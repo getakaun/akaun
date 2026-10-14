@@ -39,7 +39,10 @@ vi.mock("$lib/server/env.js", () => ({
 
 vi.mock("$lib/server/settings.js", () => ({
   getSetting: () => null,
-  SETTING_KEYS: { companyLogoPath: "company_logo_path" },
+  SETTING_KEYS: {
+    companyLogoPath: "company_logo_path",
+    companyLetterheadPath: "company_letterhead_path",
+  },
 }));
 
 const permission = { granted: true };

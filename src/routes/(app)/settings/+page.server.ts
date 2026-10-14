@@ -19,6 +19,7 @@ import {
   isLayoutKey,
 } from "$lib/pdf/layout-catalog.js";
 import { DEFAULT_PDF_THEME_COLOR } from "$lib/pdf/theme-presets.js";
+import { DEFAULT_PDF_HEADER, isPdfHeaderStyle } from "$lib/pdf/header-style.js";
 import {
   documentDefaults,
   MAX_TERM_DAYS,
@@ -31,7 +32,7 @@ import {
   listAccounts,
 } from "$lib/server/queries/accounts.js";
 import {
-  saveCompanyLogo,
+  saveCompanyImage,
   deleteFile,
   sniffAllowedType,
   MAX_LOGO_BYTES,
@@ -54,13 +55,62 @@ import {
   connectionModelAllowed,
 } from "$lib/server/llm/chatgpt-sign-in.js";
 import type { ProviderType } from "$lib/server/import/providers/index.js";
-import { fail } from "@sveltejs/kit";
+import { fail, type ActionFailure } from "@sveltejs/kit";
 import { getAccountDefaults } from "$lib/server/services/account-defaults.js";
 import {
   applyProfileSwitches,
   importProfileList,
   planProfileSwitches,
 } from "$lib/server/loaders/import-profiles.js";
+
+/** What the Company form asked for one company image (logo or letterhead). */
+type CompanyImageChange =
+  | { kind: "none" }
+  | { kind: "remove" }
+  | { kind: "replace"; buffer: Buffer; filename: string };
+
+/**
+ * Read and check one company image field without storing anything: a JPEG or
+ * PNG of at most 5MB, or the matching remove flag.
+ */
+async function readCompanyImage(
+  data: FormData,
+  fileField: string,
+  removeField: string,
+  label: string,
+): Promise<CompanyImageChange | { failure: ActionFailure<{ error: string }> }> {
+  const file = data.get(fileField);
+  if (file instanceof File && file.size > 0) {
+    if (file.size > MAX_LOGO_BYTES) {
+      return {
+        failure: fail(413, { error: `${label} image must be 5MB or smaller.` }),
+      };
+    }
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const type = sniffAllowedType(buffer);
+    if (type !== "jpeg" && type !== "png") {
+      return {
+        failure: fail(415, { error: `${label} must be a JPEG or PNG image.` }),
+      };
+    }
+    return { kind: "replace", buffer, filename: file.name };
+  }
+  return data.get(removeField) === "true"
+    ? { kind: "remove" }
+    : { kind: "none" };
+}
+
+/** Store a checked company image change and drop the file it replaces. */
+function applyCompanyImage(change: CompanyImageChange, key: string) {
+  if (change.kind === "none") return;
+  const oldPath = getSetting(db, key);
+  if (change.kind === "replace") {
+    setSetting(db, key, saveCompanyImage(change.buffer, change.filename));
+  } else if (oldPath) {
+    setSetting(db, key, "");
+  }
+  if (oldPath) deleteFile(oldPath);
+}
 
 /**
  * A category IS an account (FR-006a) — the everyday word on screen, the chart of
@@ -162,6 +212,11 @@ export const load: PageServerLoad = async ({ locals }) => {
   const companyLogoUrl = companyLogoPath
     ? `/api/files/${encodeURIComponent(companyLogoPath)}`
     : null;
+  const companyLetterheadPath =
+    getSetting(db, SETTING_KEYS.companyLetterheadPath) ?? "";
+  const companyLetterheadUrl = companyLetterheadPath
+    ? `/api/files/${encodeURIComponent(companyLetterheadPath)}`
+    : null;
 
   const providers = getAllProviders(db).map(({ oauthCredentials, ...p }) => {
     // A `chatgpt` provider's tokens never leave the server either: the
@@ -186,6 +241,10 @@ export const load: PageServerLoad = async ({ locals }) => {
     getSetting(db, SETTING_KEYS.pdfQuotationLayoutKey) ?? DEFAULT_LAYOUT_KEY;
   const pdfThemeColor =
     getSetting(db, SETTING_KEYS.pdfThemeColor) ?? DEFAULT_PDF_THEME_COLOR;
+  const storedPdfHeader = getSetting(db, SETTING_KEYS.pdfHeader);
+  const pdfHeader = isPdfHeaderStyle(storedPdfHeader)
+    ? storedPdfHeader
+    : DEFAULT_PDF_HEADER;
 
   // The terms new documents start with, as the inputs show them: what
   // `documentDefaults` reads, so a never-saved setting shows the 30 it means,
@@ -217,12 +276,14 @@ export const load: PageServerLoad = async ({ locals }) => {
     companyAddress,
     companyRegistrationNo,
     companyLogoUrl,
+    companyLetterheadUrl,
     providers,
     importProfiles,
     layoutCatalog: LAYOUT_CATALOG,
     pdfInvoiceLayoutKey,
     pdfQuotationLayoutKey,
     pdfThemeColor,
+    pdfHeader,
     invoiceDueDays,
     quotationValidDays,
   };
@@ -282,29 +343,25 @@ export const actions: Actions = {
     const companyRegistrationNo = String(
       data.get("companyRegistrationNo") ?? "",
     ).trim();
-    const removeLogo = data.get("removeLogo") === "true";
-    const logoFile = data.get("companyLogo");
+    // Both images are checked before either is stored, so a rejected
+    // letterhead does not leave a half-applied save behind.
+    const logo = await readCompanyImage(
+      data,
+      "companyLogo",
+      "removeLogo",
+      "Logo",
+    );
+    if ("failure" in logo) return logo.failure;
+    const letterhead = await readCompanyImage(
+      data,
+      "companyLetterhead",
+      "removeLetterhead",
+      "Letterhead",
+    );
+    if ("failure" in letterhead) return letterhead.failure;
 
-    if (logoFile instanceof File && logoFile.size > 0) {
-      if (logoFile.size > MAX_LOGO_BYTES) {
-        return fail(413, { error: "Logo image must be 5MB or smaller." });
-      }
-      const buffer = Buffer.from(await logoFile.arrayBuffer());
-      const type = sniffAllowedType(buffer);
-      if (type !== "jpeg" && type !== "png") {
-        return fail(415, { error: "Logo must be a JPEG or PNG image." });
-      }
-      const oldPath = getSetting(db, SETTING_KEYS.companyLogoPath);
-      const rel = saveCompanyLogo(buffer, logoFile.name);
-      setSetting(db, SETTING_KEYS.companyLogoPath, rel);
-      if (oldPath) deleteFile(oldPath);
-    } else if (removeLogo) {
-      const oldPath = getSetting(db, SETTING_KEYS.companyLogoPath);
-      if (oldPath) {
-        setSetting(db, SETTING_KEYS.companyLogoPath, "");
-        deleteFile(oldPath);
-      }
-    }
+    applyCompanyImage(logo, SETTING_KEYS.companyLogoPath);
+    applyCompanyImage(letterhead, SETTING_KEYS.companyLetterheadPath);
 
     setSetting(db, SETTING_KEYS.companyName, companyName);
     setSetting(db, SETTING_KEYS.companyAddress, companyAddress);
@@ -318,6 +375,7 @@ export const actions: Actions = {
     const invoiceLayoutKey = String(data.get("invoiceLayoutKey") ?? "");
     const quotationLayoutKey = String(data.get("quotationLayoutKey") ?? "");
     const themeColor = String(data.get("themeColor") ?? "").trim();
+    const pdfHeader = String(data.get("pdfHeader") ?? "");
     // Blank is a choice ("none"); a missing field is not, so it fails too.
     const invoiceDueDays = termDaysInput(
       String(data.get("invoiceDueDays") ?? "x"),
@@ -332,6 +390,9 @@ export const actions: Actions = {
     if (!/^#[0-9a-fA-F]{6}$/.test(themeColor)) {
       return fail(400, { error: "Choose a valid accent color." });
     }
+    if (!isPdfHeaderStyle(pdfHeader)) {
+      return fail(400, { error: "Choose a valid header." });
+    }
     if (invoiceDueDays === null || quotationValidDays === null) {
       return fail(400, {
         error: `Enter the days as a whole number from 0 to ${MAX_TERM_DAYS}, or leave it blank for none.`,
@@ -341,6 +402,7 @@ export const actions: Actions = {
     setSetting(db, SETTING_KEYS.pdfInvoiceLayoutKey, invoiceLayoutKey);
     setSetting(db, SETTING_KEYS.pdfQuotationLayoutKey, quotationLayoutKey);
     setSetting(db, SETTING_KEYS.pdfThemeColor, themeColor);
+    setSetting(db, SETTING_KEYS.pdfHeader, pdfHeader);
     setSetting(db, SETTING_KEYS.invoiceDueDays, invoiceDueDays);
     setSetting(db, SETTING_KEYS.quotationValidDays, quotationValidDays);
 

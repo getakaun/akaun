@@ -6,6 +6,7 @@ import {
   CW,
   C,
   cleanText,
+  drawLetterhead,
   drawStatusStamp,
   fmt,
   fmtDate,
@@ -46,13 +47,21 @@ export function renderCompact(
   const docNumber = docu.invoiceNumber ?? docu.quotationNumber ?? "";
 
   // ── HEADER (single row) ────────────────────────────────────────────────
-  doc
-    .font(fonts.bold)
-    .fontSize(15)
-    .fillColor(C.dark)
-    .text(cleanText(settings.companyName) || "Company", M, y, {
-      width: CW * 0.6,
-    });
+  // The letterhead takes the company name's place, top left.
+  // About the height the 15pt name stands; the row still ends below whichever
+  // of it and the title beside it is lower.
+  const letterheadBottom = settings.letterheadPath
+    ? y + drawLetterhead(doc, settings.letterheadPath, M, y, CW * 0.6, 20)
+    : 0;
+  if (!settings.letterheadPath) {
+    doc
+      .font(fonts.bold)
+      .fontSize(15)
+      .fillColor(C.dark)
+      .text(cleanText(settings.companyName) || "Company", M, y, {
+        width: CW * 0.6,
+      });
+  }
   doc
     .font(fonts.bold)
     .fontSize(13)
@@ -61,7 +70,7 @@ export function renderCompact(
       width: CW,
       align: "right",
     });
-  y = doc.y + 3;
+  y = Math.max(letterheadBottom, doc.y) + 3;
 
   const subtitleParts = [
     settings.companyAddress && cleanText(settings.companyAddress),

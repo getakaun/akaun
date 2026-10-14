@@ -108,3 +108,33 @@ export function drawStatusStamp(
     });
   doc.restore();
 }
+
+/**
+ * Draw the company letterhead at `(x, y)`, scaled to fit within `maxW × maxH`
+ * without changing its shape, and return the height it took. A layout decides
+ * only where its masthead goes; whether there is a letterhead at all, and
+ * which file it is, was settled before the layout was called.
+ */
+export function drawLetterhead(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  doc: any,
+  path: string,
+  x: number,
+  y: number,
+  maxW: number,
+  maxH: number,
+  align: "left" | "center" | "right" = "left",
+): number {
+  const image = doc.openImage(path);
+  const scale = Math.min(maxW / image.width, maxH / image.height);
+  const width = image.width * scale;
+  const height = image.height * scale;
+  const offset =
+    align === "right"
+      ? maxW - width
+      : align === "center"
+        ? (maxW - width) / 2
+        : 0;
+  doc.image(image, x + offset, y, { width, height });
+  return height;
+}

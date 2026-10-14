@@ -415,14 +415,14 @@ export function deleteReconciliationFolder(statementId: number): void {
 }
 
 // ---------------------------------------------------------------------------
-// Company logo helper
+// Company image helper
 // ---------------------------------------------------------------------------
 
 /**
- * Save the company logo image. Returns the relative path within STORAGE_PATH.
+ * Save a company image (the logo or the letterhead). Returns the relative path within STORAGE_PATH.
  * Caller must validate file type (jpeg/png only) before calling.
  */
-export function saveCompanyLogo(
+export function saveCompanyImage(
   buffer: Buffer,
   originalFilename: string,
 ): string {

@@ -3,9 +3,19 @@ import { db } from '$lib/server/db/client.js';
 import { settings } from '$lib/server/db/schema.js';
 import { setSetting, SETTING_KEYS, hasAnyDocuments } from '$lib/server/settings.js';
 
+// The stored-file keys are written only by the Company form, which saves the
+// upload itself. `/api/files` serves whatever file these keys name, so letting a
+// caller set one would let it publish any stored file — a receipt, a statement.
+const FILE_PATH_KEYS = new Set<string>([
+	SETTING_KEYS.companyLogoPath,
+	SETTING_KEYS.companyLetterheadPath
+]);
+
 // Only these keys may be written through the API — prevents arbitrary keys being
 // injected into the global settings namespace.
-const ALLOWED_KEYS = new Set<string>(Object.values(SETTING_KEYS));
+const ALLOWED_KEYS = new Set<string>(
+	Object.values(SETTING_KEYS).filter((key) => !FILE_PATH_KEYS.has(key))
+);
 
 // Once any document exists, these settings are immutable — enforced here too,
 // not just in the settings-page form actions, since this endpoint is a direct

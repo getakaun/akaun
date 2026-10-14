@@ -1,6 +1,9 @@
+import { existsSync } from "fs";
+import { join } from "path";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { InvoiceStatus, QuotationStatus } from "$lib/enums.js";
 import { DEFAULT_PDF_THEME_COLOR } from "$lib/pdf/theme-presets.js";
+import { STORAGE_PATH } from "$lib/server/env.js";
 import type { LayoutRenderData, StatusStamp } from "$lib/pdf/render-types.js";
 import { getSetting, SETTING_KEYS } from "$lib/server/settings.js";
 import { toMinor } from "$lib/server/ledger/money.js";
@@ -76,6 +79,22 @@ export function statusStampFor(
   if (doc.status === InvoiceStatus.Cancelled) return "VOID";
   if (doc.status === InvoiceStatus.Draft) return "DRAFT";
   return null;
+}
+
+/**
+ * The letterhead file to print in place of the company name, or undefined to
+ * print the name. Only when the book chose the letterhead header and its file
+ * is still there — a choice left behind by a removed letterhead falls back to
+ * the name rather than leaving the top of the page empty.
+ */
+export function resolveLetterhead(
+  header: string | null,
+  relPath: string | null,
+  storageRoot: string,
+): string | undefined {
+  if (header !== "letterhead" || !relPath) return undefined;
+  const abs = join(storageRoot, relPath);
+  return existsSync(abs) ? abs : undefined;
 }
 
 /** What the layout is handed: the document's fields, named the layout's way. */
@@ -161,7 +180,11 @@ export async function salesPdfResponse(
     companyAddress: getSetting(db, SETTING_KEYS.companyAddress) ?? "",
     companyRegistrationNo:
       getSetting(db, SETTING_KEYS.companyRegistrationNo) ?? "",
-    companyLogoPath: getSetting(db, SETTING_KEYS.companyLogoPath) ?? "",
+    letterheadPath: resolveLetterhead(
+      getSetting(db, SETTING_KEYS.pdfHeader),
+      getSetting(db, SETTING_KEYS.companyLetterheadPath),
+      STORAGE_PATH,
+    ),
   };
   // The same default the Settings picker shows, so a book that never chose a
   // colour prints in the one it was shown.

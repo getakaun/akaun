@@ -83,12 +83,17 @@ tokens and the **Save** button do not show, and you cannot change the format.
 Akaun shows these details on printed quotations and invoices.
 
 - **Logo**: click **Upload** to add a JPEG or PNG image of 5 MB or smaller. Click **Replace** to
-  use a different image, or **Remove** to remove it.
+  use a different image, or **Remove** to remove it. At this time, the logo does not print on
+  quotations or invoices.
+- **Letterhead**: a JPEG or PNG image of 5 MB or smaller, usually a wide banner with your logo,
+  name and address. It prints at the top of quotations and invoices, in place of the company name,
+  when **Header** on the **Templates** tab is **Letterhead**. **Upload**, **Replace** and **Remove**
+  work as for the logo.
 - **Company Name**: the name of the business.
 - **Address**: the address of the business.
 - **Registration No.**: the registration number of the business.
 
-Click **Save** to save the four fields.
+Click **Save** to save the fields.
 
 ## Books
 
@@ -171,6 +176,10 @@ Under **Printed documents**:
   it.
 - **Accent color**: the color of the printed documents. Choose a preset color, or choose a
   different color.
+- **Header**: what prints at the top of the page. **Company name** prints the name as text.
+  **Letterhead** prints the letterhead image from the **Company** tab in its place. The layout
+  decides where the header goes. You can choose **Letterhead** only after you upload a letterhead.
+  If you later remove the letterhead, the documents print the company name again.
 
 Under **Default terms**:
 

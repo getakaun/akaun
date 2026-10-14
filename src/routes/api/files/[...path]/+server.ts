@@ -54,10 +54,15 @@ export const GET: RequestHandler = ({ locals, params }) => {
     return new Response("Forbidden", { status: 403 });
   }
 
-  const companyLogoPath = getSetting(db, SETTING_KEYS.companyLogoPath);
-  const isCompanyLogo = !!companyLogoPath && filePath === companyLogoPath;
+  const isCompanyImage = [
+    SETTING_KEYS.companyLogoPath,
+    SETTING_KEYS.companyLetterheadPath,
+  ].some((key) => {
+    const path = getSetting(db, key);
+    return !!path && filePath === path;
+  });
 
-  if (!owned && !bankStatementFile && !isCompanyLogo)
+  if (!owned && !bankStatementFile && !isCompanyImage)
     return new Response("Forbidden", { status: 403 });
 
   let content: Blob;

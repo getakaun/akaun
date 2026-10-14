@@ -265,8 +265,9 @@ A PDF of the invoice opens in a new browser tab. Use the browser to print it or 
 
 The PDF shows these items:
 
-- Your logo, company name, address and registration number. These come from **Settings**, on the
-  **Company** tab.
+- Your company name, address and registration number. These come from **Settings**, on the
+  **Company** tab. If **Header** on the **Templates** tab is **Letterhead**, your letterhead prints
+  at the top in place of the company name.
 - The customer under **Bill to**, with the address, registration number and phone of the contact.
 - The issue date, the due date and the reference. If the invoice is overdue, the due date shows
   "overdue".

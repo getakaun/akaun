@@ -1,12 +1,10 @@
 import PDFDocument from "pdfkit";
-import { existsSync } from "fs";
-import { join } from "path";
-import { STORAGE_PATH } from "$lib/server/env.js";
 import type { LayoutRenderData, ThemeData } from "$lib/pdf/render-types.js";
 import { registerPdfFonts } from "../fonts.js";
 import {
   C,
   cleanText,
+  drawLetterhead,
   drawStatusStamp,
   fmt,
   fmtDate,
@@ -86,14 +84,28 @@ export function renderClassic(
     .fontSize(18)
     .fillColor(C.dark)
     .text(docTitle, M, y, { width: CW * 0.6 });
-  doc
-    .font(fonts.bold)
-    .fontSize(18)
-    .fillColor(C.muted)
-    .text(cleanText(settings.companyName) || "Company", M, y, {
-      width: CW,
-      align: "right",
-    });
+  // The letterhead takes the company name's slot, top right, at about the
+  // height the 18pt name stands, so the header keeps its proportions.
+  if (settings.letterheadPath) {
+    drawLetterhead(
+      doc,
+      settings.letterheadPath,
+      M + CW * 0.5,
+      y,
+      CW * 0.5,
+      24,
+      "right",
+    );
+  } else {
+    doc
+      .font(fonts.bold)
+      .fontSize(18)
+      .fillColor(C.muted)
+      .text(cleanText(settings.companyName) || "Company", M, y, {
+        width: CW,
+        align: "right",
+      });
+  }
   y += 48;
 
   // ── META ROWS (label/value, one line each) ──────────────────────────────
@@ -157,13 +169,6 @@ export function renderClassic(
   const addressTop = y;
 
   let leftY = addressTop;
-  if (settings.companyLogoPath) {
-    const absLogoPath = join(STORAGE_PATH, settings.companyLogoPath);
-    if (existsSync(absLogoPath)) {
-      doc.image(absLogoPath, M, leftY, { height: 20, fit: [leftColW, 20] });
-      leftY += 26;
-    }
-  }
   doc
     .font(fonts.regular)
     .fontSize(9)

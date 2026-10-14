@@ -51,7 +51,12 @@ export type LayoutRenderData = {
     companyName?: string;
     companyAddress?: string;
     companyRegistrationNo?: string;
-    companyLogoPath?: string;
+    /**
+     * Absolute path of the letterhead image, present only when the PDF should
+     * print it in place of the company name at the top. Resolved by
+     * `sales-pdf.ts`; a layout only decides where it goes.
+     */
+    letterheadPath?: string;
   };
   docTypeLabel: string;
   /**

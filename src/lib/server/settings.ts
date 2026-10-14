@@ -31,9 +31,13 @@ export const SETTING_KEYS = {
   companyAddress: "company.address",
   companyRegistrationNo: "company.registrationNo",
   companyLogoPath: "company.logoPath",
+  companyLetterheadPath: "company.letterheadPath",
   pdfInvoiceLayoutKey: "pdf.invoiceLayoutKey",
   pdfQuotationLayoutKey: "pdf.quotationLayoutKey",
   pdfThemeColor: "pdf.themeColor",
+  // What a PDF prints at the top: the company name as text, or the letterhead
+  // image. A choice of content, so it is one setting for every layout.
+  pdfHeader: "pdf.header",
   sequenceTemplate: "documentNumbers.template",
   // Days from issue to due (invoices) and to expiry (quotations) that a new
   // document starts with. Read through `documentDefaults` in

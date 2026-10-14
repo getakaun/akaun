@@ -9,6 +9,7 @@
 	import { CURRENCIES } from '$lib/currency.js';
 	import { EntityType } from '$lib/enums.js';
 	import { addDaysISO, daysBetweenISO, localToday } from '$lib/local-date.js';
+	import { isQuotationSealed } from '$lib/sales/status.js';
 	import {
 		SALES_DOC_KINDS,
 		secondDateOf,
@@ -27,11 +28,11 @@
 	 * `SALES_DOC_KINDS` now holds — the same risk `RecordForm` exists to avoid
 	 * for records, applied here for the same reason.
 	 *
-	 * A sent invoice is **sealed**: its amount is in the books and the customer
-	 * has a copy, so the customer, issue date, currency, rate and lines are
-	 * shown but cannot change, and only the wording around them is sent. The
-	 * server refuses the rest anyway (`PATCH /api/invoices/[id]`); sending it
-	 * made every edit of a sent invoice fail.
+	 * A sent invoice or quotation is **sealed**: the customer has a copy (and an
+	 * invoice's amount is in the books), so the customer, issue date, currency,
+	 * rate and lines are shown but cannot change, and only the wording around
+	 * them and the second date are sent. The server refuses the rest anyway
+	 * (`SEALED_SALES_FIELDS`); sending it made every edit of a sent one fail.
 	 */
 	type LineInput = { description: string; quantity: number; unitPrice: number };
 
@@ -64,7 +65,8 @@
 	const source = $derived(doc as Invoice | Quotation | null);
 	const isNew = $derived(source === null);
 	const sealed = $derived(
-		source !== null && 'ledgerRecordId' in source && source.ledgerRecordId !== null
+		source !== null &&
+			('ledgerRecordId' in source ? source.ledgerRecordId !== null : isQuotationSealed(source))
 	);
 	const id = (name: string) => `${cfg.idPrefix}-${name}`;
 
@@ -121,7 +123,7 @@
 
 	let snapshot = $state('');
 	function fingerprint(): string {
-		// A sealed invoice sends only these four, so only these can make it dirty.
+		// A sealed document sends only these four, so only these can make it dirty.
 		if (sealed) return JSON.stringify([secondDate, notes, terms, reference]);
 		return JSON.stringify([
 			issueDate,
@@ -212,7 +214,7 @@
 	});
 
 	export function blockedBy(): string | null {
-		// What a sealed invoice could be blocked on is fixed, and was fine when sent.
+		// What a sealed document could be blocked on is fixed, and was fine when sent.
 		if (sealed) return null;
 		if (!contactId && !contactName) return 'Choose a customer.';
 		if (!lines.some((l) => l.description.trim())) return 'Add at least one line item.';
@@ -291,9 +293,15 @@
 {#if sealed}
 	<!-- Same reason, and the same way out, as the server gives for refusing them. -->
 	<p class="locked-note">
-		This invoice has been sent, so its customer, date, currency and line items are fixed. To
-		change them, cancel it and write a new one. The due date, reference, notes and terms can
-		still change.
+		{#if kind === 'invoice'}
+			This invoice has been sent, so its customer, date, currency and line items are fixed. To
+			change them, use Cancel &amp; reissue. The due date, reference, notes and terms can still
+			change.
+		{:else}
+			This quotation has gone to the customer, so its customer, date, currency and line items are
+			fixed. To change them, use Revise. The expiry date, reference, notes and terms can still
+			change.
+		{/if}
 	</p>
 {/if}
 

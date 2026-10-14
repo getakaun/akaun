@@ -4,7 +4,14 @@ import { join } from "path";
 import { STORAGE_PATH } from "$lib/server/env.js";
 import type { LayoutRenderData, ThemeData } from "$lib/pdf/render-types.js";
 import { registerPdfFonts } from "../fonts.js";
-import { C, cleanText, drawStatusStamp, fmt, fmtDate } from "../layout.js";
+import {
+  C,
+  cleanText,
+  drawStatusStamp,
+  fmt,
+  fmtDate,
+  fmtMoney,
+} from "../layout.js";
 
 // Page geometry — US Letter, matching the reference invoice this layout is
 // modeled on (measured from its /MediaBox: 612x792pt, 30pt margins). This is
@@ -14,7 +21,7 @@ const M = 30;
 const PAGE_W = 612;
 const CW = PAGE_W - 2 * M;
 
-/** The latest settlement date, for "paid on <date>" — falls back to null if there's nothing to read. */
+/** The latest settlement date, for the "Date paid" row — falls back to null if there's nothing to read. */
 function latestSettlementDate(
   settlements: { otherDate: string }[] | undefined,
 ): string | null {
@@ -25,16 +32,19 @@ function latestSettlementDate(
   );
 }
 
-// Line items table columns — widths measured from the reference invoice.
+// Line items table columns — widths measured from the reference invoice,
+// except Unit price: the reference's 46pt fits neither "Unit price (MYR)" nor
+// a seven-digit price, so it is wider and the Description column gives way.
+// The Amount column and the right edge are unchanged.
 const QTY_W = 50;
-const PRICE_W = 46;
+const PRICE_W = 70;
 const AMOUNT_W = 83;
 const DESC_W = CW - QTY_W - PRICE_W - AMOUNT_W;
 const QTY_X = M + DESC_W;
 const PRICE_X = QTY_X + QTY_W;
 const AMOUNT_X = PRICE_X + PRICE_W;
 
-/** A tight, receipt-style layout: bold title, label/value meta rows, two address columns, a bold total headline, and a compact line-items table. Within each address column the name (own company / "Bill to" contact) stays regular weight but near-black (C.dark), while the address lines beneath it drop to a dark grey (C.subtle) — color, not weight, is what separates the two there. */
+/** A tight, receipt-style layout: bold title, label/value meta rows, two address columns, and a compact line-items table. Within each address column the name (own company / "Bill to" contact) stays regular weight but near-black (C.dark), while the address lines beneath it drop to a dark grey (C.subtle) — color, not weight, is what separates the two there. */
 export function renderClassic(
   data: LayoutRenderData,
   theme: ThemeData,
@@ -51,6 +61,8 @@ export function renderClassic(
   const { document: docu, settings, docTypeLabel } = data;
   const isInvoice = docTypeLabel === "INVOICE";
   const docNumber = docu.invoiceNumber ?? docu.quotationNumber ?? "";
+  // A cancelled invoice asks for nothing, so it never says what is "due".
+  const isVoid = data.statusStamp === "VOID";
 
   // A full-width accent bar along the very top edge of the page.
   doc.rect(0, 0, doc.page.width, 3).fill(theme.color);
@@ -94,6 +106,12 @@ export function renderClassic(
       "Date due",
       fmtDate(docu.dueDate) + (docu.isOverdue ? " — overdue" : ""),
     ]);
+  }
+  // The total itself is under the line items; the day it was settled is
+  // only said here.
+  if (isInvoice && !isVoid && docu.paid) {
+    const paidDate = latestSettlementDate(docu.settlements) ?? docu.issueDate;
+    metaRows.push(["Date paid", fmtDate(paidDate)]);
   }
   if (!isInvoice && docu.expiryDate) {
     metaRows.push(["Valid until", fmtDate(docu.expiryDate)]);
@@ -224,40 +242,21 @@ export function renderClassic(
 
   y = Math.max(leftY, rightY) + 26;
 
-  // ── BOLD HEADLINE ────────────────────────────────────────────────────────
-  // A cancelled invoice asks for nothing, so it never says what is "due".
-  const isVoid = data.statusStamp === "VOID";
-  let headline: string;
-  if (isInvoice && isVoid) {
-    headline = `${fmt(docu.total)} ${docu.currency} · cancelled`;
-  } else if (isInvoice) {
-    if (docu.paid) {
-      const paidDate = latestSettlementDate(docu.settlements) ?? docu.issueDate;
-      headline = `${fmt(docu.total)} ${docu.currency} paid on ${fmtDate(paidDate)}`;
-    } else {
-      const due = fmt(docu.amountDue ?? docu.total);
-      headline =
-        `${due} ${docu.currency} due` +
-        (docu.dueDate ? ` ${fmtDate(docu.dueDate)}` : "");
-    }
-  } else {
-    headline = `${fmt(docu.total)} ${docu.currency}`;
-  }
-  doc
-    .font(fonts.bold)
-    .fontSize(13.5)
-    .fillColor(C.dark)
-    .text(headline, M, y, { width: CW });
-  y = doc.y + 20;
-
   // ── LINE ITEMS ───────────────────────────────────────────────────────────
   function tableHeader() {
     doc.font(fonts.regular).fontSize(7.5).fillColor(C.dark);
     doc.text("Description", M, y, { width: DESC_W });
     doc.text("Qty", QTY_X, y, { width: QTY_W, align: "center" });
-    doc.text("Unit price", PRICE_X, y, { width: PRICE_W, align: "right" });
+    // The currency is named once per column, not on every cell.
+    doc.text(`Unit price (${docu.currency})`, PRICE_X, y, {
+      width: PRICE_W,
+      align: "right",
+    });
     doc.font(fonts.bold).fontSize(7.5).fillColor(C.dark);
-    doc.text("Amount", AMOUNT_X, y, { width: AMOUNT_W, align: "right" });
+    doc.text(`Amount (${docu.currency})`, AMOUNT_X, y, {
+      width: AMOUNT_W,
+      align: "right",
+    });
     y += 12;
     doc
       .moveTo(M, y)
@@ -331,7 +330,7 @@ export function renderClassic(
           .font(fonts.regular)
           .fontSize(9.5)
           .fillColor(C.dark)
-          .text(fmt(line.unitPrice), PRICE_X, rowY, {
+          .text(fmt(line.unitPrice, docu.currency), PRICE_X, rowY, {
             width: PRICE_W,
             align: "right",
           });
@@ -339,7 +338,7 @@ export function renderClassic(
           .font(fonts.bold)
           .fontSize(9.5)
           .fillColor(C.dark)
-          .text(fmt(line.lineTotal), AMOUNT_X, rowY, {
+          .text(fmt(line.lineTotal, docu.currency), AMOUNT_X, rowY, {
             width: AMOUNT_W,
             align: "right",
           });
@@ -372,7 +371,10 @@ export function renderClassic(
     .font(fonts.regular)
     .fontSize(9)
     .fillColor(C.dark)
-    .text(fmt(docu.subtotal), AMOUNT_X, y, { width: AMOUNT_W, align: "right" });
+    .text(fmt(docu.subtotal, docu.currency), AMOUNT_X, y, {
+      width: AMOUNT_W,
+      align: "right",
+    });
   y += 14.25;
 
   doc
@@ -384,14 +386,17 @@ export function renderClassic(
     .font(fonts.bold)
     .fontSize(9)
     .fillColor(C.dark)
-    .text(fmt(docu.total), AMOUNT_X, y, { width: AMOUNT_W, align: "right" });
+    .text(fmtMoney(docu.total, docu.currency), AMOUNT_X, y, {
+      width: AMOUNT_W,
+      align: "right",
+    });
   y += 14.25;
 
   if (isInvoice && !isVoid) {
     const label = docu.paid ? "Amount paid" : "Amount due";
     const amount = docu.paid
-      ? fmt(docu.amountPaid ?? docu.total)
-      : fmt(docu.amountDue ?? docu.total);
+      ? fmtMoney(docu.amountPaid ?? docu.total, docu.currency)
+      : fmtMoney(docu.amountDue ?? docu.total, docu.currency);
     doc
       .font(fonts.bold)
       .fontSize(9)
@@ -401,7 +406,7 @@ export function renderClassic(
       .font(fonts.bold)
       .fontSize(9)
       .fillColor(C.dark)
-      .text(`${amount} ${docu.currency}`, AMOUNT_X, y, {
+      .text(amount, AMOUNT_X, y, {
         width: AMOUNT_W,
         align: "right",
       });

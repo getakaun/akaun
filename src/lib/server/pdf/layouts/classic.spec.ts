@@ -337,40 +337,19 @@ describe("renderClassic vs. reference invoice layout", () => {
     );
   });
 
-  it("positions the due-amount headline like the reference", () => {
-    // Content differs (date format, and pdfkit renders one merged run), so
-    // locate the headline by its row's font size rather than exact text.
-    const gHeadline = generated.find(
-      (i) => i.fontSize > 12 && i.fontSize < 16 && i.str.includes("USD"),
-    );
-    const rHeadline = reference.find(
-      (i) => i.fontSize > 12 && i.fontSize < 16 && i.str.includes("USD"),
-    );
-    if (!gHeadline)
-      throw new Error("generated PDF: no due-amount headline found");
-    if (!rHeadline)
-      throw new Error("reference PDF: no due-amount headline found");
-    closeTo(
-      gHeadline.x,
-      rHeadline.x,
-      "headline x — check M in classic.ts's headline",
-    );
-    closeTo(
-      gHeadline.fontSize,
-      rHeadline.fontSize,
-      "headline font size — check the headline fontSize() in classic.ts",
-      FONT_TOL,
-    );
-  });
-
   it("aligns the line-items table header columns with the reference", () => {
-    for (const label of ["Description", "Qty", "Unit price", "Amount"]) {
-      const gRow = rowWith(generatedRows, label);
+    // Our headers name the currency ("Unit price (USD)"); the reference's don't.
+    for (const [label, generatedLabel] of [
+      ["Description", "Description"],
+      ["Unit price", "Unit price (USD)"],
+      ["Amount", "Amount (USD)"],
+    ] as const) {
+      const gRow = rowWith(generatedRows, generatedLabel);
       const rRow = rowWith(referenceRows, label);
-      const g = cell(gRow, label);
+      const g = cell(gRow, generatedLabel);
       const r = cell(rRow, label);
-      // Description/Qty are left/center-aligned (compare left edge); Unit
-      // price/Amount are right-aligned columns (compare right edge).
+      // Description is left-aligned (compare left edge); Unit price/Amount
+      // are right-aligned columns (compare right edge).
       if (label === "Unit price" || label === "Amount") {
         closeTo(
           g.x + g.width,
@@ -385,6 +364,20 @@ describe("renderClassic vs. reference invoice layout", () => {
         );
       }
     }
+    // Qty sits left of the reference on purpose: the Unit price column is wider
+    // than the reference's 46pt so "Unit price (MYR)" fits. It stays centred
+    // over a 50pt column ending where Unit price begins.
+    const gQty = cell(rowWith(generatedRows, "Qty"), "Qty");
+    const gPrice = cell(
+      rowWith(generatedRows, "Unit price (USD)"),
+      "Unit price (USD)",
+    );
+    const priceColumnLeft = gPrice.x + gPrice.width - 70;
+    closeTo(
+      gQty.x + gQty.width / 2,
+      priceColumnLeft - 25,
+      `"Qty" column centre — check QTY_W/PRICE_W in classic.ts`,
+    );
   });
 
   it("aligns the totals block with the reference", () => {

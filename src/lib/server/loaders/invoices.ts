@@ -51,6 +51,10 @@ export function loadInvoiceDetail(locals: App.Locals, id: number) {
     perms: {
       change: hasPermission(locals, "invoices", "change"),
       delete: hasPermission(locals, "invoices", "delete"),
+      // Cancel & reissue changes this invoice and adds another.
+      reissue:
+        hasPermission(locals, "invoices", "change") &&
+        hasPermission(locals, "invoices", "add"),
       // A customer's payment is a record, so recording one from the invoice
       // needs what recording it from the Records screen needs.
       recordPayment: hasPermission(locals, "records", "add"),

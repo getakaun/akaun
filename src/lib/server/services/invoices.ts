@@ -4,6 +4,7 @@ import {
   deleteInvoice as _delete,
   markInvoiceIssued,
   markInvoiceCancelled,
+  relinkSourceQuotation,
   getInvoice,
   type InvoiceCreate,
   type InvoicePatch,
@@ -20,6 +21,7 @@ import { getQuotation } from "$lib/server/queries/quotations.js";
 import { invoiceEvents, quotationEvents } from "$lib/server/finance/events.js";
 import { DefaultAccountPurpose, InvoiceStatus } from "$lib/enums.js";
 import { canCancelInvoice } from "$lib/sales/status.js";
+import { addDaysISO, daysBetweenISO, localToday } from "$lib/local-date.js";
 import type { LedgerDb, Refusable } from "$lib/server/ledger/types.js";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 
@@ -180,10 +182,51 @@ export function cancelInvoice(
   id: number,
   actingUserId: number,
 ): Refusable<Invoice> {
+  const result = voidInvoice(db, id, actingUserId, { reissue: false });
+  return result.ok ? { ok: true, value: result.value.voided } : result;
+}
+
+/**
+ * Voiding a sent invoice and issuing a corrected one in its place: the
+ * standard way to change what a sent invoice says. The old one is voided
+ * exactly as `cancelInvoice` does; the new one is a draft copy of it with the
+ * next invoice number, dated today with the same term, linked back by
+ * `replacesInvoiceId`. A quotation it was converted from follows it to the new
+ * one. The draft is edited and sent like any other.
+ *
+ * `today` is a parameter only so a test can pin it.
+ */
+export function voidAndReissueInvoice(
+  db: Db,
+  id: number,
+  actingUserId: number,
+  options: { today?: string } = {},
+): Refusable<{ voided: Invoice; invoice: Invoice }> {
+  const result = voidInvoice(db, id, actingUserId, {
+    reissue: true,
+    today: options.today,
+  });
+  if (!result.ok) return result;
+  return {
+    ok: true,
+    value: { voided: result.value.voided, invoice: result.value.reissued! },
+  };
+}
+
+function voidInvoice(
+  db: Db,
+  id: number,
+  actingUserId: number,
+  options: { reissue: boolean; today?: string },
+): Refusable<{ voided: Invoice; reissued: Invoice | null }> {
   const deferredEmits: DeferredEmits = [];
-  let cancelled: Invoice;
+  let voided: Invoice;
+  // Assigned inside the transaction's callback, which TS cannot see into —
+  // without the casts it narrows both to `null` for good.
+  let reissued = null as Invoice | null;
+  let movedQuotationId = null as number | null;
   try {
-    cancelled = db.transaction((tx) => {
+    voided = db.transaction((tx) => {
       const ledger = tx as unknown as LedgerDb;
       const invoice = getInvoice(tx, id);
       if (!invoice) throw new Refused("That invoice no longer exists.");
@@ -236,6 +279,39 @@ export function cancelInvoice(
         // ever does, throwing undoes the cancellation written just before it.
         if (!removed.ok) throw new Refused(removed.reason);
       }
+
+      if (options.reissue) {
+        const today = options.today ?? localToday();
+        // The same term the customer was given, counted from the new date.
+        const termDays =
+          invoice.dueDate === null
+            ? null
+            : daysBetweenISO(invoice.issueDate, invoice.dueDate);
+        reissued = _create(tx, actingUserId, {
+          contactId: invoice.contactId ?? null,
+          reference: invoice.reference,
+          issueDate: today,
+          dueDate: termDays === null ? null : addDaysISO(today, termDays),
+          currency: invoice.currency,
+          exchangeRate: invoice.exchangeRate,
+          notes: invoice.notes,
+          terms: invoice.terms,
+          sourceQuotationId: invoice.sourceQuotationId,
+          replacesInvoiceId: id,
+          lines: invoice.lines.map((line) => ({
+            description: line.description,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            sortOrder: line.sortOrder,
+          })),
+        });
+      }
+      movedQuotationId = relinkSourceQuotation(
+        tx,
+        id,
+        reissued?.id ?? null,
+        actingUserId,
+      );
       return getInvoice(tx, id)!;
     });
   } catch (err) {
@@ -244,6 +320,12 @@ export function cancelInvoice(
   }
 
   for (const emit of deferredEmits) emit();
-  invoiceEvents.emit("invoice-update", { item: cancelled });
-  return { ok: true, value: cancelled };
+  invoiceEvents.emit("invoice-update", { item: voided });
+  if (reissued) invoiceEvents.emit("invoice-update", { item: reissued });
+  if (movedQuotationId !== null) {
+    quotationEvents.emit("quotation-update", {
+      item: getQuotation(db, movedQuotationId),
+    });
+  }
+  return { ok: true, value: { voided, reissued } };
 }

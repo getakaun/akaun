@@ -617,6 +617,9 @@ export const invoices = sqliteTable("invoices", {
   terms: text("terms"),
   // Plain integer — no FK to avoid circular reference with quotations.
   sourceQuotationId: integer("source_quotation_id"),
+  // The voided invoice this one was reissued to replace. A sent invoice is never
+  // edited for money; it is voided and a linked copy is issued in its place.
+  replacesInvoiceId: integer("replaces_invoice_id"),
   // `result_income_id` was here. Its job passed to `ledger_record_id`, and its
   // foreign key pointed into `incomes` — one of the tables this release drops,
   // which is why the migration has to rebuild this table rather than only drop
@@ -648,7 +651,8 @@ export const quotations = sqliteTable("quotations", {
   contactId: integer("contact_id").references(() => contacts.id, {
     onDelete: "set null",
   }),
-  // QuotationStatus code (1=Draft, 2=Sent, 3=Accepted, 4=Declined, 5=Converted). See enums.ts.
+  // QuotationStatus code (1=Draft, 2=Sent, 3=Accepted, 4=Declined, 5=Converted,
+  // 6=Superseded). See enums.ts.
   status: integer("status").notNull().default(1),
   reference: text("reference"),
   issueDate: text("issue_date").notNull(),
@@ -662,6 +666,11 @@ export const quotations = sqliteTable("quotations", {
   terms: text("terms"),
   // Plain integer — no FK to avoid circular reference with invoices.
   convertedInvoiceId: integer("converted_invoice_id"),
+  // 0 for an original; n for the nth revision (number suffixed `-R<n>`). A quote
+  // that has gone to the customer is never edited; it is revised into a new
+  // draft and the old one is marked Superseded, pointing at its replacement.
+  revision: integer("revision").notNull().default(0),
+  supersededById: integer("superseded_by_id"),
   createdBy: integer("created_by").references(() => users.id),
   updatedBy: integer("updated_by").references(() => users.id),
   createdAt: text("created_at")

@@ -33,6 +33,7 @@
     accepted: { label: "Accepted", tone: "green" },
     declined: { label: "Declined", tone: "red" },
     converted: { label: "Converted", tone: "blue" },
+    superseded: { label: "Superseded", tone: "gray" },
     // Invoice-only
     cancelled: { label: "Cancelled", tone: "red" },
     // Derived statuses (never stored, computed at read time)

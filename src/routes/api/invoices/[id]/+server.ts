@@ -6,6 +6,7 @@ import { resolveOrCreateContact } from "$lib/server/queries/contacts.js";
 import { InvoiceStatus, Role } from "$lib/enums.js";
 import { hasPermission } from "$lib/server/permissions.js";
 import { notFound, refused } from "$lib/server/api-response.js";
+import { SEALED_SALES_FIELDS } from "$lib/sales/status.js";
 import {
   salesLinesSchema,
   salesRateSchema,
@@ -68,19 +69,12 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
   // corrected (FR-018a). Checked before a new customer name is resolved, so a
   // refused edit cannot leave a contact behind.
   if (invoice.ledgerRecordId !== null) {
-    const sealed = [
-      "contactId",
-      "issueDate",
-      "currency",
-      "exchangeRate",
-      "lines",
-    ];
     if (
-      sealed.some((f) => patch[f] !== undefined) ||
+      SEALED_SALES_FIELDS.some((f) => patch[f] !== undefined) ||
       Boolean(body.newContactName)
     ) {
       return refused(
-        "This invoice has been sent. Its amount, date and customer are fixed — cancel it and write a new one if they are wrong.",
+        "This invoice has been sent. Its amount, date and customer are fixed — void and reissue it if they are wrong.",
       );
     }
   }

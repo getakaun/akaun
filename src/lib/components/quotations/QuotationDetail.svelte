@@ -5,6 +5,7 @@
 	import {
 		Check,
 		ChevronRight,
+		FilePen,
 		FileText,
 		Printer,
 		Receipt,
@@ -24,7 +25,7 @@
 	import { formatCurrencyAmount } from '$lib/currency.js';
 	import { formatDate, formatMoney } from '$lib/format.js';
 	import { QuotationStatus } from '$lib/enums.js';
-	import { canConvert, quotationStatusKey } from '$lib/sales/status.js';
+	import { canConvert, canRevise, quotationStatusKey } from '$lib/sales/status.js';
 	import type { loadQuotationDetail } from '$lib/server/loaders/quotations.js';
 
 	/** One quotation, on its own page — its line items are a table. */
@@ -53,6 +54,9 @@
 	let convertError = $state('');
 	let statusSaving = $state(false);
 	let statusError = $state('');
+	let revising = $state(false);
+	let reviseError = $state('');
+	let reviseConfirmOpen = $state(false);
 	let deleteDialogOpen = $state(false);
 	let auditTrailRef = $state<{ refresh: () => Promise<void> } | null>(null);
 
@@ -60,9 +64,21 @@
 	// whatever the form held, the same way closing the drawer this replaced did.
 	const dirty = $derived(isEditing && formDirty);
 
-	/** Editing is allowed unless converted — the invoice is the record now. */
-	const canEdit = $derived(data.perms.change && quotation.status !== QuotationStatus.Converted);
 	const isConverted = $derived(quotation.status === QuotationStatus.Converted);
+	const isSuperseded = $derived(quotation.status === QuotationStatus.Superseded);
+	/**
+	 * Editing is allowed unless converted (the invoice is the record now) or
+	 * superseded (it is what the customer was sent before its revision). Once
+	 * sent, only its wording and expiry still change — the form seals the rest.
+	 */
+	const canEdit = $derived(data.perms.change && !isConverted && !isSuperseded);
+	const deleteBlockedReason = $derived(
+		isConverted
+			? 'Converted quotations cannot be deleted'
+			: isSuperseded
+				? 'A quotation replaced by a revision is kept, so it cannot be deleted'
+				: undefined
+	);
 
 	type StatusName = 'draft' | 'sent' | 'accepted' | 'declined';
 	type StatusMove = { to: StatusName; label: string; icon: typeof Send };
@@ -132,6 +148,30 @@
 		}
 	}
 
+	// Replace this quotation with a new draft version of it (`-R1`), and open
+	// that. This one stays as it is, marked Superseded.
+	async function revise() {
+		// The dialog does not close itself on confirm; any refusal shows in the hero.
+		reviseConfirmOpen = false;
+		revising = true;
+		reviseError = '';
+		statusError = '';
+		convertError = '';
+		try {
+			const res = await fetch(`/api/quotations/${quotation.id}/revise`, { method: 'POST' });
+			if (!res.ok) {
+				reviseError = (await res.json().catch(() => ({}))).error ?? 'Could not revise this.';
+				return;
+			}
+			const json = await res.json();
+			void goto(resolve('/(app)/quotations/[id]', { id: String(json.quotation.id) }));
+		} catch {
+			reviseError = 'Network error — try again';
+		} finally {
+			revising = false;
+		}
+	}
+
 	async function convertToInvoice() {
 		converting = true;
 		convertError = '';
@@ -153,6 +193,7 @@
 	backHref="/quotations"
 	backLabel="Quotations"
 	{dirty}
+	editing={isEditing}
 	{saving}
 	saveLabel="Save"
 	dirtyNote={formRef?.blockedBy() ?? 'Editing this quotation'}
@@ -163,8 +204,8 @@
 		{#if data.perms.delete}
 			<button
 				class="sheet-btn sheet-btn-delete"
-				disabled={isConverted}
-				title={isConverted ? 'Converted quotations cannot be deleted' : undefined}
+				disabled={!!deleteBlockedReason}
+				title={deleteBlockedReason}
 				onclick={() => (deleteDialogOpen = true)}
 			>
 				<Trash2 size={14} /> Delete
@@ -187,6 +228,15 @@
 					<move.icon size={14} /> {move.label}
 				</button>
 			{/each}
+		{/if}
+		{#if data.perms.revise && canRevise(quotation) && !isEditing}
+			<button
+				class="sheet-btn"
+				onclick={() => (reviseConfirmOpen = true)}
+				disabled={revising || statusSaving || converting}
+			>
+				<FilePen size={14} /> {revising ? 'Revising…' : 'Revise'}
+			</button>
 		{/if}
 		{#if data.perms.convert && canConvert(quotation) && !isEditing}
 			<button
@@ -221,8 +271,10 @@
 				</span>
 			{/if}
 		</div>
-		{#if saveError || statusError || convertError || form?.error}
-			<p class="hero-error">{saveError || statusError || convertError || form?.error}</p>
+		{#if saveError || statusError || convertError || reviseError || form?.error}
+			<p class="hero-error">
+				{saveError || statusError || convertError || reviseError || form?.error}
+			</p>
 		{/if}
 	{/snippet}
 
@@ -242,6 +294,40 @@
 	{/snippet}
 
 	{#snippet rail()}
+		{#if quotation.supersededBy}
+			<section class="detail-card">
+				<div class="detail-card-head"><span class="detail-card-title">Replaced by</span></div>
+				<a
+					class="related-link ob-card"
+					href={resolve('/(app)/quotations/[id]', { id: String(quotation.supersededBy.id) })}
+				>
+					<span class="ob-icon"><FileText size={15} /></span>
+					<span class="ob-main">
+						<span class="ob-title">{quotation.supersededBy.quotationNumber}</span>
+						<span class="ob-sub">The revision that replaced this quotation</span>
+					</span>
+					<ChevronRight size={14} color="var(--muted-foreground)" />
+				</a>
+			</section>
+		{/if}
+
+		{#if quotation.revisedFrom}
+			<section class="detail-card">
+				<div class="detail-card-head"><span class="detail-card-title">Revision of</span></div>
+				<a
+					class="related-link ob-card"
+					href={resolve('/(app)/quotations/[id]', { id: String(quotation.revisedFrom.id) })}
+				>
+					<span class="ob-icon"><FileText size={15} /></span>
+					<span class="ob-main">
+						<span class="ob-title">{quotation.revisedFrom.quotationNumber}</span>
+						<span class="ob-sub">The version the customer was sent before this one</span>
+					</span>
+					<ChevronRight size={14} color="var(--muted-foreground)" />
+				</a>
+			</section>
+		{/if}
+
 		{#if quotation.convertedInvoiceId}
 			<section class="detail-card">
 				<div class="detail-card-head"><span class="detail-card-title">Became</span></div>
@@ -273,11 +359,21 @@
 <ConfirmDialog
 	bind:open={deleteDialogOpen}
 	title="Delete quotation {quotation.quotationNumber}?"
-	description="This permanently deletes the quotation. It cannot be undone."
+	description={quotation.revisedFrom
+		? `This permanently deletes this revision. ${quotation.revisedFrom.quotationNumber}, the version it replaced, goes back to Sent. It cannot be undone.`
+		: 'This permanently deletes the quotation. It cannot be undone.'}
 	confirmLabel="Delete"
 	danger
 	onConfirm={() =>
 		(document.getElementById('quotation-delete-form') as HTMLFormElement)?.requestSubmit()}
+/>
+
+<ConfirmDialog
+	bind:open={reviseConfirmOpen}
+	title="Revise quotation {quotation.quotationNumber}?"
+	description="A new draft version opens, dated today, with the same customer and line items for you to change and send. This quotation is kept as it is and marked Superseded."
+	confirmLabel="Revise"
+	onConfirm={revise}
 />
 
 <style>

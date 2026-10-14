@@ -50,7 +50,10 @@ export function loadQuotationDetail(locals: App.Locals, id: number) {
 			// Converting changes the quotation and adds an invoice — both, the
 			// same pair the convert endpoint checks.
 			convert:
-				hasPermission(locals, 'quotations', 'change') && hasPermission(locals, 'invoices', 'add')
+				hasPermission(locals, 'quotations', 'change') && hasPermission(locals, 'invoices', 'add'),
+			// Revising adds a quotation and changes this one.
+			revise:
+				hasPermission(locals, 'quotations', 'add') && hasPermission(locals, 'quotations', 'change')
 		}
 	};
 }
@@ -66,6 +69,8 @@ export const quotationsActions: Actions = {
 		if (!result.ok) {
 			if (result.reason === 'converted')
 				return fail(409, { error: 'Converted quotations cannot be deleted.' });
+			if (result.reason === 'superseded')
+				return fail(409, { error: 'A quotation replaced by a revision is kept, so it cannot be deleted.' });
 			return fail(404, { error: 'Not found' });
 		}
 		return { success: true };

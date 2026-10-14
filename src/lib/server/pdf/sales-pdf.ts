@@ -1,5 +1,5 @@
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
-import { InvoiceStatus } from "$lib/enums.js";
+import { InvoiceStatus, QuotationStatus } from "$lib/enums.js";
 import { DEFAULT_PDF_THEME_COLOR } from "$lib/pdf/theme-presets.js";
 import type { LayoutRenderData, StatusStamp } from "$lib/pdf/render-types.js";
 import { getSetting, SETTING_KEYS } from "$lib/server/settings.js";
@@ -61,12 +61,18 @@ export function invoicePdfAmounts(
   };
 }
 
-/** The word across the page, if any. A quotation never has one. */
+/**
+ * The word across the page, if any. A quotation has one only once a revision
+ * has replaced it; a draft quotation is not stamped, since sending one is not
+ * a demand for anything.
+ */
 export function statusStampFor(
   kind: "invoice" | "quotation",
   doc: { status: number },
 ): StatusStamp | null {
-  if (kind !== "invoice") return null;
+  if (kind === "quotation") {
+    return doc.status === QuotationStatus.Superseded ? "SUPERSEDED" : null;
+  }
   if (doc.status === InvoiceStatus.Cancelled) return "VOID";
   if (doc.status === InvoiceStatus.Draft) return "DRAFT";
   return null;
@@ -108,7 +114,7 @@ export function salesPdfData(
       },
       settings,
       docTypeLabel: "QUOTATION",
-      statusStamp: null,
+      statusStamp: statusStampFor("quotation", quotation),
     };
   }
 

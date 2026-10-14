@@ -218,6 +218,13 @@
       "when": 1791438000000,
       "tag": "0030_chatgpt_device_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1791961108207,
+      "tag": "0031_quote_revisions",
+      "breakpoints": true
     }
   ]
 }

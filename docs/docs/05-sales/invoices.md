@@ -10,8 +10,9 @@ When you mark it as sent, the customer owes the amount and Akaun adds a record t
 :::info
 
 To make an invoice, you need the **Add** permission on invoices. To change an invoice, mark it as
-sent or cancel it, you need **Change**. To delete a draft, you need **Delete**. To record a payment
-from the invoice page, you need **Add** on records.
+sent or cancel it, you need **Change**. To cancel and reissue it, you need **Change** and **Add**.
+To delete a draft, you need **Delete**. To record a payment from the invoice page, you need **Add**
+on records.
 
 :::
 
@@ -109,10 +110,10 @@ You can also make an invoice from a quotation. See
 1. Open the invoice.
 2. Click **Edit**.
 3. Change the fields.
-4. In the bar at the bottom of the page, click **Save**.
+4. In the bar at the bottom of the page, click **Save changes**.
 
-To cancel your changes, click **Discard**. A change of the issue date does not change the exchange
-rate. If necessary, type a new rate.
+Nothing is saved until you click **Save changes**. To leave without saving, click **Cancel**. A
+change of the issue date does not change the exchange rate. If necessary, type a new rate.
 
 ## Mark an invoice as sent
 
@@ -171,10 +172,12 @@ After you mark an invoice as sent, you can still change some of its fields.
    A note says that the customer, date, currency and line items are fixed.
 
 3. Change the **Due date**, the **Reference**, the **Notes** or the **Terms & conditions**.
-4. In the bar at the bottom of the page, click **Save**.
+4. In the bar at the bottom of the page, click **Save changes**.
 
-If the customer, the date, the currency or a line is wrong, cancel the invoice and make a new one.
-See [Cancel an invoice](#cancel-an-invoice).
+If the customer, the date, the currency or a line is wrong, or the customer asks for a different
+item or price, cancel and reissue the invoice. See
+[Cancel and reissue an invoice](#cancel-and-reissue-an-invoice). Do not revise the quotation that
+the invoice came from: after the conversion, the invoice is the document that counts.
 
 ## Record a payment from the customer
 
@@ -219,6 +222,34 @@ The invoice keeps its number, and its status is **Cancelled**. The **Invoice** r
 longer on the **Records** screen. The balance of the customer decreases by the amount. A cancelled
 invoice cannot be changed or deleted.
 
+If the invoice was made from a quotation, the quotation goes back to **Accepted**. You can convert
+it again, or mark it declined.
+
+## Cancel and reissue an invoice
+
+Use **Cancel & reissue** to correct a sent invoice: a wrong line, a new price, or another item that
+the customer asks for. Akaun cancels the invoice in the same way as **Cancel invoice**, and makes a
+draft copy of it with a new number. **Cancel & reissue** shows where **Cancel invoice** shows, when
+you also have the **Add** permission on invoices.
+
+1. Open the invoice.
+2. Click **Cancel & reissue**.
+3. In the dialog, click **Cancel & reissue**.
+
+Akaun opens the new draft invoice. It has the same customer, currency, rate, line items,
+reference, notes and terms. Its issue date is today. Its due date is the same number of days after
+the issue date as on the old invoice.
+
+Change the draft, and then mark it as sent. Give the new PDF to the customer.
+
+The old invoice is **Cancelled**, and its PDF prints with **VOID**. On the old invoice, the
+**Replaced by** card opens the new one. On the new invoice, the **Replaces** card opens the old one.
+If the invoice was made from a quotation, the quotation stays **Converted** and now points at the
+new invoice.
+
+If a payment is recorded against the invoice, you cannot cancel or reissue it. Take the payment
+back first.
+
 ### An invoice cancelled in an earlier version
 
 In an earlier version of Akaun, a cancelled invoice kept its amount in the books. Such an invoice
@@ -243,7 +274,9 @@ The PDF shows these items:
 - The line items, **Subtotal**, **Total**, and **Amount due** or **Amount paid**.
 - The notes and the terms and conditions.
 
-All amounts on the PDF are in the currency of the invoice.
+All amounts on the PDF are in the currency of the invoice. The headings of the price and amount
+columns name the currency, for example **Unit price (USD)**. **Total**, **Amount due** and
+**Amount paid** show the currency code after the amount, for example `1,000.00 USD`.
 
 A draft prints with the word **DRAFT** across each page. A cancelled invoice prints with the word
 **VOID** across each page. A cancelled invoice shows no **Amount due**.

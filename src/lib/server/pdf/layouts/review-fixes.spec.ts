@@ -49,7 +49,7 @@ describe("PDF review regressions", () => {
     const text = (await pages(await renderClassic(data, theme, "Invoice")))[0]
       .map((i) => i.str)
       .join(" ");
-    expect(text).toContain("paid on 15 February 2026");
+    expect(text).toContain("Date paid 15 February 2026");
   });
   it("advances compact rows past every wrapped description line", async () => {
     const data = {
@@ -285,7 +285,68 @@ describe("amount due on the printed invoice", () => {
       .flat()
       .map((i) => i.str)
       .join(" ");
-    expect(all).toContain("56.14 USD due");
+    expect(all).toContain("Amount due 56.14 USD");
     expect(all).not.toContain("250.18");
   });
+});
+
+describe("currency on the printed amounts", () => {
+  const strings = async (buffer: Buffer) =>
+    (await pages(buffer)).flat().map((i) => i.str.trim());
+
+  for (const [name, render, priceHeader, amountHeader] of [
+    ["classic", renderClassic, "Unit price (USD)", "Amount (USD)"],
+    ["compact", renderCompact, "PRICE (USD)", "TOTAL (USD)"],
+  ] as const) {
+    it(`${name}: names the document currency on the price and amount columns`, async () => {
+      const data: LayoutRenderData = {
+        ...base,
+        document: { ...base.document, currency: "USD" },
+      };
+      const all = await strings(await render(data, theme, "Invoice"));
+      expect(all).toContain(priceHeader);
+      expect(all).toContain(amountHeader);
+    });
+
+    it(`${name}: puts the code after the figure a reader pays from`, async () => {
+      const data: LayoutRenderData = {
+        ...base,
+        document: {
+          ...base.document,
+          currency: "USD",
+          amountDue: 5,
+          amountPaid: 15,
+        },
+      };
+      const all = (await strings(await render(data, theme, "Invoice"))).join(
+        " ",
+      );
+      expect(all).toMatch(/5\.00 USD/);
+      expect(all).not.toMatch(/USD \d/);
+    });
+
+    it(`${name}: prints a zero-decimal currency without decimals`, async () => {
+      const data: LayoutRenderData = {
+        ...base,
+        document: {
+          ...base.document,
+          currency: "JPY",
+          lines: [
+            {
+              description: "Item",
+              quantity: 1,
+              unitPrice: 1000,
+              lineTotal: 1000,
+            },
+          ],
+          subtotal: 1000,
+          total: 1000,
+          amountDue: 1000,
+        },
+      };
+      const all = await strings(await render(data, theme, "Invoice"));
+      expect(all.join(" ")).not.toContain("1,000.00");
+      expect(all).toContain("1,000");
+    });
+  }
 });

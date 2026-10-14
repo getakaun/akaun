@@ -5,6 +5,7 @@ import {
 	getQuotation,
 	convertQuotationToInvoice as _convert,
 	setQuotationStatus as _setStatus,
+	reviseQuotation as _revise,
 	type QuotationCreate,
 	type QuotationPatch
 } from '$lib/server/queries/quotations.js';
@@ -28,8 +29,14 @@ export function patchQuotation(db: Db, id: number, actingUserId: number, patch: 
 }
 
 export function removeQuotation(db: Db, id: number, actingUserId: number) {
+	// A deleted revision puts the quote it replaced back to Sent; found before
+	// the delete, since afterwards nothing points at it.
+	const previous = getQuotation(db, id)?.revisedFrom ?? null;
 	const result = _delete(db, id, actingUserId);
-	if (result.ok) quotationEvents.emit('quotation-delete', { id });
+	if (result.ok) {
+		quotationEvents.emit('quotation-delete', { id });
+		if (previous) quotationEvents.emit('quotation-update', { item: getQuotation(db, previous.id) });
+	}
 	return result;
 }
 
@@ -52,6 +59,23 @@ export function convertToInvoice(
 		const newInvoice = getInvoice(db, result.value.invoiceId);
 		if (updatedQuotation) quotationEvents.emit('quotation-update', { item: updatedQuotation });
 		if (newInvoice) invoiceEvents.emit('invoice-update', { item: newInvoice });
+	}
+	return result;
+}
+
+/** A sent quotation replaced by a new draft revision. Both are told to the list after commit. */
+export function reviseQuotation(
+	db: Db,
+	quotationId: number,
+	userId: number,
+	options: { today?: string } = {}
+) {
+	const result = _revise(db, quotationId, userId, options);
+	if (result.ok) {
+		const previous = getQuotation(db, result.value.previousId);
+		const revision = getQuotation(db, result.value.quotationId);
+		if (previous) quotationEvents.emit('quotation-update', { item: previous });
+		if (revision) quotationEvents.emit('quotation-update', { item: revision });
 	}
 	return result;
 }

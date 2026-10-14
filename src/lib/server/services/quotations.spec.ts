@@ -15,7 +15,12 @@ import {
 import { setSetting, SETTING_KEYS } from "../settings.js";
 import { createQuotation, getQuotation } from "../queries/quotations.js";
 import { createInvoice, getInvoice } from "../queries/invoices.js";
-import { convertToInvoice, setQuotationStatus } from "./quotations.js";
+import {
+  convertToInvoice,
+  removeQuotation,
+  reviseQuotation,
+  setQuotationStatus,
+} from "./quotations.js";
 import { removeInvoice } from "./invoices.js";
 import { quotationEvents } from "../finance/events.js";
 import type { LedgerDb } from "../ledger/types.js";
@@ -55,7 +60,7 @@ function quote(status: number = QuotationStatus.Draft) {
     contactId: customer(),
     reference: "PO-778",
     issueDate: "2025-12-01",
-    expiryDate: "2025-12-31",
+    expiryDate: "2026-01-31",
     currency: "USD",
     exchangeRate: 4.2,
     notes: "Delivery in two batches.",
@@ -386,5 +391,146 @@ describe("deleting an invoice a quotation was converted into", () => {
     const after = getQuotation(db as never, id)!;
     expect(after.status).toBe(QuotationStatus.Converted);
     expect(after.convertedInvoiceId).toBe(result.value.invoiceId);
+  });
+});
+
+describe("revising a quotation that has gone out", () => {
+  function revise(id: number) {
+    const result = reviseQuotation(db as never, id, userId, { today: TODAY });
+    if (!result.ok) throw new Error(result.reason);
+    return result.value;
+  }
+
+  it("copies it into a draft -R1 and marks the old one Superseded, linked both ways", () => {
+    const id = quote(QuotationStatus.Accepted);
+    const original = getQuotation(db as never, id)!;
+
+    let value!: ReturnType<typeof revise>;
+    const updates = quotationUpdatesDuring(() => {
+      value = revise(id);
+    });
+    const revision = getQuotation(db as never, value.quotationId)!;
+    const old = getQuotation(db as never, id)!;
+
+    expect(revision.status).toBe(QuotationStatus.Draft);
+    expect(revision.quotationNumber).toBe(`${original.quotationNumber}-R1`);
+    expect(revision.revision).toBe(1);
+    expect(revision.issueDate).toBe(TODAY);
+    expect(revision.contactId).toBe(original.contactId);
+    expect(revision.currency).toBe("USD");
+    expect(revision.exchangeRate).toBe(4.2);
+    expect(revision.total).toBe(original.total);
+    expect(revision.notes).toBe(original.notes);
+    expect(
+      revision.lines.map((l) => [l.description, l.quantity, l.unitPrice]),
+    ).toEqual(
+      original.lines.map((l) => [l.description, l.quantity, l.unitPrice]),
+    );
+    expect(revision.revisedFrom).toEqual({
+      id,
+      quotationNumber: original.quotationNumber,
+    });
+
+    expect(old.status).toBe(QuotationStatus.Superseded);
+    expect(old.supersededBy).toEqual({
+      id: revision.id,
+      quotationNumber: revision.quotationNumber,
+    });
+    // The old one is otherwise untouched: it is what the customer was sent.
+    expect(old.lines).toEqual(original.lines);
+    expect(old.total).toBe(original.total);
+
+    expect(updates).toEqual([
+      { id, status: QuotationStatus.Superseded },
+      { id: revision.id, status: QuotationStatus.Draft },
+    ]);
+  });
+
+  it("numbers a revision of a revision from the same root", () => {
+    const id = quote(QuotationStatus.Sent);
+    const root = getQuotation(db as never, id)!.quotationNumber;
+    const r1 = revise(id).quotationId;
+    setQuotationStatus(db as never, r1, userId, QuotationStatus.Sent);
+    const r2 = revise(r1).quotationId;
+    expect(getQuotation(db as never, r2)!.quotationNumber).toBe(`${root}-R2`);
+    expect(getQuotation(db as never, r2)!.revision).toBe(2);
+  });
+
+  it("refuses a draft, a converted one, and one already superseded", () => {
+    const draft = quote(QuotationStatus.Draft);
+    const converted = quote(QuotationStatus.Sent);
+    expect(convert(converted).ok).toBe(true);
+    const superseded = quote(QuotationStatus.Sent);
+    revise(superseded);
+
+    for (const id of [draft, converted, superseded]) {
+      const result = reviseQuotation(db as never, id, userId, { today: TODAY });
+      expect(result.ok).toBe(false);
+    }
+  });
+
+  it("leaves a superseded one unable to be converted, moved, or deleted", () => {
+    const id = quote(QuotationStatus.Accepted);
+    revise(id);
+
+    expect(convert(id).ok).toBe(false);
+    expect(
+      setQuotationStatus(db as never, id, userId, QuotationStatus.Sent).ok,
+    ).toBe(false);
+    expect(removeQuotation(db as never, id, userId)).toEqual({
+      ok: false,
+      reason: "superseded",
+    });
+  });
+
+  it("puts the old one back to Sent when the draft revision is deleted", () => {
+    const id = quote(QuotationStatus.Accepted);
+    const { quotationId: r1 } = revise(id);
+
+    let result!: ReturnType<typeof removeQuotation>;
+    const updates = quotationUpdatesDuring(() => {
+      result = removeQuotation(db as never, r1, userId);
+    });
+
+    expect(result.ok).toBe(true);
+    const back = getQuotation(db as never, id)!;
+    expect(back.status).toBe(QuotationStatus.Sent);
+    expect(back.supersededById).toBeNull();
+    expect(back.supersededBy).toBeNull();
+    expect(updates).toEqual([{ id, status: QuotationStatus.Sent }]);
+    // And it can be revised again, taking the freed -R1.
+    const again = revise(id);
+    expect(getQuotation(db as never, again.quotationId)!.quotationNumber).toBe(
+      `${back.quotationNumber}-R1`,
+    );
+  });
+});
+
+describe("rules a sent quotation keeps", () => {
+  it("cannot go back to Draft by hand", () => {
+    const id = quote(QuotationStatus.Sent);
+    const result = setQuotationStatus(
+      db as never,
+      id,
+      userId,
+      QuotationStatus.Draft,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/Revise/);
+  });
+
+  it("cannot be converted once it has expired", () => {
+    const id = quote(QuotationStatus.Sent);
+    const result = convertToInvoice(db as never, id, userId, {
+      today: "2026-02-15",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/expired/);
+    // An accepted one is not "expired": the customer took it in time.
+    const accepted = quote(QuotationStatus.Accepted);
+    expect(
+      convertToInvoice(db as never, accepted, userId, { today: "2026-02-15" })
+        .ok,
+    ).toBe(true);
   });
 });

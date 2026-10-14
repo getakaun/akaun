@@ -62,20 +62,70 @@ const QUOTATION_CODES = new Set<number>(Object.values(QuotationStatus));
  * Whether a quotation may be moved from one status to another by hand.
  *
  * Converted is reached only by converting, and left only by deleting the
- * invoice it became, so it is never a choice on either end.
+ * invoice it became; Superseded only by revising, and left only by deleting the
+ * revision. Neither is ever a choice on either end. Nor is going back to Draft:
+ * a quote the customer has seen is sealed (`isQuotationSealed`), and moving it
+ * back to Draft would unseal it — a change to one that has gone out is a
+ * revision.
  */
 export function canSetQuotationStatus(from: number, to: number): boolean {
   if (!QUOTATION_CODES.has(from) || !QUOTATION_CODES.has(to)) return false;
-  if (from === QuotationStatus.Converted || to === QuotationStatus.Converted) {
-    return false;
-  }
+  const terminal: number[] = [
+    QuotationStatus.Converted,
+    QuotationStatus.Superseded,
+  ];
+  if (terminal.includes(from) || terminal.includes(to)) return false;
+  if (to === QuotationStatus.Draft) return false;
   return from !== to;
 }
 
-/** A quote becomes an invoice once it has gone to the customer: Sent or Accepted. */
-export function canConvert(q: { status: number }): boolean {
+/**
+ * A quote becomes an invoice once it has gone to the customer: Sent or
+ * Accepted. Not once a sent quote has expired — the price it offered has
+ * lapsed, so it is extended or revised first.
+ */
+export function canConvert(q: {
+  status: number;
+  isExpired?: boolean;
+}): boolean {
+  if (q.isExpired) return false;
   return (
     q.status === QuotationStatus.Sent || q.status === QuotationStatus.Accepted
+  );
+}
+
+/**
+ * A quotation is sealed once it has left Draft: the customer has a copy, so
+ * what it offers — customer, date, currency, rate and lines — is fixed, and a
+ * change to it is a revision. The wording around it (reference, notes, terms)
+ * and its expiry can still be corrected, the same four a sent invoice keeps.
+ */
+export function isQuotationSealed(q: { status: number }): boolean {
+  return q.status !== QuotationStatus.Draft;
+}
+
+/**
+ * What a sealed quotation or sent invoice no longer takes in an edit. One list,
+ * so the form and both endpoints agree on it.
+ */
+export const SEALED_SALES_FIELDS = [
+  "contactId",
+  "issueDate",
+  "currency",
+  "exchangeRate",
+  "lines",
+] as const;
+
+/**
+ * Whether a quotation can be revised into a new draft: it has gone out and is
+ * still the live version — not a draft (edit it), not converted (the invoice is
+ * the record now), not already superseded.
+ */
+export function canRevise(q: { status: number }): boolean {
+  return (
+    q.status === QuotationStatus.Sent ||
+    q.status === QuotationStatus.Accepted ||
+    q.status === QuotationStatus.Declined
   );
 }
 

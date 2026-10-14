@@ -93,8 +93,20 @@ describe("canSetQuotationStatus", () => {
       canSetQuotationStatus(QuotationStatus.Accepted, QuotationStatus.Sent),
     ).toBe(true);
     expect(
-      canSetQuotationStatus(QuotationStatus.Declined, QuotationStatus.Draft),
+      canSetQuotationStatus(QuotationStatus.Declined, QuotationStatus.Sent),
     ).toBe(true);
+  });
+
+  it("never moves a quotation back to Draft, or into or out of Superseded", () => {
+    expect(
+      canSetQuotationStatus(QuotationStatus.Declined, QuotationStatus.Draft),
+    ).toBe(false);
+    expect(
+      canSetQuotationStatus(QuotationStatus.Sent, QuotationStatus.Superseded),
+    ).toBe(false);
+    expect(
+      canSetQuotationStatus(QuotationStatus.Superseded, QuotationStatus.Sent),
+    ).toBe(false);
   });
 
   it("never moves into or out of Converted", () => {
@@ -124,6 +136,13 @@ describe("canConvert", () => {
     expect(canConvert({ status: QuotationStatus.Draft })).toBe(false);
     expect(canConvert({ status: QuotationStatus.Declined })).toBe(false);
     expect(canConvert({ status: QuotationStatus.Converted })).toBe(false);
+    expect(canConvert({ status: QuotationStatus.Superseded })).toBe(false);
+  });
+
+  it("refuses an expired one", () => {
+    expect(canConvert({ status: QuotationStatus.Sent, isExpired: true })).toBe(
+      false,
+    );
   });
 });
 

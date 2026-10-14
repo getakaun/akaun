@@ -1,3 +1,6 @@
+import { currencyDecimals } from "$lib/currency.js";
+import type { StatusStamp } from "$lib/pdf/render-types.js";
+
 export const PT_PER_MM = 2.8346; // points per millimetre
 
 export const M = 15 * PT_PER_MM; // 15mm page margin in points
@@ -34,11 +37,21 @@ export function cleanText(s: string | null | undefined): string {
   return s.replace(/\r\n?/g, "\n");
 }
 
-export function fmt(n: number): string {
+/** A bare amount in the document currency's own decimals (JPY → 0, KWD → 3).
+ * Only for figures under a column header that already names the currency. */
+export function fmt(n: number, currency: string): string {
+  const decimals = currencyDecimals(currency);
   return new Intl.NumberFormat("en-MY", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
   }).format(n);
+}
+
+/** An amount that stands on its own — Total, Amount due/paid — with the ISO
+ * code after it ("1,234.00 MYR"). The code, not a symbol: "$" is a dozen
+ * currencies, and symbol plus code ("RM 1,234.00 MYR") says it twice. */
+export function fmtMoney(n: number, currency: string): string {
+  return `${fmt(n, currency)} ${currency}`;
 }
 
 export function fmtDate(iso: string | null | undefined): string {
@@ -62,9 +75,11 @@ export function fmtDate(iso: string | null | undefined): string {
 }
 
 /**
- * VOID or DRAFT, large, faint and on the diagonal across the current page —
- * the way a paper invoice is stamped, so a printed copy of a cancelled or
- * unsent invoice cannot be mistaken for a live demand for payment.
+ * VOID, DRAFT or SUPERSEDED, large, faint and on the diagonal across the
+ * current page — the way a paper invoice is stamped, so a printed copy of a
+ * cancelled or unsent invoice, or of a quotation since revised, cannot be
+ * mistaken for a live one. A word too long for the page at full size is set
+ * smaller to fit.
  *
  * Drawn with no `width`, so PDFKit's line wrapper never runs: a wrapped run
  * near the bottom margin would otherwise start a page of its own. The caller
@@ -75,12 +90,13 @@ export function drawStatusStamp(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   doc: any,
   boldFont: string,
-  stamp: "VOID" | "DRAFT",
+  stamp: StatusStamp,
 ): void {
   const { width, height } = doc.page;
-  const size = 110;
   doc.save();
-  doc.font(boldFont).fontSize(size);
+  doc.font(boldFont).fontSize(110);
+  const fullW = doc.widthOfString(stamp);
+  doc.fontSize(110 * Math.min(1, (width * 0.9) / fullW));
   const textW = doc.widthOfString(stamp);
   const textH = doc.currentLineHeight();
   doc.rotate(-30, { origin: [width / 2, height / 2] });

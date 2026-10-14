@@ -17,8 +17,17 @@ export {
   LOCKED_FIELDS,
 } from "./ledger/locking.js";
 
+/**
+ * Whether a quotation takes any edit at all. A converted one is closed (the
+ * invoice is the record now) and a superseded one is what the customer was
+ * sent before its revision. What a sealed one still takes is
+ * `isQuotationSealed` in `$lib/sales/status.ts`.
+ */
 export function canEditQuotation(quotation: { status: number }): boolean {
-  return quotation.status !== QuotationStatus.Converted;
+  return (
+    quotation.status !== QuotationStatus.Converted &&
+    quotation.status !== QuotationStatus.Superseded
+  );
 }
 
 // `canEditInvoice` used to live here. It gated on `InvoiceStatus.Paid`, and

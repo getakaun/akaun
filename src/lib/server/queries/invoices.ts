@@ -63,6 +63,8 @@ export type InvoiceCreate = {
   lines: InvoiceLineInput[]; // required, non-empty
   // For conversion from quotation (optional, set by service layer):
   sourceQuotationId?: number | null;
+  // For a reissue: the voided invoice this one replaces (set by service layer).
+  replacesInvoiceId?: number | null;
 };
 
 export type InvoicePatch = Partial<Omit<InvoiceCreate, "lines">> & {
@@ -390,7 +392,34 @@ export function getInvoice(db: Db, id: number) {
     lines,
     settlements,
     isOverdue: deriveOverdue(row, state.paid),
+    ...reissueLinks(db, row),
   };
+}
+
+/**
+ * The invoices either side of this one in a void-and-reissue: the voided one it
+ * replaces, and the one that replaced it. Each is what the detail page links to.
+ */
+function reissueLinks(
+  db: Db,
+  row: { id: number; replacesInvoiceId: number | null },
+) {
+  const pick = { id: invoices.id, invoiceNumber: invoices.invoiceNumber };
+  const replaces =
+    row.replacesInvoiceId === null
+      ? null
+      : (db
+          .select(pick)
+          .from(invoices)
+          .where(eq(invoices.id, row.replacesInvoiceId))
+          .get() ?? null);
+  const replacedBy =
+    db
+      .select(pick)
+      .from(invoices)
+      .where(eq(invoices.replacesInvoiceId, row.id))
+      .get() ?? null;
+  return { replaces, replacedBy };
 }
 
 // ---------------------------------------------------------------------------
@@ -422,6 +451,7 @@ export function createInvoice(db: Db, userId: number, data: InvoiceCreate) {
         notes: data.notes ?? null,
         terms: data.terms ?? null,
         sourceQuotationId: data.sourceQuotationId ?? null,
+        replacesInvoiceId: data.replacesInvoiceId ?? null,
         createdBy: userId,
         updatedBy: userId,
       })
@@ -625,6 +655,56 @@ export function markInvoiceIssued(
     });
     return getInvoice(tx, id)!;
   });
+}
+
+/**
+ * Moves the quotation an invoice was converted from off that invoice, when it
+ * is voided: onto `toInvoiceId`, the invoice reissued in its place, so the quote
+ * stays Converted and points at the live one; or, with nothing reissued, back
+ * to Accepted with no link, as deleting a draft invoice does — so the deal can
+ * be invoiced again. Only a quotation that still points at `invoiceId` is
+ * touched. Returns the quotation it moved, if any.
+ */
+export function relinkSourceQuotation(
+  db: Db,
+  invoiceId: number,
+  toInvoiceId: number | null,
+  userId: number,
+): number | null {
+  const invoice = db
+    .select({ sourceQuotationId: invoices.sourceQuotationId })
+    .from(invoices)
+    .where(eq(invoices.id, invoiceId))
+    .get();
+  if (!invoice || invoice.sourceQuotationId === null) return null;
+  const source = db
+    .select()
+    .from(quotations)
+    .where(eq(quotations.id, invoice.sourceQuotationId))
+    .get();
+  if (!source || source.convertedInvoiceId !== invoiceId) return null;
+
+  const set =
+    toInvoiceId === null
+      ? { status: QuotationStatus.Accepted, convertedInvoiceId: null }
+      : { convertedInvoiceId: toInvoiceId };
+  db.update(quotations)
+    .set({ ...set, updatedBy: userId, updatedAt: new Date().toISOString() })
+    .where(eq(quotations.id, source.id))
+    .run();
+  const updated = db
+    .select()
+    .from(quotations)
+    .where(eq(quotations.id, source.id))
+    .get();
+  recordAudit(db, {
+    recordType: "quotation",
+    recordId: source.id,
+    userId,
+    action: "update",
+    changes: diffRecords(source, updated),
+  });
+  return source.id;
 }
 
 /**

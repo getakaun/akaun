@@ -11,8 +11,9 @@ invoice from the quotation.
 :::info
 
 To make a quotation, you need the **Add** permission on quotations. To change one or its status,
-you need **Change**. To delete one, you need **Delete**. To make an invoice from a quotation, you
-need **Change** on quotations and **Add** on invoices.
+you need **Change**. To delete one, you need **Delete**. To revise one, you need **Add** and
+**Change** on quotations. To make an invoice from a quotation, you need **Change** on quotations
+and **Add** on invoices.
 
 :::
 
@@ -29,6 +30,7 @@ The tabs above the list filter it by status:
 - **Accepted**
 - **Declined**
 - **Converted**
+- **Superseded**
 - **Expired**
 
 Each tab shows the number of quotations in it. An expired quotation shows only on the **Expired**
@@ -106,12 +108,17 @@ change, and when.
 1. Open the quotation.
 2. Click **Edit**.
 3. Change the fields.
-4. In the bar at the bottom of the page, click **Save**.
+4. In the bar at the bottom of the page, click **Save changes**.
 
-To cancel your changes, click **Discard**. A change of the issue date does not change the exchange
-rate. If necessary, type a new rate.
+Nothing is saved until you click **Save changes**. To leave without saving, click **Cancel**. A
+change of the issue date does not change the exchange rate. If necessary, type a new rate.
 
-You cannot change a converted quotation. On a converted quotation, **Edit** does not show.
+After a quotation leaves **Draft**, the customer has a copy. From then on, you can change only the
+expiry date, the reference, the notes and the terms and conditions. The customer, the issue date,
+the currency, the rate and the line items are fixed. To change them, revise the quotation. See
+[Revise a quotation](#revise-a-quotation).
+
+You cannot change a converted or a superseded quotation. On these, **Edit** does not show.
 
 ## Change the status of a quotation
 
@@ -121,10 +128,11 @@ quotation page change the status. Each status shows different buttons:
 | Status | Buttons |
 |---|---|
 | **Draft** | **Mark as sent**, **Mark accepted** |
-| **Sent** | **Mark accepted**, **Mark declined**, **Convert** |
-| **Accepted** | **Undo acceptance**, **Convert** |
-| **Declined** | **Reopen** |
+| **Sent** | **Mark accepted**, **Mark declined**, **Revise**, **Convert** |
+| **Accepted** | **Undo acceptance**, **Revise**, **Convert** |
+| **Declined** | **Reopen**, **Revise** |
 | **Converted** | none |
+| **Superseded** | none |
 
 1. Open the quotation.
 2. Click the button for the new status.
@@ -134,12 +142,47 @@ Akaun saves the new status at once. **History** shows the change.
 **Mark as sent** does not send an email. It records that the customer has the quotation. Give the
 PDF to the customer yourself. See [Print a quotation](#print-a-quotation).
 
-**Undo acceptance** and **Reopen** put the quotation back to **Sent**.
+**Undo acceptance** and **Reopen** put the quotation back to **Sent**. A quotation never goes back
+to **Draft**. To change a quotation that the customer has, revise it.
+
+## Revise a quotation
+
+Revise a quotation when the customer asks for a different price, other items or other terms
+before you make the invoice. Akaun keeps the quotation that the customer has, and makes a new
+version of it. The customer can then see which version replaces which.
+
+**Revise** shows on a quotation with the status **Sent**, **Accepted** or **Declined**.
+
+1. Open the quotation.
+2. Click **Revise**.
+3. In the dialog, click **Revise**.
+
+Akaun makes a new draft quotation and opens its page. The new quotation has the same number with
+`-R1` at the end, for example `QT20261009-001-R1`. A revision of that has `-R2`, and so on. The new
+quotation has the same customer, currency, rate, line items, reference, notes and terms. Its
+issue date is today, and its expiry date comes from **Settings**.
+
+The old quotation gets the status **Superseded**. It does not change in any other way. On the old
+quotation, the **Replaced by** card opens the new one. On the new quotation, the **Revision of**
+card opens the old one.
+
+Change the new quotation, and then mark it as sent.
+
+If you delete the draft revision, the old quotation goes back to **Sent**. If the customer had
+accepted or declined it, mark it again.
+
+### After the invoice
+
+When the quotation is converted, it is closed. If the customer asks for a change after you make the
+invoice, do not revise the quotation. Change the invoice: while it is a draft, edit it. After you
+mark it as sent, cancel and reissue it. See
+[Cancel and reissue an invoice](./invoices.md#cancel-and-reissue-an-invoice).
 
 ## Make an invoice from a quotation
 
 **Convert** shows on a quotation with the status **Sent** or **Accepted**. It makes a draft
-invoice from the quotation.
+invoice from the quotation. A sent quotation that has expired cannot be converted. Change its
+expiry date, or revise it, first.
 
 1. Open the quotation.
 2. Click **Convert**.
@@ -183,11 +226,18 @@ The PDF shows these items:
 - The line items, **Subtotal** and **Total**.
 - The notes and the terms and conditions.
 
+All amounts on the PDF are in the currency of the quotation. The headings of the price and amount
+columns name the currency, for example **Unit price (USD)**. **Total** shows the currency code after
+the amount, for example `1,000.00 USD`.
+
 The colour of the PDF comes from **Accent color** in **Settings**, on the **Templates** tab.
+
+A superseded quotation prints with the word **SUPERSEDED** across each page.
 
 ## Delete a quotation
 
-On a converted quotation, **Delete** is disabled.
+On a converted quotation and on a superseded quotation, **Delete** is disabled. Akaun keeps a
+superseded quotation, because it is what the customer has.
 
 :::caution
 

@@ -5,7 +5,7 @@ import { quotations, quotationLines, quotationSearchText, contacts } from '../db
 import { nextNumber } from '../running-number.js';
 import { QuotationStatus, QuotationStatusLabels } from '$lib/enums.js';
 import { addDaysISO, localToday } from '$lib/local-date.js';
-import { canConvert, canSetQuotationStatus } from '$lib/sales/status.js';
+import { canConvert, canRevise, canSetQuotationStatus } from '$lib/sales/status.js';
 import { upsertSearchText, searchTextExists, joinSearchText } from '../search-text.js';
 import { createInvoice } from './invoices.js';
 import { recordAudit, diffRecords } from '../audit.js';
@@ -160,7 +160,30 @@ export function getQuotation(db: Db, id: number) {
 		.orderBy(asc(quotationLines.sortOrder))
 		.all();
 
-	return { ...row, lines, isExpired: deriveExpired(row) };
+	return { ...row, lines, isExpired: deriveExpired(row), ...revisionLinks(db, row) };
+}
+
+/**
+ * The quotations either side of this one in its revision chain: the one it was
+ * revised from (whose `supersededById` points here) and the one that replaced
+ * it. Each is what the detail page links to.
+ */
+function revisionLinks(db: Db, row: { id: number; supersededById: number | null }) {
+	const revisedFrom =
+		db
+			.select({ id: quotations.id, quotationNumber: quotations.quotationNumber })
+			.from(quotations)
+			.where(eq(quotations.supersededById, row.id))
+			.get() ?? null;
+	const supersededBy =
+		row.supersededById === null
+			? null
+			: (db
+					.select({ id: quotations.id, quotationNumber: quotations.quotationNumber })
+					.from(quotations)
+					.where(eq(quotations.id, row.supersededById))
+					.get() ?? null);
+	return { revisedFrom, supersededBy };
 }
 
 // ---------------------------------------------------------------------------
@@ -257,12 +280,46 @@ export function deleteQuotation(
 	db: Db,
 	id: number,
 	userId: number
-): { ok: boolean; reason?: 'converted' | 'not_found' } {
+): { ok: boolean; reason?: 'converted' | 'superseded' | 'not_found' } {
 	return db.transaction((tx) => {
 		const existing = tx.select().from(quotations).where(eq(quotations.id, id)).get();
 		if (!existing) return { ok: false, reason: 'not_found' };
 		if (existing.status === QuotationStatus.Converted) return { ok: false, reason: 'converted' };
+		// What the customer was sent before a revision is kept, as a converted
+		// quote is: it is the record of what was offered.
+		if (existing.status === QuotationStatus.Superseded) return { ok: false, reason: 'superseded' };
 		tx.delete(quotations).where(eq(quotations.id, id)).run();
+		// Deleting a revision puts the quote it replaced back in play, the way
+		// deleting a converted quote's draft invoice puts the quote back. It goes
+		// back to Sent — the customer still holds it — not to whatever it was
+		// before: an acceptance or refusal was of the terms the revision set out
+		// to change, so it is marked again if it still stands.
+		const previous = tx
+			.select()
+			.from(quotations)
+			.where(eq(quotations.supersededById, id))
+			.get();
+		if (previous) {
+			tx.update(quotations)
+				.set({
+					status: QuotationStatus.Sent,
+					supersededById: null,
+					updatedBy: userId,
+					updatedAt: new Date().toISOString()
+				})
+				.where(eq(quotations.id, previous.id))
+				.run();
+			recordAudit(tx, {
+				recordType: 'quotation',
+				recordId: previous.id,
+				userId,
+				action: 'update',
+				changes: [
+					{ field: 'status', before: previous.status, after: QuotationStatus.Sent },
+					{ field: 'supersededById', before: id, after: null }
+				]
+			});
+		}
 		recordAudit(tx, {
 			recordType: 'quotation',
 			recordId: id,
@@ -301,8 +358,24 @@ export function setQuotationStatus(
 					'This quotation has become an invoice, so its status no longer changes. Delete the draft invoice to put it back to Accepted.'
 			};
 		}
+		if (existing.status === QuotationStatus.Superseded) {
+			return {
+				ok: false,
+				reason: 'This quotation has been replaced by a revision, so its status no longer changes.'
+			};
+		}
 		if (to === QuotationStatus.Converted) {
 			return { ok: false, reason: 'Use Convert to turn this quotation into an invoice.' };
+		}
+		if (to === QuotationStatus.Superseded) {
+			return { ok: false, reason: 'Use Revise to replace this quotation with a new version.' };
+		}
+		if (to === QuotationStatus.Draft) {
+			return {
+				ok: false,
+				reason:
+					'A quotation that has gone to the customer cannot go back to draft. Use Revise to change it.'
+			};
 		}
 		if (existing.status === to) {
 			return {
@@ -334,9 +407,14 @@ export function setQuotationStatus(
 // Convert to Invoice
 // ---------------------------------------------------------------------------
 
-/** Why a quotation in this status cannot be converted — the sentence the screen shows. */
-function convertRefusal(status: number): string {
-	switch (status) {
+/** Why a quotation cannot be converted — the sentence the screen shows. */
+function convertRefusal(q: { status: number; isExpired: boolean }): string {
+	if (q.isExpired && q.status === QuotationStatus.Sent) {
+		return 'This quotation has expired. Extend its expiry date, or revise it, before converting it.';
+	}
+	switch (q.status) {
+		case QuotationStatus.Superseded:
+			return 'This quotation has been replaced by a revision. Convert the latest version instead.';
 		case QuotationStatus.Converted:
 			return 'This quotation has already been converted to an invoice.';
 		case QuotationStatus.Draft:
@@ -369,11 +447,13 @@ export function convertQuotationToInvoice(
 	options: { today?: string } = {}
 ): Refusable<{ quotationId: number; invoiceId: number }> {
 	return db.transaction((tx) => {
-		const quotation = getQuotation(tx, quotationId);
-		if (!quotation) return { ok: false, reason: 'That quotation no longer exists.' };
-		if (!canConvert(quotation)) return { ok: false, reason: convertRefusal(quotation.status) };
-
+		const found = getQuotation(tx, quotationId);
+		if (!found) return { ok: false, reason: 'That quotation no longer exists.' };
 		const today = options.today ?? localToday();
+		// Expired as of the day the invoice is made, not the clock's day.
+		const quotation = { ...found, isExpired: deriveExpired(found, today) };
+		if (!canConvert(quotation)) return { ok: false, reason: convertRefusal(quotation) };
+
 		const { invoiceDueDays } = documentDefaults(tx);
 
 		// A nested transaction: drizzle runs it as a savepoint inside this one.
@@ -416,5 +496,130 @@ export function convertQuotationToInvoice(
 		});
 
 		return { ok: true, value: { quotationId, invoiceId: invoice.id } };
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Revise
+// ---------------------------------------------------------------------------
+
+/** Why a quotation cannot be revised — the sentence the screen shows. */
+function reviseRefusal(status: number): string {
+	switch (status) {
+		case QuotationStatus.Draft:
+			return 'This quotation is still a draft. Edit it instead.';
+		case QuotationStatus.Converted:
+			return 'This quotation has become an invoice. Change the invoice instead.';
+		case QuotationStatus.Superseded:
+			return 'This quotation has already been revised. Revise the latest version instead.';
+		default:
+			return 'This quotation cannot be revised.';
+	}
+}
+
+/** `Q-0012` → `Q-0012-R1`; `Q-0012-R1` → `Q-0012-R2`. */
+export function revisionNumber(current: { quotationNumber: string; revision: number }): string {
+	const suffix = `-R${current.revision}`;
+	const root =
+		current.revision > 0 && current.quotationNumber.endsWith(suffix)
+			? current.quotationNumber.slice(0, -suffix.length)
+			: current.quotationNumber;
+	return `${root}-R${current.revision + 1}`;
+}
+
+/**
+ * Replaces a quotation that has gone to the customer with a new draft version
+ * of it, and marks the old one Superseded with a link to the new one — one
+ * transaction, so neither half can exist without the other.
+ *
+ * The copy keeps the customer, currency, rate, lines, reference, notes and
+ * terms, and takes the next revision of the same number (`Q-0012-R1`) rather
+ * than a new one, so the customer can tell it replaces what they hold. It is
+ * dated the day it is made, with a fresh expiry from the validity setting: it
+ * is a new offer. The old one is kept unchanged as the record of what was sent.
+ *
+ * `today` is a parameter only so a test can pin it.
+ */
+export function reviseQuotation(
+	db: Db,
+	quotationId: number,
+	userId: number,
+	options: { today?: string } = {}
+): Refusable<{ previousId: number; quotationId: number }> {
+	return db.transaction((tx) => {
+		const quotation = getQuotation(tx, quotationId);
+		if (!quotation) return { ok: false, reason: 'That quotation no longer exists.' };
+		if (!canRevise(quotation)) return { ok: false, reason: reviseRefusal(quotation.status) };
+
+		const today = options.today ?? localToday();
+		const { quotationValidDays } = documentDefaults(tx);
+		const number = revisionNumber(quotation);
+		if (tx.select({ id: quotations.id }).from(quotations).where(eq(quotations.quotationNumber, number)).get()) {
+			return { ok: false, reason: `A quotation numbered ${number} already exists.` };
+		}
+
+		const { id: newId } = tx
+			.insert(quotations)
+			.values({
+				quotationNumber: number,
+				revision: quotation.revision + 1,
+				contactId: quotation.contactId ?? null,
+				reference: quotation.reference,
+				issueDate: today,
+				expiryDate: quotationValidDays === null ? null : addDaysISO(today, quotationValidDays),
+				currency: quotation.currency,
+				exchangeRate: quotation.exchangeRate,
+				subtotal: quotation.subtotal,
+				taxAmount: quotation.taxAmount,
+				total: quotation.total,
+				notes: quotation.notes,
+				terms: quotation.terms,
+				createdBy: userId,
+				updatedBy: userId
+			})
+			.returning({ id: quotations.id })
+			.get()!;
+		tx.insert(quotationLines)
+			.values(
+				lineRows(
+					quotation.lines.map((line) => ({
+						description: line.description,
+						quantity: line.quantity,
+						unitPrice: line.unitPrice,
+						sortOrder: line.sortOrder
+					}))
+				).map((row) => ({ ...row, quotationId: newId }))
+			)
+			.run();
+		reindexQuotation(tx, newId);
+		recordAudit(tx, {
+			recordType: 'quotation',
+			recordId: newId,
+			userId,
+			action: 'create',
+			changes: [{ field: 'revisedFrom', before: null, after: quotation.quotationNumber }]
+		});
+
+		tx.update(quotations)
+			.set({
+				status: QuotationStatus.Superseded,
+				supersededById: newId,
+				updatedBy: userId,
+				updatedAt: new Date().toISOString()
+			})
+			.where(eq(quotations.id, quotationId))
+			.run();
+		recordAudit(tx, {
+			recordType: 'quotation',
+			recordId: quotationId,
+			userId,
+			action: 'update',
+			changes: [
+				{ field: 'status', before: quotation.status, after: QuotationStatus.Superseded },
+				{ field: 'supersededById', before: null, after: newId }
+			]
+		});
+
+		return { ok: true, value: { previousId: quotationId, quotationId: newId } };
 	});
 }

@@ -2,9 +2,10 @@ import type { RequestHandler } from '@sveltejs/kit';
 import { db } from '$lib/server/db/client.js';
 import { getQuotation } from '$lib/server/queries/quotations.js';
 import { canEditQuotation } from '$lib/server/locking.js';
+import { isQuotationSealed, SEALED_SALES_FIELDS } from '$lib/sales/status.js';
 import { patchQuotation, removeQuotation } from '$lib/server/services/quotations.js';
 import { resolveOrCreateContact } from '$lib/server/queries/contacts.js';
-import { Role } from '$lib/enums.js';
+import { QuotationStatus, Role } from '$lib/enums.js';
 import { hasPermission } from '$lib/server/permissions.js';
 import { salesLinesSchema, salesRateSchema, invalidLines } from '$lib/server/sales/schema.js';
 
@@ -25,7 +26,15 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 	if (!quotation) return Response.json({ error: 'Not found' }, { status: 404 });
 
 	if (!canEditQuotation(quotation)) {
-		return Response.json({ error: 'Converted quotations cannot be edited.' }, { status: 409 });
+		return Response.json(
+			{
+				error:
+					quotation.status === QuotationStatus.Superseded
+						? 'This quotation has been replaced by a revision, so it can no longer be changed.'
+						: 'Converted quotations cannot be edited.'
+			},
+			{ status: 409 }
+		);
 	}
 
 	const body = await request.json();
@@ -45,6 +54,23 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 		const rate = salesRateSchema.safeParse(patch.exchangeRate);
 		if (!rate.success) return invalidLines(rate.error);
 	}
+	// Once it has gone to the customer, what it offers is fixed: a change to it
+	// is a revision, so the customer can tell the new offer from the one they
+	// hold. Checked before a new customer name is resolved, so a refused edit
+	// cannot leave a contact behind.
+	if (
+		isQuotationSealed(quotation) &&
+		(SEALED_SALES_FIELDS.some((f) => patch[f] !== undefined) || Boolean(body.newContactName))
+	) {
+		return Response.json(
+			{
+				error:
+					'This quotation has been sent. Its customer, date, currency and line items are fixed — revise it to change them.'
+			},
+			{ status: 409 }
+		);
+	}
+
 	if (!patch.contactId && body.newContactName) {
 		patch.contactId = resolveOrCreateContact(db, body.newContactName, Role.Customer, user.id);
 	}
@@ -61,6 +87,7 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
 	if (!result.ok) {
 		if (result.reason === 'not_found') return Response.json({ error: 'Not found' }, { status: 404 });
 		if (result.reason === 'converted') return Response.json({ error: 'Converted quotations cannot be deleted.' }, { status: 409 });
+		if (result.reason === 'superseded') return Response.json({ error: 'A quotation replaced by a revision is kept, so it cannot be deleted.' }, { status: 409 });
 	}
 	return new Response(null, { status: 204 });
 };

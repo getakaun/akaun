@@ -2,7 +2,17 @@
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { Ban, ChevronRight, FileText, HandCoins, Printer, Send, Trash2 } from '@lucide/svelte';
+	import {
+		Ban,
+		ChevronRight,
+		FilePen,
+		FileText,
+		HandCoins,
+		Printer,
+		Receipt,
+		Send,
+		Trash2
+	} from '@lucide/svelte';
 	import DetailPage from '$lib/components/ui/DetailPage.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 	import StatusBadge from '$lib/components/ui/StatusBadge.svelte';
@@ -55,6 +65,8 @@
 	let deleteDialogOpen = $state(false);
 	let issueConfirmOpen = $state(false);
 	let cancelConfirmOpen = $state(false);
+	let reissuing = $state(false);
+	let reissueConfirmOpen = $state(false);
 	let auditTrailRef = $state<{ refresh: () => Promise<void> } | null>(null);
 
 	// Only actually dirty while the form is mounted: leaving edit mode discards
@@ -83,6 +95,11 @@
 	 * already says Cancelled, so all that is left to do is the books.
 	 */
 	const cancelOnlyBooks = $derived(invoice.status === InvoiceStatus.Cancelled);
+	/**
+	 * Cancel & reissue: the way to change what a sent invoice says. Offered
+	 * whenever a plain cancel is, except to finish one already cancelled.
+	 */
+	const canReissue = $derived(canCancel && !cancelOnlyBooks && data.perms.reissue);
 	/** Sent, still owed, and the user may record a payment. */
 	const canRecordPayment = $derived(
 		data.perms.recordPayment &&
@@ -132,6 +149,8 @@
 	// leaves the books. The server refuses once anything has been paid, and its
 	// sentence is what shows.
 	async function cancelInvoice() {
+		// The dialog does not close itself on confirm; any refusal shows in the hero.
+		cancelConfirmOpen = false;
 		cancelling = true;
 		cancelError = '';
 		issueError = '';
@@ -151,6 +170,30 @@
 		}
 	}
 
+	// Void this one and open a draft copy of it, with the next number, to
+	// correct and send. The server refuses on the same terms as a cancel.
+	async function reissue() {
+		// The dialog does not close itself on confirm; any refusal shows in the hero.
+		reissueConfirmOpen = false;
+		reissuing = true;
+		cancelError = '';
+		issueError = '';
+		try {
+			const res = await fetch(`/api/invoices/${invoice.id}/reissue`, { method: 'POST' });
+			if (!res.ok) {
+				cancelError =
+					(await res.json().catch(() => ({}))).error ?? 'Could not reissue the invoice.';
+				return;
+			}
+			const json = await res.json();
+			void goto(resolve('/(app)/invoices/[id]', { id: String(json.invoice.id) }));
+		} catch {
+			cancelError = 'Network error — try again';
+		} finally {
+			reissuing = false;
+		}
+	}
+
 	// The payment page opens as a receipt from this customer with this invoice
 	// ticked, and comes back here once saved (`loadPaymentNew`).
 	function recordPayment() {
@@ -165,6 +208,7 @@
 	backHref="/invoices"
 	backLabel="Invoices"
 	{dirty}
+	editing={isEditing}
 	{saving}
 	saveLabel="Save"
 	dirtyNote={formRef?.blockedBy() ?? 'Editing this invoice'}
@@ -189,11 +233,21 @@
 		>
 			<Printer size={14} /> Print
 		</a>
+		{#if canReissue && !isEditing}
+			<button
+				class="sheet-btn"
+				onclick={() => (reissueConfirmOpen = true)}
+				disabled={reissuing || cancelling}
+			>
+				<FilePen size={14} />
+				{reissuing ? 'Reissuing…' : 'Cancel & reissue'}
+			</button>
+		{/if}
 		{#if canCancel && !isEditing}
 			<button
 				class="sheet-btn"
 				onclick={() => (cancelConfirmOpen = true)}
-				disabled={cancelling}
+				disabled={cancelling || reissuing}
 			>
 				<Ban size={14} />
 				{cancelling ? 'Cancelling…' : cancelOnlyBooks ? 'Remove from the books' : 'Cancel invoice'}
@@ -281,6 +335,40 @@
 			</section>
 		{/if}
 
+		{#if invoice.replacedBy}
+			<section class="detail-card">
+				<div class="detail-card-head"><span class="detail-card-title">Replaced by</span></div>
+				<a
+					class="related-link ob-card"
+					href={resolve('/(app)/invoices/[id]', { id: String(invoice.replacedBy.id) })}
+				>
+					<span class="ob-icon"><Receipt size={15} /></span>
+					<span class="ob-main">
+						<span class="ob-title">{invoice.replacedBy.invoiceNumber}</span>
+						<span class="ob-sub">Reissued in place of this invoice</span>
+					</span>
+					<ChevronRight size={14} color="var(--muted-foreground)" />
+				</a>
+			</section>
+		{/if}
+
+		{#if invoice.replaces}
+			<section class="detail-card">
+				<div class="detail-card-head"><span class="detail-card-title">Replaces</span></div>
+				<a
+					class="related-link ob-card"
+					href={resolve('/(app)/invoices/[id]', { id: String(invoice.replaces.id) })}
+				>
+					<span class="ob-icon"><Receipt size={15} /></span>
+					<span class="ob-main">
+						<span class="ob-title">{invoice.replaces.invoiceNumber}</span>
+						<span class="ob-sub">The cancelled invoice this one was reissued from</span>
+					</span>
+					<ChevronRight size={14} color="var(--muted-foreground)" />
+				</a>
+			</section>
+		{/if}
+
 		{#if invoice.sourceQuotationId}
 			<section class="detail-card">
 				<div class="detail-card-head"><span class="detail-card-title">Came from</span></div>
@@ -336,11 +424,21 @@
 		: `Cancel invoice ${invoice.invoiceNumber}?`}
 	description={cancelOnlyBooks
 		? 'This invoice is already marked Cancelled, but its amount is still in the books. This takes it out of them — out of money owed to you and out of income, including the reports for the period it was issued in. The invoice keeps its number.'
-		: 'The invoice keeps its number and is marked Cancelled. Its amount is taken out of the books — out of money owed to you and out of income, including the reports for the period it was issued in. This cannot be undone.'}
+		: `The invoice keeps its number and is marked Cancelled. Its amount is taken out of the books — out of money owed to you and out of income, including the reports for the period it was issued in.${invoice.sourceQuotationId ? ' The quotation it was converted from goes back to Accepted, so it can be converted again.' : ''} This cannot be undone.`}
 	confirmLabel={cancelOnlyBooks ? 'Remove from the books' : 'Cancel invoice'}
 	cancelLabel="Keep it"
 	danger
 	onConfirm={cancelInvoice}
+/>
+
+<ConfirmDialog
+	bind:open={reissueConfirmOpen}
+	title="Cancel and reissue invoice {invoice.invoiceNumber}?"
+	description="This invoice keeps its number and is marked Cancelled, and its amount is taken out of the books, including the reports for the period it was issued in. A draft copy opens with the next invoice number, dated today, for you to correct and send. This cannot be undone."
+	confirmLabel="Cancel & reissue"
+	cancelLabel="Keep it"
+	danger
+	onConfirm={reissue}
 />
 
 <style>

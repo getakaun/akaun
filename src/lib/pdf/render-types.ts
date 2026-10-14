@@ -61,4 +61,4 @@ export type LayoutRenderData = {
   statusStamp?: StatusStamp | null;
 };
 
-export type StatusStamp = "VOID" | "DRAFT";
+export type StatusStamp = "VOID" | "DRAFT" | "SUPERSEDED";

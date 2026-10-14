@@ -109,6 +109,7 @@
 		accepted: (q) => q.status === QuotationStatus.Accepted,
 		declined: (q) => q.status === QuotationStatus.Declined,
 		converted: (q) => q.status === QuotationStatus.Converted,
+		superseded: (q) => q.status === QuotationStatus.Superseded,
 		expired: (q) => q.isExpired
 	};
 
@@ -120,6 +121,7 @@
 		accepted: quotations.filter(IN_TAB.accepted).length,
 		declined: quotations.filter(IN_TAB.declined).length,
 		converted: quotations.filter(IN_TAB.converted).length,
+		superseded: quotations.filter(IN_TAB.superseded).length,
 		expired: quotations.filter(IN_TAB.expired).length
 	}));
 
@@ -289,7 +291,7 @@
 			<!-- Toolbar -->
 			<div class="toolbar">
 				<div class="status-tabs">
-					{#each [['all', 'All'], ['draft', 'Draft'], ['sent', 'Sent'], ['accepted', 'Accepted'], ['declined', 'Declined'], ['converted', 'Converted'], ['expired', 'Expired']] as [id, label]}
+					{#each [['all', 'All'], ['draft', 'Draft'], ['sent', 'Sent'], ['accepted', 'Accepted'], ['declined', 'Declined'], ['converted', 'Converted'], ['superseded', 'Superseded'], ['expired', 'Expired']] as [id, label]}
 						<button
 							class="status-tab"
 							class:active={statusTab === id}

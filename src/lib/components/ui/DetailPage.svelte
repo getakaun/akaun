@@ -21,6 +21,7 @@
 		backHref,
 		backLabel,
 		dirty = false,
+		editing = false,
 		saving = false,
 		saveLabel = 'Save changes',
 		dirtyNote = 'Unsaved changes',
@@ -34,6 +35,12 @@
 		backHref: string;
 		backLabel: string;
 		dirty?: boolean;
+		/**
+		 * The page is in an explicit edit mode (quotations, invoices). The bar then
+		 * stays up even before anything changes, so there is always a way to leave
+		 * edit mode — nothing saves until Save is clicked.
+		 */
+		editing?: boolean;
 		saving?: boolean;
 		saveLabel?: string;
 		dirtyNote?: string;
@@ -96,17 +103,17 @@
 				{/if}
 			</div>
 
-			{#if dirty}
+			{#if dirty || editing}
 				<div class="detail-savebar">
-					<span class="detail-savebar-note">{dirtyNote}</span>
+					<span class="detail-savebar-note">{dirty ? dirtyNote : 'No changes yet'}</span>
 					<button type="button" class="sheet-btn" onclick={() => onrevert?.()} disabled={saving}>
-						Discard
+						{editing ? 'Cancel' : 'Discard'}
 					</button>
 					<button
 						type="button"
 						class="sheet-btn sheet-btn-primary"
 						onclick={() => onsave?.()}
-						disabled={saving}
+						disabled={saving || !dirty}
 					>
 						{saving ? 'Saving…' : saveLabel}
 					</button>

@@ -9,6 +9,7 @@ import {
   DefaultAccountPurpose,
   EntityType,
   InvoiceStatus,
+  QuotationStatus,
 } from "$lib/enums.js";
 import * as schema from "../db/schema.js";
 import {
@@ -20,13 +21,20 @@ import {
   invoices,
   ledgerMovements,
   ledgerRecords,
+  quotations,
   reconciliationAllocations,
   users,
 } from "../db/schema.js";
 import { createAccount } from "./accounts.js";
 import { createRecord } from "./ledger.js";
 import { createSettlements } from "./settlements.js";
-import { cancelInvoice, issueInvoice, removeInvoice } from "./invoices.js";
+import {
+  cancelInvoice,
+  issueInvoice,
+  removeInvoice,
+  voidAndReissueInvoice,
+} from "./invoices.js";
+import { createQuotation, getQuotation } from "../queries/quotations.js";
 import * as invoiceQueries from "../queries/invoices.js";
 import { createInvoice, getInvoice } from "../queries/invoices.js";
 import { getRecord } from "../queries/ledger.js";
@@ -380,5 +388,120 @@ describe("sending an invoice", () => {
     });
     expect(issued.ok).toBe(true);
     expect(db.select().from(ledgerRecords).all()).toHaveLength(1);
+  });
+});
+
+describe("cancelling and reissuing a sent invoice", () => {
+  /** A sent invoice that a converted quotation points at. */
+  function convertedSentInvoice(b: ReturnType<typeof book>) {
+    const invoice = sentInvoice(b);
+    const quote = createQuotation(db as never, userId, {
+      contactId: b.customer,
+      issueDate: "2026-07-20",
+      lines: [{ description: "Consulting", quantity: 1, unitPrice: 100 }],
+    });
+    db.update(quotations)
+      .set({
+        status: QuotationStatus.Converted,
+        convertedInvoiceId: invoice.id,
+      })
+      .where(eq(quotations.id, quote.id))
+      .run();
+    db.update(invoices)
+      .set({ sourceQuotationId: quote.id })
+      .where(eq(invoices.id, invoice.id))
+      .run();
+    return { invoice: getInvoice(db, invoice.id)!, quoteId: quote.id };
+  }
+
+  it("voids the old one and opens a linked draft copy with a new number, dated today on the same term", () => {
+    const b = book();
+    const sent = sentInvoice(b);
+    db.update(invoices)
+      .set({ dueDate: "2026-08-31", notes: "Thanks" })
+      .where(eq(invoices.id, sent.id))
+      .run();
+
+    const result = voidAndReissueInvoice(db as never, sent.id, userId, {
+      today: "2026-09-10",
+    });
+    if (!result.ok) throw new Error(result.reason);
+    const { voided, invoice } = result.value;
+
+    expect(voided.status).toBe(InvoiceStatus.Cancelled);
+    expect(voided.ledgerRecordId).toBeNull();
+    expect(getRecord(db, sent.ledgerRecordId!)).toBeNull();
+
+    expect(invoice.status).toBe(InvoiceStatus.Draft);
+    expect(invoice.ledgerRecordId).toBeNull();
+    expect(invoice.invoiceNumber).not.toBe(sent.invoiceNumber);
+    expect(invoice.issueDate).toBe("2026-09-10");
+    expect(invoice.dueDate).toBe("2026-10-10"); // 30 days, as before
+    expect(invoice.notes).toBe("Thanks");
+    expect(invoice.total).toBe(sent.total);
+    expect(invoice.lines.map((l) => l.description)).toEqual(["Consulting"]);
+    expect(invoice.replaces).toEqual({
+      id: sent.id,
+      invoiceNumber: sent.invoiceNumber,
+    });
+    expect(getInvoice(db, sent.id)!.replacedBy).toEqual({
+      id: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+    });
+  });
+
+  it("moves the quotation it came from onto the new invoice", () => {
+    const b = book();
+    const { invoice: sent, quoteId } = convertedSentInvoice(b);
+
+    const result = voidAndReissueInvoice(db as never, sent.id, userId);
+    if (!result.ok) throw new Error(result.reason);
+
+    const quote = getQuotation(db as never, quoteId)!;
+    expect(quote.status).toBe(QuotationStatus.Converted);
+    expect(quote.convertedInvoiceId).toBe(result.value.invoice.id);
+    expect(result.value.invoice.sourceQuotationId).toBe(quoteId);
+  });
+
+  it("is refused on the same terms as a cancel, and writes nothing", () => {
+    const b = book();
+    const invoice = sentInvoice(b);
+    pay(b, invoice, 1000);
+    const before = db.select().from(invoices).all().length;
+
+    const result = voidAndReissueInvoice(db as never, invoice.id, userId);
+    expect(result.ok).toBe(false);
+    expect(db.select().from(invoices).all()).toHaveLength(before);
+    expect(getInvoice(db, invoice.id)!.status).toBe(InvoiceStatus.Sent);
+  });
+});
+
+describe("cancelling an invoice a quotation was converted into", () => {
+  it("puts the quotation back to Accepted, so it can be converted again", () => {
+    const b = book();
+    const invoice = sentInvoice(b);
+    const quote = createQuotation(db as never, userId, {
+      contactId: b.customer,
+      issueDate: "2026-07-20",
+      lines: [{ description: "Consulting", quantity: 1, unitPrice: 100 }],
+    });
+    db.update(quotations)
+      .set({
+        status: QuotationStatus.Converted,
+        convertedInvoiceId: invoice.id,
+      })
+      .where(eq(quotations.id, quote.id))
+      .run();
+    db.update(invoices)
+      .set({ sourceQuotationId: quote.id })
+      .where(eq(invoices.id, invoice.id))
+      .run();
+
+    const result = cancelInvoice(db as never, invoice.id, userId);
+    if (!result.ok) throw new Error(result.reason);
+
+    const back = getQuotation(db as never, quote.id)!;
+    expect(back.status).toBe(QuotationStatus.Accepted);
+    expect(back.convertedInvoiceId).toBeNull();
   });
 });

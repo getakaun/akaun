@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  * record now has and feed the result into `setExtractedText`.
  *
  * The route imports the singleton `db`, which opens DATABASE_PATH at import
- * time — mocked here, like `file-ownership.spec.ts`, so it never loads the
+ * time — mocked here, like `attachment-file.spec.ts`, so it never loads the
  * real one.
  */
 

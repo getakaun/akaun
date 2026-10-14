@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-// The stored-file keys must never be writable here: `/api/files` serves whatever
+// The stored-file keys must never be writable here: `/api/company/[image]` serves whatever
 // file they name. The real database is never opened — the 400 comes before any
 // write, and a stub stands in for the client module.
 const written: string[] = [];

@@ -73,8 +73,8 @@
 		<div class="attach-list">
 			{#each attachments as att (att.id)}
 				<div class="attach-item related-link">
-					<a
-						href="/api/files/{att.filename}"
+					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- an API endpoint under apiBase that serves the file, not an app page. -->
+					<a href="{apiBase}/attachments/{att.id}"
 						target="_blank"
 						rel="noopener"
 						class="attach-link-area"

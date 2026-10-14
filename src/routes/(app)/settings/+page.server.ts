@@ -67,7 +67,7 @@ import {
 type CompanyImageChange =
   | { kind: "none" }
   | { kind: "remove" }
-  | { kind: "replace"; buffer: Buffer; filename: string };
+  | { kind: "replace"; buffer: Buffer; type: "jpeg" | "png" };
 
 /**
  * Read and check one company image field without storing anything: a JPEG or
@@ -93,7 +93,7 @@ async function readCompanyImage(
         failure: fail(415, { error: `${label} must be a JPEG or PNG image.` }),
       };
     }
-    return { kind: "replace", buffer, filename: file.name };
+    return { kind: "replace", buffer, type };
   }
   return data.get(removeField) === "true"
     ? { kind: "remove" }
@@ -101,11 +101,11 @@ async function readCompanyImage(
 }
 
 /** Store a checked company image change and drop the file it replaces. */
-function applyCompanyImage(change: CompanyImageChange, key: string) {
+async function applyCompanyImage(change: CompanyImageChange, key: string) {
   if (change.kind === "none") return;
   const oldPath = getSetting(db, key);
   if (change.kind === "replace") {
-    setSetting(db, key, saveCompanyImage(change.buffer, change.filename));
+    setSetting(db, key, await saveCompanyImage(change.buffer, change.type));
   } else if (oldPath) {
     setSetting(db, key, "");
   }
@@ -209,14 +209,19 @@ export const load: PageServerLoad = async ({ locals }) => {
   const companyRegistrationNo =
     getSetting(db, SETTING_KEYS.companyRegistrationNo) ?? "";
   const companyLogoPath = getSetting(db, SETTING_KEYS.companyLogoPath) ?? "";
-  const companyLogoUrl = companyLogoPath
-    ? `/api/files/${encodeURIComponent(companyLogoPath)}`
-    : null;
+  // The URL names the image, not the file. A replaced image keeps the same
+  // URL, so `v` changes with the stored file to make the page show the new one.
+  const companyImageUrl = (image: string, path: string) =>
+    path
+      ? `/api/company/${image}?v=${encodeURIComponent(path.split("/").pop()!)}`
+      : null;
+  const companyLogoUrl = companyImageUrl("logo", companyLogoPath);
   const companyLetterheadPath =
     getSetting(db, SETTING_KEYS.companyLetterheadPath) ?? "";
-  const companyLetterheadUrl = companyLetterheadPath
-    ? `/api/files/${encodeURIComponent(companyLetterheadPath)}`
-    : null;
+  const companyLetterheadUrl = companyImageUrl(
+    "letterhead",
+    companyLetterheadPath,
+  );
 
   const providers = getAllProviders(db).map(({ oauthCredentials, ...p }) => {
     // A `chatgpt` provider's tokens never leave the server either: the
@@ -360,8 +365,8 @@ export const actions: Actions = {
     );
     if ("failure" in letterhead) return letterhead.failure;
 
-    applyCompanyImage(logo, SETTING_KEYS.companyLogoPath);
-    applyCompanyImage(letterhead, SETTING_KEYS.companyLetterheadPath);
+    await applyCompanyImage(logo, SETTING_KEYS.companyLogoPath);
+    await applyCompanyImage(letterhead, SETTING_KEYS.companyLetterheadPath);
 
     setSetting(db, SETTING_KEYS.companyName, companyName);
     setSetting(db, SETTING_KEYS.companyAddress, companyAddress);

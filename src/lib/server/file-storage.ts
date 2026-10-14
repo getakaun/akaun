@@ -6,7 +6,6 @@ import {
   rmSync,
   statSync,
   unlinkSync,
-  writeFileSync,
 } from "fs";
 import { dirname, basename, extname, join, resolve, sep } from "path";
 import { existsSync } from "fs";
@@ -16,6 +15,7 @@ import { ImportState } from "$lib/enums.js";
 import { STORAGE_PATH } from "./env.js";
 import { importQueue, recordAttachments } from "./db/schema.js";
 import type { LedgerDb } from "./ledger/types.js";
+import { LocalBlobStore, type BlobStore } from "./storage/blob-store.js";
 
 /** Largest accepted upload, in bytes. */
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15 MB
@@ -64,34 +64,61 @@ export function isImportTempPath(relativePath: string): boolean {
   return relativePath.startsWith("import/temp/");
 }
 
-export function saveToTemp(buffer: Buffer, originalFilename: string): string {
-  const uuid = randomUUID();
-  const rel = `import/temp/${uuid}_${originalFilename}`;
-  const abs = join(STORAGE_PATH, rel);
-  mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, buffer);
+/**
+ * The configured file store. Every new write goes through it. Built on each
+ * call, not once at module load, so the root is read when it is used — the
+ * same as every helper here that reads `STORAGE_PATH`.
+ */
+export function fileStore(): BlobStore {
+  return new LocalBlobStore(STORAGE_PATH);
+}
+
+/** Longest original name kept in a stored file's name, in characters. */
+const MAX_STORED_NAME_LENGTH = 120;
+
+/**
+ * The part of a client-supplied filename that is safe to put in a stored
+ * file's name. The name comes from the multipart request, which the client
+ * controls completely: a browser sends only the base name, but a crafted
+ * request can send `../../x` or `C:\x`. So both kinds of separator, control
+ * characters and the `.`/`..` names are removed, and a long name is cut,
+ * keeping its extension. Spaces and non-ASCII letters stay, because
+ * `displayName` shows this part to the user.
+ */
+export function storedNamePart(originalFilename: string): string {
+  const base = originalFilename.split(/[/\\]/).pop() ?? "";
+  // eslint-disable-next-line no-control-regex
+  let name = base.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  if (name === "" || name === "." || name === "..") return "file";
+  if (name.length > MAX_STORED_NAME_LENGTH) {
+    const extension = extname(name).slice(0, 10);
+    name = name.slice(0, MAX_STORED_NAME_LENGTH - extension.length) + extension;
+  }
+  return name;
+}
+
+export async function saveToTemp(
+  buffer: Buffer,
+  originalFilename: string,
+): Promise<string> {
+  const rel = `import/temp/${randomUUID()}_${storedNamePart(originalFilename)}`;
+  await fileStore().put(rel, buffer);
   return rel;
 }
 
-export function saveReconciliationStatement(
+export async function saveReconciliationStatement(
   buffer: Buffer,
   statementKey: number | string,
   originalFilename: string,
-): string {
+): Promise<string> {
   if (!/^[a-zA-Z0-9-]+$/.test(String(statementKey)))
     throw new Error("Invalid bank statement key");
-  const safeName = basename(originalFilename).replace(/[^a-zA-Z0-9._-]/g, "_");
-  const rel = join(
-    "reconciliation",
-    String(statementKey),
-    `${randomUUID()}_${safeName}`,
+  const safeName = storedNamePart(originalFilename).replace(
+    /[^a-zA-Z0-9._-]/g,
+    "_",
   );
-  const abs = resolve(STORAGE_PATH, rel);
-  const root = resolve(STORAGE_PATH);
-  if (!abs.startsWith(root + sep))
-    throw new Error("Resolved destination escapes storage root");
-  mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, buffer);
+  const rel = `reconciliation/${statementKey}/${randomUUID()}_${safeName}`;
+  await fileStore().put(rel, buffer);
   return rel;
 }
 
@@ -420,17 +447,13 @@ export function deleteReconciliationFolder(statementId: number): void {
 
 /**
  * Save a company image (the logo or the letterhead). Returns the relative path within STORAGE_PATH.
- * Caller must validate file type (jpeg/png only) before calling.
+ * The extension comes from the sniffed type, never from the client's filename.
  */
-export function saveCompanyImage(
+export async function saveCompanyImage(
   buffer: Buffer,
-  originalFilename: string,
-): string {
-  const uuid = randomUUID();
-  const ext = extname(originalFilename).toLowerCase();
-  const filename = `${uuid}${ext}`;
-  const dir = join(STORAGE_PATH, "company");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, filename), buffer);
-  return join("company", filename);
+  type: "jpeg" | "png",
+): Promise<string> {
+  const rel = `company/${randomUUID()}.${type === "jpeg" ? "jpg" : "png"}`;
+  await fileStore().put(rel, buffer);
+  return rel;
 }

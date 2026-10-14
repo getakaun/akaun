@@ -4,7 +4,7 @@ import { settings } from '$lib/server/db/schema.js';
 import { setSetting, SETTING_KEYS, hasAnyDocuments } from '$lib/server/settings.js';
 
 // The stored-file keys are written only by the Company form, which saves the
-// upload itself. `/api/files` serves whatever file these keys name, so letting a
+// upload itself. `/api/company/[image]` serves whatever file these keys name, so letting a
 // caller set one would let it publish any stored file — a receipt, a statement.
 const FILE_PATH_KEYS = new Set<string>([
 	SETTING_KEYS.companyLogoPath,

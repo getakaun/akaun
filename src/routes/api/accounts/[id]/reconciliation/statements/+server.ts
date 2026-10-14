@@ -63,7 +63,11 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       { status: 400 },
     );
   try {
-    const path = saveReconciliationStatement(buffer, randomUUID(), file.name);
+    const path = await saveReconciliationStatement(
+      buffer,
+      randomUUID(),
+      file.name,
+    );
     const statement = createStatement(db, locals, {
       originalFilename: file.name,
       storedFilePath: path,

@@ -596,8 +596,8 @@
         {#if data.statement.storedFilePath}
           · <a
             class="source-link"
-            href={resolve("/api/files/[...path]", {
-              path: data.statement.storedFilePath,
+            href={resolve("/api/reconciliation/statements/[statementId]/file", {
+              statementId: String(data.statement.id),
             })}
             target="_blank"
             rel="noopener"><ExternalLink size={12} /> Source file</a

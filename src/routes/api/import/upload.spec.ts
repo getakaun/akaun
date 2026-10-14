@@ -112,7 +112,11 @@ async function upload(name: string, data: Buffer | string, readAs = "items") {
 }
 
 async function fileOf(jobId: string) {
-  return (GET as Handler)({ locals, params: { jobId } } as never);
+  return (GET as Handler)({
+    locals,
+    params: { jobId },
+    request: new Request("http://localhost/"),
+  } as never);
 }
 
 function rowOf(jobId: string) {

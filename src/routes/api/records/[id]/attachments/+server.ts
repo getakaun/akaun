@@ -76,7 +76,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   }
 
   const finalPath = moveToRecordStorage(
-    saveToTemp(buffer, file.name),
+    await saveToTemp(buffer, file.name),
     record.date,
   );
   const attachment = addAttachment(

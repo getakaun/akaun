@@ -1,54 +1,27 @@
-import type { RequestHandler } from './$types.js';
-import { existsSync, readFileSync } from 'fs';
-import { join, resolve, sep } from 'path';
-import { eq } from 'drizzle-orm';
-import { db } from '$lib/server/db/client.js';
-import { importQueue } from '$lib/server/db/schema.js';
-import { STORAGE_PATH } from '$lib/server/env.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import type { RequestHandler } from "./$types.js";
+import { eq } from "drizzle-orm";
+import { db } from "$lib/server/db/client.js";
+import { importQueue } from "$lib/server/db/schema.js";
+import { fileStore } from "$lib/server/file-storage.js";
+import { hasPermission } from "$lib/server/permissions.js";
+import { storedFileResponse } from "$lib/server/stored-file-response.js";
 
-const MIME: Record<string, string> = {
-	pdf: 'application/pdf',
-	jpg: 'image/jpeg',
-	jpeg: 'image/jpeg',
-	png: 'image/png',
-	xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-	csv: 'text/csv'
-};
+export const GET: RequestHandler = async ({ locals, params, request }) => {
+  if (!locals.user) return new Response("Unauthorized", { status: 401 });
+  if (!hasPermission(locals, "import", "view"))
+    return new Response("Forbidden", { status: 403 });
 
-// A spreadsheet is offered as a download rather than shown in the page
-// (006 FR-050): a browser has no viewer for a workbook, and a CSV file shown
-// as text would be the uploader's content rendered under the app's address.
-const DOWNLOAD_ONLY = new Set(['xlsx', 'csv']);
+  const row = db
+    .select()
+    .from(importQueue)
+    .where(eq(importQueue.id, params.jobId))
+    .get();
+  if (!row) return new Response("Not found", { status: 404 });
 
-export const GET: RequestHandler = ({ locals, params }) => {
-	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'import', 'view')) return new Response('Forbidden', { status: 403 });
-
-	const row = db.select().from(importQueue).where(eq(importQueue.id, params.jobId)).get();
-	if (!row) return new Response('Not found', { status: 404 });
-
-	const storageRoot = resolve(STORAGE_PATH);
-	const abs = resolve(join(STORAGE_PATH, row.tempFilePath));
-	if (!abs.startsWith(storageRoot + sep) && abs !== storageRoot) {
-		return new Response('Forbidden', { status: 403 });
-	}
-	if (!existsSync(abs)) return new Response('Not found', { status: 404 });
-
-	const content = new Blob([readFileSync(abs)]);
-	const ext = row.tempFilePath.split('.').pop()?.toLowerCase() ?? '';
-	const contentType = MIME[ext] ?? 'application/octet-stream';
-
-	const displayFilename = row.originalFilename;
-	const asciiFallback = displayFilename.replace(/[\x00-\x1f"\\]/g, '_') || 'file';
-	const encoded = encodeURIComponent(displayFilename);
-	const mode = DOWNLOAD_ONLY.has(ext) ? 'attachment' : 'inline';
-	const disposition = `${mode}; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
-
-	return new Response(content, {
-		headers: {
-			'Content-Type': contentType,
-			'Content-Disposition': disposition
-		}
-	});
+  return storedFileResponse(
+    fileStore(),
+    request,
+    row.tempFilePath,
+    row.originalFilename,
+  );
 };

@@ -109,7 +109,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const sniffed = sniffImportUpload(buffer, file.name);
 	if (!sniffed.ok) return json({ error: sniffed.error }, { status: 400 });
 
-	const tempFilePath = saveToTemp(buffer, file.name);
+	const tempFilePath = await saveToTemp(buffer, file.name);
 	const fileHash = createHash('sha256').update(buffer).digest('hex');
 
 	const jobId = randomUUID();

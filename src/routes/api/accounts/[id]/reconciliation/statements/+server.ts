@@ -8,7 +8,7 @@ import {
   saveReconciliationStatement,
   sniffAllowedType,
 } from "$lib/server/file-storage.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import {
   createStatement,
   ReconciliationError,
@@ -38,7 +38,7 @@ const accountIdSchema = z.coerce.number().int().positive();
 
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "reconciliation", "add"))
+  if (!can(locals, "reconciliation.create"))
     return new Response("Forbidden", { status: 403 });
 
   const accountId = accountIdSchema.safeParse(params.id);

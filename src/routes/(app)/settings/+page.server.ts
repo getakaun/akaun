@@ -26,7 +26,10 @@ import {
   termDaysInput,
 } from "$lib/server/sales/defaults.js";
 import { isMoneyPotAccount } from "$lib/server/ledger/account-type.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
+
+const SETTINGS_FORBIDDEN =
+  "You do not have permission to change settings. Ask an administrator for Settings › Manage.";
 import {
   defaultAccountId,
   listAccounts,
@@ -55,7 +58,7 @@ import {
   connectionModelAllowed,
 } from "$lib/server/llm/chatgpt-sign-in.js";
 import type { ProviderType } from "$lib/server/import/providers/index.js";
-import { fail, type ActionFailure } from "@sveltejs/kit";
+import { fail, redirect, type ActionFailure } from "@sveltejs/kit";
 import { getAccountDefaults } from "$lib/server/services/account-defaults.js";
 import {
   applyProfileSwitches,
@@ -125,11 +128,18 @@ async function applyCompanyImage(change: CompanyImageChange, key: string) {
  * so what Settings offers and what an expense screen offers can never drift.
  */
 export const load: PageServerLoad = async ({ locals }) => {
+  // Settings had no permission at all. Seeing them needs settings.read;
+  // changing them needs settings.manage, checked again by every action below.
+  // To the profile, which every signed-in user can open: the dashboard and
+  // records send a user who cannot see them here, so going back to "/" would
+  // loop for someone with no access at all.
+  if (!can(locals, "settings.read")) redirect(302, "/profile");
+  const canManageSettings = can(locals, "settings.manage");
   // Categories are accounts, and accounts are created, renamed and archived on
   // the Accounts screen. Settings no longer lists them (FR-019, FR-020); this
   // one ability is still read, because the default-account setting below writes
   // an account (FR-011).
-  const canManageAccounts = hasPermission(locals, "accounts", "change");
+  const canManageAccounts = can(locals, "accounts.update");
 
   // Which account new records start with, and the accounts it may be (FR-011).
   // With one account there is nothing to ask, so the setting stays off screen.
@@ -160,7 +170,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   // retired with the tables it converted (research.md R-06), but what it
   // recorded is still worth showing: it is the account of a one-off change to
   // this installation's own books, and nothing rewrites it.
-  const canSeeBooks = hasPermission(locals, "reports", "view");
+  const canSeeBooks = can(locals, "reports.read");
   const upgradeRaw = canSeeBooks
     ? getSetting(db, SETTING_KEYS.ledgerUpgradeState)
     : null;
@@ -268,6 +278,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     terms.quotationValidDays === null ? "" : String(terms.quotationValidDays);
 
   return {
+    canManageSettings,
     canManageAccounts,
     moneyAccounts,
     ledgerDefaultAccountId,
@@ -303,6 +314,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 export const actions: Actions = {
   saveGeneral: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     const data = await request.formData();
     const code = String(data.get("currencyCode") ?? "")
       .trim()
@@ -312,7 +325,7 @@ export const actions: Actions = {
     // by the browser when there is more than one to choose between.
     const chosenAccount = String(data.get("defaultAccountId") ?? "").trim();
     if (chosenAccount) {
-      if (!hasPermission(locals, "accounts", "change")) {
+      if (!can(locals, "accounts.update")) {
         return fail(403, { error: "Forbidden" });
       }
       const parsed = z.coerce
@@ -348,7 +361,9 @@ export const actions: Actions = {
     return { success: true, action: "saveGeneral" };
   },
 
-  saveCompany: async ({ request }) => {
+  saveCompany: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     const data = await request.formData();
     const companyName = String(data.get("companyName") ?? "").trim();
     const companyAddress = String(data.get("companyAddress") ?? "").trim();
@@ -382,7 +397,9 @@ export const actions: Actions = {
     return { success: true, action: "saveCompany" };
   },
 
-  savePdfTemplate: async ({ request }) => {
+  savePdfTemplate: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     const data = await request.formData();
     const invoiceLayoutKey = String(data.get("invoiceLayoutKey") ?? "");
     const quotationLayoutKey = String(data.get("quotationLayoutKey") ?? "");
@@ -421,7 +438,9 @@ export const actions: Actions = {
     return { success: true, action: "savePdfTemplate" };
   },
 
-  saveSequenceTemplate: async ({ request }) => {
+  saveSequenceTemplate: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     if (hasAnyDocuments(db)) {
       return fail(400, {
         error:
@@ -437,6 +456,8 @@ export const actions: Actions = {
   },
 
   updateProvider: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     const data = await request.formData();
     const id = String(data.get("id") ?? "").trim();
     if (!id) return fail(400, { error: "Provider ID is required" });
@@ -484,7 +505,9 @@ export const actions: Actions = {
     return { success: true, action: "updateProvider" };
   },
 
-  deleteProvider: async ({ request }) => {
+  deleteProvider: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     const data = await request.formData();
     const id = String(data.get("id") ?? "").trim();
     if (!id) return fail(400, { error: "Provider ID is required" });
@@ -496,6 +519,8 @@ export const actions: Actions = {
   },
 
   saveIntelligence: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     const data = await request.formData();
     const raw = String(data.get("providers") ?? "[]");
 

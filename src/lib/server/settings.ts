@@ -44,6 +44,9 @@ export const SETTING_KEYS = {
   // sales/defaults.ts, which owns the parsing: unset means 30, empty means none.
   invoiceDueDays: "documents.invoiceDueDays",
   quotationValidDays: "documents.quotationValidDays",
+  // Set once the default groups have been written, so a default group an
+  // administrator deleted is not written again (admin/seed-groups.ts).
+  groupsSeeded: "groups.seeded",
 } as const;
 
 export function getSetting(

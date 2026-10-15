@@ -1,5 +1,6 @@
 import type { OAuthScope } from "../oauth/config.js";
 import { TOOL_REQUIREMENTS } from "./tool-requirements.js";
+import { allowedScopes } from "../oauth/scopes.js";
 import { MAX_ATTACHMENT_FILE_BYTES } from "../application/attachments.js";
 
 /** Every request but a file upload. Reads and ordinary writes are small. */
@@ -99,7 +100,14 @@ export async function inspectRpc(
     )
   )
     required = ["records:read"];
-  if (required.every((s) => locals.oauth!.scopes.includes(s)))
+  const missing = required.filter((s) => !locals.oauth!.scopes.includes(s));
+  if (missing.length === 0) return { response: null, maxRequestBodySize };
+  // Step up only when the user could actually grant what is missing (their
+  // role ∩ their groups' delegation ceiling). Otherwise a client would loop
+  // through consent for a scope the page will never offer; the tool is not
+  // listed for this caller anyway, and the call is refused as unknown.
+  const grantable = locals.role ? allowedScopes(locals.role) : [];
+  if (!missing.every((s) => grantable.includes(s)))
     return { response: null, maxRequestBodySize };
   return {
     response: new Response("Insufficient OAuth scope", {

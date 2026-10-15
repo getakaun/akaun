@@ -49,7 +49,8 @@ vi.mock("$lib/server/db/client.js", () => ({
 }));
 
 vi.mock("$lib/server/permissions.js", () => ({
-  hasPermission: () => true,
+  can: () => true,
+  canAll: () => true,
 }));
 
 vi.mock("$lib/server/logger.js", () => {

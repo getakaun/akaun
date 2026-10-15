@@ -161,7 +161,6 @@ export function registerSales(server: McpServer, context: McpContext) {
     server,
     context,
     "list_invoices",
-    ["invoices"],
     "Search invoices by status, customer, issue date or text. Amounts are in each invoice's own currency; outstandingMinor is main-currency cents still owed. Use get_invoice for lines, settlements and the owedMovementId a payment settles.",
     {
       ...dateRangeShape,
@@ -193,7 +192,6 @@ export function registerSales(server: McpServer, context: McpContext) {
     server,
     context,
     "get_invoice",
-    ["invoices"],
     "Read one invoice: lines, payment state, settlements, the record it posted when sent, and `owedMovementId` — what record_payment settles to mark it paid. Returns `version` for changes.",
     { invoiceId: id },
     ({ invoiceId }) => {
@@ -208,7 +206,6 @@ export function registerSales(server: McpServer, context: McpContext) {
     server,
     context,
     "list_quotations",
-    ["quotations"],
     "Search quotations by status, customer, issue date or text.",
     {
       ...dateRangeShape,
@@ -248,7 +245,6 @@ export function registerSales(server: McpServer, context: McpContext) {
     server,
     context,
     "get_quotation",
-    ["quotations"],
     "Read one quotation with its lines and revision chain. Returns `version` for changes.",
     { quotationId: id },
     ({ quotationId }) => {

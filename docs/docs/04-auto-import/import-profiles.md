@@ -11,7 +11,9 @@ way.
 :::info
 
 To see the profiles, you need the **View** permission on **Auto Import**. To add, change, enable,
-disable or delete a profile, you need **Change**.
+disable or delete a profile, you need **Profiles**. To enable or disable a profile, or to import
+one from a file, you also need the **Manage** permission on **Settings**. Without it, the
+**Intelligence** tab is read only.
 
 :::
 

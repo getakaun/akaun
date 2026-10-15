@@ -1,7 +1,7 @@
 import type { RequestHandler } from "@sveltejs/kit";
 import { db } from "$lib/server/db/client.js";
 import { getInvoice } from "$lib/server/queries/invoices.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import {
   deleteInvoice,
   updateInvoice,
@@ -9,7 +9,7 @@ import {
 import { toResponse } from "$lib/server/application/http.js";
 
 export const GET: RequestHandler = async ({ locals, params }) => {
-  if (!hasPermission(locals, "invoices", "view"))
+  if (!can(locals, "invoices.read"))
     return new Response("Forbidden", { status: 403 });
   const id = parseInt(params.id!);
   const invoice = getInvoice(db, id);

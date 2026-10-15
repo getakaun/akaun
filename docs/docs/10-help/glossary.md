@@ -68,17 +68,18 @@ See [Getting paid](../05-sales/getting-paid.md).
 
 ### Adjustments
 
-**Adjustments** is a permission. It lets a user save a record between any two accounts. It also
-lets a user add more than two lines to a record that is not an everyday split. Of the groups that
-Akaun creates, only **Administrators** has it, because that group is a superuser group. Give it
-only to a person that you trust with the books.
+**Adjustments** is an ability in the **Records** permission area. It lets a user save a record
+between any two accounts. It also lets a user add more than two lines to a record that is not an
+everyday split. Of the groups that Akaun creates, only **Administrators** has it, because that
+group is a superuser group. When you select the whole **Records** area, Akaun does not select
+**Adjustments**. Give it only to a person that you trust with the books.
 
 See [Permissions explained](../09-administration/permissions-explained.md).
 
 ### AI assistant
 
 An AI assistant is a chat program, for example Claude or ChatGPT, that can connect to Akaun. It
-can read your books but cannot change them.
+can read your books. If you give it the access, it can also change them.
 
 See [Connect AI assistants](../09-administration/connect-ai-assistants.md).
 
@@ -107,11 +108,10 @@ See [Owed, part paid and paid](../02-concepts/owed-and-paid.md).
 
 ### API token
 
-An API token is a secret key that lets a program use Akaun as you. You find it on your profile,
-on the **API Token** tab. Akaun shows the full token one time only. A program with your token can read and change data, the same as you
-can. Keep the token secret.
+An API token was the secret key of older versions of Akaun. The upgrade revoked all API tokens,
+and they do not work any more. Use a [personal access token](#personal-access-token).
 
-See [Connect AI assistants](../09-administration/connect-ai-assistants.md).
+See [Troubleshooting](./troubleshooting.md#api-tokens-were-replaced-by-personal-access-tokens).
 
 ### Attachment
 
@@ -197,7 +197,8 @@ See [Bank reconciliation](../07-bank-reconciliation.md).
 
 ### Connected app
 
-A connected app is a program, for example an AI assistant, that you let read your Akaun data.
+A connected app is a program, for example an AI assistant, that you let read or change your Akaun
+data.
 You find the list on your profile, on the **Connected apps** tab. Click **Revoke access** to
 disconnect an app immediately.
 
@@ -500,11 +501,23 @@ See [Owed, part paid and paid](../02-concepts/owed-and-paid.md).
 
 ### Permission
 
-A permission lets a user do one action on one area of Akaun. The actions are **View**, **Add**,
-**Change** and **Delete**. The areas include **Records**, **Contacts**, **Accounts** and
-**Reports**. Reports are view only.
+A permission lets a user do one thing in one area of Akaun. Each area, for example **Records**,
+**Contacts** or **Invoices**, has a list of abilities. Most areas have **View**, **Add**, **Change**
+and **Delete**. Some areas have more, for example **Send** and **Void** on **Invoices**. Reports are
+view only. On the screens, you choose a level for each area: **None**, **View**, **Edit**, **Full**
+or **Custom**.
 
 See [Permissions explained](../09-administration/permissions-explained.md).
+
+### Personal access token
+
+A personal access token is a secret key that lets a program, for example an AI assistant, use
+Akaun as you. You make it on your profile, on the **Access tokens** tab. Only you can make a token
+for yourself. Each token has a name, an expiry date or no expiry, and its own permissions. A token never does more than what you may hand on to tokens
+and apps. Akaun shows the full token one time only. It starts with `akp_`. Keep the token secret.
+
+See [Your profile](../09-administration/your-profile.md#access-tokens) and
+[Connect AI assistants](../09-administration/connect-ai-assistants.md).
 
 ### Possible duplicate
 
@@ -626,7 +639,8 @@ See [Accounts and categories](../02-concepts/accounts-and-categories.md).
 
 ### Superuser
 
-A superuser can do all actions in all areas. The permission grid does not apply to a superuser.
+A superuser can do all actions in all areas. The permissions of the groups do not limit a superuser.
+Only a superuser can open **Users & Groups**.
 The **Administrators** group is a superuser group.
 
 See [Users and groups](../09-administration/users-and-groups.md).
@@ -675,5 +689,5 @@ words that do not match a feature of Akaun.
 | log in, log on | sign in |
 | role (for a group of users) | group |
 | admin rights | superuser |
-| key (for API access) | API token |
+| key (for API access), API token | personal access token |
 | void | cancel |

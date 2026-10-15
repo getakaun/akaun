@@ -1,10 +1,10 @@
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { forbidden, notFound } from "$lib/server/api-response.js";
 import { getRecord } from "$lib/server/queries/ledger.js";
 import { settlementsForRecord } from "$lib/server/queries/settlements.js";
-import { resourceForKind } from "$lib/server/ledger/record-permissions.js";
+import { permissionForKind } from "$lib/server/ledger/record-permissions.js";
 
 /**
  * What paid this record, or — on a payment — what this record paid off.
@@ -24,7 +24,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 
   const record = getRecord(db, id);
   if (!record) return notFound("That record no longer exists.");
-  if (!hasPermission(locals, resourceForKind(record.kind), "view")) {
+  if (!can(locals, permissionForKind(record.kind, "read"))) {
     return forbidden();
   }
 

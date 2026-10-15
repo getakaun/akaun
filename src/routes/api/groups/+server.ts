@@ -1,60 +1,32 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types.js';
 import { db } from '$lib/server/db/client.js';
-import { groups, groupPermissions, userGroups } from '$lib/server/db/schema.js';
-import { eq } from 'drizzle-orm';
+import { groups } from '$lib/server/db/schema.js';
+import { can } from '$lib/server/permissions.js';
+import { groupView, PROTECTED_GROUP } from '$lib/server/admin/access.js';
 
-function buildGroupResponse(groupRow: typeof groups.$inferSelect) {
-	const perms = db
-		.select()
-		.from(groupPermissions)
-		.where(eq(groupPermissions.groupId, groupRow.id))
-		.all();
-
-	const permGrid: Record<string, { view: boolean; add: boolean; change: boolean; delete: boolean }> = {};
-	for (const p of perms) {
-		permGrid[p.resource] = {
-			view: !!p.canView,
-			add: !!p.canAdd,
-			change: !!p.canChange,
-			delete: !!p.canDelete
-		};
-	}
-
-	const memberCount = db
-		.select({ userId: userGroups.userId })
-		.from(userGroups)
-		.where(eq(userGroups.groupId, groupRow.id))
-		.all().length;
-
-	return {
-		id: groupRow.id,
-		name: groupRow.name,
-		description: groupRow.description,
-		isSuperuser: !!groupRow.isSuperuser,
-		locked: groupRow.name === 'Administrators',
-		permissions: permGrid,
-		memberCount
-	};
-}
-
+/**
+ * Groups, for Users & Groups. Every route here asks for `users.manage`, which
+ * only a superuser group holds and no token or app can be given — so the
+ * people who decide who may do what are always signed in themselves.
+ */
 export const GET: RequestHandler = async ({ locals }) => {
-	if (!locals.isSuperuser) return new Response('Forbidden', { status: 403 });
-
-	const allGroups = db.select().from(groups).all();
-	return json(allGroups.map(buildGroupResponse));
+	if (!can(locals, 'users.manage')) return new Response('Forbidden', { status: 403 });
+	return json(db.select().from(groups).all().map((g) => groupView(db, g)));
 };
 
 export const POST: RequestHandler = async ({ locals, request }) => {
-	if (!locals.isSuperuser) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'users.manage')) return new Response('Forbidden', { status: 403 });
 
 	const body = await request.json();
 	const { name, description = '', isSuperuser = false } = body;
 	if (!name) return json({ error: 'name is required' }, { status: 400 });
+	if (String(name).trim() === PROTECTED_GROUP)
+		return json({ error: `"${PROTECTED_GROUP}" is reserved.` }, { status: 400 });
 
 	const [group] = db
 		.insert(groups)
-		.values({ name, description, isSuperuser })
+		.values({ name, description, isSuperuser: Boolean(isSuperuser) })
 		.returning({ id: groups.id })
 		.all();
 

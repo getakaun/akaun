@@ -20,7 +20,10 @@ vi.mock("$lib/server/env.js", () => ({
   OCR_CACHE_PATH: "/dev/null",
 }));
 vi.mock("$lib/server/db/client.js", () => ({ db: {} }));
-vi.mock("$lib/server/permissions.js", () => ({ hasPermission: () => true }));
+vi.mock("$lib/server/permissions.js", () => ({
+  can: () => true,
+  canAll: () => true,
+}));
 
 const outcome = { refuse: true };
 vi.mock("$lib/server/services/reconciliation.js", () => {

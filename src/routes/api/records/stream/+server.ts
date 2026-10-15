@@ -1,5 +1,5 @@
 import type { RequestHandler } from "./$types.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { forbidden } from "$lib/server/api-response.js";
 import { eventStream } from "$lib/server/sse-stream.js";
 import { ledgerEvents } from "$lib/server/ledger/events.js";
@@ -28,7 +28,7 @@ import { ledgerEvents } from "$lib/server/ledger/events.js";
  */
 export const GET: RequestHandler = ({ locals }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "records", "view")) return forbidden();
+  if (!can(locals, "records.read")) return forbidden();
 
   return eventStream([
     {

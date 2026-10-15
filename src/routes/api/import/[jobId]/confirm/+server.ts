@@ -14,7 +14,7 @@ import {
 } from "$lib/server/services/import.js";
 import { ImportState } from "$lib/enums.js";
 import type { RequestHandler } from "./$types.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 
 /**
  * Turning a reviewed document into a record.
@@ -42,7 +42,7 @@ const bodySchema = reviewOverridesSchema.extend({
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
   // Shared ledger: any user with import.change may confirm, not just the uploader.
-  if (!hasPermission(locals, "import", "change")) return forbidden();
+  if (!can(locals, "import.confirm")) return forbidden();
 
   const row = db
     .select()

@@ -1,6 +1,6 @@
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { forbidden } from "$lib/server/api-response.js";
 import { checkIntegrity } from "$lib/server/ledger/integrity.js";
 import { integrityInputs } from "$lib/server/queries/ledger.js";
@@ -13,7 +13,7 @@ import { integrityInputs } from "$lib/server/queries/ledger.js";
  * books grow?" is a figure the user can read, rather than a claim.
  */
 export const GET: RequestHandler = async ({ locals }) => {
-  if (!hasPermission(locals, "reports", "view")) return forbidden();
+  if (!can(locals, "reports.read")) return forbidden();
 
   const startedAt = performance.now();
   const report = checkIntegrity(integrityInputs(db));

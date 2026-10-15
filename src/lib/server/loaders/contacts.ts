@@ -14,10 +14,10 @@ import {
   mergeContacts,
 } from "$lib/server/services/contacts.js";
 import { fail, redirect } from "@sveltejs/kit";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 
 export function loadContactsPage(locals: App.Locals) {
-  if (!hasPermission(locals, "contacts", "view"))
+  if (!can(locals, "contacts.read"))
     throw redirect(302, "/dashboard");
 
   const contacts = listContacts(db, {});
@@ -41,7 +41,7 @@ export function loadContactsPage(locals: App.Locals) {
    * Gated on `records.view`, not on `contacts.view`: it is derived from records,
    * so seeing it means being allowed to see them.
    */
-  const canSeeRecords = hasPermission(locals, "records", "view");
+  const canSeeRecords = can(locals, "records.read");
   const owedToUs = canSeeRecords ? contactBalances(db, "owed-to-us") : [];
   const weOwe = canSeeRecords ? contactBalances(db, "we-owe") : [];
 
@@ -67,9 +67,13 @@ export function loadContactsPage(locals: App.Locals) {
       weOweMinor: weOwe.reduce((sum, r) => sum + r.outstandingMinor, 0),
     },
     perms: {
-      add: hasPermission(locals, "contacts", "add"),
-      change: hasPermission(locals, "contacts", "change"),
-      delete: hasPermission(locals, "contacts", "delete"),
+      add: can(locals, "contacts.create"),
+      change: can(locals, "contacts.update"),
+      delete: can(locals, "contacts.delete"),
+      merge:
+        can(locals, "contacts.merge") &&
+        can(locals, "contacts.update") &&
+        can(locals, "contacts.delete"),
       /** Whether to offer the statement link at all. */
       records: canSeeRecords,
     },
@@ -84,7 +88,7 @@ export function loadContactsPage(locals: App.Locals) {
  * computed correctly since the double-entry release — had nowhere to appear.
  */
 export function loadContactDetail(locals: App.Locals, id: number) {
-  if (!hasPermission(locals, "contacts", "view"))
+  if (!can(locals, "contacts.read"))
     throw redirect(302, "/dashboard");
 
   const contact = getContact(db, id);
@@ -94,7 +98,7 @@ export function loadContactDetail(locals: App.Locals, id: number) {
 
   // Gated on `records.view`, not on `contacts.view`: it is derived from
   // records, so seeing it means being allowed to see them.
-  const canSeeRecords = hasPermission(locals, "records", "view");
+  const canSeeRecords = can(locals, "records.read");
   const owedToUs = canSeeRecords
     ? (contactBalances(db, "owed-to-us").find((r) => r.contactId === id)
         ?.outstandingMinor ?? 0)
@@ -112,8 +116,8 @@ export function loadContactDetail(locals: App.Locals, id: number) {
     // customer.
     balanceMinor: owedToUs - weOwe,
     perms: {
-      change: hasPermission(locals, "contacts", "change"),
-      delete: hasPermission(locals, "contacts", "delete"),
+      change: can(locals, "contacts.update"),
+      delete: can(locals, "contacts.delete"),
       /** Whether to offer the statement link at all. */
       records: canSeeRecords,
     },
@@ -129,7 +133,7 @@ function parseRoles(data: FormData): number[] {
 
 export const contactsActions: Actions = {
   create: async ({ locals, request }) => {
-    if (!hasPermission(locals, "contacts", "add"))
+    if (!can(locals, "contacts.create"))
       return fail(403, { error: "Forbidden" });
     const userId = locals.user!.id;
     const data = await request.formData();
@@ -154,7 +158,7 @@ export const contactsActions: Actions = {
   },
 
   update: async ({ locals, request }) => {
-    if (!hasPermission(locals, "contacts", "change"))
+    if (!can(locals, "contacts.update"))
       return fail(403, { error: "Forbidden" });
     const userId = locals.user!.id;
     const data = await request.formData();
@@ -179,7 +183,7 @@ export const contactsActions: Actions = {
   },
 
   delete: async ({ locals, request }) => {
-    if (!hasPermission(locals, "contacts", "delete"))
+    if (!can(locals, "contacts.delete"))
       return fail(403, { error: "Forbidden" });
     const userId = locals.user!.id;
     const data = await request.formData();
@@ -192,8 +196,9 @@ export const contactsActions: Actions = {
 
   merge: async ({ locals, request }) => {
     if (
-      !hasPermission(locals, "contacts", "change") ||
-      !hasPermission(locals, "contacts", "delete")
+      !can(locals, "contacts.merge") ||
+      !can(locals, "contacts.update") ||
+      !can(locals, "contacts.delete")
     ) {
       return fail(403, { error: "Forbidden" });
     }

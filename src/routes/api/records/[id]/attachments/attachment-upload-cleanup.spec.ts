@@ -28,7 +28,10 @@ vi.mock("$lib/server/db/client.js", () => ({
     return holder.db;
   },
 }));
-vi.mock("$lib/server/permissions.js", () => ({ hasPermission: () => true }));
+vi.mock("$lib/server/permissions.js", () => ({
+  can: () => true,
+  canAll: () => true,
+}));
 vi.mock("$lib/server/queries/ledger.js", () => ({
   getRecord: () => ({ id: 42, kind: 1, date: "2026-08-01" }),
   addAttachment: () => {

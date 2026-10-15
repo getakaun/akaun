@@ -7,7 +7,7 @@ import {
   profileNotFound,
   profileRefused,
 } from "$lib/server/import/profile-reply.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import {
   deleteImportProfile,
   getImportProfile,
@@ -46,7 +46,7 @@ const patchBody = z
 
 export const GET: RequestHandler = async ({ locals, params }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "import", "view")) return forbidden();
+  if (!can(locals, "import.read")) return forbidden();
 
   const id = profileIdParam(params.id);
   const profile = id === null ? null : getImportProfile(db, id);
@@ -56,7 +56,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 
 export const PATCH: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "import", "change")) return forbidden();
+  if (!can(locals, "import.profiles")) return forbidden();
 
   const id = profileIdParam(params.id);
   if (id === null) return profileNotFound();
@@ -93,7 +93,7 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 
 export const DELETE: RequestHandler = async ({ locals, params }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "import", "change")) return forbidden();
+  if (!can(locals, "import.profiles")) return forbidden();
 
   const id = profileIdParam(params.id);
   if (id === null) return profileNotFound();

@@ -12,9 +12,11 @@ To open the settings, click **Settings** in the sidebar. The tabs are **General*
 
 :::info
 
-**Settings** has no permission. All users who can sign in can open it and change most settings.
-On the **Groups** tab in **Users & Groups**, the text for a superuser group says that settings are
-for superusers only. This is not correct at this time. See [Permissions explained](./permissions-explained.md#settings).
+To open **Settings**, you need the **View** permission on **Settings**. To change a setting, you
+need the **Manage** permission on **Settings**. Without **Manage**, Akaun shows all the tabs as read
+only, with a note at the top. The groups that Akaun makes give **View** only. Thus at the start,
+only a superuser can change the settings. Akaun never shows the key of an AI provider. See
+[Permissions explained](./permissions-explained.md#settings).
 
 :::
 
@@ -119,8 +121,8 @@ accounts that fit the default.
 | **Uncategorised income** | An imported income with no matching revenue account. |
 
 Click **Save defaults** to save. Akaun shows **Default accounts updated**. To change a default,
-you need the **Change** permission on **Accounts**. Without it, the lists and the button are
-not available.
+you need the **Change** permission on **Accounts** and the **Manage** permission on **Settings**.
+Without them, the lists and the button are not available.
 
 :::caution
 

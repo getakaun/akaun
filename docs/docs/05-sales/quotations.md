@@ -11,8 +11,8 @@ invoice from the quotation.
 :::info
 
 To make a quotation, you need the **Add** permission on quotations. To change one or its status,
-you need **Change**. To delete one, you need **Delete**. To revise one, you need **Add** and
-**Change** on quotations. To make an invoice from a quotation, you need **Change** on quotations
+you need **Change**. To delete one, you need **Delete**. To revise one, you need **Revise** and
+**Add** on quotations. To make an invoice from a quotation, you need **Convert** on quotations
 and **Add** on invoices.
 
 :::

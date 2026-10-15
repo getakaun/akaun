@@ -1,6 +1,6 @@
 import { fail, redirect, type Actions } from "@sveltejs/kit";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import {
   canonicalAccountId,
   listAccounts,
@@ -41,17 +41,17 @@ const LIST_PATH = "/accounts";
 /** The four abilities both the chart and one account's page ask about. */
 function accountPerms(locals: App.Locals) {
   return {
-    add: hasPermission(locals, "accounts", "add"),
-    change: hasPermission(locals, "accounts", "change"),
-    delete: hasPermission(locals, "accounts", "delete"),
+    add: can(locals, "accounts.create"),
+    change: can(locals, "accounts.update"),
+    delete: can(locals, "accounts.delete"),
     // Whether to offer the way in to reconciling at all (FR-049).
-    reconcile: hasPermission(locals, "reconciliation", "view"),
+    reconcile: can(locals, "reconciliation.read"),
   };
 }
 
 /** The chart of accounts — all five types on one page (FR-022). */
 export function loadAccountsPage(locals: App.Locals) {
-  if (!hasPermission(locals, "accounts", "view"))
+  if (!can(locals, "accounts.read"))
     throw redirect(302, "/dashboard");
 
   const accounts = listAccounts(db, { includeArchived: true });
@@ -78,7 +78,7 @@ export function loadAccountsPage(locals: App.Locals) {
  * one place that decides which id is the real one.
  */
 export function loadAccountDetail(locals: App.Locals, requestedId: number) {
-  if (!hasPermission(locals, "accounts", "view"))
+  if (!can(locals, "accounts.read"))
     throw redirect(302, "/dashboard");
 
   const canonical = canonicalAccountId(db, requestedId);
@@ -99,7 +99,7 @@ export function loadAccountDetail(locals: App.Locals, requestedId: number) {
    * Only read when the user may reconcile at all; there is nothing to tell
    * somebody who cannot open the surface it points at.
    */
-  const unfinishedStatements = hasPermission(locals, "reconciliation", "view")
+  const unfinishedStatements = can(locals, "reconciliation.read")
     ? listStatementSummaries(db, locals).filter(
         (s) => !s.completed && s.accountId === canonical,
       ).length
@@ -129,7 +129,7 @@ const RECENT_LIMIT = 25;
 
 export const accountsActions: Actions = {
   create: async ({ locals, request }) => {
-    if (!hasPermission(locals, "accounts", "add"))
+    if (!can(locals, "accounts.create"))
       return fail(403, { error: "Forbidden" });
     const data = await request.formData();
 
@@ -156,7 +156,7 @@ export const accountsActions: Actions = {
   },
 
   update: async ({ locals, request }) => {
-    if (!hasPermission(locals, "accounts", "change"))
+    if (!can(locals, "accounts.update"))
       return fail(403, { error: "Forbidden" });
     const data = await request.formData();
     const id = parseInt(String(data.get("id") ?? "0"));
@@ -179,7 +179,7 @@ export const accountsActions: Actions = {
   },
 
   delete: async ({ locals, request }) => {
-    if (!hasPermission(locals, "accounts", "delete"))
+    if (!can(locals, "accounts.delete"))
       return fail(403, { error: "Forbidden" });
     const data = await request.formData();
     const id = parseInt(String(data.get("id") ?? "0"));
@@ -194,7 +194,7 @@ export const accountsActions: Actions = {
   },
 
   openingBalance: async ({ locals, request }) => {
-    if (!hasPermission(locals, "accounts", "change"))
+    if (!can(locals, "accounts.update"))
       return fail(403, { error: "Forbidden" });
     const data = await request.formData();
     const id = parseInt(String(data.get("id") ?? "0"));

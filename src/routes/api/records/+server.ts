@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { badRequest, forbidden } from "$lib/server/api-response.js";
 import { listRecords } from "$lib/server/queries/ledger.js";
 import type { LedgerRecordKindCode } from "$lib/enums.js";
@@ -142,7 +142,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   // that was a live hole: a record entered by hand is a `journal` kind, so it
   // was never covered by either check, and anyone with expense view read it
   // (research.md R-11).
-  if (!hasPermission(locals, "records", "view")) return forbidden();
+  if (!can(locals, "records.read")) return forbidden();
 
   const parsed = querySchema.safeParse(
     Object.fromEntries(url.searchParams.entries()),

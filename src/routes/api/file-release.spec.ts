@@ -46,7 +46,10 @@ vi.mock("$lib/server/db/client.js", () => ({
   },
 }));
 
-vi.mock("$lib/server/permissions.js", () => ({ hasPermission: () => true }));
+vi.mock("$lib/server/permissions.js", () => ({
+  can: () => true,
+  canAll: () => true,
+}));
 
 // Emitting a record update reads balances this bare database has no accounts
 // for; the event itself is not what these tests check.

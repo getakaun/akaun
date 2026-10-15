@@ -4,81 +4,60 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { toast } from 'svelte-sonner';
 	import {
-		Users,
 		Shield,
 		ShieldCheck,
 		AlertTriangle,
 		Plus,
 		Pencil,
 		Key,
-		RefreshCw,
 		Trash2,
 		X,
 		Lock,
 		MoreHorizontal,
-		UserPlus,
-		Copy,
-		Check
+		UserPlus
 	} from '@lucide/svelte';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
+	import AccessEditor from '$lib/components/permissions/AccessEditor.svelte';
+	import TokenList, {
+		type TokenOutcome,
+		type TokenRow
+	} from '$lib/components/permissions/TokenList.svelte';
+	import {
+		LEAF_PERMISSIONS,
+		isDelegable,
+		leafMeta,
+		type LeafPermission
+	} from '$lib/permissions/catalog.js';
 
 	// ─── Types ───────────────────────────────────────────────────────────────────
 
 	type GroupSummary = { id: number; name: string };
-	type PermSet = { view: boolean; add: boolean; change: boolean; delete: boolean };
 	type UserRow = {
 		id: number;
 		name: string | null;
 		email: string;
 		username: string;
-		hasBearerToken: boolean;
+		tokenCount: number;
 		groups: GroupSummary[];
 		isSuperuser: boolean;
-		permOverrides: Record<string, PermSet>;
+		extraGrants: LeafPermission[];
 		createdAt: string;
 	};
-	type PermGrid = Record<string, { view: boolean; add: boolean; change: boolean; delete: boolean }>;
 	type GroupRow = {
 		id: number;
 		name: string;
 		description: string;
 		isSuperuser: boolean;
-		locked: boolean;
-		permissions: PermGrid;
+		grants: LeafPermission[];
+		delegations: LeafPermission[];
 		memberCount: number;
+		/** Administrators: never renamed, changed or deleted. */
+		locked: boolean;
 	};
+	type UserTokens = { tokens: TokenRow[] };
 
-	// Mirrors ALL_RESOURCES in src/lib/server/permissions.ts, which is the rule.
-	const RESOURCES = [
-		{ id: 'dashboard', label: 'Dashboard', description: 'The opening summary of income, expenses and outstanding balances.' },
-		{
-			id: 'records',
-			label: 'Records',
-			description:
-				'Every transaction — income, expenses, transfers, payments and journal entries.'
-		},
-		{ id: 'import', label: 'Auto Import', description: 'Reading receipts and statements and turning them into records.' },
-		{ id: 'contacts', label: 'Contacts', description: 'The people and businesses records are attached to.' },
-		{ id: 'quotations', label: 'Quotations', description: 'Quotes written for customers, and turning an accepted one into an invoice.' },
-		{
-			id: 'invoices',
-			label: 'Invoices',
-			description:
-				'Invoices to customers. Changing one includes sending it, which records what the customer owes in the books.'
-		},
-		{ id: 'reconciliation', label: 'Reconciliation', description: 'Checking an account against the statement its bank sends.' },
-		{ id: 'accounts', label: 'Accounts', description: 'The chart of accounts: every asset, liability, equity, revenue and expense account.' },
-		{ id: 'reports', label: 'Reports', description: 'Profit and loss, balance sheet and partner statements. Viewing only — a report is never edited.' },
-		// Off for everyone by default: a record written this way can make the
-		// books say anything and still add up (FR-031a).
-		{
-			id: 'adjustments',
-			label: 'Adjustments',
-			description:
-				'Lets someone write a record between any two accounts, and add more than two sides. Needed for corrections and year-end adjustments. Grant it only to someone you trust with the books, because a record written this way can make the accounts say anything and still add up.'
-		}
-	] as const;
-	const ACTIONS = ['view', 'add', 'change', 'delete'] as const;
+	/** Every leaf a non-superuser group could be granted. */
+	const GRANTABLE = new Set(LEAF_PERMISSIONS.filter((leaf) => !leafMeta(leaf).superuserOnly));
 
 	// ─── Mobile detection ─────────────────────────────────────────────────────────
 
@@ -95,10 +74,9 @@
 
 	// Users tab
 	let editingUser = $state<Partial<UserRow> & { password?: string; groupIds?: number[] } | null>(null);
-	let editingUserPermOverrides = $state<Record<string, PermSet>>({});
+	let editingUserExtraGrants = $state<LeafPermission[]>([]);
 	let userSheetOpen = $state(false);
-	let newFullToken = $state<string | null>(null);
-	let tokenCopied = $state(false);
+	let userTokens = $state<UserTokens | null>(null);
 	let savingUser = $state(false);
 
 	// Groups tab
@@ -109,36 +87,19 @@
 	const selectedGroup = $derived(groupList.find((g) => g.id === selectedGroupId) ?? null);
 	const noGroupCount = $derived(userList.filter((u) => u.groups.length === 0).length);
 
-	const editingInheritedPerms = $derived((() => {
-		const result: Record<string, PermSet> = {};
-		for (const r of RESOURCES) result[r.id] = { view: false, add: false, change: false, delete: false };
-		if (!editingUser || editingUser.isSuperuser) return result;
-		for (const gid of editingUser.groupIds ?? []) {
-			const group = groupList.find((g) => g.id === gid);
-			if (!group) continue;
-			if (group.isSuperuser) {
-				for (const r of RESOURCES) result[r.id] = { view: true, add: true, change: true, delete: true };
-				return result;
-			}
-			for (const r of RESOURCES) {
-				const gp = group.permissions[r.id] ?? { view: false, add: false, change: false, delete: false };
-				for (const action of ACTIONS) {
-					if (gp[action as keyof typeof gp]) result[r.id][action] = true;
-				}
-			}
-		}
-		return result;
-	})());
+	/** What the user being edited already has from their groups. */
+	const editingInherited = $derived.by((): ReadonlySet<LeafPermission> => {
+		const chosen = groupList.filter((g) => (editingUser?.groupIds ?? []).includes(g.id));
+		if (chosen.some((g) => g.isSuperuser)) return new Set(LEAF_PERMISSIONS);
+		return new Set(chosen.flatMap((g) => g.grants));
+	});
 
 	// ─── Data loading ─────────────────────────────────────────────────────────────
 
 	async function loadAll() {
 		loading = true;
 		try {
-			const [usersRes, groupsRes] = await Promise.all([
-				fetch('/api/users'),
-				fetch('/api/groups')
-			]);
+			const [usersRes, groupsRes] = await Promise.all([fetch('/api/users'), fetch('/api/groups')]);
 			userList = await usersRes.json();
 			groupList = await groupsRes.json();
 			if (!selectedGroupId && groupList.length > 0) selectedGroupId = groupList[0].id;
@@ -165,24 +126,30 @@
 	}
 
 	function openNewUser() {
-		editingUser = { name: '', email: '', username: '', password: '', groupIds: [], permOverrides: {} };
-		editingUserPermOverrides = {};
-		newFullToken = null;
+		editingUser = { name: '', email: '', username: '', password: '', groupIds: [], extraGrants: [] };
+		editingUserExtraGrants = [];
+		userTokens = null;
 		userSheetOpen = true;
+	}
+
+	async function loadUserTokens(userId: number) {
+		const res = await fetch(`/api/users/${userId}/tokens`);
+		userTokens = res.ok ? await res.json() : null;
 	}
 
 	function openEditUser(u: UserRow) {
 		editingUser = { ...u, password: '', groupIds: u.groups.map((g) => g.id) };
-		editingUserPermOverrides = { ...u.permOverrides };
-		newFullToken = null;
+		editingUserExtraGrants = [...u.extraGrants];
+		userTokens = null;
 		userSheetOpen = true;
+		loadUserTokens(u.id);
 	}
 
 	function closeUserSheet() {
 		userSheetOpen = false;
 		editingUser = null;
-		editingUserPermOverrides = {};
-		newFullToken = null;
+		editingUserExtraGrants = [];
+		userTokens = null;
 	}
 
 	function toggleGroup(gid: number) {
@@ -194,11 +161,14 @@
 		};
 	}
 
-	async function saveUserPermOverrides(userId: number) {
-		await fetch(`/api/users/${userId}/permissions`, {
-			method: 'PATCH',
+	async function saveUserGrants(userId: number) {
+		await fetch(`/api/users/${userId}/grants`, {
+			method: 'PUT',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(editingUserPermOverrides)
+			// Only what the groups do not already give: a user grant only adds.
+			body: JSON.stringify({
+				grants: editingUserExtraGrants.filter((leaf) => !editingInherited.has(leaf))
+			})
 		});
 	}
 
@@ -230,7 +200,7 @@
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ groupIds: editingUser.groupIds })
 				});
-				await saveUserPermOverrides(id);
+				await saveUserGrants(id);
 				toast.success('User created');
 			} else {
 				const patch: Record<string, unknown> = {};
@@ -246,12 +216,18 @@
 						body: JSON.stringify(patch)
 					});
 				}
-				await fetch(`/api/users/${editingUser.id}/groups`, {
+				const groupsRes = await fetch(`/api/users/${editingUser.id}/groups`, {
 					method: 'PATCH',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ groupIds: editingUser.groupIds })
 				});
-				await saveUserPermOverrides(editingUser.id!);
+				if (!groupsRes.ok) {
+					// The last superuser cannot leave: the sheet stays open to fix it.
+					const err = await groupsRes.json().catch(() => null);
+					toast.error(err?.error ?? 'Could not save the groups');
+					return;
+				}
+				await saveUserGrants(editingUser.id!);
 				toast.success('User saved');
 			}
 			closeUserSheet();
@@ -275,42 +251,15 @@
 		}
 	}
 
-	async function regenerateToken(u: UserRow) {
-		const res = await fetch(`/api/users/${u.id}`, {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ regenerateToken: true })
-		});
-		const data = await res.json();
-		if (data.newToken) {
-			newFullToken = data.newToken;
-			if (editingUser?.id === u.id) {
-				editingUser = { ...editingUser, hasBearerToken: true };
-			}
-			toast.success('New token generated — copy it now');
-			await loadAll();
-		}
-	}
+	// ─── Tokens (administrator) ───────────────────────────────────────────────────
 
-	async function revokeToken(userId: number) {
-		await fetch(`/api/users/${userId}`, {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ revokeToken: true })
-		});
-		toast.success('Token revoked');
-		if (editingUser?.id === userId) {
-			editingUser = { ...editingUser, hasBearerToken: false };
-		}
-		newFullToken = null;
+	async function tokenRequest(url: string, init: RequestInit): Promise<TokenOutcome> {
+		const res = await fetch(url, init);
+		const body = res.status === 204 ? null : await res.json().catch(() => null);
+		if (editingUser?.id) await loadUserTokens(editingUser.id);
 		await loadAll();
-	}
-
-	async function copyToken() {
-		if (!newFullToken) return;
-		await navigator.clipboard.writeText(newFullToken);
-		tokenCopied = true;
-		setTimeout(() => (tokenCopied = false), 2000);
+		if (!res.ok) return { error: body?.error ?? body?.reason ?? 'That did not work.' };
+		return {};
 	}
 
 	// ─── Group helpers ────────────────────────────────────────────────────────────
@@ -319,21 +268,23 @@
 		name: string;
 		description: string;
 		isSuperuser: boolean;
-		permissions: PermGrid;
+		grants: LeafPermission[];
+		delegations: LeafPermission[];
 	};
+
+	function draftOf(g: GroupRow): GroupDraft {
+		return {
+			name: g.name,
+			description: g.description,
+			isSuperuser: g.isSuperuser,
+			grants: [...g.grants],
+			delegations: [...g.delegations]
+		};
+	}
 	let groupDraft = $state<GroupDraft | null>(null);
 
 	$effect(() => {
-		if (selectedGroup) {
-			groupDraft = {
-				name: selectedGroup.name,
-				description: selectedGroup.description,
-				isSuperuser: selectedGroup.isSuperuser,
-				permissions: JSON.parse(JSON.stringify(selectedGroup.permissions))
-			};
-		} else {
-			groupDraft = null;
-		}
+		groupDraft = selectedGroup ? draftOf(selectedGroup) : null;
 	});
 
 	const isDirty = $derived(
@@ -343,7 +294,8 @@
 			groupDraft.name !== selectedGroup.name ||
 			groupDraft.description !== selectedGroup.description ||
 			groupDraft.isSuperuser !== selectedGroup.isSuperuser ||
-			JSON.stringify(groupDraft.permissions) !== JSON.stringify(selectedGroup.permissions)
+			JSON.stringify(groupDraft.grants) !== JSON.stringify(selectedGroup.grants) ||
+			JSON.stringify(groupDraft.delegations) !== JSON.stringify(selectedGroup.delegations)
 		)
 	);
 
@@ -382,11 +334,19 @@
 			}
 
 			if (!groupDraft.isSuperuser) {
-				await fetch(`/api/groups/${selectedGroup.id}/permissions`, {
-					method: 'PATCH',
+				const res = await fetch(`/api/groups/${selectedGroup.id}/access`, {
+					method: 'PUT',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify(groupDraft.permissions)
+					body: JSON.stringify({
+						grants: groupDraft.grants,
+						delegations: groupDraft.delegations
+					})
 				});
+				if (!res.ok) {
+					const err = await res.json().catch(() => null);
+					toast.error(err?.error ?? 'Failed to save permissions');
+					return;
+				}
 			}
 
 			await loadAll();
@@ -397,14 +357,7 @@
 	}
 
 	function resetGroupDraft() {
-		if (selectedGroup) {
-			groupDraft = {
-				name: selectedGroup.name,
-				description: selectedGroup.description,
-				isSuperuser: selectedGroup.isSuperuser,
-				permissions: JSON.parse(JSON.stringify(selectedGroup.permissions))
-			};
-		}
+		if (selectedGroup) groupDraft = draftOf(selectedGroup);
 	}
 
 	async function deleteGroup(g: GroupRow) {
@@ -419,51 +372,27 @@
 	}
 
 	function grantCount(g: GroupRow) {
-		return RESOURCES.reduce((s, r) => {
-			const p = g.permissions[r.id];
-			if (!p) return s;
-			return s + ACTIONS.filter((a) => p[a]).length;
-		}, 0);
+		return g.grants.length;
 	}
 
-	function rowAll(resource: string): boolean {
-		if (!groupDraft) return false;
-		const perms = groupDraft.permissions[resource];
-		if (!perms) return false;
-		return ACTIONS.every((a) => perms[a as keyof typeof perms]);
-	}
-
-	function rowSome(resource: string): boolean {
-		if (!groupDraft) return false;
-		const perms = groupDraft.permissions[resource];
-		if (!perms) return false;
-		return ACTIONS.some((a) => perms[a as keyof typeof perms]) && !rowAll(resource);
-	}
-
-	function toggleRowAll(resource: string, val: boolean) {
+	/** Changing the grants trims the ceiling: a group can only hand on what it has. */
+	function setGrants(next: LeafPermission[]) {
 		if (!groupDraft) return;
+		const granted = new Set(next);
 		groupDraft = {
 			...groupDraft,
-			permissions: {
-				...groupDraft.permissions,
-				[resource]: { view: val, add: val, change: val, delete: val }
-			}
+			grants: next,
+			delegations: groupDraft.delegations.filter((leaf) => granted.has(leaf))
 		};
 	}
 
-	function togglePermDraft(resource: string, action: string, val: boolean) {
-		if (!groupDraft) return;
-		groupDraft = {
-			...groupDraft,
-			permissions: {
-				...groupDraft.permissions,
-				[resource]: {
-					...(groupDraft.permissions[resource] ?? { view: false, add: false, change: false, delete: false }),
-					[action]: val
-				}
-			}
-		};
+	function setDelegations(next: LeafPermission[]) {
+		if (groupDraft) groupDraft = { ...groupDraft, delegations: next };
 	}
+
+	const delegableForDraft = $derived(
+		new Set((groupDraft?.grants ?? []).filter((leaf) => isDelegable(leaf)))
+	);
 </script>
 
 <svelte:head>
@@ -498,7 +427,7 @@
 			</button>
 		</div>
 		{#if activeTab === 'groups'}
-			<span class="ax-hint">Superusers bypass the grid · most-permissive-wins across a user's groups</span>
+			<span class="ax-hint">Superusers hold every permission · a user has everything any of their groups grants</span>
 		{/if}
 	</div>
 
@@ -512,9 +441,11 @@
 					<b>{userList.length}</b> user{userList.length !== 1 ? 's' : ''} ·
 					<b>{noGroupCount}</b> without a group
 				</div>
-				<Button size="sm" onclick={openNewUser}>
-					<UserPlus size={15} /> Add user
-				</Button>
+				<div class="ax-meta-actions">
+					<Button size="sm" onclick={openNewUser}>
+						<UserPlus size={15} /> Add user
+					</Button>
+				</div>
 			</div>
 
 			<div class="table-card">
@@ -524,7 +455,7 @@
 							<th>User</th>
 							<th>Groups</th>
 							<th>Access</th>
-							<th>API token</th>
+							<th>Tokens</th>
 							<th>Created</th>
 							<th style="width:44px"></th>
 						</tr>
@@ -544,7 +475,7 @@
 								<td data-label="Groups">
 									{#if u.groups.length > 0}
 										<div class="ax-chips">
-											{#each u.groups as g}
+											{#each u.groups as g (g.id)}
 												<span class="chip" class:is-super={groupList.find((x) => x.id === g.id)?.isSuperuser}>
 													{g.name}
 												</span>
@@ -564,8 +495,8 @@
 									{/if}
 								</td>
 								<td data-label="Token">
-									{#if u.hasBearerToken}
-										<span class="ax-token"><Key size={13} /> Configured</span>
+									{#if u.tokenCount > 0}
+										<span class="ax-token"><Key size={13} /> {u.tokenCount} active</span>
 									{:else}
 										<span class="muted-sm">None</span>
 									{/if}
@@ -580,14 +511,6 @@
 											<button class="dd-item" onclick={() => openEditUser(u)}>
 												<Pencil size={14} /> Edit user
 											</button>
-											<button class="dd-item" onclick={() => regenerateToken(u)}>
-												<RefreshCw size={14} /> {u.hasBearerToken ? 'Regenerate' : 'Issue'} API token
-											</button>
-											{#if u.hasBearerToken}
-												<button class="dd-item" onclick={() => revokeToken(u.id)}>
-													<X size={14} /> Revoke token
-												</button>
-											{/if}
 											<button class="dd-item danger" onclick={() => deleteUser(u)}>
 												<Trash2 size={14} /> Remove user
 											</button>
@@ -666,7 +589,7 @@
 								</div>
 							{/if}
 							<div class="ax-grouppick">
-								{#each groupList as g}
+								{#each groupList as g (g.id)}
 									<label class="ax-pick" class:on={(editingUser.groupIds ?? []).includes(g.id)}>
 										<input
 											type="checkbox"
@@ -688,94 +611,36 @@
 							</div>
 
 							{#if !editingUser.isSuperuser}
-								<div class="detail-section-label">Permissions</div>
-								<p class="field-hint" style="margin:0">Permissions inherited from groups are shown disabled. Check additional permissions to grant this user extra access.</p>
-								<div class="ax-userperm">
-									<table class="ax-perm ax-perm-user">
-										<thead>
-											<tr>
-												<th class="res">Resource</th>
-												{#each ACTIONS as action}
-													<th>{action.charAt(0).toUpperCase() + action.slice(1)}</th>
-												{/each}
-											</tr>
-										</thead>
-										<tbody>
-											{#each RESOURCES as r}
-												<tr class="ax-resrow">
-													<td>
-														<span class="ax-resname">{r.label}</span>
-														<span class="ax-resdesc">{r.description}</span>
-													</td>
-													{#each ACTIONS as action}
-														{@const inherited = editingInheritedPerms[r.id]?.[action] ?? false}
-														{@const extra = editingUserPermOverrides[r.id]?.[action] ?? false}
-														<td>
-															<div class="ax-permcellwrap">
-																<input
-																	type="checkbox"
-																	class="perm-cb"
-																	checked={inherited || extra}
-																	disabled={inherited}
-																	onchange={(e) => {
-																		if (inherited) return;
-																		const checked = (e.target as HTMLInputElement).checked;
-																		const cur = editingUserPermOverrides[r.id] ?? { view: false, add: false, change: false, delete: false };
-																		const updated = { ...cur, [action]: checked };
-																		const hasAny = ACTIONS.some((a) => updated[a]);
-																		if (hasAny) {
-																			editingUserPermOverrides = { ...editingUserPermOverrides, [r.id]: updated };
-																		} else {
-																			const copy = { ...editingUserPermOverrides };
-																			delete copy[r.id];
-																			editingUserPermOverrides = copy;
-																		}
-																	}}
-																/>
-															</div>
-														</td>
-													{/each}
-												</tr>
-											{/each}
-										</tbody>
-									</table>
-								</div>
+								<div class="detail-section-label">Extra permissions</div>
+								<p class="field-hint" style="margin:0">
+									What this user's groups grant is already on, and cannot be taken away here.
+									Raise a level or switch on an ability to give this user alone more. Extra
+									permissions are never handed on to the user's tokens or apps.
+								</p>
+								<AccessEditor
+									value={editingUserExtraGrants}
+									onchange={(next) => (editingUserExtraGrants = next)}
+									available={GRANTABLE}
+									inherited={editingInherited}
+								/>
 							{/if}
 
 							{#if editingUser.id}
-								<div class="detail-section-label">API Token</div>
-								{#if newFullToken}
-									<div class="ax-token-reveal">
-										<div class="ax-token-reveal-header">
-											<Key size={13} /> New token — copy now
-										</div>
-										<div class="ax-token-reveal-body">
-											<code class="ax-token-code">{newFullToken}</code>
-											<button class="ax-token-copy" onclick={copyToken} title="Copy token">
-												{#if tokenCopied}<Check size={15} />{:else}<Copy size={15} />{/if}
-											</button>
-										</div>
-										<p class="ax-token-warn-text">This token won't be shown again. Store it securely.</p>
-									</div>
-								{:else if editingUser.hasBearerToken}
-									<div class="ax-token-existing">
-										<code class="codepill">API token configured</code>
-										<div class="ax-token-btns">
-											<Button variant="outline" size="sm" onclick={() => regenerateToken(editingUser as UserRow)}>
-												<RefreshCw size={13} /> Regenerate
-											</Button>
-											<Button variant="ghost" size="sm" class="text-destructive hover:bg-destructive/10" onclick={() => revokeToken(editingUser!.id!)}>
-												<X size={13} /> Revoke
-											</Button>
-										</div>
-									</div>
+								<div class="detail-section-label">Personal access tokens</div>
+								{#if userTokens}
+									<p class="field-hint" style="margin:0">
+										Only the user can make a token, signed in as themselves. You can revoke theirs.
+									</p>
+									<TokenList
+										tokens={userTokens.tokens}
+										emptySub="This user has not made any tokens."
+										onrevoke={(id) =>
+											tokenRequest(`/api/users/${editingUser!.id}/tokens/${id}`, { method: 'DELETE' })}
+										onrevokeall={() =>
+											tokenRequest(`/api/users/${editingUser!.id}/tokens`, { method: 'DELETE' })}
+									/>
 								{:else}
-									<div class="ax-token-empty">
-										<span class="muted-sm">No API token issued</span>
-										<Button variant="outline" size="sm" onclick={() => regenerateToken(editingUser as UserRow)}>
-											<Key size={13} /> Issue token
-										</Button>
-									</div>
+									<span class="muted-sm">Loading tokens…</span>
 								{/if}
 							{/if}
 						</div>
@@ -839,9 +704,9 @@
 				</div>
 
 				<div class="ax-permhead">
-					<div class="detail-section-label" style="margin: 4px 0 0">Permissions</div>
+					<div class="detail-section-label" style="margin: 4px 0 0">Members can</div>
 					{#if !groupDraft?.isSuperuser}
-						<span class="ax-permcount">{grantCount(g)} of {RESOURCES.length * ACTIONS.length} granted</span>
+						<span class="ax-permcount">{groupDraft?.grants.length ?? 0} of {GRANTABLE.size} granted</span>
 					{/if}
 				</div>
 
@@ -849,63 +714,38 @@
 					<div class="ax-bypass">
 						<div class="ax-bypass-icon"><ShieldCheck size={20} /></div>
 						<div>
-							<div class="ax-bypass-title">Grid bypassed</div>
-							<div class="ax-bypass-desc">Superusers are granted every action on every resource automatically. System areas — settings, user &amp; group management and backup/restore — are available to superusers only and never appear in the grid below.</div>
+							<div class="ax-bypass-title">Every permission</div>
+							<div class="ax-bypass-desc">Superusers hold every permission, including managing users and groups, which no other group can be given. Their tokens and apps may be given anything except user management — and are still limited to what each token or app was granted.</div>
 						</div>
 					</div>
-				{:else}
-					<div class="ax-permcard">
-						<table class="ax-perm">
-							<thead>
-								<tr>
-									<th class="res">Resource</th>
-									<th class="col-all">All</th>
-									{#each ACTIONS as action}
-										<th>{action.charAt(0).toUpperCase() + action.slice(1)}</th>
-									{/each}
-								</tr>
-							</thead>
-							<tbody>
-								{#each RESOURCES as r}
-									{@const perms = groupDraft?.permissions[r.id] ?? { view: false, add: false, change: false, delete: false }}
-									<tr class="ax-resrow">
-										<td>
-														<span class="ax-resname">{r.label}</span>
-														<span class="ax-resdesc">{r.description}</span>
-													</td>
-										<td>
-											<div class="ax-permcellwrap">
-												<input
-													type="checkbox"
-													class="perm-cb perm-cb-all"
-													checked={rowAll(r.id)}
-													indeterminate={rowSome(r.id)}
-													onchange={(e) => toggleRowAll(r.id, (e.target as HTMLInputElement).checked)}
-												/>
-											</div>
-										</td>
-										{#each ACTIONS as action}
-											<td>
-												<div class="ax-permcellwrap">
-													<input
-														type="checkbox"
-														class="perm-cb"
-														checked={perms[action as keyof typeof perms]}
-														onchange={(e) => togglePermDraft(r.id, action, (e.target as HTMLInputElement).checked)}
-													/>
-												</div>
-											</td>
-										{/each}
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-
+				{:else if groupDraft}
+					<AccessEditor
+						value={groupDraft.grants}
+						onchange={setGrants}
+						available={GRANTABLE}
+						disabled={g.locked}
+					/>
 					<p class="ax-permnote">
-						<Lock size={12} /> Reports is view-only: a report shows figures and never changes
-						them, so <b>Add</b>, <b>Change</b> and <b>Delete</b> have no effect there.
+						<Lock size={12} /> No level includes Adjustments. It has its own switch, so it is only ever
+						given on purpose.
 					</p>
+
+					<div class="ax-permhead">
+						<div class="detail-section-label" style="margin: 4px 0 0">Members may hand on to tokens &amp; apps</div>
+						<span class="ax-permcount">{groupDraft.delegations.length} of {delegableForDraft.size}</span>
+					</div>
+					<p class="field-hint" style="margin:0">
+						The most a member's personal access tokens and connected AI apps may do. Members choose less
+						for each token or app; nothing outside this can ever be chosen. Only what the group grants
+						above can be handed on.
+					</p>
+					<AccessEditor
+						value={groupDraft.delegations}
+						onchange={setDelegations}
+						available={delegableForDraft}
+						disabled={g.locked}
+						unavailableNote="Not granted to this group."
+					/>
 				{/if}
 			</div>
 		{/snippet}
@@ -1058,6 +898,13 @@
 		margin-left: auto;
 	}
 
+
+	.ax-meta-actions {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		flex-wrap: wrap;
+	}
 
 	/* ── Body ── */
 	.ax-body {
@@ -1238,92 +1085,6 @@
 	.ax-pick-name { font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
 	.ax-pick-desc { font-size: 12px; color: var(--muted-foreground); }
 
-	/* ── API Token UI ── */
-	.codepill {
-		font-family: var(--font-mono, monospace);
-		font-size: 11.5px;
-		background: var(--muted);
-		border: 1px solid var(--border);
-		border-radius: 4px;
-		padding: 2px 7px;
-	}
-	.ax-token-reveal {
-		background: oklch(0.97 0.04 60 / 0.7);
-		border: 1px solid oklch(0.8 0.12 60);
-		border-radius: var(--radius);
-		padding: 12px 14px;
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-	}
-	:global(.dark) .ax-token-reveal {
-		background: oklch(0.22 0.04 60 / 0.5);
-		border-color: oklch(0.45 0.1 60);
-	}
-	.ax-token-reveal-header {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		font-size: 12.5px;
-		font-weight: 600;
-		color: oklch(0.45 0.15 55);
-	}
-	:global(.dark) .ax-token-reveal-header { color: oklch(0.75 0.1 60); }
-	.ax-token-reveal-body {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		background: var(--card);
-		border: 1px solid var(--border);
-		border-radius: calc(var(--radius) - 2px);
-		padding: 8px 10px;
-	}
-	.ax-token-code {
-		font-family: var(--font-mono, monospace);
-		font-size: 11.5px;
-		flex: 1;
-		word-break: break-all;
-		color: var(--foreground);
-	}
-	.ax-token-copy {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		flex-shrink: 0;
-		background: var(--primary);
-		color: var(--primary-foreground);
-		border: none;
-		border-radius: calc(var(--radius) - 2px);
-		cursor: pointer;
-	}
-	.ax-token-copy:hover { opacity: 0.9; }
-	.ax-token-warn-text {
-		font-size: 11.5px;
-		color: oklch(0.5 0.12 50);
-		margin: 0;
-	}
-	:global(.dark) .ax-token-warn-text { color: oklch(0.7 0.1 60); }
-	.ax-token-existing {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		flex-wrap: wrap;
-	}
-	.ax-token-btns {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		margin-left: auto;
-	}
-	.ax-token-empty {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 10px;
-		padding: 10px 0 4px;
-	}
 
 	/* ── Buttons ── */
 	.btn-outline-icon {
@@ -1463,47 +1224,6 @@
 	.ax-bypass-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
 	.ax-bypass-desc { font-size: 12.5px; color: var(--muted-foreground); line-height: 1.5; }
 
-	/* ── Permission grid ── */
-	.ax-permcard {
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		overflow: hidden;
-	}
-	.ax-perm {
-		width: 100%;
-		border-collapse: collapse;
-		table-layout: fixed;
-	}
-	.ax-perm th {
-		padding: 8px 12px;
-		font-size: 12px;
-		font-weight: 600;
-		color: var(--muted-foreground);
-		background: var(--muted);
-		text-align: center;
-		border-bottom: 1px solid var(--border);
-	}
-	.ax-perm th.res { width: 140px; text-align: left; }
-	.ax-perm th.col-all { color: var(--foreground); }
-	.ax-resrow td {
-		padding: 9px 12px;
-		border-bottom: 1px solid var(--border);
-		font-size: 13px;
-	}
-	.ax-resrow:last-child td { border-bottom: none; }
-	.ax-resname { font-weight: 500; display: block; }
-	/* FR-031e — `adjustments` is unguessable from its name alone. */
-	.ax-resdesc {
-		display: block;
-		margin-top: 2px;
-		max-width: 340px;
-		font-size: 12px;
-		line-height: 1.4;
-		color: var(--muted-foreground);
-	}
-	.ax-permcellwrap { display: flex; justify-content: center; }
-	.perm-cb { width: 15px; height: 15px; accent-color: var(--primary); cursor: pointer; }
-	.perm-cb-all { accent-color: var(--foreground); }
 	.ax-permnote {
 		display: flex;
 		align-items: center;
@@ -1522,14 +1242,6 @@
 		border-top: 1px solid var(--border);
 		margin-top: 4px;
 	}
-
-	/* ── User permission overrides ── */
-	.ax-userperm {
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		overflow: clip;
-	}
-	.perm-cb:disabled { opacity: 0.4; cursor: not-allowed; }
 
 	/* ── Spinner ── */
 	.spinner.xs { width: 12px; height: 12px; }
@@ -1566,11 +1278,6 @@
 
 		/* Group list: no border, full width */
 		.ax-glist { border-right: none; padding: 4px 0; }
-
-		/* Permission grid: horizontal scroll inside sheets */
-		.ax-permcard { overflow-x: auto; }
-		.ax-userperm { overflow-x: auto; }
-		.ax-perm { min-width: 500px; }
 
 		/* .set-row collides with the global Settings-page class of the same
 		   name, which stacks it vertically on mobile; keep it left-aligned

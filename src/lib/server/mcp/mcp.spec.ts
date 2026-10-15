@@ -16,13 +16,12 @@ import {
   accounts,
   auditLog,
   contacts,
-  groups,
-  groupPermissions,
+  groupGrants,
+  personalAccessTokens,
   importQueue,
   ledgerRecords,
   recordAttachments,
   settlements,
-  userGroups,
   users,
 } from "../db/schema.js";
 import { seedAccounts } from "../db/seed-accounts.js";
@@ -33,7 +32,10 @@ import { reindexContact } from "../queries/contacts.js";
 import { listRecords } from "../queries/ledger.js";
 import { EntityType, ImportState, Role } from "$lib/enums.js";
 import type { LedgerDb, RecordCreate, RecordView } from "../ledger/types.js";
-import { bearerLocals } from "../bearer-auth.js";
+import { patLocals } from "../tokens/pat.js";
+import { revokeAllTokens } from "../tokens/manage.js";
+import { grantGroup, issueTestToken } from "../permissions/test-locals.js";
+import { TOOL_REQUIREMENTS } from "./tool-requirements.js";
 import { handleMcpRequest } from "./http.js";
 import { LocalBlobStore } from "../storage/blob-store.js";
 import { hit, reset } from "../rate-limit.js";
@@ -61,9 +63,10 @@ let storageRoot: string;
 let store: LocalBlobStore;
 const clients: Client[] = [];
 const origin = "https://akaun.test";
-const fullToken = "test-full-read-token";
-const directoryToken = "test-directory-only-token";
-const importToken = "test-import-only-token";
+// Personal access tokens, issued in the fixture below with each user's reads.
+let fullToken: string;
+let directoryToken: string;
+let importToken: string;
 let contactId: number;
 let expense: RecordView;
 let payment: RecordView;
@@ -98,46 +101,38 @@ beforeEach(() => {
         email: "read@test",
         username: "read",
         passwordHash: "unused",
-        bearerToken: fullToken,
       },
       {
         id: 2,
         email: "directory@test",
         username: "directory",
         passwordHash: "unused",
-        bearerToken: directoryToken,
       },
       {
         id: 3,
         email: "import@test",
         username: "import",
         passwordHash: "unused",
-        bearerToken: importToken,
       },
     ])
     .run();
-  db.insert(groups)
-    .values([
-      { id: 1, name: "readers" },
-      { id: 2, name: "directory" },
-      { id: 3, name: "import" },
-    ])
-    .run();
-  db.insert(userGroups)
-    .values([
-      { userId: 1, groupId: 1 },
-      { userId: 2, groupId: 2 },
-      { userId: 3, groupId: 3 },
-    ])
-    .run();
-  db.insert(groupPermissions)
-    .values([
-      ...["records", "accounts", "contacts", "reports", "import"].map(
-        (resource) => ({ groupId: 1, resource, canView: true }),
-      ),
-      { groupId: 2, resource: "contacts", canView: true },
-      { groupId: 3, resource: "import", canView: true },
-    ])
+  const fullReads = [
+    "records.read",
+    "accounts.read",
+    "contacts.read",
+    "reports.read",
+    "import.read",
+  ];
+  grantGroup(db, { name: "readers", userIds: [1], grants: fullReads });
+  grantGroup(db, { name: "directory", userIds: [2], grants: ["contacts.read"] });
+  grantGroup(db, { name: "import", userIds: [3], grants: ["import.read"] });
+  fullToken = issueTestToken(db, 1, fullReads);
+  directoryToken = issueTestToken(db, 2, ["contacts.read"]);
+  importToken = issueTestToken(db, 3, ["import.read"]);
+  // Marked as used just now, so reads under query_only never need to write
+  // last_used_at (it is written at most once a minute).
+  db.update(personalAccessTokens)
+    .set({ lastUsedAt: Date.now() + 60 * 60_000 })
     .run();
   seedAccounts(db);
   setSetting(db, SETTING_KEYS.currencyCode, "MYR");
@@ -251,7 +246,7 @@ afterEach(async () => {
 });
 
 function actor(token = fullToken) {
-  const locals = bearerLocals(db, `Bearer ${token}`);
+  const locals = patLocals(db, `Bearer ${token}`);
   if (!locals) throw new Error("Fixture actor missing");
   return locals;
 }
@@ -276,17 +271,13 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         fetch: async (url, init) => {
           const request = new Request(url, init);
           const observedRequest = exchanges ? request.clone() : undefined;
-          const locals = bearerLocals(db, request.headers.get("Authorization"));
+          const locals = patLocals(db, request.headers.get("Authorization"));
           const response = await handleMcpRequest(
             request,
             {
               db,
               store,
-              locals: locals ?? {
-                user: null,
-                permissions: null,
-                isSuperuser: false,
-              },
+              locals: locals ?? { user: null, permissions: null },
             },
             origin,
           );
@@ -529,7 +520,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       });
     });
 
-    // An API token without MCP_BEARER_WRITES sees reads only, as in phase one.
+    // A personal access token with reads only sees reads only.
     it("connects with the official HTTP client and exposes only the twelve read tools", async () => {
       const client = await connect();
       expect(client.getServerVersion()?.name).toBe("akaun");
@@ -572,15 +563,15 @@ for (const era of ["legacy", "modern", "auto"] as const) {
     });
 
     it("rejects missing/bad tokens and revocation, independently of the user's role label", () => {
-      expect(bearerLocals(db, null)).toBeNull();
-      expect(bearerLocals(db, "Bearer wrong")).toBeNull();
-      expect(bearerLocals(db, "Basic x")).toBeNull();
-      expect(bearerLocals(db, `bearer ${directoryToken}`)?.isSuperuser).toBe(
+      expect(patLocals(db, null)).toBeNull();
+      expect(patLocals(db, "Bearer wrong")).toBeNull();
+      expect(patLocals(db, "Basic x")).toBeNull();
+      expect(patLocals(db, `bearer ${directoryToken}`)?.role?.isSuperuser).toBe(
         false,
       );
       sqlite.exec("PRAGMA query_only = OFF");
-      db.update(users).set({ bearerToken: null }).where(eq(users.id, 1)).run();
-      expect(bearerLocals(db, `Bearer ${fullToken}`)).toBeNull();
+      revokeAllTokens(db, 1);
+      expect(patLocals(db, `Bearer ${fullToken}`)).toBeNull();
     });
 
     it("returns 401 instead of a browser redirect and refuses cross-origin requests", async () => {
@@ -589,7 +580,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         {
           db,
           store,
-          locals: { user: null, permissions: null, isSuperuser: false },
+          locals: { user: null, permissions: null },
         },
         origin,
       );
@@ -716,7 +707,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       clients.push(client);
       await server.connect(serverTransport);
       await client.connect(clientTransport);
-      locals.permissions!.records.view = false;
+      (locals.permissions as Set<string>).delete("records.read");
       const result = await call(client, "get_record", { recordId: expense.id });
       expect(result).toMatchObject({ isError: true });
       expect(JSON.stringify(result)).toContain("FORBIDDEN");
@@ -727,9 +718,8 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       const client = await connect();
       expect((await client.listTools()).tools).toHaveLength(12);
       sqlite.exec("PRAGMA query_only = OFF");
-      db.update(groupPermissions)
-        .set({ canView: false })
-        .where(eq(groupPermissions.resource, "records"))
+      db.delete(groupGrants)
+        .where(eq(groupGrants.permission, "records.read"))
         .run();
       sqlite.exec("PRAGMA query_only = ON");
       await expect(call(client, "list_records")).rejects.toMatchObject({
@@ -746,7 +736,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       const client = await connect();
       await client.listTools();
       sqlite.exec("PRAGMA query_only = OFF");
-      db.update(users).set({ bearerToken: null }).where(eq(users.id, 1)).run();
+      revokeAllTokens(db, 1);
       sqlite.exec("PRAGMA query_only = ON");
       await expect(call(client, "list_records")).rejects.toThrow();
       await expect(client.listTools()).rejects.toThrow();
@@ -755,14 +745,20 @@ for (const era of ["legacy", "modern", "auto"] as const) {
     it("bounds output and sanitizes unexpected failures", async () => {
       const server = new McpServer({ name: "budget-test", version: "1" });
       const context: McpContext = { db, store, locals: actor() };
-      registerRead(server, context, "large", ["records"], "budget", {}, () => ({
+      // Tools that exist only for this test, given a requirement for it.
+      for (const name of ["large", "duplicated", "broken"])
+        TOOL_REQUIREMENTS[name] = {
+          scopes: ["records:read"],
+          permissions: ["records.read"],
+          writes: false,
+        };
+      registerRead(server, context, "large", "budget", {}, () => ({
         text: "x".repeat(512 * 1024),
       }));
       registerRead(
         server,
         context,
         "duplicated",
-        ["records"],
         "complete result budget",
         {},
         () => ({ text: "x".repeat(Math.floor(MAX_RESPONSE_BYTES * 0.6)) }),
@@ -771,7 +767,6 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         server,
         context,
         "broken",
-        ["records"],
         "failure",
         { id: z.number() },
         () => {
@@ -794,6 +789,8 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       expect(result).toContain("INTERNAL_ERROR");
       expect(result).not.toContain("secret");
       expect(result).not.toContain("/private/database");
+      for (const name of ["large", "duplicated", "broken"])
+        delete TOOL_REQUIREMENTS[name];
       await server.close();
     });
   });

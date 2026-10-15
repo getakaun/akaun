@@ -1,6 +1,10 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
-	import { Copy, Check, RefreshCw, Trash2, KeyRound, GripVertical } from '@lucide/svelte';
+	import { deserialize, enhance } from '$app/forms';
+	import { invalidateAll, replaceState } from '$app/navigation';
+	import { page } from '$app/state';
+	import { resolve } from '$app/paths';
+	import TokenList, { type TokenOutcome } from '$lib/components/permissions/TokenList.svelte';
+	import { GripVertical } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
@@ -13,7 +17,23 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	type Tab = 'profile' | 'security' | 'token' | 'navigation' | 'apps';
-	let activeTab = $state<Tab>('profile');
+	const TAB_IDS: Tab[] = ['profile', 'security', 'token', 'navigation', 'apps'];
+
+	// The open tab is kept in the address (`?tab=token`), as on Settings, so the
+	// New token page's way back lands on the list it came from.
+	function tabFromUrl(): Tab {
+		const asked = page.url.searchParams.get('tab') as Tab | null;
+		return asked && TAB_IDS.includes(asked) ? asked : 'profile';
+	}
+	let activeTab = $state<Tab>(tabFromUrl());
+
+	function showTab(id: Tab) {
+		activeTab = id;
+		const path = resolve('/(app)/profile');
+		// A shallow replace: the tab is page state, not a new page to go back to.
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- route is resolved above; only the tab is appended.
+		replaceState(id === 'profile' ? path : `${path}?tab=${id}`, page.state);
+	}
 
 	// Navigation tab state — local reorderable copy, synced from data
 	type NavPrefItem = { id: string; label: string; showOnMobile: boolean };
@@ -76,11 +96,29 @@
 	let confirmPassword = $state('');
 	let passwordMismatch = $derived(confirmPassword.length > 0 && newPassword !== confirmPassword);
 
-	// Token tab state — derived from data; only revealedToken is local state
-	const hasBearerToken = $derived(data.hasBearerToken);
-	const maskedToken = $derived(data.maskedToken);
-	let revealedToken = $state<string | null>(null);
-	let copied = $state(false);
+	/**
+	 * Posts one of this page's token form actions and refreshes the page data.
+	 * Form actions, not an API: they are reached only from a signed-in browser.
+	 */
+	async function tokenAction(action: string, fields: Record<string, string>): Promise<TokenOutcome> {
+		const body = new FormData();
+		for (const [key, value] of Object.entries(fields)) body.set(key, value);
+		const response = await fetch(`?/${action}`, {
+			method: 'POST',
+			body,
+			headers: { 'x-sveltekit-action': 'true' }
+		});
+		const result = deserialize(await response.text());
+		await invalidateAll();
+		if (result.type === 'success') {
+			const token = (result.data as { newToken?: string } | undefined)?.newToken;
+			toast.success(token ? 'Token regenerated — copy the new secret now' : 'Token revoked');
+			return { token };
+		}
+		if (result.type === 'failure')
+			return { error: (result.data as { error?: string } | undefined)?.error ?? 'That did not work.' };
+		return { error: 'That did not work.' };
+	}
 
 	$effect(() => {
 		if (!form) return;
@@ -91,14 +129,6 @@
 			currentPassword = '';
 			newPassword = '';
 			confirmPassword = '';
-		} else if (form.action === 'token' && form.success) {
-			if (form.newToken) {
-				revealedToken = form.newToken;
-				toast.success('New API token generated — copy it now');
-			} else {
-				revealedToken = null;
-				toast.success('API token revoked');
-			}
 		} else if (form.action === 'apps' && form.success) {
 			toast.success('App access revoked');
 		} else if (form.action === 'navigation') {
@@ -107,17 +137,10 @@
 		}
 	});
 
-	async function copyToken() {
-		if (!revealedToken) return;
-		await navigator.clipboard.writeText(revealedToken);
-		copied = true;
-		setTimeout(() => (copied = false), 2000);
-	}
-
 	const TABS: { id: Tab; label: string }[] = [
 		{ id: 'profile', label: 'Profile' },
 		{ id: 'security', label: 'Security' },
-		{ id: 'token', label: 'API Token' },
+		{ id: 'token', label: 'Access tokens' },
 		{ id: 'apps', label: 'Connected apps' },
 		{ id: 'navigation', label: 'Navigation' }
 	];
@@ -137,11 +160,11 @@
 
 	<div class="set-layout">
 		<nav class="set-nav">
-			{#each TABS as tab}
+			{#each TABS as tab (tab.id)}
 				<button
 					class="set-nav-item"
 					class:active={activeTab === tab.id}
-					onclick={() => (activeTab = tab.id)}
+					onclick={() => showTab(tab.id)}
 				>
 					{tab.label}
 				</button>
@@ -298,59 +321,19 @@
 			{:else if activeTab === 'token'}
 				<div class="set-section">
 					<div class="set-section-head">
-						<h2 class="set-section-title">API Token</h2>
-						<p class="set-section-sub">Use this token to authenticate API requests with a Bearer header</p>
+						<h2 class="set-section-title">Access tokens</h2>
+						<p class="set-section-sub">
+							Personal access tokens let a script or an AI assistant use Akaun as you, with only the
+							permissions you give each one. Send one in an <code>Authorization: Bearer</code> header.
+						</p>
 					</div>
-
-					{#if revealedToken}
-						<div class="token-reveal">
-							<div class="token-warn">
-								<KeyRound size={13} />
-								Copy this token now — it will not be shown again.
-							</div>
-							<div class="token-box">
-								<code class="token-value">{revealedToken}</code>
-								<Button variant="ghost" size="sm" onclick={copyToken}>
-									{#if copied}
-										<Check size={14} /> Copied
-									{:else}
-										<Copy size={14} /> Copy
-									{/if}
-								</Button>
-							</div>
-						</div>
-					{:else if hasBearerToken}
-						<div class="set-rows">
-							<div class="set-row">
-								<div class="set-row-label">Active token</div>
-								<code class="token-masked">{maskedToken}</code>
-							</div>
-						</div>
-					{:else}
-						<div class="set-rows">
-							<div class="set-row">
-								<div class="set-row-label">Token</div>
-								<div class="set-row-value" style="color:var(--muted-foreground); font-size:13px;">No token issued</div>
-							</div>
-						</div>
-					{/if}
-
-					<div class="token-actions">
-						<form method="POST" action="?/regenerateToken" use:enhance>
-							<Button type="submit" variant="outline" size="sm">
-								<RefreshCw size={13} />
-								{hasBearerToken ? 'Regenerate token' : 'Generate token'}
-							</Button>
-						</form>
-						{#if hasBearerToken}
-							<form method="POST" action="?/revokeToken" use:enhance>
-								<Button type="submit" variant="ghost" size="sm" class="text-destructive">
-									<Trash2 size={13} />
-									Revoke token
-								</Button>
-							</form>
-						{/if}
-					</div>
+					<TokenList
+						tokens={data.tokens}
+						newHref={resolve('/(app)/profile/tokens/new')}
+						onregenerate={(id) => tokenAction('regenerateToken', { tokenId: String(id) })}
+						onrevoke={(id) => tokenAction('revokeToken', { tokenId: String(id) })}
+						onrevokeall={() => tokenAction('revokeAllTokens', {})}
+					/>
 				</div>
 
 			{:else if activeTab === 'navigation'}
@@ -404,55 +387,6 @@
 		margin: 10px 16px 0;
 		font-size: 12px;
 		color: var(--red);
-	}
-
-	.token-reveal {
-		margin: 0 0 16px;
-	}
-
-	.token-warn {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 8px 12px;
-		background: var(--amber-soft);
-		border: 1px solid var(--amber);
-		border-radius: var(--radius);
-		font-size: 12px;
-		color: var(--amber);
-		margin-bottom: 8px;
-	}
-
-	.token-box {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		background: var(--muted);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		padding: 10px 12px;
-	}
-
-	.token-value {
-		flex: 1;
-		min-width: 0;
-		font-family: "Geist Mono", ui-monospace, monospace;
-		font-size: 12px;
-		word-break: break-all;
-		color: var(--foreground);
-	}
-
-	.token-masked {
-		font-family: "Geist Mono", ui-monospace, monospace;
-		font-size: 13px;
-		color: var(--muted-foreground);
-		letter-spacing: 0.02em;
-	}
-
-	.token-actions {
-		display: flex;
-		gap: 8px;
-		margin: 16px 0 0;
 	}
 
 	.nav-pref-list {

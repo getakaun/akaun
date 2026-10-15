@@ -1,12 +1,12 @@
 import type { RequestHandler } from '@sveltejs/kit';
 import { db } from '$lib/server/db/client.js';
 import { getQuotation } from '$lib/server/queries/quotations.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import { can } from '$lib/server/permissions.js';
 import { deleteQuotation, updateQuotation } from '$lib/server/application/sales.js';
 import { toResponse } from '$lib/server/application/http.js';
 
 export const GET: RequestHandler = async ({ locals, params }) => {
-	if (!hasPermission(locals, 'quotations', 'view')) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'quotations.read')) return new Response('Forbidden', { status: 403 });
 	const id = parseInt(params.id!);
 	const quotation = getQuotation(db, id);
 	if (!quotation) return Response.json({ error: 'Not found' }, { status: 404 });

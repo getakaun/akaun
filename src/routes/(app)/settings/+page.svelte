@@ -1296,6 +1296,15 @@
 
 		<!-- Content -->
 		<div class="set-content">
+			{#if !data.canManageSettings}
+				<p class="set-readonly-note">
+					You can see settings but not change them. An administrator can give you the Settings › Manage
+					permission on Users &amp; Groups.
+				</p>
+			{/if}
+			<!-- Every control is read-only without settings.manage; the server refuses the saves anyway.
+			     The Books tab is the exception: its integrity check reads, and asks only reports.read. -->
+			<fieldset class="set-fieldset" disabled={!data.canManageSettings && activeTab !== 'books'}>
 			{#if activeTab === 'general'}
 				<div class="set-section">
 					<div class="set-section-head">
@@ -2113,6 +2122,7 @@
 					</div>
 				</div>
 			{/if}
+			</fieldset>
 		</div>
 	</div>
 </div>
@@ -2794,4 +2804,19 @@
 	}
 	.layout-static-name { font-size: 13px; font-weight: 600; color: var(--foreground); }
 	.layout-static-desc { font-size: 12px; color: var(--muted-foreground); }
+	.set-fieldset {
+		border: none;
+		margin: 0;
+		padding: 0;
+		min-width: 0;
+	}
+	.set-readonly-note {
+		font-size: 13px;
+		color: var(--muted-foreground);
+		background: var(--muted);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		padding: 10px 12px;
+		margin: 0 0 16px;
+	}
 </style>

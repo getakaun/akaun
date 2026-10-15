@@ -3,11 +3,11 @@ import { db } from '$lib/server/db/client.js';
 import { listQuotations } from '$lib/server/queries/quotations.js';
 import { createQuotation } from '$lib/server/application/sales.js';
 import { toResponse } from '$lib/server/application/http.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import { can } from '$lib/server/permissions.js';
 
 
 export const GET: RequestHandler = async ({ locals, url }) => {
-	if (!hasPermission(locals, 'quotations', 'view')) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'quotations.read')) return new Response('Forbidden', { status: 403 });
 	const p = url.searchParams;
 	const statusRaw = p.get('status');
 	const contactIdRaw = p.get('contactId');

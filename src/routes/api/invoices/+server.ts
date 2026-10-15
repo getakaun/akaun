@@ -3,11 +3,11 @@ import { db } from '$lib/server/db/client.js';
 import { listInvoices } from '$lib/server/queries/invoices.js';
 import { createInvoice } from '$lib/server/application/sales.js';
 import { toResponse } from '$lib/server/application/http.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import { can } from '$lib/server/permissions.js';
 
 
 export const GET: RequestHandler = async ({ locals, url }) => {
-	if (!hasPermission(locals, 'invoices', 'view')) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'invoices.read')) return new Response('Forbidden', { status: 403 });
 	const p = url.searchParams;
 	const statusRaw = p.get('status');
 	const contactIdRaw = p.get('contactId');

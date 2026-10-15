@@ -1,3 +1,4 @@
+import { can } from '$lib/server/permissions.js';
 import { getRebuildStatus } from '$lib/server/search-rebuild/worker.js';
 import { searchRebuildEvents } from '$lib/server/search-rebuild/events.js';
 import type { RebuildStatus } from '$lib/server/search-rebuild/worker.js';
@@ -5,6 +6,7 @@ import type { RequestHandler } from './$types.js';
 
 export const GET: RequestHandler = ({ locals }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
+	if (!can(locals, 'settings.manage')) return new Response('Forbidden', { status: 403 });
 
 	const encoder = new TextEncoder();
 	const encodeEvent = (data: object) => encoder.encode(`data: ${JSON.stringify(data)}\n\n`);

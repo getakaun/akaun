@@ -3,7 +3,6 @@ import {
   db,
   ensureDefaultAdmin,
   ensureGroupSeed,
-  applyRecordsPermission,
 } from "$lib/server/db/client.js";
 import { seedAccounts } from "$lib/server/db/seed-accounts.js";
 import { setLogLevel } from "$lib/server/logger.js";
@@ -16,11 +15,10 @@ if (env.LOG_LEVEL) setLogLevel(env.LOG_LEVEL);
 
 export const init = async () => {
   await ensureDefaultAdmin();
+  // `applyRecordsPermission()` ran here, merging the old `expenses` and
+  // `income` grid rows into `records`. Migration 0033 now reads those names
+  // itself when it converts the grid to permission strings.
   ensureGroupSeed();
-  // Beside the group seed, because it finishes the same job: the seed writes the
-  // `records` ability for a fresh install, and this rewrites the two abilities it
-  // replaces for an existing one (FR-029).
-  applyRecordsPermission();
   // The chart of accounts a new installation starts with. An installation that
   // had books already has every seeded code by now — `db/auto-upgrade.ts` runs
   // before this, at module load in `createDb()`, and `migrateAccountChart` either

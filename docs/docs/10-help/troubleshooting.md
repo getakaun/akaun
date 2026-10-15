@@ -126,13 +126,14 @@ See [Install Akaun](../01-getting-started/install.md#environment-variables).
 ### Cause
 
 The user has no **View** permission on **Records**. After the sign-in, Akaun tries **Records**,
-then the **Dashboard**, and then opens **Settings**. These users see this:
+then the **Dashboard**, and then opens **Settings**. For example, a user in the **Data Entry** group
+only sees this. This group can add records, but it has no **View** permission on **Records**.
 
-- A user in no group. Such a user has no permissions, and extra permissions have no effect. The
-  sidebar shows no screens.
+If the user also has no **View** permission on **Settings**, Akaun opens their **Profile**
+instead. These users see this:
+
+- A user in no group, and with no extra permissions.
 - A user in a group with no permissions, for example a group that stops access.
-- A user in the **Data Entry** group only. This group can add records, but it has no **View**
-  permission on **Records**.
 
 A user who opens Akaun from the home screen of a phone can also see **Settings**. The home-screen
 icon opens the **Dashboard**, and only **Administrators** have **View** on **Dashboard**. Click
@@ -164,11 +165,13 @@ conditions.
 | **New record** | You have no **Add** permission on **Records**. |
 | **Delete** or **Take this back** | You have no **Delete** permission on **Records**. No group except **Administrators** gives it. |
 | **Users & Groups** | Only a superuser sees it. |
+| **Settings** in the sidebar | You have no **View** permission on **Settings**. |
+| The fields and the **Save** buttons in **Settings** | You have no **Manage** permission on **Settings**. A note at the top of the page tells this. The groups that Akaun makes do not give it. |
 | **Reconcile** on an account page | You have no **View** permission on **Reconciliation**, or the account is inactive. |
 | The **Books** tab in **Settings** | You have no **View** permission on **Reports**. |
-| **Quotations** and **Invoices** | You have no **View** permission on these areas. A group that you make has none until you select them in the permission grid. |
-| **Convert** on a quotation | The status is not **Sent** or **Accepted**. Or you do not have **Change** on **Quotations** and **Add** on **Invoices**. |
-| **Cancel invoice** | The invoice is a draft, or a payment is recorded against it. Or you have no **Change** permission on **Invoices**. |
+| **Quotations** and **Invoices** | You have no **View** permission on these areas. A group that you make has none until you choose a level for them in the group. |
+| **Convert** on a quotation | The status is not **Sent** or **Accepted**. Or you do not have **Convert** on **Quotations** and **Add** on **Invoices**. |
+| **Cancel invoice** | The invoice is a draft, or a payment is recorded against it. Or you do not have **Void** on **Invoices** and **Change** on **Records**. |
 | **Record payment** on an invoice | The invoice is a draft, is cancelled or is fully paid. Or you have no **Add** permission on **Records**. |
 | The **Partners' Equity** tab | No contact has the **Partner** role. |
 | **Pay all outstanding** | The business owes money to one contact only, or to none. Or you have no **Add** permission on **Records**. |
@@ -182,10 +185,31 @@ Ask a superuser for the permission. See
 [Permissions explained](../09-administration/permissions-explained.md).
 
 **Confirm & import** and **Skip** show for all users, but Akaun refuses them without the
-**Change** permission on **Auto Import**. **Read again** shows only with the **Add** and **Change**
-permissions on **Auto Import**. The **Bookkeeper** group does not give **Change** on
-**Auto Import**. See
+**Confirm** permission on **Auto Import**. **Read again** shows only with the **Upload** and
+**Change** permissions on **Auto Import**. The **Bookkeeper** group does not give **Change** or
+**Confirm** on **Auto Import**. See
 [Users and groups](../09-administration/users-and-groups.md#the-groups-that-akaun-makes).
+
+## API tokens were replaced by personal access tokens
+
+The full message is "API tokens were replaced by personal access tokens. Create one under Profile →
+Access tokens." A program or an AI assistant gets this message, and it cannot connect.
+
+### Cause
+
+The program uses an API token of an older version of Akaun. The upgrade revoked all these tokens.
+They do not work any more.
+
+### What to do
+
+1. Open your profile, and click the **Access tokens** tab.
+2. Make a new token with only the permissions that the program needs. See
+   [Make a token](../09-administration/your-profile.md#make-a-token).
+3. In the program, replace the old token with the new token. The new token starts with `akp_`.
+
+If **Permissions** offers nothing, ask your administrator to let your group hand on permissions to
+tokens and apps. See
+[What members may hand on](../09-administration/users-and-groups.md#what-members-may-hand-on).
 
 ## The amount, the date or the account of a record is read only
 
@@ -211,7 +235,7 @@ Remove each thing that locks the record.
 8. Change the record.
 
 **Take this back** needs the **Delete** permission on **Records**. **Save & Next** and **Save**
-need the **Change** permission on **Reconciliation**. You can still change the
+need the **Match** permission on **Reconciliation**. You can still change the
 description, contact, reference, remark and attachments of a locked record. On a locked expense or
 income, you can also change the categories.
 
@@ -358,7 +382,7 @@ this message.
 2. On **Auto Import**, click **Read again** on each failed row.
 3. In the dialog, click **Read again**.
 
-**Read again** needs the **Add** and **Change** permissions on **Auto Import**.
+**Read again** needs the **Upload** and **Change** permissions on **Auto Import**.
 
 A spreadsheet that a **Table rows** import profile reads does not need a provider. See
 [Import profiles](../04-auto-import/import-profiles.md).

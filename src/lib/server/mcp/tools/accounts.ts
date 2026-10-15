@@ -59,7 +59,6 @@ export function registerAccounts(server: McpServer, context: McpContext) {
     server,
     context,
     "list_accounts",
-    ["accounts"],
     "Discover accounts and categories (categories are accounts). Balances are current signed ledger amounts; displayBalanceMinor applies the app's normal-balance sign. Archived accounts are optionally included. The chart is small and is read as one set before output paging.",
     {
       ...pageShape,
@@ -98,7 +97,6 @@ export function registerAccounts(server: McpServer, context: McpContext) {
     server,
     context,
     "get_account_statement",
-    ["records"],
     "Read an account's chronological movements and signed running balances. Dates are inclusive. No offset or additional filters: skipping movements would corrupt running balances. When truncated, returnedClosingBalanceMinor is only through returned rows; periodClosingBalanceMinor is null. Narrow dates to obtain a complete statement.",
     {
       accountId: id,

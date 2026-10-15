@@ -36,7 +36,6 @@ export function registerContacts(server: McpServer, context: McpContext) {
     server,
     context,
     "list_contacts",
-    ["contacts"],
     "Find contacts by name or indexed directory details, role and entity type. Returns directory information only, not financial balances. For money owed use get_contact_balance, which also requires records view.",
     {
       ...pageShape,
@@ -77,7 +76,6 @@ export function registerContacts(server: McpServer, context: McpContext) {
     server,
     context,
     "get_contact_balance",
-    ["contacts", "records"],
     "Read CURRENT outstanding amounts for one contact: owed to us, we owe, and net (positive means owed to us). Derived from movements and settlements, not a historical balance. Use list_outstanding or list_records for supporting records.",
     { contactId: id },
     (input) => {
@@ -107,7 +105,6 @@ export function registerContacts(server: McpServer, context: McpContext) {
     server,
     context,
     "list_outstanding",
-    ["records"],
     "List CURRENT open receivable/payable sides and their remaining amounts. Includes unallocated payments under the app's existing outstanding rules. Full-filter totalOutstandingMinor is independent of paging. Ageing uses today (UTC); it does not reconstruct historical balances.",
     {
       ...pageShape,

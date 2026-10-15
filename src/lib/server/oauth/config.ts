@@ -1,59 +1,13 @@
-/**
- * What an MCP client can be granted. Three tiers per resource, each asked for
- * by name and each confirmed separately on the consent screen:
- *
- * - `:read` — what the user can view.
- * - `:write` — add and change. Never implied by a read grant.
- * - `:delete` — permanent removal, kept apart from `:write` so a client allowed
- *   to record things is not thereby allowed to destroy them.
- *
- * `reports` is read-only everywhere (CLAUDE.md, Permissions). `adjustments`
- * has no scope of its own: it is an RBAC-only extra under `records:write`, so
- * a client never holds more than the signed-in user can do.
- */
-export const READ_SCOPES = [
-  "records:read",
-  "accounts:read",
-  "contacts:read",
-  "reports:read",
-  "import:read",
-  "invoices:read",
-  "quotations:read",
-  "reconciliation:read",
-] as const;
-export const WRITE_RESOURCES = [
-  "records",
-  "accounts",
-  "contacts",
-  "invoices",
-  "quotations",
-  "reconciliation",
-  "import",
-] as const;
-export const WRITE_SCOPES = [
-  "records:write",
-  "accounts:write",
-  "contacts:write",
-  "invoices:write",
-  "quotations:write",
-  "reconciliation:write",
-  "import:write",
-] as const;
-export const DELETE_SCOPES = [
-  "records:delete",
-  "accounts:delete",
-  "contacts:delete",
-  "invoices:delete",
-  "quotations:delete",
-  "reconciliation:delete",
-  "import:delete",
-] as const;
-export const OAUTH_SCOPES = [
-  ...READ_SCOPES,
-  ...WRITE_SCOPES,
-  ...DELETE_SCOPES,
-] as const;
-export type OAuthScope = (typeof OAUTH_SCOPES)[number];
+// The scope strings, and what each expands to, live in
+// `$lib/permissions/oauth-scopes.ts` so the consent page can read them too.
+export {
+  DELETE_SCOPES,
+  OAUTH_SCOPES,
+  READ_SCOPES,
+  WRITE_RESOURCES,
+  WRITE_SCOPES,
+  type OAuthScope,
+} from "$lib/permissions/oauth-scopes.js";
 export type OAuthConfig = { issuer: string; resource: string };
 
 /** Public identity is configuration, never caller-controlled Host headers. */

@@ -1,3 +1,4 @@
+import { can } from '$lib/server/permissions.js';
 import { json } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { db } from '$lib/server/db/client.js';
@@ -14,6 +15,7 @@ interface ModelInfo {
 
 export const GET: RequestHandler = async ({ params, locals, fetch }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
+	if (!can(locals, 'settings.manage')) return new Response('Forbidden', { status: 403 });
 
 	const provider = db.select().from(llmProviders).where(eq(llmProviders.id, params.id)).get();
 	if (!provider) return new Response('Not found', { status: 404 });

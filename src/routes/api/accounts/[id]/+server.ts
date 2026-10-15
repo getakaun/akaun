@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import {
   badRequest,
   forbidden,
@@ -59,7 +59,7 @@ function accountId(params: { id: string }): number | null {
 }
 
 export const GET: RequestHandler = async ({ locals, params }) => {
-  if (!hasPermission(locals, "accounts", "view")) return forbidden();
+  if (!can(locals, "accounts.read")) return forbidden();
   const id = accountId(params as { id: string });
   if (id === null) return notFound("That account no longer exists.");
 
@@ -69,7 +69,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 };
 
 export const PATCH: RequestHandler = async ({ locals, params, request }) => {
-  if (!hasPermission(locals, "accounts", "change")) return forbidden();
+  if (!can(locals, "accounts.update")) return forbidden();
   const id = accountId(params as { id: string });
   if (id === null) return notFound("That account no longer exists.");
 
@@ -82,7 +82,7 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 };
 
 export const DELETE: RequestHandler = async ({ locals, params }) => {
-  if (!hasPermission(locals, "accounts", "delete")) return forbidden();
+  if (!can(locals, "accounts.delete")) return forbidden();
   const id = accountId(params as { id: string });
   if (id === null) return notFound("That account no longer exists.");
 

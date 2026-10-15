@@ -1,10 +1,10 @@
 import { contactEvents } from '$lib/server/finance/events.js';
 import type { RequestHandler } from './$types.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import { can } from '$lib/server/permissions.js';
 
 export const GET: RequestHandler = ({ locals }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'contacts', 'view')) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'contacts.read')) return new Response('Forbidden', { status: 403 });
 
 	const encoder = new TextEncoder();
 	const encodeEvent = (data: object) => encoder.encode(`data: ${JSON.stringify(data)}\n\n`);

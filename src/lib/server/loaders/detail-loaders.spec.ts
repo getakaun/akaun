@@ -45,10 +45,19 @@ vi.mock("$lib/server/env.js", () => ({
   OCR_CACHE_PATH: "/dev/null",
 }));
 
-vi.mock("$lib/server/permissions.js", () => ({
-  hasPermission: (_locals: unknown, resource: string, action: string) =>
-    holder.allow(resource, action),
-}));
+vi.mock("$lib/server/permissions.js", async () => {
+  // The fake answers in the old grid's terms; each leaf is asked as the
+  // (resource, action) it came from.
+  const { legacyPairOf } = await import("$lib/server/permissions/legacy-map.js");
+  const allow = (resource: string, action: string) =>
+    holder.allow(resource, action);
+  return {
+    can: (_locals: unknown, permission: string) =>
+      allow(...legacyPairOf(permission)),
+    canAll: (_locals: unknown, permissions: string[]) =>
+      permissions.every((permission) => allow(...legacyPairOf(permission))),
+  };
+});
 
 /**
  * What the detail loaders promise, tested against the queries they are built
@@ -318,6 +327,7 @@ describe("import group detail", () => {
     expect(loaded.items.map((i) => i.id)).toEqual(["a", "b", "c"]);
     expect(loaded.perms).toEqual({
       change: true,
+      confirm: true,
       delete: false,
       readAgain: true,
     });

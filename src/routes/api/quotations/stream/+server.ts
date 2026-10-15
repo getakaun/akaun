@@ -1,5 +1,5 @@
 import type { RequestHandler } from "./$types.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { forbidden } from "$lib/server/api-response.js";
 import { quotationEvents } from "$lib/server/finance/events.js";
 import { eventStream } from "$lib/server/sse-stream.js";
@@ -16,7 +16,7 @@ import { eventStream } from "$lib/server/sse-stream.js";
  */
 export const GET: RequestHandler = ({ locals }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "quotations", "view")) return forbidden();
+  if (!can(locals, "quotations.read")) return forbidden();
 
   return eventStream([
     {

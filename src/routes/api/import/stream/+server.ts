@@ -6,13 +6,13 @@ import { jobEvents } from '$lib/server/import/group-state.js';
 import type { ImportItemEvent, ImportJobEvent } from '$lib/server/import/job-event.js';
 import { ImportState } from '$lib/enums.js';
 import type { RequestHandler } from './$types.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import { can } from '$lib/server/permissions.js';
 
 const TERMINAL_STATES = [ImportState.Confirmed, ImportState.Skipped];
 
 export const GET: RequestHandler = ({ locals }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'import', 'view')) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'import.read')) return new Response('Forbidden', { status: 403 });
 
 	const encoder = new TextEncoder();
 

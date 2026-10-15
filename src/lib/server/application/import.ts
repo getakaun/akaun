@@ -25,10 +25,10 @@ import {
  * Auto Import's review step as authorized operations.
  *
  * Confirming turns a reviewed document into a record, yet asks only for
- * `import:change` — deliberately, as the REST routes do (006 FR-045: "Confirm
- * checks `import.change` only, not `records.add`"). The record stays the
- * uploader's, as it always was (`ImportJobSource.uploadedBy`); the audit trail
- * names whoever confirmed it.
+ * `import.confirm` — deliberately, as the REST routes do (006 FR-045: confirm
+ * needs the import ability only, never `records.create`). The record stays
+ * the uploader's, as it always was (`ImportJobSource.uploadedBy`); the audit
+ * trail names whoever confirmed it.
  *
  * Every file path goes through `ctx.storageRoot`, never the configured default,
  * so a test can never touch the real `data/storage`.
@@ -74,7 +74,7 @@ export async function confirmImport(
   },
   expectedVersion?: string,
 ): Promise<AppResult<Record<string, unknown>>> {
-  const refused = requirePermissions(ctx, [["import", "change"]]);
+  const refused = requirePermissions(ctx, ["import.confirm"]);
   if (refused) return refused;
   const storage = root(ctx);
   if (!storage.ok) return storage;
@@ -143,7 +143,7 @@ export function skipImport(
   input: { itemIds?: string[]; all?: boolean },
   expectedVersion?: string,
 ): AppResult<Record<string, unknown>> {
-  const refused = requirePermissions(ctx, [["import", "change"]]);
+  const refused = requirePermissions(ctx, ["import.confirm"]);
   if (refused) return refused;
   const storage = root(ctx);
   if (!storage.ok) return storage;
@@ -188,7 +188,7 @@ export function updateImportItem(
   overrides: z.output<typeof reviewOverridesSchema>,
   expectedVersion?: string,
 ): AppResult<Record<string, unknown>> {
-  const refused = requirePermissions(ctx, [["import", "change"]]);
+  const refused = requirePermissions(ctx, ["import.update"]);
   if (refused) return refused;
   const item = ctx.db
     .select({ jobId: importItems.jobId })
@@ -220,7 +220,7 @@ export function discardImportJob(
   jobId: string,
   expectedVersion?: string,
 ): AppResult<{ jobId: string }> {
-  const refused = requirePermissions(ctx, [["import", "delete"]]);
+  const refused = requirePermissions(ctx, ["import.delete"]);
   if (refused) return refused;
   const storage = root(ctx);
   if (!storage.ok) return storage;

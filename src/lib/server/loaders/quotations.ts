@@ -3,16 +3,16 @@ import { db } from '$lib/server/db/client.js';
 import { getQuotation, listQuotations } from '$lib/server/queries/quotations.js';
 import { removeQuotation } from '$lib/server/services/quotations.js';
 import { fail, redirect } from '@sveltejs/kit';
-import { hasPermission } from '$lib/server/permissions.js';
+import { can } from '$lib/server/permissions.js';
 import { documentDefaults } from '$lib/server/sales/defaults.js';
 
 export function loadQuotationsPage(locals: App.Locals) {
-	if (!hasPermission(locals, 'quotations', 'view')) throw redirect(302, '/dashboard');
+	if (!can(locals, 'quotations.read')) throw redirect(302, '/dashboard');
 	// The tab counts are worked out on the page, from the live list the stream
 	// keeps current.
 	return {
 		quotations: listQuotations(db, { limit: 1000 }),
-		perms: { add: hasPermission(locals, 'quotations', 'add') }
+		perms: { add: can(locals, 'quotations.create') }
 	};
 }
 
@@ -24,7 +24,7 @@ export function loadQuotationsPage(locals: App.Locals) {
  * that would 403 on submit.
  */
 export function loadQuotationNew(locals: App.Locals) {
-	if (!hasPermission(locals, 'quotations', 'add')) throw redirect(302, '/quotations');
+	if (!can(locals, 'quotations.create')) throw redirect(302, '/quotations');
 	// Days from the issue date to the expiry date a new quotation starts with;
 	// null when the setting is empty (no expiry).
 	return { defaultDays: documentDefaults(db).quotationValidDays };
@@ -37,7 +37,7 @@ export function loadQuotationNew(locals: App.Locals) {
  * opening — so the table a reader came for arrived a moment after the panel.
  */
 export function loadQuotationDetail(locals: App.Locals, id: number) {
-	if (!hasPermission(locals, 'quotations', 'view')) throw redirect(302, '/dashboard');
+	if (!can(locals, 'quotations.read')) throw redirect(302, '/dashboard');
 
 	const quotation = getQuotation(db, id);
 	if (!quotation) throw redirect(302, '/quotations');
@@ -45,22 +45,22 @@ export function loadQuotationDetail(locals: App.Locals, id: number) {
 	return {
 		quotation,
 		perms: {
-			change: hasPermission(locals, 'quotations', 'change'),
-			delete: hasPermission(locals, 'quotations', 'delete'),
-			// Converting changes the quotation and adds an invoice — both, the
-			// same pair the convert endpoint checks.
+			change: can(locals, 'quotations.update'),
+			delete: can(locals, 'quotations.delete'),
+			// Converting makes an invoice from this quotation — the same pair the
+			// convert endpoint checks.
 			convert:
-				hasPermission(locals, 'quotations', 'change') && hasPermission(locals, 'invoices', 'add'),
-			// Revising adds a quotation and changes this one.
+				can(locals, 'quotations.convert') && can(locals, 'invoices.create'),
+			// Revising adds a new quotation in this one's place.
 			revise:
-				hasPermission(locals, 'quotations', 'add') && hasPermission(locals, 'quotations', 'change')
+				can(locals, 'quotations.revise') && can(locals, 'quotations.create')
 		}
 	};
 }
 
 export const quotationsActions: Actions = {
 	delete: async ({ locals, request }) => {
-		if (!hasPermission(locals, 'quotations', 'delete')) return fail(403, { error: 'Forbidden' });
+		if (!can(locals, 'quotations.delete')) return fail(403, { error: 'Forbidden' });
 		const userId = locals.user!.id;
 		const data = await request.formData();
 		const id = parseInt(String(data.get('id') ?? '0'));

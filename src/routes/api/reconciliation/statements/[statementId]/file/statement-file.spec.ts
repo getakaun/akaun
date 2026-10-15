@@ -20,10 +20,19 @@ vi.mock("$lib/server/env.js", () => ({
 vi.mock("$lib/server/db/client.js", () => ({ db: {} }));
 
 const allowed = { view: true };
-vi.mock("$lib/server/permissions.js", () => ({
-  hasPermission: (_locals: unknown, resource: string, action: string) =>
-    resource === "reconciliation" && action === "view" && allowed.view,
-}));
+vi.mock("$lib/server/permissions.js", async () => {
+  // The fake answers in the old grid's terms; each leaf is asked as the
+  // (resource, action) it came from.
+  const { legacyPairOf } = await import("$lib/server/permissions/legacy-map.js");
+  const allow = (resource: string, action: string) =>
+    resource === "reconciliation" && action === "view" && allowed.view;
+  return {
+    can: (_locals: unknown, permission: string) =>
+      allow(...legacyPairOf(permission)),
+    canAll: (_locals: unknown, permissions: string[]) =>
+      permissions.every((permission) => allow(...legacyPairOf(permission))),
+  };
+});
 
 const statements: Record<
   number,

@@ -10,13 +10,15 @@
 		user,
 		activePage,
 		unpaidCount = 0,
-		isSuperuser = false,
+		canManageUsers = false,
+		canSeeSettings = false,
 		navItems = []
 	}: {
 		user: { username: string; name?: string | null; email?: string } | null;
 		activePage: string;
 		unpaidCount?: number;
-		isSuperuser?: boolean;
+		canManageUsers?: boolean;
+		canSeeSettings?: boolean;
 		navItems?: SerializableNavItem[];
 	} = $props();
 
@@ -110,7 +112,7 @@
 
 	<div class="sb-spacer"></div>
 
-	{#if isSuperuser}
+	{#if canManageUsers}
 		<div class="sb-section">
 			{#if !collapsed}<div class="sb-section-label">Administration</div>{/if}
 			<nav class="sb-nav">
@@ -131,15 +133,17 @@
 
 	<div class="sb-section">
 		<nav class="sb-nav">
-			<a
-				href="/settings"
-				class="sb-item"
-				class:active={isActive('/settings')}
-				title={collapsed ? 'Settings' : undefined}
-			>
-				<Settings size={18} />
-				{#if !collapsed}<span class="sb-item-label">Settings</span>{/if}
-			</a>
+			{#if canSeeSettings}
+				<a
+					href="/settings"
+					class="sb-item"
+					class:active={isActive('/settings')}
+					title={collapsed ? 'Settings' : undefined}
+				>
+					<Settings size={18} />
+					{#if !collapsed}<span class="sb-item-label">Settings</span>{/if}
+				</a>
+			{/if}
 			<button class="sb-item sb-theme" title="Toggle theme" onclick={toggleTheme}>
 				{#if isDark}
 					<Moon size={18} />

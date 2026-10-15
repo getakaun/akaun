@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { badRequest, forbidden } from "$lib/server/api-response.js";
 import { outstandingAgeing } from "$lib/server/queries/settlements.js";
 import { isValidDate } from "$lib/server/date.js";
@@ -23,7 +23,7 @@ const createSchema = z.object(settleShape).strict();
  * into age bands for the views; neither caller has to ask twice.
  */
 export const GET: RequestHandler = async ({ locals, url }) => {
-  if (!hasPermission(locals, "records", "view")) return forbidden();
+  if (!can(locals, "records.read")) return forbidden();
 
   const p = url.searchParams;
   const direction =
@@ -44,7 +44,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 };
 
 export const POST: RequestHandler = async ({ locals, request }) => {
-  if (!hasPermission(locals, "records", "add")) return forbidden();
+  if (!can(locals, "records.create")) return forbidden();
 
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return badRequest(parsed.error);

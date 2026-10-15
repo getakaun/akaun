@@ -1,6 +1,6 @@
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { badRequest, forbidden } from "$lib/server/api-response.js";
 import { partnerStatementCsv } from "$lib/server/ledger/reports/csv.js";
 import { partnerStatementReport } from "$lib/server/queries/reports.js";
@@ -16,7 +16,7 @@ import {
  * out, over a date range (FR-027).
  */
 export const GET: RequestHandler = async ({ locals, url }) => {
-  if (!hasPermission(locals, "reports", "view")) return forbidden();
+  if (!can(locals, "reports.read")) return forbidden();
 
   const parsed = periodQuery.safeParse(
     queryValues(url, ["dateFrom", "dateTo"]),

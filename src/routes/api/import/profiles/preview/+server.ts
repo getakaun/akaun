@@ -4,7 +4,7 @@ import { mainCurrencyCode } from "$lib/server/currency/form.js";
 import { db } from "$lib/server/db/client.js";
 import { readSampleUpload } from "$lib/server/import/sample-upload.js";
 import { previewTable } from "$lib/server/import/table-preview.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import type { RequestHandler } from "./$types.js";
 
 /**
@@ -25,7 +25,7 @@ import type { RequestHandler } from "./$types.js";
  */
 export const POST: RequestHandler = async ({ locals, request }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "import", "change")) return forbidden();
+  if (!can(locals, "import.profiles")) return forbidden();
 
   const form = await request.formData().catch(() => null);
   if (!form)

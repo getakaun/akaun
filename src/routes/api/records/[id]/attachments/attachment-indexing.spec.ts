@@ -14,7 +14,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  */
 
 vi.mock("$lib/server/db/client.js", () => ({ db: {} }));
-vi.mock("$lib/server/permissions.js", () => ({ hasPermission: () => true }));
+vi.mock("$lib/server/permissions.js", () => ({
+  can: () => true,
+  canAll: () => true,
+}));
 
 const record = { id: 42, kind: 1, date: "2026-01-01" };
 const attachment = { id: 7, recordId: 42, filename: "records/2026/08/receipt.pdf", displayName: "receipt.pdf" };

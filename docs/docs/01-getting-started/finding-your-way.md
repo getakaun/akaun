@@ -41,8 +41,8 @@ click **Reconcile**. See [Bank reconciliation](../07-bank-reconciliation.md).
 
 Below these parts are three more items:
 
-- **Settings** opens the settings of the book. See
-  [Settings reference](../09-administration/settings-reference.md).
+- **Settings** opens the settings of the book. It shows only if you have the **View** permission on
+  **Settings**. See [Settings reference](../09-administration/settings-reference.md).
 - **Light** or **Dark** shows the current theme. Click it to change to the other theme.
 - **Collapse** makes the sidebar narrow, with icons only. To make it wide again, click the arrow
   at the same position. On a small screen, such as a tablet, the sidebar is narrow at the start.

@@ -9,9 +9,10 @@ When you mark it as sent, the customer owes the amount and Akaun adds a record t
 
 :::info
 
-To make an invoice, you need the **Add** permission on invoices. To change an invoice, mark it as
-sent or cancel it, you need **Change**. To cancel and reissue it, you need **Change** and **Add**.
-To delete a draft, you need **Delete**. To record a payment from the invoice page, you need **Add**
+To make an invoice, you need the **Add** permission on invoices. To change an invoice, you need
+**Change**. To mark it as sent, you need **Send** on invoices and **Add** on records. To cancel it,
+you need **Void** on invoices and **Change** on records. To cancel and reissue it, you also need
+**Add** on invoices. To delete a draft, you need **Delete**. To record a payment from the invoice page, you need **Add**
 on records.
 
 :::

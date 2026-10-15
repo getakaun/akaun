@@ -8,12 +8,14 @@
 	let {
 		open = $bindable(false),
 		user,
-		isSuperuser = false,
+		canManageUsers = false,
+		canSeeSettings = false,
 		navItems = []
 	}: {
 		open?: boolean;
 		user: { username: string; name?: string | null; email?: string } | null;
-		isSuperuser?: boolean;
+		canManageUsers?: boolean;
+		canSeeSettings?: boolean;
 		navItems?: (SerializableNavItem & { showOnMobile: boolean })[];
 	} = $props();
 
@@ -126,17 +128,19 @@
 
 			<!-- Preferences -->
 			<div class="drawer-group">
-				<a href="/settings" class="drawer-item" class:active={isActive('/settings')} onclick={close}>
-					<Settings size={17} /><span>Settings</span>
-				</a>
+				{#if canSeeSettings}
+					<a href="/settings" class="drawer-item" class:active={isActive('/settings')} onclick={close}>
+						<Settings size={17} /><span>Settings</span>
+					</a>
+				{/if}
 				<button class="drawer-item" onclick={toggleTheme}>
 					{#if isDark}<Moon size={17} />{:else}<Sun size={17} />{/if}
 					<span>{isDark ? 'Dark' : 'Light'} mode</span>
 				</button>
 			</div>
 
-			<!-- Administration — superuser only -->
-			{#if isSuperuser}
+			<!-- Administration — users.manage only -->
+			{#if canManageUsers}
 				<div class="drawer-group">
 					<div class="drawer-group-label">Administration</div>
 					<a

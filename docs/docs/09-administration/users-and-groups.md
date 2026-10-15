@@ -10,14 +10,15 @@ leaves.
 
 :::info
 
-Only a superuser can open **Users & Groups**. Akaun does not open the screen for other users. In
-the sidebar, the screen is under **Administration**.
+Only a superuser can open **Users & Groups**. The screen needs **Manage** on **Users & Groups**, and
+only a superuser group has it. Akaun does not open the screen for other users. In the sidebar, the
+screen is under **Administration**.
 
 :::
 
 ## How access works
 
-- A permission lets a user do one action in one area, for example **Add** on **Records**. See
+- A permission lets a user do one thing in one area, for example **Add** on **Records**. See
   [Permissions explained](./permissions-explained.md).
 - A group is a set of permissions. A user can be in more than one group.
 - A user gets each permission that one or more of their groups gives. A group cannot remove a
@@ -26,6 +27,8 @@ the sidebar, the screen is under **Administration**.
   superusers.
 - You can give one user extra permissions. Extra permissions only add. They cannot remove a
   permission that a group gives.
+- Each group also sets what its members may hand on to their tokens and apps. See
+  [What members may hand on](#what-members-may-hand-on).
 
 ## The groups that Akaun makes
 
@@ -37,23 +40,29 @@ The other three groups give these permissions:
 
 | Area | **Bookkeeper** | **Data Entry** | **Reviewer** |
 |---|---|---|---|
-| **Dashboard** | none | none | none |
 | **Records** | View, Add, Change | Add | View |
-| **Auto Import** | View, Add | Add | View |
+| **Auto Import** | View, Upload | Upload | View |
 | **Contacts** | View, Add, Change | View, Add | View |
-| **Quotations** | View, Add, Change | Add | View |
-| **Invoices** | View, Add, Change | Add | View |
-| **Reconciliation** | View, Add, Change | none | View |
+| **Quotations** | View, Add, Change, Revise, Convert | Add | View |
+| **Invoices** | View, Add, Change, Send, Void | Add | View |
+| **Reconciliation** | View, Add, Change, Match | none | View |
 | **Accounts** | View, Add, Change | none | View |
 | **Reports** | View | none | View |
-| **Adjustments** | none | none | none |
+| **Dashboard** | none | none | none |
+| **Settings** | View | View | View |
+| **Users & Groups** | none | none | none |
 
 Read these notes before you choose a group:
 
-- No group except **Administrators** gives **Delete** or **Adjustments**.
-- **Bookkeeper** does not have **Change** on **Auto Import**. Thus a Bookkeeper can upload files,
-  but cannot confirm or skip the items. To let a Bookkeeper confirm items, give **Change** on
-  **Auto Import**.
+- No group except **Administrators** gives **Delete**, **Adjustments** on **Records**, **Merge** on
+  **Contacts** or **Manage** on **Settings**.
+- **Bookkeeper** does not have **Change**, **Confirm** or **Profiles** on **Auto Import**. Thus a
+  Bookkeeper can upload files, but cannot confirm or skip the items. To let a Bookkeeper confirm
+  items, give **Confirm** on **Auto Import**.
+- Only a superuser can change the settings. To let a different user change them, give **Manage** on
+  **Settings**.
+- Each of the three groups lets its members hand on to tokens and apps all the permissions that the
+  group gives, except **View** on **Settings**.
 - A screen opens only for a user with **View** on its area. **Data Entry** has **View** on
   **Contacts** only. Thus a Data Entry user cannot open **Records**, **Auto Import**,
   **Quotations** or **Invoices**.
@@ -68,7 +77,8 @@ The **Users** tab shows one row for each user, with these columns:
 - **User**: the name and the email.
 - **Groups**: the groups of the user. **No groups** shows that the user is in no group.
 - **Access**: **Superuser**, **Standard** or **No access**.
-- **API token**: **Configured** if the user has an API token, or **None**.
+- **Tokens**: the number of active personal access tokens of the user, for example **2 active**,
+  or **None**.
 - **Created**: the date when the user was added.
 
 ## Add a user
@@ -90,7 +100,8 @@ group into **Administrators**. That user then becomes a superuser.
 5. In **Username**, type the name that the person types to sign in.
 6. In **Temporary password**, type a password for the first sign-in.
 7. Under **Group membership**, select one or more groups.
-8. If the person needs more permissions than the groups give, select them under **Permissions**.
+8. If the person needs more permissions than the groups give, choose them under
+   **Extra permissions**. See [Give a user extra permissions](#give-a-user-extra-permissions).
 9. Click **Create user**.
 
 Akaun shows **User created**, and the user shows in the list. Give the username and the
@@ -114,57 +125,70 @@ This new user is a superuser, and anyone who knows the default password can sign
 5. Click **Save changes**.
 
 Akaun shows **User saved**. If **Reset password** is empty, the password does not change. A new
-password also disconnects all the connected apps of the user.
+password also disconnects all the connected apps of the user, and revokes all the tokens of the
+user.
 
 ## Give a user extra permissions
 
-Use extra permissions when one person needs one more action than their groups give.
+Use extra permissions when one person needs one more ability than their groups give.
 
 1. On the **Users** tab, click the row of the user.
-2. Under **Permissions**, find the row of the area.
-3. Select the action that the user needs.
+2. Under **Extra permissions**, find the area.
+3. Select a higher level for the area, or select **Custom** and switch on the ability that the user
+   needs. See [Choose the permissions](#the-permission-tree).
 4. Click **Save changes**.
 
-A permission that a group gives shows selected, and you cannot clear it there. To remove that
-permission, change the groups of the user.
+**Extra permissions** already shows what the groups of the user give:
 
-Extra permissions work only when the user is in one or more groups. The **Permissions** section
-does not show for a superuser, because a superuser has all permissions.
+- An ability that a group gives is on and shows **From a group**. You cannot switch it off there.
+  To remove it, change the groups of the user.
+- A level that is lower than what the groups give is not available. Hold the pointer on it to see
+  **A group already grants more than this.**
 
-## Issue an API token for a user
+Extra permissions work only when the user is in one or more groups. The **Extra permissions**
+section does not show for a superuser, because a superuser has all permissions.
 
-An API token lets a program connect to Akaun as this user. The program can do all the actions
-that the user can do. See [Connect AI assistants](./connect-ai-assistants.md).
+Extra permissions are never handed on. The tokens and the connected apps of the user cannot use
+them.
+
+## The tokens of a user
+
+A personal access token lets a program connect to Akaun as a user. Only the user can make a token,
+signed in as themselves, on the profile. See [Your profile](./your-profile.md#access-tokens). You
+cannot make a token for a different user. You can see and revoke the tokens of a user.
+
+1. On the **Users** tab, click the row of the user.
+2. Look under **Personal access tokens**.
+
+Each row shows the name, the last four characters, what the token can do in each area, the expiry
+date and the date of the last use. If the user has no tokens, the section shows **No access tokens
+yet**. The **Tokens** column of the list shows the number of active tokens of the user.
+
+For a program that does not act for one person, for example a shared AI assistant, add a separate
+user with only the permissions that the program needs. Then sign in as that user, and make the
+token on the profile of that user. See [Add a user](#add-a-user) and
+[Make a token](./your-profile.md#make-a-token).
+
+### Revoke the tokens of a user
 
 :::caution
 
-Issue the token from the panel of the user, as the steps below tell you. The row menu (three
-dots) also has **Issue API token**, but it does not show the new token. If you use it, open the
-panel of the user and click **Regenerate** to get a token that you can copy.
+A program that uses a revoked token cannot connect any more. You cannot undo this.
 
 :::
 
 1. On the **Users** tab, click the row of the user.
-2. Under **API Token**, click **Issue token**.
-3. Under **New token — copy now**, click the copy button next to the token.
-4. Keep the token in a safe place, for example a password manager.
+2. Under **Personal access tokens**, find the token.
+3. Click **Revoke**.
+4. In the message, click **Revoke**.
 
-The **API token** column shows **Configured**. Akaun shows the full token one time only.
+To revoke all the tokens of the user, click **Revoke all N tokens** under the list, and then click
+**Revoke all** in the message. The link shows when the user has two or more tokens.
 
-The **Issue token**, **Regenerate** and **Revoke** buttons act immediately. You do not need
-**Save changes** for them.
+The token buttons act immediately. You do not need **Save changes** for them.
 
-### Replace or remove a token
-
-:::caution
-
-**Regenerate** makes a new token and stops the old token immediately. A program that uses the old
-token cannot connect until you give it the new token.
-
-:::
-
-- To replace the token, click **Regenerate**. Then copy the new token.
-- To remove the token, click **Revoke**. Akaun shows **Token revoked**.
+A new password in **Reset password** also revokes all the tokens and the connected apps of the
+user.
 
 ## Stop the access of a user
 
@@ -183,14 +207,16 @@ To stop the access of a user safely, put the user in a group with no permissions
 2. On the **Users** tab, click the row of the user.
 3. Under **Group membership**, clear all the groups.
 4. Select the `No access` group.
-5. Under **Permissions**, clear each extra permission.
+5. Under **Extra permissions**, select **None** for each area.
 6. In **Reset password**, type a new password that the person does not know.
-7. If the **API Token** section shows **API token configured**, click **Revoke**.
-8. Click **Save changes**.
+7. Click **Save changes**.
+8. Under **Personal access tokens**, make sure that no token shows. If a token shows, click
+   **Revoke all N tokens** or **Revoke**. See [Revoke the tokens of a user](#revoke-the-tokens-of-a-user).
 
-The **Access** column shows **Standard**. The user cannot sign in with the old password. If the user
-is still signed in, the user can open only **Settings** and the profile. The records of the user
-stay in the book.
+The **Access** column shows **Standard**. The user cannot sign in with the old password. The new
+password revokes all the tokens and disconnects all the connected apps of the user. If the user is
+still signed in, the user cannot open the screens of the book. The records of the user stay in the
+book.
 
 ## Remove a user
 
@@ -221,19 +247,78 @@ the number of permissions. Click a group to see its details on the right.
    opens it.
 2. At the top of the group, type a name for the group.
 3. In the description box, type what the group is for.
-4. In the permission grid, select the actions that the group gives.
-5. Click **Save changes**.
+4. Under **Members can**, choose a level for each area that the group gives. See
+   [Choose the permissions](#the-permission-tree).
+5. Under **Members may hand on to tokens & apps**, choose what the tokens and the apps of the
+   members can do. See [What members may hand on](#what-members-may-hand-on).
+6. Click **Save changes**.
 
 Akaun shows **Group saved**. **Save changes** and **Reset** show only when the group has unsaved
 changes. **Reset** removes your changes.
 
-### The permission grid
+### Choose the permissions \{#the-permission-tree}
 
-The grid has one row for each area and one column for each action: **View**, **Add**, **Change**
-and **Delete**. Select **All** to select the four actions of a row. The line above the grid shows
-the number of permissions that the group gives, for example **15 of 40 granted**.
+**Members can**, **Members may hand on to tokens & apps** and **Extra permissions** use the same
+editor. It shows one row for each area, for example **Records** or **Invoices**. Each row has a
+level picker with **None**, **View**, **Edit**, **Full** and **Custom**. A sentence under the name
+of the area tells what the choice allows, for example "Can see, add, change and send invoices.
+Cannot delete or void."
 
-**Reports** is view only. **Add**, **Change** and **Delete** have no effect on **Reports**.
+- **View** gives the **View** ability only.
+- **Edit** gives **View** and each ability that adds or changes items. For example, on **Invoices**
+  it gives **View**, **Add**, **Change** and **Send**.
+- **Full** gives all the abilities of the area, also **Delete**, except **Adjustments**.
+- **Custom** shows a switch for each ability of the area, with a description. Use it to give one
+  ability.
+
+See [Levels of access](./permissions-explained.md#levels-of-access) for the abilities in each
+level.
+
+- An area with one ability, for example **Reports** or **Dashboard**, offers only **None** and
+  **View**.
+- A set of abilities that is not the same as a level shows as **Custom**. For example, **Data
+  Entry** has **Add** on **Records** but no **View**.
+- **Adjustments** on **Records** is never part of a level. It has its own switch under **Records**,
+  so you give it only on purpose.
+- A warning sign shows an ability that gives a lot of power, for example **Adjustments** on
+  **Records** and **Manage** on **Settings**.
+- A level that includes an ability that you cannot choose is not available. Hold the pointer on it
+  to see **Includes something that cannot be chosen here.**
+
+The line above **Members can** shows the number of abilities that the group gives, for example
+**15 of 41 granted**. **Users & Groups** does not show in the editor. Only a superuser group has
+it.
+
+The levels only help you choose. Akaun keeps each ability on its own, as before.
+
+See [Permissions explained](./permissions-explained.md).
+
+### What members may hand on
+
+**Members may hand on to tokens & apps** is a second list of areas under **Members can**. It is the most that
+the personal access tokens and the connected AI apps of a member can do. Each member chooses less
+for each token or app. A member cannot choose a permission that is not in this list.
+
+- You can choose only what the group gives under **Members can**. An area that the group does not
+  give shows **Not granted to this group.** When you remove a permission under **Members can**,
+  Akaun also removes it here.
+- When you give the group a new permission, Akaun does not add it here. Choose it here if the
+  tokens and the apps of the members need it.
+- A token or an app never does more than what its user may hand on at that time. When you remove a
+  permission in either list, each token and each app of the members loses it on its next request.
+- When a user is in two or more groups, the user may hand on each permission that one or more of
+  these groups allow.
+- A permission that a user has as an extra permission is never handed on.
+
+:::caution
+
+Do not let members hand on **Adjustments** or **Manage** on **Settings** unless a program must do
+these things. A program with a token acts without a person who checks each step.
+
+:::
+
+A superuser group does not show this list. The tokens and the apps of a superuser can have all
+permissions except **Manage** on **Users & Groups**.
 
 ### The Superuser switch
 
@@ -249,12 +334,24 @@ superusers. Use it only for people that you trust with all the books.
 2. Click the **Superuser** switch.
 3. Click **Save changes**.
 
-The group shows **Superuser** and **Grid bypassed**. The permission grid does not show.
+The group shows **Superuser**. Under **Members can**, the group shows **Every permission**, and the
+permission lists do not show.
 
 ### Protected groups
 
-**Administrators** shows **Protected**. You cannot change its name, its description or its
-**Superuser** switch. You cannot delete it.
+**Administrators** shows **Protected**. You cannot change its name, its description, its
+**Superuser** switch or its permissions. You cannot delete it. You can change, rename and delete
+all the other groups, also **Bookkeeper**, **Data Entry** and **Reviewer**.
+
+### Keep one superuser
+
+At least one user must stay in a superuser group. Only a superuser can manage users and groups.
+Thus Akaun refuses a change that removes the last one, and shows **At least one user must stay in a
+superuser group, or nobody could manage users and groups.** These changes can show it:
+
+- You turn off **Superuser** on the only other superuser group that has members.
+- You remove the last superuser from their superuser group.
+- You delete the last superuser.
 
 :::caution
 
@@ -274,12 +371,15 @@ You can delete a group only when it has no members and is not protected.
 
 Akaun shows **Group deleted**.
 
-If you delete or rename **Bookkeeper**, **Data Entry** or **Reviewer**, Akaun makes a new group with
-that name at the next start of the server.
+Akaun makes the default groups (**Administrators**, **Bookkeeper**, **Data Entry** and **Reviewer**)
+one time only, when you install it. If you delete or rename **Bookkeeper**, **Data Entry** or
+**Reviewer**, Akaun does not make it again. To get it back, make a new group and choose its
+permissions.
 
 ## Notes and limits
 
-- A change to the permissions applies on the next action of the user. The user does not need to
-  sign in again.
+- A change to the permissions applies on the next action of the user, and on the next request of
+  each token and app of the user. The user does not need to sign in again.
+- A user can have 50 personal access tokens or fewer.
 - A sign-in stays valid in the browser for up to 30 days. A new password does not end a sign-in
   that is already open. To stop the access immediately, use a group with no permissions.

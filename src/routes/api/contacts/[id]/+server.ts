@@ -2,11 +2,11 @@ import type { RequestHandler } from "@sveltejs/kit";
 import { db } from "$lib/server/db/client.js";
 import { getContact } from "$lib/server/queries/contacts.js";
 import { patchContact, deleteContact } from "$lib/server/services/contacts.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { refused } from "$lib/server/api-response.js";
 
 export const GET: RequestHandler = async ({ locals, params }) => {
-  if (!hasPermission(locals, "contacts", "view"))
+  if (!can(locals, "contacts.read"))
     return new Response("Not Found", { status: 404 });
   const id = parseInt(params.id!);
   const contact = getContact(db, id);
@@ -15,7 +15,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 };
 
 export const PATCH: RequestHandler = async ({ locals, params, request }) => {
-  if (!hasPermission(locals, "contacts", "change"))
+  if (!can(locals, "contacts.update"))
     return new Response("Forbidden", { status: 403 });
   const user = locals.user!;
   const id = parseInt(params.id!);
@@ -41,7 +41,7 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 };
 
 export const DELETE: RequestHandler = async ({ locals, params }) => {
-  if (!hasPermission(locals, "contacts", "delete"))
+  if (!can(locals, "contacts.delete"))
     return new Response("Forbidden", { status: 403 });
   const id = parseInt(params.id!);
   if (!getContact(db, id))

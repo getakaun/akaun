@@ -3,12 +3,12 @@ import { eq } from "drizzle-orm";
 import { db } from "$lib/server/db/client.js";
 import { importQueue } from "$lib/server/db/schema.js";
 import { fileStore } from "$lib/server/file-storage.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { storedFileResponse } from "$lib/server/stored-file-response.js";
 
 export const GET: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "import", "view"))
+  if (!can(locals, "import.read"))
     return new Response("Forbidden", { status: 403 });
 
   const row = db

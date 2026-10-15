@@ -19,7 +19,6 @@ export function registerReports(server: McpServer, context: McpContext) {
     server,
     context,
     "get_financial_report",
-    ["reports"],
     "Read the app's canonical financial report in main-currency minor units. balance-sheet requires asAt only; other types require inclusive dateFrom/dateTo only. Preserve report notes about incomplete history or accounts needing classification. Totals come from ledger movements, never a sum of record display amounts. Account lines have list_records drill-down filters; cash-flow lines represent activities rather than individual accounts.",
     {
       type: z.enum([

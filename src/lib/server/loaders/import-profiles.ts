@@ -5,7 +5,7 @@ import { isImportTransactionAsset } from "$lib/server/import/account-policy.js";
 import { categoryChoices } from "$lib/server/import/category-accounts.js";
 import { profileIdParam } from "$lib/server/import/profile-reply.js";
 import type { LedgerDb } from "$lib/server/ledger/types.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { listAccounts } from "$lib/server/queries/accounts.js";
 import {
   getImportProfile,
@@ -83,12 +83,12 @@ function editorChoices(database: LedgerDb, selfId: number | null) {
  * `canChange` false for one who may not change them.
  */
 export function importProfileList(locals: App.Locals, database: LedgerDb = db) {
-  if (!hasPermission(locals, "import", "view")) {
+  if (!can(locals, "import.read")) {
     return { canView: false, canChange: false, profiles: [] };
   }
   return {
     canView: true,
-    canChange: hasPermission(locals, "import", "change"),
+    canChange: can(locals, "import.profiles"),
     profiles: listImportProfiles(database).map((profile) => ({
       id: profile.id,
       name: profile.name,
@@ -109,7 +109,7 @@ export function loadImportProfileNew(
   locals: App.Locals,
   database: LedgerDb = db,
 ) {
-  if (!hasPermission(locals, "import", "change")) {
+  if (!can(locals, "import.profiles")) {
     throw redirect(302, PROFILES_HOME);
   }
   return {
@@ -129,7 +129,7 @@ export function loadImportProfileDetail(
   rawId: string,
   database: LedgerDb = db,
 ) {
-  if (!hasPermission(locals, "import", "view")) {
+  if (!can(locals, "import.read")) {
     throw redirect(302, PROFILES_HOME);
   }
   const id = profileIdParam(rawId);
@@ -139,7 +139,7 @@ export function loadImportProfileDetail(
     profile,
     ...categoryOptions(database),
     ...editorChoices(database, profile.id),
-    perms: { change: hasPermission(locals, "import", "change") },
+    perms: { change: can(locals, "import.profiles") },
   };
 }
 
@@ -195,7 +195,7 @@ export function planProfileSwitches(
     const current = getImportProfile(database, entry.id);
     return current !== null && current.enabled !== entry.enabled;
   });
-  if (switches.length > 0 && !hasPermission(locals, "import", "change")) {
+  if (switches.length > 0 && !can(locals, "import.profiles")) {
     return {
       ok: false,
       status: 403,

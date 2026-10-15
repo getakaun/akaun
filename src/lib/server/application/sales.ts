@@ -31,8 +31,7 @@ import {
   reviseQuotation as reviseQuotationService,
   setQuotationStatus as setQuotationStatusService,
 } from "../services/quotations.js";
-import type { ActionName, ResourceName } from "../permissions.js";
-import { canMcpWrite } from "../oauth/scopes.js";
+import { can } from "../permissions.js";
 import { actor, requirePermissions, type AppContext } from "./context.js";
 import { fail, missing, ok, type AppResult } from "./result.js";
 import { isoDate, positiveId } from "./records.js";
@@ -109,10 +108,9 @@ function resolveContact(
     input.newContactName,
     Role.Customer,
   );
-  // `canMcpWrite`, not `hasPermission`: for an OAuth client it also asks for
-  // the `contacts:write` scope, before the superuser shortcut. Without OAuth
-  // (REST, API tokens) it is the RBAC check alone.
-  if (!existing && !canMcpWrite(ctx.locals, "contacts", "add")) {
+  // Through a token or an app, `locals.permissions` already holds only what
+  // it was granted, so this asks the token's scope and the user's role alike.
+  if (!existing && !can(ctx.locals, "contacts.create")) {
     return fail(
       "FORBIDDEN",
       "Creating a new customer needs permission to add contacts. Choose an existing customer instead.",
@@ -166,7 +164,7 @@ export function createInvoice(
   ctx: AppContext,
   raw: unknown,
 ): AppResult<InvoiceWritten> {
-  const refused = requirePermissions(ctx, [["invoices", "add"]]);
+  const refused = requirePermissions(ctx, ["invoices.create"]);
   if (refused) return refused;
   const parsed = createInvoiceSchema.safeParse(raw);
   if (!parsed.success) return invalidDocument(parsed.error);
@@ -189,7 +187,7 @@ export function updateInvoice(
   raw: unknown,
   expectedVersion?: string,
 ): AppResult<InvoiceWritten> {
-  const refused = requirePermissions(ctx, [["invoices", "change"]]);
+  const refused = requirePermissions(ctx, ["invoices.update"]);
   if (refused) return refused;
   const invoice = getInvoice(ctx.db, id);
   if (!invoice) return missing("That invoice no longer exists.");
@@ -241,10 +239,8 @@ export function issueInvoice(
   input: { incomeAccountId?: number },
   expectedVersion?: string,
 ): AppResult<InvoiceWritten> {
-  const refused = requirePermissions(ctx, [
-    ["invoices", "change"],
-    ["records", "add"],
-  ]);
+  // Sending puts a record in the books, so it also needs records.create.
+  const refused = requirePermissions(ctx, ["invoices.issue", "records.create"]);
   if (refused) return refused;
   if (!getInvoice(ctx.db, id)) return missing("That invoice no longer exists.");
   if (input.incomeAccountId !== undefined) {
@@ -277,12 +273,12 @@ export function voidInvoice(
   input: { reissue: boolean },
   expectedVersion?: string,
 ): AppResult<InvoiceWritten & { reissued: InvoiceWritten | null }> {
+  // Voiding takes the posting out of the books (records.update); reissuing
+  // makes a new draft (invoices.create).
   const refused = requirePermissions(ctx, [
-    ["invoices", "change"],
-    ["records", "change"],
-    ...(input.reissue
-      ? [["invoices", "add"] as [ResourceName, ActionName]]
-      : []),
+    "invoices.void",
+    "records.update",
+    ...(input.reissue ? (["invoices.create"] as const) : []),
   ]);
   if (refused) return refused;
   if (!getInvoice(ctx.db, id)) return missing("That invoice no longer exists.");
@@ -308,7 +304,7 @@ export function deleteInvoice(
   id: number,
   expectedVersion?: string,
 ): AppResult<{ id: number }> {
-  const refused = requirePermissions(ctx, [["invoices", "delete"]]);
+  const refused = requirePermissions(ctx, ["invoices.delete"]);
   if (refused) return refused;
   if (!getInvoice(ctx.db, id)) return missing("That invoice no longer exists.");
   const stale = checkVersion(invoiceVersion(ctx.db, id), expectedVersion);
@@ -334,7 +330,7 @@ export function createQuotation(
   ctx: AppContext,
   raw: unknown,
 ): AppResult<QuotationWritten> {
-  const refused = requirePermissions(ctx, [["quotations", "add"]]);
+  const refused = requirePermissions(ctx, ["quotations.create"]);
   if (refused) return refused;
   const parsed = createQuotationSchema.safeParse(raw);
   if (!parsed.success) return invalidDocument(parsed.error);
@@ -355,7 +351,7 @@ export function updateQuotation(
   raw: unknown,
   expectedVersion?: string,
 ): AppResult<QuotationWritten> {
-  const refused = requirePermissions(ctx, [["quotations", "change"]]);
+  const refused = requirePermissions(ctx, ["quotations.update"]);
   if (refused) return refused;
   const quotation = getQuotation(ctx.db, id);
   if (!quotation) return missing("That quotation no longer exists.");
@@ -408,7 +404,7 @@ export function setQuotationStatus(
   status: keyof typeof QUOTATION_STATUS_BY_NAME,
   expectedVersion?: string,
 ): AppResult<QuotationWritten> {
-  const refused = requirePermissions(ctx, [["quotations", "change"]]);
+  const refused = requirePermissions(ctx, ["quotations.update"]);
   if (refused) return refused;
   if (!getQuotation(ctx.db, id))
     return missing("That quotation no longer exists.");
@@ -430,8 +426,8 @@ export function reviseQuotation(
   expectedVersion?: string,
 ): AppResult<QuotationWritten & { previous: QuotationWritten }> {
   const refused = requirePermissions(ctx, [
-    ["quotations", "add"],
-    ["quotations", "change"],
+    "quotations.revise",
+    "quotations.create",
   ]);
   if (refused) return refused;
   if (!getQuotation(ctx.db, id))
@@ -453,8 +449,8 @@ export function convertQuotation(
   expectedVersion?: string,
 ): AppResult<QuotationWritten & { invoice: InvoiceWritten }> {
   const refused = requirePermissions(ctx, [
-    ["quotations", "change"],
-    ["invoices", "add"],
+    "quotations.convert",
+    "invoices.create",
   ]);
   if (refused) return refused;
   if (!getQuotation(ctx.db, id))
@@ -475,7 +471,7 @@ export function deleteQuotation(
   id: number,
   expectedVersion?: string,
 ): AppResult<{ id: number }> {
-  const refused = requirePermissions(ctx, [["quotations", "delete"]]);
+  const refused = requirePermissions(ctx, ["quotations.delete"]);
   if (refused) return refused;
   if (!getQuotation(ctx.db, id))
     return missing("That quotation no longer exists.");

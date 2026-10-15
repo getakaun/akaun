@@ -26,7 +26,7 @@ export function getUserNavOrder(db: Db, userId: number): OrderedNavItem[] {
 	const known = new Set(DEFAULT_NAV_ITEMS.map((i) => i.id));
 
 	function toOrderedItem(item: NavItem, showOnMobile: boolean): OrderedNavItem {
-		return { id: item.id, label: item.label, href: item.href, resource: item.resource, showOnMobile };
+		return { id: item.id, label: item.label, href: item.href, permission: item.permission, showOnMobile };
 	}
 
 	const ordered: OrderedNavItem[] = [];

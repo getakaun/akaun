@@ -1,6 +1,6 @@
 import { redirect } from "@sveltejs/kit";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { normalizeDate, today } from "$lib/server/date.js";
 import {
   balanceSheetReport,
@@ -93,7 +93,7 @@ export function loadReportsPage(
   viewParam: string | null,
   url: URL,
 ): ReportsPageData {
-  if (!hasPermission(locals, "reports", "view"))
+  if (!can(locals, "reports.read"))
     throw redirect(302, "/dashboard");
 
   // Contacts already renders the balance either direction owed, for every

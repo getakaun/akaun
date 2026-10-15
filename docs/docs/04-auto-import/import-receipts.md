@@ -9,8 +9,9 @@ reads each file and prepares a record. You check each record before Akaun saves 
 
 :::info
 
-To upload files, you need the **Add** permission on **Auto Import**. To confirm or skip a record,
-you need **Change**. To read a file again, you need both **Add** and **Change**. See [Permissions explained](../09-administration/permissions-explained.md).
+To upload files, you need the **Upload** permission on **Auto Import**. To confirm or skip a record,
+you need **Confirm**. To correct a record before you confirm it, you need **Change**. To read a
+file again, you need both **Upload** and **Change**. See [Permissions explained](../09-administration/permissions-explained.md).
 
 :::
 
@@ -83,7 +84,7 @@ A failed row has these buttons:
   in the browser tab where you uploaded the file, before a reload.
 - **Read again**: reads the file again from the copy on the server. You can choose a different
   **Read as** choice. Then click **Read again** in the dialog. This button shows only when you
-  have the **Add** and **Change** permissions.
+  have the **Upload** and **Change** permissions.
 - **Discard**: removes the row from the list. You need the **Delete** permission on **Auto Import**.
 
 A review card also has **Read again**. The new reading replaces the card and all your changes on
@@ -115,7 +116,7 @@ To clear the history, you need the **Delete** permission on **Auto Import**.
 
 ## Notes and limits
 
-- All users see the same queue. Any user with the **Change** permission can confirm a document
+- All users see the same queue. Any user with the **Confirm** permission can confirm a document
   that a different user uploaded.
 - If Akaun reads too little text, the file fails. Use a clearer photo, or a PDF with text.
 - If you upload a file that Akaun already imported as one record, the card shows a possible

@@ -8,7 +8,7 @@ import {
   recentExpenses,
   recentIncomes,
 } from "$lib/server/queries/dashboard.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import {
   periodDateRange,
   isDashboardPeriod,
@@ -16,7 +16,7 @@ import {
 } from "$lib/dashboard-periods.js";
 
 export const load: PageServerLoad = async ({ locals, url }) => {
-  if (!hasPermission(locals, "dashboard", "view"))
+  if (!can(locals, "dashboard.read"))
     throw redirect(302, "/settings");
   const requestedPeriod = url.searchParams.get("period");
   const period = isDashboardPeriod(requestedPeriod) ? requestedPeriod : "m";

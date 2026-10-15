@@ -5,13 +5,13 @@ import { releaseIfUnreferenced } from '$lib/server/file-storage.js';
 import { importEvents } from '$lib/server/import/events.js';
 import { ImportState } from '$lib/enums.js';
 import type { RequestHandler } from './$types.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import { can } from '$lib/server/permissions.js';
 
 const HISTORY_STATES = [ImportState.Confirmed, ImportState.Imported, ImportState.Skipped];
 
 export const DELETE: RequestHandler = async ({ locals }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'import', 'delete'))
+	if (!can(locals, 'import.delete'))
 		return new Response('Forbidden', { status: 403 });
 
 	const rows = db

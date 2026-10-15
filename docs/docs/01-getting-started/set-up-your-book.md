@@ -171,7 +171,8 @@ most businesses.
 :::info
 
 The **Books** tab shows only for a user with the **View** permission on **Reports**. To change a
-default account, the user needs the **Change** permission on **Accounts**.
+default account, the user needs the **Change** permission on **Accounts** and the **Manage**
+permission on **Settings**.
 
 :::
 

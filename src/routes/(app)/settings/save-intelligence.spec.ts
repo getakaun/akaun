@@ -47,10 +47,19 @@ vi.mock("$lib/server/env.js", () => ({
   OCR_CACHE_PATH: "/dev/null",
 }));
 
-vi.mock("$lib/server/permissions.js", () => ({
-  hasPermission: (_locals: unknown, resource: string, action: string) =>
-    holder.allow(resource, action),
-}));
+vi.mock("$lib/server/permissions.js", async () => {
+  // The fake answers in the old grid's terms; each leaf is asked as the
+  // (resource, action) it came from.
+  const { legacyPairOf } = await import("$lib/server/permissions/legacy-map.js");
+  const allow = (resource: string, action: string) =>
+    holder.allow(resource, action);
+  return {
+    can: (_locals: unknown, permission: string) =>
+      allow(...legacyPairOf(permission)),
+    canAll: (_locals: unknown, permissions: string[]) =>
+      permissions.every((permission) => allow(...legacyPairOf(permission))),
+  };
+});
 
 vi.mock("$lib/server/logger.js", () => {
   const silent = {
@@ -118,6 +127,23 @@ function saveIntelligence(fields: Record<string, string>) {
 }
 
 describe("saving the Intelligence tab", () => {
+  it("refuses a user who may see settings but not change them", async () => {
+    const provider = insertProvider(db, {
+      type: "openrouter",
+      name: "Main",
+      apiKey: "k",
+      model: "m",
+    });
+    holder.allow = (resource, action) =>
+      !(resource === "settings" && action === "manage");
+    const result = (await saveIntelligence({
+      providers: JSON.stringify([{ id: provider.id, enabled: false }]),
+      parallelTasks: "7",
+    })) as { status?: number; data?: { error?: string } };
+    expect(result.status).toBe(403);
+    expect(result.data?.error).toContain("Settings › Manage");
+  });
+
   it("saves nothing at all when a profile switch is refused with 403", async () => {
     const created = createImportProfile(db, 1, {
       ...profileDraft("fee_document"),
@@ -133,10 +159,11 @@ describe("saving the Intelligence tab", () => {
     });
     const auditBefore = db.select().from(auditLog).all().length;
 
-    // May see imports, may not change them: the profile list comes back with
-    // a switch flipped, which only import.change may do.
+    // May manage settings and see imports, but not manage import profiles:
+    // the profile list comes back with a switch flipped, which only
+    // import.profiles may do.
     holder.allow = (resource, action) =>
-      resource === "import" && action === "view";
+      resource === "settings" || (resource === "import" && action === "view");
 
     const result = (await saveIntelligence({
       providers: JSON.stringify([

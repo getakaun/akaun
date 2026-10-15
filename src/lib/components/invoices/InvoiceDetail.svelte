@@ -76,7 +76,7 @@
 	const isDraft = $derived(invoice.status === InvoiceStatus.Draft);
 	const canEdit = $derived(data.perms.change && invoice.status !== InvoiceStatus.Cancelled);
 	/** Only a draft can be sent, and only once — sending it twice would owe it twice. */
-	const canIssue = $derived(data.perms.change && isDraft && invoice.ledgerRecordId === null);
+	const canIssue = $derived(data.perms.issue && isDraft && invoice.ledgerRecordId === null);
 	/**
 	 * Only a draft can be deleted. A sent invoice is cancelled instead — its
 	 * amount is already in the books — and a cancelled one keeps its number.
@@ -89,7 +89,7 @@
 				: null
 	);
 	/** Sent and nothing paid yet — the same rule the server applies (`$lib/sales/status.ts`). */
-	const canCancel = $derived(data.perms.change && canCancelInvoice(invoice));
+	const canCancel = $derived(data.perms.void && canCancelInvoice(invoice));
 	/**
 	 * Cancelled before cancelling took the amount out of the books: the status
 	 * already says Cancelled, so all that is left to do is the books.

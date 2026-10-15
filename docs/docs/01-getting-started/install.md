@@ -128,7 +128,6 @@ Bun reads the `.env` file in the folder of the code. For Docker, put each settin
 | `PUBLIC_BASE_URL` | the value of `ORIGIN` | The public address for OAuth. If you set it, it must be the same as `ORIGIN`. |
 | `AUTH_ISSUER` | the public address | For OAuth only. If you set it, it must be the public address. |
 | `MCP_RESOURCE` | the public address with `/mcp` | For OAuth only. If you set it, it must be the public address with `/mcp` at the end. |
-| `MCP_BEARER_WRITES` | `false` | Set to `true` to let an AI assistant that connects with an API token change data. Without it, a token can only read. See [Connect AI assistants](../09-administration/connect-ai-assistants.md#connect-with-an-api-token). |
 | `PUID`, `PGID` | `1000` | Docker only. The user ID and group ID that own the `data` folder. |
 
 :::caution

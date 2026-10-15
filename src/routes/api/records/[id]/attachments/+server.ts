@@ -1,6 +1,6 @@
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { forbidden, notFound, refused } from "$lib/server/api-response.js";
 import {
   addAttachment,
@@ -9,7 +9,7 @@ import {
   searchableAttachmentFilenames,
   setExtractedText,
 } from "$lib/server/queries/ledger.js";
-import { resourceForKind } from "$lib/server/ledger/record-permissions.js";
+import { permissionForKind } from "$lib/server/ledger/record-permissions.js";
 import { recordAudit } from "$lib/server/audit.js";
 import { emitRecordUpdate } from "$lib/server/services/ledger.js";
 import { extractAttachmentsText } from "$lib/server/extraction/attachment-text.js";
@@ -40,7 +40,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 
   const record = getRecord(db, id);
   if (!record) return notFound("That record no longer exists.");
-  if (!hasPermission(locals, resourceForKind(record.kind), "view")) {
+  if (!can(locals, permissionForKind(record.kind, "read"))) {
     return forbidden();
   }
 
@@ -55,7 +55,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 
   const record = getRecord(db, id);
   if (!record) return notFound("That record no longer exists.");
-  if (!hasPermission(locals, resourceForKind(record.kind), "change")) {
+  if (!can(locals, permissionForKind(record.kind, "update"))) {
     return forbidden();
   }
 

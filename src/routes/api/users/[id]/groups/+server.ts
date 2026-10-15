@@ -3,9 +3,11 @@ import type { RequestHandler } from './$types.js';
 import { eq } from 'drizzle-orm';
 import { db } from '$lib/server/db/client.js';
 import { users, userGroups, groups } from '$lib/server/db/schema.js';
+import { can } from '$lib/server/permissions.js';
+import { keepsASuperuser, LAST_SUPERUSER_MESSAGE } from '$lib/server/admin/access.js';
 
 export const GET: RequestHandler = async ({ locals, params }) => {
-	if (!locals.isSuperuser) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'users.manage')) return new Response('Forbidden', { status: 403 });
 
 	const userId = parseInt(params.id);
 	const memberships = db
@@ -19,7 +21,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 };
 
 export const PATCH: RequestHandler = async ({ locals, params, request }) => {
-	if (!locals.isSuperuser) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'users.manage')) return new Response('Forbidden', { status: 403 });
 
 	const userId = parseInt(params.id);
 	const user = db.select({ id: users.id }).from(users).where(eq(users.id, userId)).get();
@@ -27,6 +29,8 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 
 	const body = await request.json();
 	const groupIds: number[] = body.groupIds ?? [];
+	if (!keepsASuperuser(db, { userId, groupIds }))
+		return json({ error: LAST_SUPERUSER_MESSAGE }, { status: 400 });
 
 	// Replace all memberships atomically
 	db.delete(userGroups).where(eq(userGroups.userId, userId)).run();

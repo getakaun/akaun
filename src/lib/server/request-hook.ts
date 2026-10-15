@@ -1,8 +1,12 @@
 import { redirect, type Handle } from "@sveltejs/kit";
 import type { LedgerDb } from "./ledger/types.js";
 import { getSessionUser } from "./auth.js";
-import { bearerLocals } from "./bearer-auth.js";
-import { getEffectivePermissions } from "./permissions.js";
+import { resolveAccess } from "./permissions.js";
+import {
+  isLegacyToken,
+  LEGACY_TOKEN_MESSAGE,
+  patLocals,
+} from "./tokens/pat.js";
 import { isSameOriginRequest } from "./browser-origin.js";
 import { mcpChallenge, type OAuthConfig } from "./oauth/config.js";
 import { BROWSER_COOKIE, type AkaunOAuth } from "./oauth/service.js";
@@ -61,12 +65,15 @@ export function createRequestHandle(
     // MCP is a protocol interface beside REST. Cookie sessions must never turn
     // an unauthenticated MCP request into a browser login redirect.
     if (pathname === "/mcp" || pathname === "/mcp/") {
+      const authorization = event.request.headers.get("Authorization");
       const actor = oauth
         ? await oauth.authenticate(event.request)
-        : bearerLocals(db, event.request.headers.get("Authorization"));
+        : patLocals(db, authorization);
       if (!actor) {
         return withSecurityHeaders(
-          new Response("Unauthorized", {
+          new Response(
+            isLegacyToken(authorization) ? LEGACY_TOKEN_MESSAGE : "Unauthorized",
+            {
             status: 401,
             headers: {
               "WWW-Authenticate": mcpChallenge(
@@ -75,7 +82,8 @@ export function createRequestHandle(
               ),
               "Cache-Control": "no-store",
             },
-          }),
+            },
+          ),
         );
       }
       Object.assign(event.locals, actor);
@@ -85,11 +93,15 @@ export function createRequestHandle(
     if (pathname.startsWith("/api/")) {
       const header = event.request.headers.get("Authorization");
       if (header && /^Bearer(?:\s|$)/i.test(header)) {
-        const actor = /^Bearer\s+akn[or]_/i.test(header)
-          ? null
-          : bearerLocals(db, header);
+        // Only a personal access token reaches the REST API. An OAuth token's
+        // audience is /mcp alone (RFC 8707), and the old raw API tokens were
+        // revoked by migration 0033.
+        const actor = patLocals(db, header);
         if (!actor) {
-          return new Response("Unauthorized", { status: 401 });
+          return new Response(
+            isLegacyToken(header) ? LEGACY_TOKEN_MESSAGE : "Unauthorized",
+            { status: 401 },
+          );
         }
         Object.assign(event.locals, actor);
       } else {
@@ -120,12 +132,7 @@ export function createRequestHandle(
           }
         }
         event.locals.user = sessionUser;
-        const { permissions, isSuperuser } = getEffectivePermissions(
-          db,
-          sessionUser.id,
-        );
-        event.locals.permissions = permissions;
-        event.locals.isSuperuser = isSuperuser;
+        Object.assign(event.locals, resolveAccess(db, sessionUser.id));
       }
       return withSecurityHeaders(await resolve(event));
     }
@@ -151,7 +158,7 @@ export function createRequestHandle(
         throw redirect(302, target);
       }
       event.locals.permissions = null;
-      event.locals.isSuperuser = false;
+      event.locals.role = null;
       const response = await resolve(event);
       response.headers.set("Cache-Control", "no-store");
       // Keep same-site form provenance for CSRF checks without leaking OAuth
@@ -160,12 +167,7 @@ export function createRequestHandle(
       return withSecurityHeaders(response);
     }
 
-    const { permissions, isSuperuser } = getEffectivePermissions(
-      db,
-      sessionUser.id,
-    );
-    event.locals.permissions = permissions;
-    event.locals.isSuperuser = isSuperuser;
+    Object.assign(event.locals, resolveAccess(db, sessionUser.id));
 
     const response = await resolve(event);
     if (pathname === "/oauth/authorize" || pathname === "/login") {

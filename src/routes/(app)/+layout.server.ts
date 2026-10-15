@@ -5,6 +5,7 @@ import { listRecords } from "$lib/server/queries/ledger.js";
 import { LedgerRecordKind } from "$lib/enums.js";
 import { getUserNavOrder } from "$lib/server/navPreferences.js";
 import { DEFAULT_CURRENCY } from "$lib/currency.js";
+import { can } from "$lib/server/permissions.js";
 
 export const load: LayoutServerLoad = async ({ locals }) => {
   const mainCurrency =
@@ -26,18 +27,18 @@ export const load: LayoutServerLoad = async ({ locals }) => {
     limit: 1,
   }).total;
 
-  const navItems = getUserNavOrder(db, locals.user!.id).filter(
-    (item) =>
-      locals.isSuperuser ||
-      (locals.permissions?.[item.resource]?.view ?? false),
+  const navItems = getUserNavOrder(db, locals.user!.id).filter((item) =>
+    can(locals, item.permission),
   );
 
   return {
     user: locals.user,
     mainCurrency,
     unpaidCount,
-    isSuperuser: locals.isSuperuser,
-    permissions: locals.permissions,
+    // What the shell offers. Never a superuser flag: a page decides what it
+    // shows from a permission, so a group can be given exactly that.
+    canManageUsers: can(locals, "users.manage"),
+    canSeeSettings: can(locals, "settings.read"),
     navItems,
   };
 };

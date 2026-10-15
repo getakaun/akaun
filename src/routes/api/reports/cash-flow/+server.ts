@@ -1,6 +1,6 @@
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { badRequest, forbidden } from "$lib/server/api-response.js";
 import { cashFlowCsv } from "$lib/server/ledger/reports/csv.js";
 import { cashFlowReport } from "$lib/server/queries/reports.js";
@@ -14,7 +14,7 @@ import {
 /** Where the period's cash came from and what it went on (FR-006, FR-010). */
 export const GET: RequestHandler = async ({ locals, url }) => {
   // Seeing a report never allows recording one (FR-039).
-  if (!hasPermission(locals, "reports", "view")) return forbidden();
+  if (!can(locals, "reports.read")) return forbidden();
 
   const parsed = periodQuery.safeParse(
     queryValues(url, ["dateFrom", "dateTo"]),

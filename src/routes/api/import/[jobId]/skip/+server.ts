@@ -9,11 +9,11 @@ import { refused } from '$lib/server/api-response.js';
 import { skipGroupItems } from '$lib/server/services/import-items.js';
 import { ImportState } from '$lib/enums.js';
 import type { RequestHandler } from './$types.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import { can } from '$lib/server/permissions.js';
 
 export const POST: RequestHandler = async ({ locals, params }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'import', 'change')) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'import.confirm')) return new Response('Forbidden', { status: 403 });
 
 	const row = db.select().from(importQueue).where(eq(importQueue.id, params.jobId)).get();
 

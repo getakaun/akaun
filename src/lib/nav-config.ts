@@ -9,14 +9,15 @@ import {
   ChartColumn,
 } from "@lucide/svelte";
 import type { Component } from "svelte";
-import type { ResourceName } from "$lib/server/permissions.js";
+import type { LeafPermission } from "$lib/permissions/catalog.js";
 
 export type NavItem = {
   id: string;
   label: string;
   href: string;
   Icon: Component<{ size?: number | string }>;
-  resource: ResourceName;
+  /** What a user must be able to do to see this item in the navigation. */
+  permission: LeafPermission;
 };
 
 export const DEFAULT_NAV_ITEMS: NavItem[] = [
@@ -25,7 +26,7 @@ export const DEFAULT_NAV_ITEMS: NavItem[] = [
     label: "Dashboard",
     href: "/dashboard",
     Icon: LayoutDashboard,
-    resource: "dashboard",
+    permission: "dashboard.read",
   },
   // One list of everything that happened with money. Expenses, Income and
   // Journal were three doors into one store, and a transfer belonged to none of
@@ -35,35 +36,35 @@ export const DEFAULT_NAV_ITEMS: NavItem[] = [
     label: "Records",
     href: "/records",
     Icon: Wallet,
-    resource: "records",
+    permission: "records.read",
   },
   {
     id: "quotations",
     label: "Quotations",
     href: "/quotations",
     Icon: ScrollText,
-    resource: "quotations",
+    permission: "quotations.read",
   },
   {
     id: "invoices",
     label: "Invoices",
     href: "/invoices",
     Icon: Receipt,
-    resource: "invoices",
+    permission: "invoices.read",
   },
   {
     id: "contacts",
     label: "Contacts",
     href: "/contacts",
     Icon: Users,
-    resource: "contacts",
+    permission: "contacts.read",
   },
   {
     id: "import",
     label: "Auto Import",
     href: "/import",
     Icon: Upload,
-    resource: "import",
+    permission: "import.read",
   },
   // Reconciliation is not a menu item any more: a statement always belonged to
   // exactly one account, so reconciling is reached from that account's page
@@ -73,14 +74,14 @@ export const DEFAULT_NAV_ITEMS: NavItem[] = [
     label: "Accounts",
     href: "/accounts",
     Icon: Landmark,
-    resource: "accounts",
+    permission: "accounts.read",
   },
   {
     id: "reports",
     label: "Reports",
     href: "/reports",
     Icon: ChartColumn,
-    resource: "reports",
+    permission: "reports.read",
   },
 ];
 

@@ -3,17 +3,17 @@ import { db } from "$lib/server/db/client.js";
 import { getInvoice, listInvoices } from "$lib/server/queries/invoices.js";
 import { removeInvoice } from "$lib/server/services/invoices.js";
 import { fail, redirect } from "@sveltejs/kit";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { documentDefaults } from "$lib/server/sales/defaults.js";
 
 export function loadInvoicesPage(locals: App.Locals) {
-  if (!hasPermission(locals, "invoices", "view"))
+  if (!can(locals, "invoices.read"))
     throw redirect(302, "/dashboard");
   // The tab counts are worked out on the page, from the live list the stream
   // keeps current.
   return {
     invoices: listInvoices(db, { limit: 1000 }),
-    perms: { add: hasPermission(locals, "invoices", "add") },
+    perms: { add: can(locals, "invoices.create") },
   };
 }
 
@@ -25,7 +25,7 @@ export function loadInvoicesPage(locals: App.Locals) {
  * that would 403 on submit.
  */
 export function loadInvoiceNew(locals: App.Locals) {
-  if (!hasPermission(locals, "invoices", "add"))
+  if (!can(locals, "invoices.create"))
     throw redirect(302, "/invoices");
   // Days from the issue date to the due date a new invoice starts with; null
   // when the setting is empty (no due date).
@@ -40,7 +40,7 @@ export function loadInvoiceNew(locals: App.Locals) {
  * numbers a reader came to check arrived a moment after the panel did.
  */
 export function loadInvoiceDetail(locals: App.Locals, id: number) {
-  if (!hasPermission(locals, "invoices", "view"))
+  if (!can(locals, "invoices.read"))
     throw redirect(302, "/dashboard");
 
   const invoice = getInvoice(db, id);
@@ -49,22 +49,27 @@ export function loadInvoiceDetail(locals: App.Locals, id: number) {
   return {
     invoice,
     perms: {
-      change: hasPermission(locals, "invoices", "change"),
-      delete: hasPermission(locals, "invoices", "delete"),
-      // Cancel & reissue changes this invoice and adds another.
+      change: can(locals, "invoices.update"),
+      delete: can(locals, "invoices.delete"),
+      // Sending puts the invoice in the books: a record, as the endpoint asks.
+      issue: can(locals, "invoices.issue") && can(locals, "records.create"),
+      // Voiding takes the posting out of the books again.
+      void: can(locals, "invoices.void") && can(locals, "records.update"),
+      // Void & reissue also adds a new draft.
       reissue:
-        hasPermission(locals, "invoices", "change") &&
-        hasPermission(locals, "invoices", "add"),
+        can(locals, "invoices.void") &&
+        can(locals, "records.update") &&
+        can(locals, "invoices.create"),
       // A customer's payment is a record, so recording one from the invoice
       // needs what recording it from the Records screen needs.
-      recordPayment: hasPermission(locals, "records", "add"),
+      recordPayment: can(locals, "records.create"),
     },
   };
 }
 
 export const invoicesActions: Actions = {
   delete: async ({ locals, request }) => {
-    if (!hasPermission(locals, "invoices", "delete"))
+    if (!can(locals, "invoices.delete"))
       return fail(403, { error: "Forbidden" });
     const userId = locals.user!.id;
     const data = await request.formData();

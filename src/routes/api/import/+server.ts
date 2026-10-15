@@ -13,13 +13,13 @@ import { profileSnapshotOf, serializeProfileSnapshot } from '$lib/server/import/
 import { deletedProfileName, getImportProfile } from '$lib/server/services/import-profiles.js';
 import { ImportState } from '$lib/enums.js';
 import type { RequestHandler } from './$types.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import { can } from '$lib/server/permissions.js';
 
 const ACTIVE_STATES: number[] = [ImportState.Queued, ImportState.Extracting, ImportState.Processing];
 
 export const GET: RequestHandler = async ({ locals, url }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'import', 'view')) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'import.read')) return new Response('Forbidden', { status: 403 });
 
 	const activeOnly = url.searchParams.get('active') === '1';
 
@@ -46,7 +46,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 
 export const POST: RequestHandler = async ({ locals, request }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'import', 'add')) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'import.create')) return new Response('Forbidden', { status: 403 });
 
 	const formData = await request.formData();
 	const file = formData.get('file');

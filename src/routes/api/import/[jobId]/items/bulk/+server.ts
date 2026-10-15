@@ -6,7 +6,7 @@ import { importQueue } from "$lib/server/db/schema.js";
 import { badRequest, forbidden, refused } from "$lib/server/api-response.js";
 import { DOCUMENT_ITEMS_MAX } from "$lib/import-reading.js";
 import { groupCounts } from "$lib/server/import/group-state.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import {
   confirmGroupItems,
   setGroupItemsAccount,
@@ -76,11 +76,16 @@ const NOT_AS_SHOWN =
 
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "import", "change")) return forbidden();
-
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return badRequest(parsed.error);
   const body = parsed.data;
+  // Confirming and skipping decide what reaches the books (import.confirm);
+  // setting a category or an account corrects the reading (import.update).
+  const needed =
+    body.action === "confirm" || body.action === "skip"
+      ? "import.confirm"
+      : "import.update";
+  if (!can(locals, needed)) return forbidden();
 
   if (body.readAt !== undefined) {
     const group = db

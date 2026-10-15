@@ -22,7 +22,7 @@ A document with many records shows as one card under **Ready to review**. The ca
 
 Click the card to open the page of the document. **Skip** on the card skips each item that still
 waits. Akaun asks you first, and you click **Skip** in the dialog. Items that are already
-confirmed keep their records. **Skip** shows only when you have the **Change** permission.
+confirmed keep their records. **Skip** shows only when you have the **Confirm** permission.
 
 ## Confirm the items
 
@@ -141,7 +141,7 @@ does not follow, the panel names the row. A row can be missing from the export, 
 
 **Read again** reads the file again in a different way. The new reading replaces each item that
 waits and each skipped item. When an item is confirmed, you cannot read the document again. You
-need the **Add** and **Change** permissions on **Auto Import**.
+need the **Upload** and **Change** permissions on **Auto Import**.
 
 ## Discard the document
 

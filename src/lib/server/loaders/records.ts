@@ -1,7 +1,7 @@
 import { fail, redirect, type Actions } from "@sveltejs/kit";
 import { z } from "zod";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import {
   defaultAccountId,
   listAccounts,
@@ -55,7 +55,7 @@ const LIST_PATH = "/records";
 const PAGE_LIMIT = 1000;
 
 export function loadRecordsPage(locals: App.Locals) {
-  if (!hasPermission(locals, "records", "view"))
+  if (!can(locals, "records.read"))
     throw redirect(302, "/dashboard");
 
   // No `kind` filter: one list of everything that happened, newest first
@@ -78,7 +78,7 @@ export function loadRecordsPage(locals: App.Locals) {
  * `locked`, `lockedReason`, `reconciled` — so nothing here recomputes them.
  */
 export function loadRecordDetail(locals: App.Locals, id: number) {
-  if (!hasPermission(locals, "records", "view"))
+  if (!can(locals, "records.read"))
     throw redirect(302, "/dashboard");
 
   const record = getRecord(db, id);
@@ -108,7 +108,7 @@ export function loadRecordDetail(locals: App.Locals, id: number) {
  * that would 403 on submit.
  */
 export function loadRecordNew(locals: App.Locals) {
-  if (!hasPermission(locals, "records", "add")) throw redirect(302, LIST_PATH);
+  if (!can(locals, "records.create")) throw redirect(302, LIST_PATH);
 
   return recordFormOptions(locals);
 }
@@ -135,7 +135,7 @@ function positiveIdParam(url: URL, name: string): number | null {
  * built here from the invoice's own id, never echoed from the address bar.
  */
 export function loadPaymentNew(locals: App.Locals, url: URL) {
-  if (!hasPermission(locals, "records", "add")) throw redirect(302, LIST_PATH);
+  if (!can(locals, "records.create")) throw redirect(302, LIST_PATH);
 
   let contactId = positiveIdParam(url, "contactId");
   let direction: "we-pay" | "we-receive" =
@@ -151,7 +151,7 @@ export function loadPaymentNew(locals: App.Locals, url: URL) {
 
   const invoiceId = positiveIdParam(url, "invoice");
   const invoice =
-    invoiceId !== null && hasPermission(locals, "invoices", "view")
+    invoiceId !== null && can(locals, "invoices.read")
       ? getInvoice(db, invoiceId)
       : null;
   if (invoice) {
@@ -216,13 +216,13 @@ function recordFormOptions(locals: App.Locals) {
         USER_PREF_KEYS.lastForeignCurrencyIncome,
       ) ?? null,
     perms: {
-      add: hasPermission(locals, "records", "add"),
-      change: hasPermission(locals, "records", "change"),
-      delete: hasPermission(locals, "records", "delete"),
+      add: can(locals, "records.create"),
+      change: can(locals, "records.update"),
+      delete: can(locals, "records.delete"),
       // Free choice of account and a third side. The server enforces this at
       // the point of derivation; the screen only stops offering what would be
       // refused (FR-031c).
-      adjustments: hasPermission(locals, "adjustments", "add"),
+      adjustments: can(locals, "records.adjust"),
     },
   };
 }
@@ -254,7 +254,7 @@ export const recordsActions: Actions = {
     const parsed = idsSchema.safeParse(String(data.get("ids") ?? ""));
     if (!parsed.success) return fail(400, { error: "Nothing was selected." });
 
-    if (!hasPermission(locals, "records", "delete")) {
+    if (!can(locals, "records.delete")) {
       return fail(403, { error: "Forbidden" });
     }
 

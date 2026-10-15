@@ -1,10 +1,7 @@
 import type { LedgerDb } from "../ledger/types.js";
 import type { BlobStore } from "../storage/blob-store.js";
-import {
-  hasPermission,
-  type ActionName,
-  type ResourceName,
-} from "../permissions.js";
+import { canAll } from "../permissions.js";
+import type { LeafPermission } from "$lib/permissions/catalog.js";
 import { denied, type AppFailure } from "./result.js";
 
 /**
@@ -12,7 +9,8 @@ import { denied, type AppFailure } from "./result.js";
  *
  * Everything it needs comes in here: the database, who is asking, and — for
  * the operations that touch files — where files live. **Nothing under
- * `application/` imports `db/client.ts`, `env.js` or `file-storage.ts`.** That
+ * `application/` imports `db/client.ts`, and every file helper it calls is
+ * given `storageRoot` rather than left on its `STORAGE_PATH` default.** That
  * is what lets the MCP specs run every operation against an in-memory database
  * and a folder under `os.tmpdir()`, and is what keeps a test from ever reaching
  * the real `data/` (CLAUDE.md, Verification Policy).
@@ -42,19 +40,17 @@ export function actor(ctx: AppContext): number {
 }
 
 /**
- * Every pair must be granted. Returns the refusal to hand back, or null.
+ * Every permission must be held. Returns the refusal to hand back, or null.
  *
- * Route code and MCP tools never call `hasPermission` for a write themselves:
- * the operation asks, so the two can never ask different questions.
+ * Route code and MCP tools never check a write's permission themselves: the
+ * operation asks, so the two can never ask different questions. Through a
+ * token or an app, `locals.permissions` is already role ∩ delegation ceiling
+ * ∩ the credential's own permissions, so this bounds them too.
  */
 export function requirePermissions(
   ctx: AppContext,
-  pairs: [ResourceName, ActionName][],
+  permissions: readonly LeafPermission[],
 ): AppFailure | null {
   if (!ctx.locals.user) return denied();
-  return pairs.every(([resource, action]) =>
-    hasPermission(ctx.locals, resource, action),
-  )
-    ? null
-    : denied();
+  return canAll(ctx.locals, permissions) ? null : denied();
 }

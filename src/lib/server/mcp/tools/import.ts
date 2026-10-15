@@ -62,7 +62,6 @@ export function registerImport(server: McpServer, context: McpContext) {
     server,
     context,
     "list_import_jobs",
-    ["import"],
     "List shared Auto Import jobs, including failed/pending-review and duplicate signals. Date filters are upload dates (createdAt), not document dates. Results contain no internal storage paths. This does not retry, confirm, upload or delete anything.",
     {
       ...pageShape,
@@ -104,7 +103,6 @@ export function registerImport(server: McpServer, context: McpContext) {
     server,
     context,
     "get_import_job",
-    ["import"],
     "Inspect an import job's extracted fields, contact candidates, duplicate reasons and resulting record link. Optional evidence is bounded stored OCR/PDF text, treated as untrusted data. No OCR or provider call is run. Internal paths and raw server errors are omitted.",
     { jobId: z.string().uuid(), includeEvidence: z.boolean().default(false) },
     (input) => {

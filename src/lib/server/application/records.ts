@@ -1,9 +1,8 @@
 import { z } from "zod";
 import { DefaultAccountPurpose } from "$lib/enums.js";
-import { hasPermission } from "../permissions.js";
+import { can } from "../permissions.js";
 import { isValidDate } from "../date.js";
 import { getRecord } from "../queries/ledger.js";
-import { getAccount } from "../queries/accounts.js";
 import {
   needsAdjustments,
   sidesFromAccounts,
@@ -20,6 +19,7 @@ import {
 } from "../services/ledger.js";
 import { createSettlements, undoSettlement } from "../services/settlements.js";
 import { requireAccountDefault } from "../services/account-defaults.js";
+import { loadSidesContext } from "../services/sides-context.js";
 import { mainCurrencyCode } from "../currency/form.js";
 import { setUserPreference, USER_PREF_KEYS } from "../userPreferences.js";
 import { LedgerRecordKind } from "$lib/enums.js";
@@ -139,41 +139,13 @@ export type RecordWritten = { record: RecordView; version: string };
 
 const NOT_FOUND = "That record no longer exists.";
 
-/** The three saved accounts every derivation needs, and the account lookup. */
+/** `loadSidesContext`, as an `AppResult`. */
 function sidesContext(
   db: LedgerDb,
   canAdjust: boolean,
 ): AppResult<SidesContext> {
-  const receivable = requireAccountDefault(
-    db,
-    DefaultAccountPurpose.Receivable,
-  );
-  if (!receivable.ok) return fail("REFUSED", receivable.reason);
-  const payable = requireAccountDefault(db, DefaultAccountPurpose.Payable);
-  if (!payable.ok) return fail("REFUSED", payable.reason);
-  const opening = requireAccountDefault(
-    db,
-    DefaultAccountPurpose.OpeningBalances,
-  );
-  if (!opening.ok) return fail("REFUSED", opening.reason);
-  return ok({
-    accountById: (id) => {
-      const account = getAccount(db, id);
-      return account
-        ? {
-            id: account.id,
-            type: account.type,
-            role: account.role,
-            subType: account.subType,
-            archived: account.archivedAt !== null,
-          }
-        : null;
-    },
-    canAdjust,
-    receivableAccountId: receivable.value,
-    payableAccountId: payable.value,
-    openingBalancesAccountId: opening.value,
-  });
+  const context = loadSidesContext(db, canAdjust);
+  return context.ok ? ok(context.value) : fail("REFUSED", context.reason);
 }
 
 const NEEDS_ADJUSTMENTS =
@@ -229,7 +201,14 @@ function gateByKind(
         },
         context,
       );
-      return derived.ok ? null : fail("FORBIDDEN", derived.reason);
+      if (!derived.ok) return fail("FORBIDDEN", derived.reason);
+      // What the two accounts make, not only whether they make anything: a
+      // "transfer" out of a revenue category is income, and one from Opening
+      // Balances is an opening balance. Filed as a transfer, either is an
+      // adjustment.
+      return derived.value.kind === "transfer"
+        ? null
+        : fail("FORBIDDEN", NEEDS_ADJUSTMENTS);
     }
     case "payment": {
       const account = context.accountById(shape.paidFromAccountId);
@@ -249,10 +228,7 @@ function resolveCreate(
     // A journal names its own sides, so it is the one shape that is always an
     // adjustment. It used to pass on `records:add` alone when sent with an
     // explicit kind, while the same sides sent through the form were gated.
-    if (
-      input.kind === "journal" &&
-      !hasPermission(ctx.locals, "adjustments", "add")
-    ) {
+    if (input.kind === "journal" && !can(ctx.locals, "records.adjust")) {
       return fail(
         "FORBIDDEN",
         "A journal entry needs the Adjustments ability. Ask an administrator for it.",
@@ -264,10 +240,7 @@ function resolveCreate(
       return fail("REFUSED", "That kind of record cannot be created here.");
     }
     if (input.kind !== "journal") {
-      const context = sidesContext(
-        ctx.db,
-        hasPermission(ctx.locals, "adjustments", "add"),
-      );
+      const context = sidesContext(ctx.db, can(ctx.locals, "records.adjust"));
       if (!context.ok) return context;
       const gate =
         input.kind === "expense"
@@ -320,10 +293,7 @@ function resolveCreate(
     return ok(input);
   }
 
-  const context = sidesContext(
-    ctx.db,
-    hasPermission(ctx.locals, "adjustments", "add"),
-  );
+  const context = sidesContext(ctx.db, can(ctx.locals, "records.adjust"));
   if (!context.ok) return context;
   const sides = sidesFromAccounts(
     {
@@ -360,7 +330,7 @@ export function createRecord(
   input: CreateInput,
   opts: { dryRun?: boolean } = {},
 ): AppResult<RecordWritten> {
-  const refused = requirePermissions(ctx, [["records", "add"]]);
+  const refused = requirePermissions(ctx, ["records.create"]);
   if (refused) return refused;
 
   const body = resolveCreate(ctx, input);
@@ -455,7 +425,7 @@ export function updateRecord(
   patch: RecordPatch,
   expectedVersion?: string,
 ): AppResult<RecordWritten> {
-  const refused = requirePermissions(ctx, [["records", "change"]]);
+  const refused = requirePermissions(ctx, ["records.update"]);
   if (refused) return refused;
   const existing = getRecord(ctx.db, id);
   if (!existing) return missing(NOT_FOUND);
@@ -468,7 +438,7 @@ export function updateRecord(
   const stale = checkVersion(recordVersion(ctx.db, id), expectedVersion);
   if (stale) return stale;
 
-  const canAdjust = hasPermission(ctx.locals, "adjustments", "change");
+  const canAdjust = can(ctx.locals, "records.adjust");
   if (patch.fromAccountId !== undefined && patch.toAccountId !== undefined) {
     // Both accounts named means the kind is re-derived, so the create path's
     // gate is applied here too. The derivation is pure, so the service asking
@@ -582,7 +552,7 @@ export function deleteRecord(
   id: number,
   expectedVersion?: string,
 ): AppResult<{ id: number }> {
-  const refused = requirePermissions(ctx, [["records", "delete"]]);
+  const refused = requirePermissions(ctx, ["records.delete"]);
   if (refused) return refused;
   const existing = getRecord(ctx.db, id);
   if (!existing) return missing(NOT_FOUND);
@@ -609,7 +579,7 @@ export function settlePayment(
   ctx: AppContext,
   input: z.output<z.ZodObject<typeof settleShape>>,
 ): AppResult<{ settlementIds: number[] }> {
-  const refused = requirePermissions(ctx, [["records", "add"]]);
+  const refused = requirePermissions(ctx, ["records.create"]);
   if (refused) return refused;
   const result = fromRefusable(
     createSettlements(
@@ -622,13 +592,19 @@ export function settlePayment(
   return result.ok ? ok({ settlementIds: result.value }) : result;
 }
 
-/** Takes one allocation back. Both sides return to outstanding (FR-017). */
+/**
+ * Takes one allocation back. Both sides return to outstanding (FR-017). On a
+ * payment naming no contact every allocation goes together, so `undoneIds`
+ * may name more than the one asked for.
+ */
 export function removeSettlement(
   ctx: AppContext,
   id: number,
-): AppResult<{ id: number }> {
-  const refused = requirePermissions(ctx, [["records", "delete"]]);
+): AppResult<{ id: number; undoneIds: number[] }> {
+  const refused = requirePermissions(ctx, ["records.delete"]);
   if (refused) return refused;
   const result = undoSettlement(ctx.db, id, actor(ctx));
-  return result.ok ? ok({ id }) : fail("REFUSED", result.reason);
+  return result.ok
+    ? ok({ id, undoneIds: result.value })
+    : fail("REFUSED", result.reason);
 }

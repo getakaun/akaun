@@ -4,14 +4,12 @@ import { getContact } from "../queries/contacts.js";
 import {
   createContact as createContactService,
   deleteContact as deleteContactService,
-  mergeContacts as mergeContactsService,
   patchContact,
   replaceContactRoles,
 } from "../services/contacts.js";
 import { actor, requirePermissions, type AppContext } from "./context.js";
 import { fail, missing, ok, type AppResult } from "./result.js";
-import { positiveId } from "./records.js";
-import { checkVersion, contactVersion, contactVersions } from "./version.js";
+import { checkVersion, contactVersion } from "./version.js";
 
 /**
  * Contacts — the purchase and sales ledger's "who" (CLAUDE.md, The three
@@ -72,13 +70,6 @@ export const updateContactShape = {
   roles: rolesShape.optional(),
 };
 
-export const mergeContactsShape = {
-  survivorId: positiveId,
-  loserIds: z.array(positiveId).min(1).max(50),
-  /** The version of the survivor and of each contact merged into it, by id. */
-  expectedVersions: z.record(z.string(), z.string()).optional(),
-};
-
 type Contact = NonNullable<ReturnType<typeof getContact>>;
 export type ContactWritten = { contact: Contact; version: string };
 
@@ -88,7 +79,7 @@ export function createContact(
   ctx: AppContext,
   input: z.output<z.ZodObject<typeof createContactShape>>,
 ): AppResult<ContactWritten> {
-  const refused = requirePermissions(ctx, [["contacts", "add"]]);
+  const refused = requirePermissions(ctx, ["contacts.create"]);
   if (refused) return refused;
   const contact = createContactService(ctx.db, actor(ctx), input);
   return ok({ contact, version: contactVersion(ctx.db, contact.id) });
@@ -100,7 +91,7 @@ export function updateContact(
   input: z.output<z.ZodObject<typeof updateContactShape>>,
   expectedVersion?: string,
 ): AppResult<ContactWritten> {
-  const refused = requirePermissions(ctx, [["contacts", "change"]]);
+  const refused = requirePermissions(ctx, ["contacts.update"]);
   if (refused) return refused;
   if (!getContact(ctx.db, id)) return missing(NOT_FOUND);
   const stale = checkVersion(contactVersion(ctx.db, id), expectedVersion);
@@ -123,7 +114,7 @@ export function deleteContact(
   id: number,
   expectedVersion?: string,
 ): AppResult<{ id: number }> {
-  const refused = requirePermissions(ctx, [["contacts", "delete"]]);
+  const refused = requirePermissions(ctx, ["contacts.delete"]);
   if (refused) return refused;
   if (!getContact(ctx.db, id)) return missing(NOT_FOUND);
   const stale = checkVersion(contactVersion(ctx.db, id), expectedVersion);
@@ -132,48 +123,4 @@ export function deleteContact(
   // sentence the screen shows (FR-009a).
   const result = deleteContactService(ctx.db, id, actor(ctx));
   return result.ok ? ok({ id }) : fail("REFUSED", result.reason);
-}
-
-/**
- * Repoints everything the losers are named on to the survivor, then deletes
- * the losers — so it needs both `change` and `delete`, as the screen does.
- */
-export function mergeContacts(
-  ctx: AppContext,
-  input: z.output<z.ZodObject<typeof mergeContactsShape>>,
-): AppResult<ContactWritten & { mergedIds: number[] }> {
-  const refused = requirePermissions(ctx, [
-    ["contacts", "change"],
-    ["contacts", "delete"],
-  ]);
-  if (refused) return refused;
-  if (input.loserIds.includes(input.survivorId))
-    return fail("INVALID_INPUT", "A contact cannot be merged into itself.");
-  const ids = [input.survivorId, ...input.loserIds];
-  const current = contactVersions(ctx.db, ids);
-  for (const id of ids) {
-    if (!getContact(ctx.db, id))
-      return missing(`Contact ${id} no longer exists.`);
-    const stale = checkVersion(
-      current[id],
-      input.expectedVersions?.[String(id)],
-    );
-    if (stale)
-      return {
-        ...stale,
-        reason: `Contact ${id} ${stale.reason.charAt(0).toLowerCase()}${stale.reason.slice(1)}`,
-      };
-  }
-  const survivor = mergeContactsService(
-    ctx.db,
-    input.survivorId,
-    input.loserIds,
-    actor(ctx),
-  );
-  if (!survivor) return missing(NOT_FOUND);
-  return ok({
-    contact: survivor,
-    version: contactVersion(ctx.db, input.survivorId),
-    mergedIds: input.loserIds,
-  });
 }

@@ -92,7 +92,7 @@ export function createAccount(
   ctx: AppContext,
   input: z.output<z.ZodObject<typeof createAccountShape>>,
 ): AppResult<AccountWritten> {
-  const refused = requirePermissions(ctx, [["accounts", "add"]]);
+  const refused = requirePermissions(ctx, ["accounts.create"]);
   if (refused) return refused;
   const result = createAccountService(ctx.db, actor(ctx), {
     type: input.type,
@@ -111,7 +111,7 @@ export function updateAccount(
   patch: z.output<z.ZodObject<typeof updateAccountShape>>,
   expectedVersion?: string,
 ): AppResult<AccountWritten> {
-  const refused = requirePermissions(ctx, [["accounts", "change"]]);
+  const refused = requirePermissions(ctx, ["accounts.update"]);
   if (refused) return refused;
   if (!getAccount(ctx.db, id)) return missing(NOT_FOUND);
   const stale = checkVersion(accountVersion(ctx.db, id), expectedVersion);
@@ -130,7 +130,7 @@ export function deleteAccount(
   id: number,
   expectedVersion?: string,
 ): AppResult<{ id: number }> {
-  const refused = requirePermissions(ctx, [["accounts", "delete"]]);
+  const refused = requirePermissions(ctx, ["accounts.delete"]);
   if (refused) return refused;
   if (!getAccount(ctx.db, id)) return missing(NOT_FOUND);
   const stale = checkVersion(accountVersion(ctx.db, id), expectedVersion);
@@ -154,8 +154,8 @@ export function openingBalanceVersion(
  * Creates, replaces or (at zero) removes an account's one opening balance.
  *
  * The opening balance is a record, so this asks for the records ability the
- * write amounts to — adding one where there was none, changing or removing the
- * one there is — on top of `accounts:change`. It used to ask for the second
+ * write amounts to — adding one where there was none, changing the one there
+ * is, or deleting it (zero) — on top of `accounts.update`. It used to ask for the second
  * alone, and the records screen never heard about the record it wrote.
  */
 export function setOpeningBalance(
@@ -164,11 +164,19 @@ export function setOpeningBalance(
   input: { date: string; amountMinor: number },
   expectedVersion?: string,
 ): AppResult<{ accountId: number; recordId: number | null; version: string }> {
+  // Asked before anything is looked up, so a caller without the ability
+  // cannot learn which ids exist.
+  const refusedAccount = requirePermissions(ctx, ["accounts.update"]);
+  if (refusedAccount) return refusedAccount;
   if (!getAccount(ctx.db, accountId)) return missing(NOT_FOUND);
   const before = openingBalanceFor(ctx.db, accountId)?.recordId ?? null;
   const refused = requirePermissions(ctx, [
-    ["accounts", "change"],
-    ["records", before === null ? "add" : "change"],
+    before === null
+      ? "records.create"
+      : input.amountMinor === 0
+        ? // Zero deletes the record, so it needs what deleting one needs.
+          "records.delete"
+        : "records.update",
   ]);
   if (refused) return refused;
   const stale = checkVersion(

@@ -1,6 +1,8 @@
 import { recordAudit } from "../audit.js";
 import {
   checkAllocations,
+  money,
+  outstandingOf,
   settlementDirectionForAccount,
 } from "../ledger/settlement-rules.js";
 import { DefaultAccountPurpose } from "$lib/enums.js";
@@ -14,6 +16,7 @@ import type {
 import {
   deleteSettlement,
   getSettlement,
+  settlementIdsForPayment,
   getSide,
   getSides,
   insertSettlements,
@@ -136,16 +139,30 @@ export function createSettlements(
   );
   if (!check.ok) return check;
 
+  const allocatedMinor = allocations.reduce((sum, a) => sum + a.amountMinor, 0);
+  // `checkAllocations` weighs these against the payment's whole amount; what
+  // earlier settlements already put against it is spoken for. Without this a
+  // payment could be spread over more than it is, one call at a time.
+  if (allocatedMinor > outstandingOf(payment)) {
+    const left = outstandingOf(payment);
+    return {
+      ok: false,
+      reason:
+        left === 0
+          ? "This payment is already fully put against other items."
+          : `Only ${money(left)} of this payment is left to put against anything — the rest already covers other items.`,
+    };
+  }
+
   // A payment naming one contact may leave part of itself unallocated — the
   // rest just sits as a payment to that person with nothing (yet) put against
   // it. A payment naming none has nobody left to put a remainder on, so it
   // has to be spent in full.
   if (payment.contactId === null) {
-    const allocatedMinor = allocations.reduce(
-      (sum, a) => sum + a.amountMinor,
-      0,
-    );
-    if (allocatedMinor !== Math.abs(payment.amountMinor)) {
+    if (
+      allocatedMinor + payment.settledMinor !==
+      Math.abs(payment.amountMinor)
+    ) {
       return {
         ok: false,
         reason:
@@ -187,34 +204,56 @@ export function createSettlements(
 /**
  * Undoes one allocation. Both sides return to outstanding, and any field the
  * settlement was locking becomes editable again (FR-017).
+ *
+ * A payment naming no contact (a batch across several) must stay fully
+ * allocated — there is nobody to leave a remainder on — so taking back one of
+ * its allocations takes back all of them, in one transaction. Returns the ids
+ * undone.
  */
 export function undoSettlement(
   db: LedgerDb,
   id: number,
   actingUserId: number,
-): Refusable<null> {
+): Refusable<number[]> {
   const existing = getSettlement(db, id);
   if (!existing) {
     return { ok: false, reason: "That settlement has already been undone." };
   }
 
-  const touched = recordIdsForSettlement(
-    db,
-    existing.paymentMovementId,
-    existing.owedMovementId,
-  );
+  const payment = getSide(db, existing.paymentMovementId);
+  const ids =
+    payment && payment.contactId === null
+      ? settlementIdsForPayment(db, existing.paymentMovementId)
+      : [id];
 
-  if (!deleteSettlement(db, id)) {
+  const touched = new Set<number>();
+  const undone = db.transaction(() => {
+    const done: number[] = [];
+    for (const settlementId of ids) {
+      const row = getSettlement(db, settlementId);
+      if (!row) continue;
+      for (const recordId of recordIdsForSettlement(
+        db,
+        row.paymentMovementId,
+        row.owedMovementId,
+      ))
+        touched.add(recordId);
+      if (!deleteSettlement(db, settlementId)) continue;
+      recordAudit(db, {
+        recordType: "settlement",
+        recordId: settlementId,
+        userId: actingUserId,
+        action: "delete",
+      });
+      done.push(settlementId);
+    }
+    return done;
+  });
+
+  if (!undone.includes(id)) {
     return { ok: false, reason: "That settlement has already been undone." };
   }
 
-  recordAudit(db, {
-    recordType: "settlement",
-    recordId: id,
-    userId: actingUserId,
-    action: "delete",
-  });
-
-  emitSettlementChanged(db, touched);
-  return { ok: true, value: null };
+  emitSettlementChanged(db, [...touched]);
+  return { ok: true, value: undone };
 }

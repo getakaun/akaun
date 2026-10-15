@@ -48,11 +48,12 @@ export function registerImportWrites(server: McpServer, context: McpContext) {
     server,
     context,
     "skip_import",
-    "Decline a document waiting for review, or `itemIds`/`all` of a grouped one. No record is made; the file is kept only while something else uses it. Requires the job's `version`.",
+    "Decline a document waiting for review, or `itemIds`/`all` of a grouped one. No record is made, and the uploaded file is deleted for good unless something else still uses it, so it cannot be read again. Confirm with the user before calling. Requires the job's `version`.",
     { jobId, expectedVersion, ...selectionShape },
     ({ jobId, expectedVersion, ...input }) =>
       skipImport(context, jobId, input, expectedVersion),
-    { idempotent: true, ids: (input) => ({ jobId: input.jobId }) },
+    // Deletes the source file; a second call is refused, not repeated.
+    { destructive: true, ids: (input) => ({ jobId: input.jobId }) },
   );
 
   registerWrite(

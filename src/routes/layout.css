@@ -508,7 +508,8 @@ th.sortable:hover .th-idle { opacity: .5; }
 .attach-sub { font-size: 11.5px; color: var(--muted-foreground); margin-top: 2px; }
 .attach-empty { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 13px; padding: 14px; border: 1px dashed var(--border); border-radius: 9px; justify-content: center; }
 .attach-del { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; background: none; border: none; cursor: pointer; color: var(--muted-foreground); border-radius: 6px; flex-shrink: 0; margin-right: 8px; }
-.attach-del:hover { background: var(--accent); color: var(--destructive); }
+.attach-del:hover:not(:disabled) { background: var(--accent); color: var(--destructive); }
+.attach-del:disabled { cursor: not-allowed; opacity: 0.4; }
 .attach-upload-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 1px dashed var(--border); border-radius: 7px; font-size: 12.5px; color: var(--muted-foreground); cursor: pointer; margin-top: 10px; font-family: inherit; }
 .attach-upload-btn:hover { border-color: var(--primary); color: var(--primary); }
 .attach-section-header { display: flex; align-items: center; justify-content: space-between; margin: 24px 0 10px; }

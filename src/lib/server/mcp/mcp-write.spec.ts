@@ -24,13 +24,12 @@ import {
   bankStatementLines,
   bankStatements,
   contacts,
-  groupPermissions,
-  groups,
+  groupDelegations,
+  groupGrants,
   importQueue,
   ledgerRecords,
   recordAttachments,
   settlements,
-  userGroups,
   users,
 } from "../db/schema.js";
 import { seedAccounts } from "../db/seed-accounts.js";
@@ -43,7 +42,14 @@ import {
   StatementExtractionState,
 } from "$lib/enums.js";
 import type { LedgerDb } from "../ledger/types.js";
-import { bearerLocals } from "../bearer-auth.js";
+import { patLocals } from "../tokens/pat.js";
+import { resolveAccess } from "../permissions.js";
+import { grantGroup, issueTestToken } from "../permissions/test-locals.js";
+import {
+  LEAF_PERMISSIONS,
+  type LeafPermission,
+} from "$lib/permissions/catalog.js";
+import { expandScopes } from "$lib/permissions/oauth-scopes.js";
 import { ledgerEvents } from "../ledger/events.js";
 import type { OAuthScope } from "../oauth/config.js";
 import { LocalBlobStore } from "../storage/blob-store.js";
@@ -62,9 +68,10 @@ let storageRoot: string;
 let store: LocalBlobStore;
 const clients: Client[] = [];
 const origin = "https://akaun.test";
-const writerToken = "test-writer-token";
-const keeperToken = "test-keeper-token";
-const readerToken = "test-reader-token";
+// Personal access tokens with each user's whole role, issued in the fixture.
+let writerToken: string;
+let keeperToken: string;
+let readerToken: string;
 let bank: number;
 let cash: number;
 let software: number;
@@ -79,7 +86,6 @@ function account(code: number) {
     .get()!.id;
 }
 
-const EVERY = ["view", "add", "change", "delete"] as const;
 const RESOURCES = [
   "records",
   "accounts",
@@ -90,6 +96,18 @@ const RESOURCES = [
   "import",
   "reports",
 ] as const;
+const inScope = (leaf: LeafPermission) =>
+  (RESOURCES as readonly string[]).includes(leaf.split(".")[0]);
+/** Every ability in these areas except Adjustments, like the seeded Owner without a grant. */
+const WRITER = LEAF_PERMISSIONS.filter(
+  (leaf) => inScope(leaf) && leaf !== "records.adjust",
+);
+/** A bookkeeper: adds and changes, never deletes or merges. */
+const KEEPER = WRITER.filter(
+  (leaf) => !leaf.endsWith(".delete") && leaf !== "contacts.merge",
+);
+/** Views only. */
+const READER = WRITER.filter((leaf) => leaf.endsWith(".read"));
 
 beforeEach(() => {
   storageRoot = mkdtempSync(join(tmpdir(), "akaun-mcp-write-spec-"));
@@ -105,7 +123,6 @@ beforeEach(() => {
         email: "w@test",
         username: "writer",
         passwordHash: "x",
-        bearerToken: writerToken,
       },
       // Bookkeeper: add and change, never delete.
       {
@@ -113,7 +130,6 @@ beforeEach(() => {
         email: "k@test",
         username: "keeper",
         passwordHash: "x",
-        bearerToken: keeperToken,
       },
       // Views only.
       {
@@ -121,45 +137,15 @@ beforeEach(() => {
         email: "r@test",
         username: "reader",
         passwordHash: "x",
-        bearerToken: readerToken,
       },
     ])
     .run();
-  db.insert(groups)
-    .values([
-      { id: 1, name: "writers" },
-      { id: 2, name: "keepers" },
-      { id: 3, name: "readers" },
-    ])
-    .run();
-  db.insert(userGroups)
-    .values([
-      { userId: 1, groupId: 1 },
-      { userId: 2, groupId: 2 },
-      { userId: 3, groupId: 3 },
-    ])
-    .run();
-  db.insert(groupPermissions)
-    .values([
-      ...RESOURCES.map((resource) => ({
-        groupId: 1,
-        resource,
-        canView: true,
-        canAdd: resource !== "reports",
-        canChange: resource !== "reports",
-        canDelete: resource !== "reports",
-      })),
-      ...RESOURCES.map((resource) => ({
-        groupId: 2,
-        resource,
-        canView: true,
-        canAdd: resource !== "reports",
-        canChange: resource !== "reports",
-        canDelete: false,
-      })),
-      ...RESOURCES.map((resource) => ({ groupId: 3, resource, canView: true })),
-    ])
-    .run();
+  grantGroup(db, { name: "writers", userIds: [1], grants: WRITER });
+  grantGroup(db, { name: "keepers", userIds: [2], grants: KEEPER });
+  grantGroup(db, { name: "readers", userIds: [3], grants: READER });
+  writerToken = issueTestToken(db, 1, WRITER);
+  keeperToken = issueTestToken(db, 2, KEEPER);
+  readerToken = issueTestToken(db, 3, READER);
   seedAccounts(db);
   setSetting(db, SETTING_KEYS.currencyCode, "MYR");
   setSetting(
@@ -192,24 +178,25 @@ afterEach(async () => {
   rmSync(storageRoot, { recursive: true, force: true });
 });
 
-type Auth =
-  | { token: string; scopes?: undefined; bearerWrites?: boolean }
-  | { token: string; scopes: OAuthScope[]; bearerWrites?: undefined };
+/** A personal access token alone, or an OAuth app acting for that token's user. */
+type Auth = { token: string; scopes?: OAuthScope[] };
 
-function localsFor(auth: Auth) {
-  const locals = bearerLocals(db, `Bearer ${auth.token}`);
-  if (!locals) return { user: null, permissions: null, isSuperuser: false };
-  return auth.scopes
-    ? {
-        ...locals,
-        oauth: {
-          clientId: "client",
-          grantId: "grant",
-          resource: `${origin}/mcp`,
-          scopes: auth.scopes,
-        },
-      }
-    : locals;
+function localsFor(auth: Auth): App.Locals {
+  const locals = patLocals(db, `Bearer ${auth.token}`);
+  if (!locals) return { user: null, permissions: null };
+  if (!auth.scopes) return locals;
+  // As `oauth.authenticate` builds it: the scopes, expanded, ∩ role ∩ ceiling.
+  return {
+    user: locals.user,
+    ...resolveAccess(db, locals.user!.id, expandScopes(auth.scopes)),
+    credential: { kind: "oauth", grantId: "grant", clientId: "client" },
+    oauth: {
+      clientId: "client",
+      grantId: "grant",
+      resource: `${origin}/mcp`,
+      scopes: auth.scopes,
+    },
+  };
 }
 
 const ALL_WRITE: OAuthScope[] = [
@@ -230,7 +217,6 @@ const ALL_WRITE: OAuthScope[] = [
   "quotations:delete",
   "reconciliation:read",
   "reconciliation:write",
-  "reconciliation:delete",
   "import:read",
   "import:write",
   "import:delete",
@@ -260,7 +246,6 @@ for (const era of ["legacy", "modern"] as const) {
               store,
               storageRoot,
               locals: localsFor(auth),
-              bearerWrites: auth.bearerWrites,
             },
             origin,
           ),
@@ -309,15 +294,31 @@ for (const era of ["legacy", "modern"] as const) {
 
   describe(`MCP writes (${era})`, () => {
     describe("discovery", () => {
-      it("hides every write tool from an API token unless the operator opts in", async () => {
-        const plain = await tools(await connect({ token: writerToken }));
-        expect(plain).toContain("get_record");
-        expect(plain).not.toContain("create_record");
-        const opted = await tools(
-          await connect({ token: writerToken, bearerWrites: true }),
+      it("lists for a personal access token exactly what it was granted", async () => {
+        const reads = await tools(
+          await connect({ token: issueTestToken(db, 1, ["records.read"]) }),
         );
-        expect(opted).toContain("create_record");
-        expect(opted).toContain("delete_record");
+        expect(reads).toContain("get_record");
+        expect(reads).not.toContain("create_record");
+        const writes = await tools(
+          await connect({
+            token: issueTestToken(db, 1, ["records.read", "records.create"]),
+          }),
+        );
+        expect(writes).toContain("create_record");
+        expect(writes).not.toContain("delete_record");
+        const all = await tools(await connect({ token: writerToken }));
+        expect(all).toContain("delete_record");
+      });
+
+      it("never lets a token go beyond its owner's delegation ceiling", async () => {
+        const token = issueTestToken(db, 1, ["records.read", "records.create"]);
+        db.delete(groupDelegations)
+          .where(eq(groupDelegations.permission, "records.create"))
+          .run();
+        const names = await tools(await connect({ token }));
+        expect(names).toContain("get_record");
+        expect(names).not.toContain("create_record");
       });
 
       it("lists writes only for granted scopes, and deletes only for :delete", async () => {
@@ -377,13 +378,10 @@ for (const era of ["legacy", "modern"] as const) {
           db,
           store,
           storageRoot,
-          locals: {
-            ...localsFor({
-              token: writerToken,
-              scopes: [...ALL_WRITE, "reports:read"],
-            }),
-            isSuperuser: true,
-          },
+          locals: localsFor({
+            token: writerToken,
+            scopes: [...ALL_WRITE, "reports:read"],
+          }),
         } as never) as McpServer;
         const registered = (
           server as unknown as { _registeredTools: Record<string, unknown> }
@@ -447,6 +445,11 @@ for (const era of ["legacy", "modern"] as const) {
           }),
         );
         expect(preview.record.sides).toHaveLength(2);
+        // Says so, and hands back no id or version a client could act on.
+        expect(preview.dryRun).toBe(true);
+        expect(preview.saved).toBe(false);
+        expect(preview.record.id).toBeUndefined();
+        expect(preview.version).toBeUndefined();
         expect(db.select().from(ledgerRecords).all()).toHaveLength(0);
       });
 
@@ -495,6 +498,18 @@ for (const era of ["legacy", "modern"] as const) {
         );
         expect(read.record.description).toBe("Software licence");
         expect(read.record.version).toBe(updated.version);
+
+        // A list row's version is good for a write, with no get_record first.
+        const listed = data(await call(client, "list_records", {})).records[0];
+        expect(listed.version).toBe(updated.version);
+        const fromList = data(
+          await call(client, "update_record", {
+            recordId: listed.id,
+            expectedVersion: listed.version,
+            description: "Software licence (annual)",
+          }),
+        );
+        expect(fromList.record.description).toBe("Software licence (annual)");
       });
 
       it("records a payment with its settlement, and keeps the settled amount locked", async () => {
@@ -605,7 +620,7 @@ for (const era of ["legacy", "modern"] as const) {
         clients.push(client);
         await server.connect(serverTransport);
         await client.connect(clientTransport);
-        locals.permissions!.records.add = false;
+        (locals.permissions as Set<string>).delete("records.create");
         const refused = errorOf(
           await call(client, "create_record", {
             ...expenseArgs,
@@ -674,9 +689,36 @@ for (const era of ["legacy", "modern"] as const) {
           }),
         );
         expect(again.code).toBe("CONFLICT");
+
+        // Zero deletes the record, so it needs the delete ability: a keeper
+        // (add and change, never delete) is refused, the writer is not.
+        const versionNow = async () =>
+          data(
+            await call(client, "list_accounts", { search: "Bank" }),
+          ).accounts.find((a: { id: number }) => a.id === bank)
+            .openingBalanceVersion;
+        const keeper = await connect({ token: keeperToken });
+        const forbidden = errorOf(
+          await call(keeper, "set_opening_balance", {
+            accountId: bank,
+            expectedVersion: await versionNow(),
+            date: "2026-01-01",
+            amountMinor: 0,
+          }),
+        );
+        expect(forbidden.code).toBe("FORBIDDEN");
+        const cleared = data(
+          await call(client, "set_opening_balance", {
+            accountId: bank,
+            expectedVersion: await versionNow(),
+            date: "2026-01-01",
+            amountMinor: 0,
+          }),
+        );
+        expect(cleared.recordId).toBeNull();
       });
 
-      it("creates and merges contacts, and refuses deleting one in use", async () => {
+      it("creates contacts, and refuses deleting one in use", async () => {
         const client = await connect();
         const duplicate = data(
           await call(client, "create_contact", {
@@ -704,24 +746,6 @@ for (const era of ["legacy", "modern"] as const) {
           }),
         );
         expect(inUse.code).toBe("REFUSED");
-        const merged = data(
-          await call(client, "merge_contacts", {
-            survivorId: supplier,
-            loserIds: [duplicate.contact.id],
-            expectedVersions: {
-              [supplier]: versionOf(supplier),
-              [duplicate.contact.id]: versionOf(duplicate.contact.id),
-            },
-          }),
-        );
-        expect(merged.contact.id).toBe(supplier);
-        expect(
-          db
-            .select()
-            .from(contacts)
-            .where(eq(contacts.id, duplicate.contact.id))
-            .get(),
-        ).toBeUndefined();
       });
     });
 
@@ -826,9 +850,8 @@ for (const era of ["legacy", "modern"] as const) {
       });
 
       it("hides issue_invoice from a user who cannot add records", async () => {
-        db.update(groupPermissions)
-          .set({ canAdd: false })
-          .where(eq(groupPermissions.resource, "records"))
+        db.delete(groupGrants)
+          .where(eq(groupGrants.permission, "records.create"))
           .run();
         const names = await tools(await connect());
         expect(names).toContain("create_invoice");
@@ -922,7 +945,7 @@ for (const era of ["legacy", "modern"] as const) {
         return { statementId, spendLine: spend.id, transferLine: moved.id };
       }
 
-      it("matches a movement to its line, locks the line's amount, and records a transfer from another", async () => {
+      it("matches a movement to its line and records a transfer from another", async () => {
         const client = await connect();
         const { statementId, spendLine, transferLine } = statementWithLines();
         const created = data(
@@ -955,21 +978,6 @@ for (const era of ["legacy", "modern"] as const) {
         }
         expect(recordEvents).toBeGreaterThan(0);
 
-        const line = statement.lines.find(
-          (l: { id: number }) => l.id === spendLine,
-        );
-        const locked = errorOf(
-          await call(client, "update_statement_line", {
-            lineId: spendLine,
-            expectedVersion: data(
-              await call(client, "get_bank_statement", { statementId }),
-            ).lines.find((l: { id: number }) => l.id === spendLine).version,
-            amount: 99,
-          }),
-        );
-        expect(locked.code).toBe("REFUSED");
-        expect(line.version).toBeTruthy();
-
         const transferLineVersion = statement.lines.find(
           (l: { id: number }) => l.id === transferLine,
         ).version;
@@ -983,11 +991,34 @@ for (const era of ["legacy", "modern"] as const) {
         expect(transfer.record.id).toBeGreaterThan(0);
       });
 
+      it("refuses a transfer from a line into equity or a category without Adjustments", async () => {
+        const client = await connect();
+        const { statementId, transferLine } = statementWithLines();
+        const version = () =>
+          call(client, "get_bank_statement", { statementId }).then(
+            (result) =>
+              data(result).lines.find(
+                (l: { id: number }) => l.id === transferLine,
+              ).version,
+          );
+        for (const other of [account(3000), account(4000), software]) {
+          const refused = errorOf(
+            await call(client, "record_transfer_from_line", {
+              lineId: transferLine,
+              expectedVersion: await version(),
+              otherAccountId: other,
+            }),
+          );
+          expect(refused.code).toBe("FORBIDDEN");
+          expect(refused.message).toContain("Adjustments");
+        }
+        expect(db.select().from(ledgerRecords).all()).toHaveLength(0);
+      });
+
       it("refuses a transfer from a line to a user who cannot add records", async () => {
         const { transferLine } = statementWithLines();
-        db.update(groupPermissions)
-          .set({ canAdd: false })
-          .where(eq(groupPermissions.resource, "records"))
+        db.delete(groupGrants)
+          .where(eq(groupGrants.permission, "records.create"))
           .run();
         const names = await tools(await connect());
         expect(names).toContain("set_movement_matches");
@@ -1071,6 +1102,10 @@ for (const era of ["legacy", "modern"] as const) {
         );
         expect(existsSync(join(storageRoot, tempFilePath))).toBe(false);
         expect(db.select().from(ledgerRecords).all()).toHaveLength(0);
+        // The file is gone for good, so a client must be told to ask first.
+        const { tools: listed } = await client.listTools();
+        const skip = listed.find((tool) => tool.name === "skip_import")!;
+        expect(skip.annotations?.destructiveHint).toBe(true);
       });
     });
 
@@ -1080,7 +1115,7 @@ for (const era of ["legacy", "modern"] as const) {
         Buffer.alloc(64),
       ]);
 
-      it("attaches a file into the temp store and deletes it again", async () => {
+      it("attaches a file into the temp store", async () => {
         const client = await connect();
         const created = data(
           await call(client, "create_record", {
@@ -1099,13 +1134,6 @@ for (const era of ["legacy", "modern"] as const) {
         expect(attached.attachment.displayName).toBe("receipt.png");
         const stored = db.select().from(recordAttachments).get()!;
         expect(existsSync(join(storageRoot, stored.filename))).toBe(true);
-        data(
-          await call(client, "delete_attachment", {
-            recordId: created.record.id,
-            attachmentId: attached.attachment.id,
-          }),
-        );
-        expect(existsSync(join(storageRoot, stored.filename))).toBe(false);
       });
 
       it("refuses a file whose bytes are not PDF, JPEG or PNG, and stores nothing", async () => {
@@ -1174,28 +1202,21 @@ for (const era of ["legacy", "modern"] as const) {
 }
 
 describe("MCP writes (requirements table)", () => {
-  it("gives every write tool a scope for each resource it changes", () => {
+  it("gives every tool scopes that stand for its permissions", () => {
     for (const [name, requirement] of Object.entries(TOOL_REQUIREMENTS)) {
-      if (!requirement.writes) continue;
-      expect(requirement.scopes.length, name).toBeGreaterThan(0);
-      for (const [resource, action] of requirement.rbac) {
-        if (action === "view") continue;
-        const tier = action === "delete" ? "delete" : "write";
-        expect(
-          requirement.scopes.some(
-            (scope) =>
-              scope === `${resource}:${tier}` || scope === `${resource}:delete`,
-          ),
-          `${name} needs a ${resource} scope`,
-        ).toBe(true);
-      }
+      if (requirement.writes)
+        expect(requirement.scopes.length, name).toBeGreaterThan(0);
+      const covered = new Set(expandScopes(requirement.scopes));
+      for (const permission of requirement.permissions)
+        expect(covered.has(permission), `${name}: ${permission}`).toBe(true);
     }
   });
   it("never offers a write on reports", () => {
     for (const requirement of Object.values(TOOL_REQUIREMENTS))
       expect(
-        requirement.rbac.some(([r, a]) => r === "reports" && a !== "view"),
+        requirement.permissions.some(
+          (p) => p.startsWith("reports.") && p !== "reports.read",
+        ),
       ).toBe(false);
-    expect(EVERY).toHaveLength(4);
   });
 });

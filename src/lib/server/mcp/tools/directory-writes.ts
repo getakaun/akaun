@@ -12,8 +12,6 @@ import {
   createContact,
   createContactShape,
   deleteContact,
-  mergeContacts,
-  mergeContactsShape,
   updateContact,
   updateContactShape,
 } from "../../application/contacts.js";
@@ -65,11 +63,16 @@ export function registerDirectoryWrites(
     server,
     context,
     "set_opening_balance",
-    "Create or replace an account's single opening balance, in main-currency minor units (negative allowed). Zero removes it. Refused once it is settled or bank-matched. Requires `expectedVersion` = the account's `openingBalanceVersion` from list_accounts.",
+    "Create or replace an account's single opening balance, in main-currency minor units (negative allowed). Zero deletes it, which needs the user's delete ability for records; confirm with the user first. Refused once it is settled or bank-matched. Requires `expectedVersion` = the account's `openingBalanceVersion` from list_accounts.",
     { accountId: id, expectedVersion, ...openingBalanceShape },
     ({ accountId, expectedVersion, ...input }) =>
       setOpeningBalance(context, accountId, input, expectedVersion),
-    { idempotent: true, ids: (input) => ({ accountId: input.accountId }) },
+    {
+      // Zero deletes the opening-balance record, and a new figure replaces it.
+      destructive: true,
+      idempotent: true,
+      ids: (input) => ({ accountId: input.accountId }),
+    },
   );
 
   registerWrite(
@@ -101,21 +104,5 @@ export function registerDirectoryWrites(
     ({ contactId, expectedVersion }) =>
       deleteContact(context, contactId, expectedVersion),
     { destructive: true, ids: (input) => ({ contactId: input.contactId }) },
-  );
-
-  registerWrite(
-    server,
-    context,
-    "merge_contacts",
-    "Merge duplicate contacts: every record, quotation and invoice naming a contact in `loserIds` is moved to `survivorId`, and the losers are deleted. Pass `expectedVersions` keyed by contact id. Confirm the survivor with the user before calling; this cannot be undone.",
-    mergeContactsShape,
-    (input) => mergeContacts(context, input),
-    {
-      destructive: true,
-      ids: (input) => ({
-        survivorId: input.survivorId,
-        loserIds: input.loserIds,
-      }),
-    },
   );
 }

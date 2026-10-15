@@ -13,9 +13,10 @@ Do this check each month, after the bank sends the statement.
 You need these things:
 
 - The **Reconciliation** permission. **View** lets you open the screens. **Add** lets you upload a
-  statement, retry a failed statement and record a line as a transfer. **Change** lets you save a
-  match, correct a line and move a statement to a different account. **Delete** lets you delete a
-  statement or a statement line. See
+  statement, retry a failed statement and record a line as a transfer. **Match** lets you save and
+  remove a match. **Change** lets you correct a line and move a statement to a different account.
+  **Delete** lets you delete a statement or a statement line. To record a line as a transfer, you
+  also need the **Add** permission on **Records**. See
   [Permissions explained](./09-administration/permissions-explained.md).
 - An AI provider. Akaun uses the AI provider to read the lines of a statement. See
   [Connect an AI provider](./04-auto-import/connect-an-ai-provider.md).
@@ -117,7 +118,7 @@ that only this statement matched is then not cleared.
 4. Click **Save & Next**.
 
 Akaun saves the match and opens the next record. If no other record needs a match, the button is
-**Save**. You need the **Change** permission to save.
+**Save**. You need the **Match** permission to save.
 
 The match screen has three parts:
 
@@ -217,7 +218,7 @@ record that already has a part of a match. A record is skipped if a different re
 lines first. Akaun then shows the number of records that it matched and skipped.
 
 The button counts only the records that the list shows. If you search or filter the list, the
-button saves only the matches in the filtered list. You need the **Change** permission to see the
+button saves only the matches in the filtered list. You need the **Match** permission to see the
 button.
 
 ### Correct a statement line
@@ -246,7 +247,12 @@ the account, it is **To account**.
 
 Akaun makes a **Transfer** record in the main currency, with the date and amount of the line. Then
 it matches the line to the transfer. The button shows only on a line without a match. You need the
-**Add** permission.
+**Add** permission on **Reconciliation** and on **Records**.
+
+The list of other accounts shows only places where money sits, such as a bank or cash account. A
+category, an owner account or money owed is not a transfer: record the line as an expense or
+income, or as a payment, and match it. A user with **Adjustments** on **Records** sees every
+account.
 
 ### Delete a statement line
 

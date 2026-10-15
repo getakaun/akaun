@@ -1,11 +1,8 @@
 import { z } from "zod";
-import { StatementDirection } from "$lib/enums.js";
 import {
   autoMatchMovements,
   createTransferForLine,
-  editLine,
   ReconciliationError,
-  removeLine,
   replaceMovementAllocations,
 } from "../services/reconciliation.js";
 import { getLine } from "../queries/reconciliation.js";
@@ -18,7 +15,7 @@ import {
   type AppErrorCode,
   type AppResult,
 } from "./result.js";
-import { isoDate, positiveId } from "./records.js";
+import { positiveId } from "./records.js";
 import {
   checkVersion,
   movementMatchesVersion,
@@ -52,79 +49,15 @@ function run<T>(write: () => T): AppResult<T> {
     if (error instanceof ReconciliationError)
       return fail(
         STATUS_CODE[error.status] ?? "REFUSED",
-        error.status === 403 || error.status === 401
+        // The bare "Forbidden" of a missing ability says nothing; a 403 that
+        // explains itself (an account that needs Adjustments) is passed on.
+        error.status === 401 ||
+          (error.status === 403 && error.message === "Forbidden")
           ? "You do not have permission to do that."
           : error.message,
       );
     throw error;
   }
-}
-
-export const lineDirection = z
-  .enum(["in", "out"])
-  .describe("in: money into the account; out: money out of it.");
-
-export const updateLineShape = {
-  date: isoDate.optional(),
-  description: z.string().max(500).optional(),
-  /** Positive decimal in the statement's currency. */
-  amount: z.number().positive().optional(),
-  direction: lineDirection.optional(),
-  note: z.string().max(500).optional(),
-};
-
-export function updateStatementLine(
-  ctx: AppContext,
-  lineId: number,
-  input: z.output<z.ZodObject<typeof updateLineShape>>,
-  expectedVersion?: string,
-) {
-  // Asked before anything is looked up, so a caller without the ability
-  // cannot learn which ids exist. The service asks again.
-  const refused = requirePermissions(ctx, [["reconciliation", "change"]]);
-  if (refused) return refused;
-  if (!getLine(ctx.db, lineId)) return missing("Statement line not found");
-  const stale = checkVersion(
-    statementLineVersion(ctx.db, lineId),
-    expectedVersion,
-  );
-  if (stale) return stale;
-  const { direction, ...rest } = input;
-  return run(() => ({
-    line: editLine(ctx.db, ctx.locals, lineId, {
-      ...rest,
-      ...(direction
-        ? {
-            direction:
-              direction === "in"
-                ? StatementDirection.In
-                : StatementDirection.Out,
-          }
-        : {}),
-    }),
-    version: statementLineVersion(ctx.db, lineId),
-  }));
-}
-
-export function deleteStatementLine(
-  ctx: AppContext,
-  lineId: number,
-  expectedVersion?: string,
-) {
-  // Asked before anything is looked up, so a caller without the ability
-  // cannot learn which ids exist. The service asks again.
-  const refused = requirePermissions(ctx, [["reconciliation", "delete"]]);
-  if (refused) return refused;
-  if (!getLine(ctx.db, lineId)) return missing("Statement line not found");
-  const stale = checkVersion(
-    statementLineVersion(ctx.db, lineId),
-    expectedVersion,
-  );
-  if (stale) return stale;
-  return run(() => {
-    removeLine(ctx.db, ctx.locals, lineId);
-    return { id: lineId };
-  });
 }
 
 export const allocationsShape = z
@@ -146,7 +79,7 @@ export function setMovementMatches(
 ) {
   // Asked before anything is looked up, so a caller without the ability
   // cannot learn which ids exist. The service asks again.
-  const refused = requirePermissions(ctx, [["reconciliation", "change"]]);
+  const refused = requirePermissions(ctx, ["reconciliation.match"]);
   if (refused) return refused;
   if (!getMovementCandidate(ctx.db, movementId))
     return missing("Reconciliation record not found");
@@ -179,8 +112,8 @@ export function recordTransferFromLine(
   // Asked before anything is looked up, so a caller without the ability
   // cannot learn which ids exist. The service asks again.
   const refused = requirePermissions(ctx, [
-    ["reconciliation", "add"],
-    ["records", "add"],
+    "reconciliation.create",
+    "records.create",
   ]);
   if (refused) return refused;
   if (!getLine(ctx.db, lineId)) return missing("Statement line not found");

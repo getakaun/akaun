@@ -18,7 +18,7 @@ import type {
  * covered that item, for this much (D-09).
  */
 
-function money(minor: Minor): string {
+export function money(minor: Minor): string {
   return Math.abs(fromMinor(minor)).toFixed(2);
 }
 

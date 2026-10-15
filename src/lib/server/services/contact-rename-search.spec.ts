@@ -4,10 +4,16 @@ import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AccountSubType, AccountType, EntityType } from "$lib/enums.js";
 import * as schema from "../db/schema.js";
-import { users } from "../db/schema.js";
+import { accounts, users } from "../db/schema.js";
+import { eq } from "drizzle-orm";
 import { createAccount } from "./accounts.js";
 import { createRecord } from "./ledger.js";
-import { createContact, mergeContacts, patchContact } from "./contacts.js";
+import {
+  createContact,
+  deleteContact,
+  mergeContacts,
+  patchContact,
+} from "./contacts.js";
 import { createInvoice, listInvoices } from "../queries/invoices.js";
 import { createQuotation, listQuotations } from "../queries/quotations.js";
 import { listRecords } from "../queries/ledger.js";
@@ -133,5 +139,45 @@ describe("merging contacts", () => {
       quotations: [],
       invoices: [],
     });
+  });
+});
+
+describe("a partner's own account", () => {
+  function partnerAccount(contactId: number) {
+    const id = account("Capital", AccountType.Equity);
+    db.update(accounts).set({ contactId }).where(eq(accounts.id, id)).run();
+    return id;
+  }
+  const ownerOf = (id: number) =>
+    db.select().from(accounts).where(eq(accounts.id, id)).get()!.contactId;
+
+  it("moves to the survivor on a merge, rather than to nobody", () => {
+    const survivor = createContact(db, userId, {
+      entityType: EntityType.Individual,
+      legalName: "Ali",
+    });
+    const loser = createContact(db, userId, {
+      entityType: EntityType.Individual,
+      legalName: "Ali bin Abu",
+    });
+    const capital = partnerAccount(loser.id);
+
+    mergeContacts(db, survivor.id, [loser.id], userId);
+
+    expect(ownerOf(capital)).toBe(survivor.id);
+  });
+
+  it("keeps its contact from being deleted", () => {
+    const partner = createContact(db, userId, {
+      entityType: EntityType.Individual,
+      legalName: "Ali",
+    });
+    const capital = partnerAccount(partner.id);
+
+    const result = deleteContact(db, partner.id, userId);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/partner/);
+    expect(ownerOf(capital)).toBe(partner.id);
   });
 });

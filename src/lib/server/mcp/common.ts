@@ -2,8 +2,8 @@ import { z } from "zod";
 import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import type { LedgerDb } from "../ledger/types.js";
 import type { BlobStore } from "../storage/blob-store.js";
-import { type ResourceName } from "../permissions.js";
-import { canMcpRead } from "../oauth/scopes.js";
+import { canAll } from "../permissions.js";
+import type { LeafPermission } from "$lib/permissions/catalog.js";
 import type { AppContext } from "../application/context.js";
 import type { AppResult } from "../application/result.js";
 import { TOOL_REQUIREMENTS, toolAllowed } from "./tool-requirements.js";
@@ -38,12 +38,6 @@ export const dateRangeShape = {
 export type McpContext = AppContext & {
   db: LedgerDb;
   store: BlobStore;
-  /**
-   * Whether a request signed with an API token (not OAuth) may see write
-   * tools. Off by default: a token that was set up for phase one's reads must
-   * not start changing the books just because the server was upgraded.
-   */
-  bearerWrites?: boolean;
 };
 
 export type McpErrorCode =
@@ -70,12 +64,9 @@ export class McpToolError extends Error {
 
 export function requireView(
   context: Pick<McpContext, "locals">,
-  resources: ResourceName[],
+  permissions: readonly LeafPermission[],
 ) {
-  if (
-    !context.locals.user ||
-    resources.some((resource) => !canMcpRead(context.locals, resource))
-  ) {
+  if (!context.locals.user || !canAll(context.locals, permissions)) {
     throw new McpToolError(
       "FORBIDDEN",
       "You do not have permission to read this data.",
@@ -133,7 +124,7 @@ const outputSchema = z.object({
 });
 
 /**
- * Runs one read: checks the caller may read every resource it touches, then
+ * Runs one read: checks the caller may still use the tool, then
  * logs the outcome and turns a failure into an MCP error result. No raw
  * inputs, document text, tokens or database error strings reach the logs or
  * the result.
@@ -141,12 +132,15 @@ const outputSchema = z.object({
 async function runRead(
   context: McpContext,
   name: string,
-  resources: ResourceName[],
   produce: () => CallToolResult | Promise<CallToolResult>,
 ): Promise<CallToolResult> {
   const startedAt = performance.now();
   try {
-    requireView(context, resources);
+    if (!toolAllowed(context.locals, requirementOf(name)))
+      throw new McpToolError(
+        "FORBIDDEN",
+        "You do not have permission to read this data.",
+      );
     const result = await produce();
     log.info(
       {
@@ -197,18 +191,26 @@ const readOnlyAnnotations = {
   openWorldHint: false,
 };
 
-/** Discovery is filtered, and authorization is checked again at execution. */
+function requirementOf(name: string) {
+  const requirement = TOOL_REQUIREMENTS[name];
+  if (!requirement)
+    throw new Error(`MCP tool ${name} has no entry in TOOL_REQUIREMENTS.`);
+  return requirement;
+}
+
+/**
+ * A read. Listed only when the request may use it (`TOOL_REQUIREMENTS`), and
+ * checked again when it runs.
+ */
 export function registerRead<S extends z.ZodRawShape>(
   server: McpServer,
   context: McpContext,
   name: string,
-  resources: ResourceName[],
   description: string,
   shape: S,
   read: (input: z.output<z.ZodObject<S>>) => Record<string, unknown>,
 ) {
-  if (resources.some((resource) => !canMcpRead(context.locals, resource)))
-    return;
+  if (!toolAllowed(context.locals, requirementOf(name))) return;
   const schema = z.object(shape).strict();
   server.registerTool<typeof outputSchema, typeof schema>(
     name,
@@ -219,7 +221,7 @@ export function registerRead<S extends z.ZodRawShape>(
       annotations: readOnlyAnnotations,
     },
     (args) =>
-      runRead(context, name, resources, () => {
+      runRead(context, name, () => {
         const data = read(schema.parse(args));
         const structuredContent = {
           data,
@@ -259,18 +261,16 @@ export function registerFileRead<S extends z.ZodRawShape>(
   server: McpServer,
   context: McpContext,
   name: string,
-  resources: ResourceName[],
   description: string,
   shape: S,
   read: (input: z.output<z.ZodObject<S>>) => Promise<CallToolResult>,
 ) {
-  if (resources.some((resource) => !canMcpRead(context.locals, resource)))
-    return;
+  if (!toolAllowed(context.locals, requirementOf(name))) return;
   const schema = z.object(shape).strict();
   server.registerTool(
     name,
     { description, inputSchema: schema, annotations: readOnlyAnnotations },
-    (args) => runRead(context, name, resources, () => read(schema.parse(args))),
+    (args) => runRead(context, name, () => read(schema.parse(args))),
   );
 }
 
@@ -329,9 +329,9 @@ function structured(context: McpContext, data: Record<string, unknown>) {
 /**
  * A tool that changes the books.
  *
- * Listed only when the token holds every scope in `TOOL_REQUIREMENTS[name]`
- * and the user holds every ability; an API token sees none unless the server
- * was started with MCP_BEARER_WRITES. Checked again when it runs, because the
+ * Listed only when the request may do everything `TOOL_REQUIREMENTS[name]`
+ * asks — for a personal access token or an OAuth app that is what its owner
+ * may delegate ∩ what it was granted. Checked again when it runs, because the
  * user's abilities can change between listing and calling.
  *
  * `run` calls an operation in `application/` — the same one the REST route
@@ -352,11 +352,8 @@ export function registerWrite<S extends z.ZodRawShape>(
     | Promise<AppResult<Record<string, unknown>>>,
   options: WriteOptions<z.output<z.ZodObject<S>>> = {},
 ) {
-  const requirement = TOOL_REQUIREMENTS[name];
-  if (!requirement)
-    throw new Error(`MCP tool ${name} has no entry in TOOL_REQUIREMENTS.`);
-  const allowed = () =>
-    toolAllowed(context.locals, requirement, context.bearerWrites ?? false);
+  const requirement = requirementOf(name);
+  const allowed = () => toolAllowed(context.locals, requirement);
   if (!allowed()) return;
   const schema = z.object(shape).strict();
   server.registerTool<typeof outputSchema, typeof schema>(
@@ -401,9 +398,21 @@ export function registerWrite<S extends z.ZodRawShape>(
             ...(result.issues ? { issues: result.issues } : {}),
           });
         }
-        const output = structured(context, result.value);
         log.info(logLine("ok", ids), "MCP write");
-        return output;
+        try {
+          return structured(context, result.value);
+        } catch (error) {
+          if (!(error instanceof McpToolError)) throw error;
+          // The change is already saved. Reporting a failure now would invite
+          // a retry, and a retry of a create makes a second one — so say it
+          // was saved, with the ids the call named, and where to read it.
+          log.warn(logLine("ok-output-too-large", ids), "MCP write output");
+          return structured(context, {
+            saved: true,
+            ...(ids ?? {}),
+            note: "The change was saved, but the result is too large to return. Read the item again to see it; do not repeat the call.",
+          });
+        }
       } catch (error) {
         const code =
           error instanceof McpToolError

@@ -118,7 +118,9 @@
 
 	/**
 	 * Takes one payment back off this record (FR-017). The record's own paid
-	 * figure comes back over the stream, so only the list is corrected here.
+	 * figure comes back over the stream, so only the list is corrected here —
+	 * read again rather than filtered, because taking back one part of a batch
+	 * payment (no contact) takes back all of it.
 	 */
 	async function undoPayment(link: SettlementLink) {
 		error = '';
@@ -129,6 +131,7 @@
 			return;
 		}
 		settlementLinks = settlementLinks.filter((l) => l.settlementId !== link.settlementId);
+		await refreshSettlements();
 	}
 
 	async function refreshSettlements() {
@@ -269,7 +272,11 @@
 		{/if}
 
 		<section class="detail-card">
-			<AttachmentManager apiBase="/api/records/{record.id}" bind:attachments />
+			<AttachmentManager
+				apiBase="/api/records/{record.id}"
+				bind:attachments
+				canDelete={data.perms.delete}
+			/>
 		</section>
 
 		<!--

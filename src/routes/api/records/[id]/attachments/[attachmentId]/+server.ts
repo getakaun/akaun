@@ -1,13 +1,13 @@
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { forbidden, notFound } from "$lib/server/api-response.js";
 import {
   deleteAttachment,
   getAttachment,
   getRecord,
 } from "$lib/server/queries/ledger.js";
-import { resourceForKind } from "$lib/server/ledger/record-permissions.js";
+import { permissionForKind } from "$lib/server/ledger/record-permissions.js";
 import { recordAudit } from "$lib/server/audit.js";
 import { emitRecordUpdate } from "$lib/server/services/ledger.js";
 import { fileStore, releaseIfUnreferenced } from "$lib/server/file-storage.js";
@@ -29,7 +29,7 @@ export const GET: RequestHandler = async ({ locals, params, request }) => {
 
   const record = getRecord(db, id);
   if (!record) return notFound("That record no longer exists.");
-  if (!hasPermission(locals, resourceForKind(record.kind), "view")) {
+  if (!can(locals, permissionForKind(record.kind, "read"))) {
     return forbidden();
   }
 
@@ -56,7 +56,9 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
 
   const record = getRecord(db, id);
   if (!record) return notFound("That record no longer exists.");
-  if (!hasPermission(locals, resourceForKind(record.kind), "change")) {
+  // Deleting, not changing: the file can be gone for good, so it needs what
+  // deleting a record needs — as the catalog and the consent screen say.
+  if (!can(locals, permissionForKind(record.kind, "delete"))) {
     return forbidden();
   }
 

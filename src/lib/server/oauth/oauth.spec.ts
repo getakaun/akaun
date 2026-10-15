@@ -28,12 +28,15 @@ import * as schema from "../db/schema.js";
 import type { LedgerDb } from "../ledger/types.js";
 import { EntityType } from "$lib/enums.js";
 import { createSession } from "../auth.js";
-import { bearerLocals } from "../bearer-auth.js";
+import { isLegacyToken, patLocals } from "../tokens/pat.js";
+import { can, resolveAccess } from "../permissions.js";
+import { grantGroup, issueTestToken } from "../permissions/test-locals.js";
+import { SCOPE_PERMISSIONS } from "$lib/permissions/oauth-scopes.js";
 import { createRequestHandle } from "../request-hook.js";
 import { handleMcpRequest } from "../mcp/http.js";
 import { LocalBlobStore } from "../storage/blob-store.js";
 import { requireView } from "../mcp/common.js";
-import { allowedScopes, canMcpRead, canMcpWrite } from "./scopes.js";
+import { allowedScopes } from "./scopes.js";
 import { handleOAuthProtocol } from "./http.js";
 import { isSameOriginRequest } from "../browser-origin.js";
 import { oauthConfig, READ_SCOPES, type OAuthConfig } from "./config.js";
@@ -72,32 +75,17 @@ beforeEach(() => {
         username: "admin",
         email: "admin@test",
         passwordHash: "unused",
-        bearerToken: "akn_legacy",
       },
       {
         id: 2,
         username: "limited",
         email: "limited@test",
         passwordHash: "unused",
-        bearerToken: "akn_limited",
       },
     ])
     .run();
-  db.insert(schema.groups)
-    .values([
-      { id: 1, name: "admins", isSuperuser: true },
-      { id: 2, name: "directory" },
-    ])
-    .run();
-  db.insert(schema.userGroups)
-    .values([
-      { userId: 1, groupId: 1 },
-      { userId: 2, groupId: 2 },
-    ])
-    .run();
-  db.insert(schema.groupPermissions)
-    .values({ groupId: 2, resource: "contacts", canView: true })
-    .run();
+  grantGroup(db, { name: "admins", userIds: [1], grants: [], superuser: true });
+  grantGroup(db, { name: "directory", userIds: [2], grants: ["contacts.read"] });
   oauth = createOAuth(db, config);
   registered = oauth.register({
     client_name: "Test MCP",
@@ -112,11 +100,20 @@ afterEach(async () => {
   await Promise.all(protocolClients.splice(0).map((c) => c.close()));
   sqlite.close();
 });
-function actor(user = 1) {
-  return bearerLocals(
-    db,
-    `Bearer ${user === 1 ? "akn_legacy" : "akn_limited"}`,
-  )!;
+/** A signed-in browser session for the user: what the consent page acts with. */
+function actor(user = 1): App.Locals {
+  const row = db
+    .select({
+      id: schema.users.id,
+      email: schema.users.email,
+      username: schema.users.username,
+      name: schema.users.name,
+      role: schema.users.role,
+    })
+    .from(schema.users)
+    .where(eq(schema.users.id, user))
+    .get()!;
+  return { user: row, ...resolveAccess(db, user) };
 }
 function params(overrides: Record<string, string> = {}) {
   return {
@@ -195,7 +192,7 @@ async function throughHook(
     url: new URL(request.url),
     cookies,
     getClientAddress: () => address,
-    locals: { user: null, permissions: null, isSuperuser: false },
+    locals: { user: null, permissions: null },
   } as unknown as RequestEvent;
   try {
     return await handle({
@@ -224,7 +221,7 @@ async function throughHook(
 
 // All fixtures are in-memory. Never import oauth/runtime or db/client here.
 describe("OAuth authorization and persistence", () => {
-  it("upgrades a pre-OAuth database without changing users, API tokens or bookkeeping", () => {
+  it("upgrades an older database without changing users or bookkeeping, and revokes old API tokens", () => {
     const folder = mkdtempSync(join(tmpdir(), "akaun-oauth-migrations-"));
     const oldRaw = new Database(":memory:");
     try {
@@ -265,11 +262,16 @@ describe("OAuth authorization and persistence", () => {
         .run();
       const before = oldDb.select().from(schema.users).all();
       migrate(oldDb, { migrationsFolder: "drizzle" });
-      expect(oldDb.select().from(schema.users).all()).toEqual(before);
+      // Everything but the raw API token, which migration 0033 revokes: they
+      // are replaced by hashed, fine-grained personal access tokens.
+      expect(oldDb.select().from(schema.users).all()).toEqual(
+        before.map((user) => ({ ...user, bearerToken: null })),
+      );
       expect(oldDb.select().from(schema.contacts).all()[0].legalName).toBe(
         "Preserved supplier",
       );
-      expect(bearerLocals(oldDb, "Bearer akn_preserved")?.user?.id).toBe(99);
+      expect(isLegacyToken("Bearer akn_preserved")).toBe(false);
+      expect(patLocals(oldDb, "Bearer akn_preserved")).toBeNull();
       expect(oldDb.select().from(schema.oauthTokens).all()).toHaveLength(0);
     } finally {
       oldRaw.close();
@@ -546,33 +548,58 @@ describe("OAuth authorization and persistence", () => {
     const reads = (await oauth.authenticate(
       bearer((await tokens(["records:read"])).access_token),
     ))!;
-    expect(reads.isSuperuser).toBe(true);
-    expect(canMcpWrite(reads, "records", "add")).toBe(false);
-    expect(canMcpWrite(reads, "adjustments", "add")).toBe(false);
+    expect(reads.role?.isSuperuser).toBe(true);
+    expect(can(reads, "records.create")).toBe(false);
+    expect(can(reads, "records.adjust")).toBe(false);
     const writes = (await oauth.authenticate(
       bearer((await tokens(["records:read", "records:write"])).access_token),
     ))!;
-    expect(canMcpWrite(writes, "records", "add")).toBe(true);
-    expect(canMcpWrite(writes, "records", "change")).toBe(true);
-    expect(canMcpWrite(writes, "adjustments", "add")).toBe(true);
-    expect(canMcpWrite(writes, "records", "delete")).toBe(false);
-    expect(canMcpWrite(writes, "contacts", "add")).toBe(false);
+    expect(can(writes, "records.create")).toBe(true);
+    expect(can(writes, "records.update")).toBe(true);
+    // Adjustments are never part of "change records": they need their own scope.
+    expect(can(writes, "records.adjust")).toBe(false);
+    expect(can(writes, "records.delete")).toBe(false);
+    expect(can(writes, "contacts.create")).toBe(false);
+    expect(can(writes, "users.manage")).toBe(false);
   });
-  it("offers only the write and delete scopes the user's RBAC allows", () => {
-    const limited = actor(2);
+  it("grants adjustments only through records:adjust", async () => {
+    const adjust = (await oauth.authenticate(
+      bearer(
+        (await tokens(["records:read", "records:write", "records:adjust"]))
+          .access_token,
+      ),
+    ))!;
+    expect(can(adjust, "records.adjust")).toBe(true);
+    expect(can(adjust, "records.create")).toBe(true);
+  });
+  it("bounds an app by the user's delegation ceiling, at once", async () => {
+    db.update(schema.groups)
+      .set({ isSuperuser: false })
+      .where(eq(schema.groups.id, 1))
+      .run();
+    grantGroup(db, {
+      name: "keepers",
+      userIds: [1],
+      grants: ["contacts.read", "contacts.create"],
+      delegations: ["contacts.read"],
+    });
+    const scope = ["contacts:read", "contacts:write"] as const;
+    expect(allowedScopes(actor().role!)).toContain("contacts:read");
+    expect(allowedScopes(actor().role!)).not.toContain("contacts:write");
+    const id = oauth.begin(params({ scope: scope.join(" ") }), browser);
+    await expect(
+      oauth.finish(id, browser, actor(), [...scope], true),
+    ).rejects.toThrow();
+  });
+  it("offers only the scopes the user may delegate", () => {
+    const limited = actor(2).role!;
     const offered = allowedScopes(limited);
-    for (const scope of offered) {
-      const [resource, tier] = scope.split(":");
-      const actions =
-        tier === "read" ? ["view"] : tier === "delete" ? ["delete"] : ["add", "change"];
+    expect(offered).toEqual(["contacts:read"]);
+    for (const scope of offered)
       expect(
-        actions.some(
-          (action) =>
-            limited.permissions?.[resource as never]?.[action as never] === true,
-        ),
+        SCOPE_PERMISSIONS[scope].some((leaf) => limited.delegable.has(leaf)),
       ).toBe(true);
-    }
-    expect(offered.length).toBeLessThan(allowedScopes(actor(1)).length);
+    expect(offered.length).toBeLessThan(allowedScopes(actor(1).role!).length);
   });
   it("binds pending consent to the browser and consumes it once", async () => {
     const id = oauth.begin(params(), browser);
@@ -1114,11 +1141,21 @@ describe("OAuth hook and MCP scope integration", () => {
       (
         await throughHook(
           new Request(`${config.issuer}/api/users`, {
-            headers: { Authorization: "Bearer akn_legacy" },
+            headers: {
+              Authorization: `Bearer ${issueTestToken(db, 2, ["contacts.read"])}`,
+            },
           }),
         )
       ).status,
     ).toBe(200);
+    // A revoked API token from before personal access tokens is told what replaced it.
+    const legacy = await throughHook(
+      new Request(`${config.issuer}/api/users`, {
+        headers: { Authorization: `Bearer akn_${"ab".repeat(24)}` },
+      }),
+    );
+    expect(legacy.status).toBe(401);
+    expect(await legacy.text()).toContain("personal access tokens");
     expect(
       (await throughHook(new Request(`${config.issuer}/api/users`), jar))
         .status,
@@ -1127,19 +1164,20 @@ describe("OAuth hook and MCP scope integration", () => {
   it("enforces scopes ahead of superuser permissions and checks current RBAC", async () => {
     const t = await tokens();
     const locals = (await oauth.authenticate(bearer(t.access_token)))!;
-    expect(locals.isSuperuser).toBe(true);
-    expect(canMcpRead(locals, "contacts")).toBe(true);
-    expect(canMcpRead(locals, "records")).toBe(false);
-    expect(() => requireView({ locals }, ["contacts", "records"])).toThrow();
+    expect(locals.role?.isSuperuser).toBe(true);
+    expect(can(locals, "contacts.read")).toBe(true);
+    expect(can(locals, "records.read")).toBe(false);
+    expect(() =>
+      requireView({ locals }, ["contacts.read", "records.read"]),
+    ).toThrow();
     const limited = await tokens(["contacts:read"], 2);
-    db.update(schema.groupPermissions)
-      .set({ canView: false })
-      .where(eq(schema.groupPermissions.groupId, 2))
+    db.delete(schema.groupGrants)
+      .where(eq(schema.groupGrants.permission, "contacts.read"))
       .run();
     expect(
-      canMcpRead(
+      can(
         (await oauth.authenticate(bearer(limited.access_token)))!,
-        "contacts",
+        "contacts.read",
       ),
     ).toBe(false);
   });

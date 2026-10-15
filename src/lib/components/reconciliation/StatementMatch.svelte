@@ -196,8 +196,12 @@
   const transferLine = $derived(
     data.lines.find((line) => line.id === transferLineId) ?? null,
   );
+  // Decided on the server (`transferTargetIds`): two places money sits, unless
+  // the user has Adjustments.
   const transferTargets = $derived(
-    data.accounts.filter((account) => account.id !== data.statement.accountId),
+    data.accounts.filter((account) =>
+      data.transferTargetIds.includes(account.id),
+    ),
   );
 
   // Which movement's allocations `drafts` currently holds. Deliberately a plain
@@ -988,7 +992,7 @@
 {/if}
 
 {#snippet BulkMatchButton()}
-  {#if data.permissions.change && bulkMatchable.length > 0}
+  {#if data.permissions.match && bulkMatchable.length > 0}
     <button
       class="bulk-match-btn"
       type="button"
@@ -1139,7 +1143,7 @@
           ><button
             class="sheet-btn-primary"
             type="button"
-            disabled={!data.permissions.change ||
+            disabled={!data.permissions.match ||
               saving ||
               !dirty ||
               draftRemaining < -CENT}

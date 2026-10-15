@@ -478,6 +478,19 @@ export function insertSettlements(
   return rows.map((r) => r.id);
 }
 
+/** Every settlement a payment movement makes. */
+export function settlementIdsForPayment(
+  db: LedgerDb,
+  paymentMovementId: number,
+): number[] {
+  return db
+    .select({ id: settlements.id })
+    .from(settlements)
+    .where(eq(settlements.paymentMovementId, paymentMovementId))
+    .all()
+    .map((row) => row.id);
+}
+
 export function deleteSettlement(db: LedgerDb, id: number): boolean {
   const row = db
     .delete(settlements)

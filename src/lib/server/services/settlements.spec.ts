@@ -12,7 +12,8 @@ import * as schema from "../db/schema.js";
 import { accountDefaults, contacts, users } from "../db/schema.js";
 import { createAccount } from "./accounts.js";
 import { createRecord } from "./ledger.js";
-import { createSettlements } from "./settlements.js";
+import { createSettlements, undoSettlement } from "./settlements.js";
+import { settlementIdsForPayment } from "../queries/settlements.js";
 import type { LedgerDb } from "../ledger/types.js";
 
 /**
@@ -320,5 +321,101 @@ describe("a batch payment naming no single contact", () => {
     ]);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/nobody in particular/i);
+  });
+});
+
+describe("what a payment has left", () => {
+  it("refuses to spread a payment over more than it is, across several calls", () => {
+    const category = categoryAccount("Office Supplies");
+    payableAccount();
+    receivableAccount();
+    const bank = bankAccount("Main Bank");
+    const alice = contact("Alice");
+    const first = owedMovementOf(makeExpenseOwed(category, alice, 30));
+    const second = owedMovementOf(makeExpenseOwed(category, alice, 30));
+
+    const payment = createRecord(db, userId, {
+      kind: "payment",
+      date: "2026-08-02",
+      description: "Reimburse Alice",
+      amount: 50,
+      currency: "USD",
+      exchangeRate: 1,
+      contactId: alice,
+      paidFromAccountId: bank,
+      direction: "we-pay",
+    });
+    if (!payment.ok) throw new Error(payment.reason);
+    const paymentMovement = payment.value.movements.find(
+      (m) => m.amountMinor > 0,
+    )!;
+
+    expect(
+      createSettlements(db, userId, paymentMovement.id, [
+        { owedMovementId: first.id, amountMinor: 3000 },
+      ]).ok,
+    ).toBe(true);
+    // 20.00 is left; 30.00 more would make the payment cover 60.00 of 50.00.
+    const over = createSettlements(db, userId, paymentMovement.id, [
+      { owedMovementId: second.id, amountMinor: 3000 },
+    ]);
+    expect(over.ok).toBe(false);
+    if (!over.ok) expect(over.reason).toMatch(/20\.00/);
+    expect(
+      createSettlements(db, userId, paymentMovement.id, [
+        { owedMovementId: second.id, amountMinor: 2000 },
+      ]).ok,
+    ).toBe(true);
+  });
+});
+
+describe("taking back part of a batch payment", () => {
+  it("takes back every allocation together, so none is left owed to nobody", () => {
+    const category = categoryAccount("Office Supplies");
+    payableAccount();
+    receivableAccount();
+    const bank = bankAccount("Main Bank");
+    const alice = owedMovementOf(
+      makeExpenseOwed(category, contact("Alice"), 30),
+    );
+    const bob = owedMovementOf(makeExpenseOwed(category, contact("Bob"), 20));
+    const payment = createRecord(db, userId, {
+      kind: "payment",
+      date: "2026-08-02",
+      description: "Batch reimbursement",
+      amount: 50,
+      currency: "USD",
+      exchangeRate: 1,
+      contactId: null,
+      paidFromAccountId: bank,
+      direction: "we-pay",
+      settlements: [
+        { owedMovementId: alice.id, amountMinor: 3000 },
+        { owedMovementId: bob.id, amountMinor: 2000 },
+      ],
+    });
+    if (!payment.ok) throw new Error(payment.reason);
+    const paymentMovement = payment.value.movements.find(
+      (m) => m.amountMinor > 0,
+    )!;
+    const settled = createSettlements(db, userId, paymentMovement.id, [
+      { owedMovementId: alice.id, amountMinor: 3000 },
+      { owedMovementId: bob.id, amountMinor: 2000 },
+    ]);
+    if (!settled.ok) throw new Error(settled.reason);
+
+    const undone = undoSettlement(db, settled.value[0], userId);
+    expect(undone.ok).toBe(true);
+    if (undone.ok)
+      expect([...undone.value].sort()).toEqual([...settled.value].sort());
+    expect(settlementIdsForPayment(db, paymentMovement.id)).toEqual([]);
+
+    // And it can be allocated again from scratch.
+    expect(
+      createSettlements(db, userId, paymentMovement.id, [
+        { owedMovementId: alice.id, amountMinor: 3000 },
+        { owedMovementId: bob.id, amountMinor: 2000 },
+      ]).ok,
+    ).toBe(true);
   });
 });

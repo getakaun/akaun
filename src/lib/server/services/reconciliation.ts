@@ -2,7 +2,10 @@ import { StatementDirection, StatementExtractionState } from "$lib/enums.js";
 import { diffRecords, recordAudit } from "$lib/server/audit.js";
 import { mainCurrencyCode } from "$lib/server/currency/form.js";
 import { deleteStatementFile } from "$lib/server/file-storage.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
+import { sidesFromAccounts } from "$lib/server/ledger/sides-from-accounts.js";
+import { loadSidesContext } from "$lib/server/services/sides-context.js";
+import type { LeafPermission } from "$lib/permissions/catalog.js";
 import { reconciliationEvents } from "$lib/server/reconciliation/events.js";
 import {
   directionFor,
@@ -49,13 +52,9 @@ export class ReconciliationError extends Error {
     super(message);
   }
 }
-function authorize(
-  locals: App.Locals,
-  action: "view" | "add" | "change" | "delete",
-) {
+function authorize(locals: App.Locals, permission: LeafPermission) {
   if (!locals.user) throw new ReconciliationError("Unauthorized", 401);
-  if (!hasPermission(locals, "reconciliation", action))
-    throw new ReconciliationError("Forbidden", 403);
+  if (!can(locals, permission)) throw new ReconciliationError("Forbidden", 403);
   return locals.user.id;
 }
 
@@ -109,7 +108,7 @@ export function listStatementSummaries(
   db: ReconciliationDb,
   locals: App.Locals,
 ) {
-  authorize(locals, "view");
+  authorize(locals, "reconciliation.read");
   return listStatements(db).map((s) => statementSummary(db, s));
 }
 export function getStatementDetail(
@@ -117,7 +116,7 @@ export function getStatementDetail(
   locals: App.Locals,
   id: number,
 ) {
-  authorize(locals, "view");
+  authorize(locals, "reconciliation.read");
   const s = getStatement(db, id);
   if (!s) throw new ReconciliationError("Bank statement not found", 404);
   return {
@@ -148,7 +147,7 @@ export function createStatement(
     accountId: number;
   },
 ) {
-  const userId = authorize(locals, "add");
+  const userId = authorize(locals, "reconciliation.create");
   requirePostingAccount(db, input.accountId);
   const s = insertStatement(db, {
     ...input,
@@ -181,7 +180,7 @@ export function setStatementAccount(
   id: number,
   accountId: number,
 ) {
-  const userId = authorize(locals, "change");
+  const userId = authorize(locals, "reconciliation.update");
   const before = getStatement(db, id);
   if (!before) throw new ReconciliationError("Bank statement not found", 404);
   requirePostingAccount(db, accountId);
@@ -245,7 +244,7 @@ export function retryStatementExtraction(
   locals: App.Locals,
   id: number,
 ) {
-  authorize(locals, "add");
+  authorize(locals, "reconciliation.create");
   const statement = getStatement(db, id);
   if (!statement)
     throw new ReconciliationError("Bank statement not found", 404);
@@ -275,7 +274,7 @@ export function editLine(
   id: number,
   patch: Parameters<typeof updateLineQuery>[2],
 ) {
-  const userId = authorize(locals, "change"),
+  const userId = authorize(locals, "reconciliation.update"),
     before = getLine(db, id);
   if (!before) throw new ReconciliationError("Statement line not found", 404);
   // A matched line's amount and direction are what the match was checked
@@ -309,7 +308,7 @@ export function removeLine(
   locals: App.Locals,
   id: number,
 ) {
-  const userId = authorize(locals, "delete"),
+  const userId = authorize(locals, "reconciliation.delete"),
     before = getLine(db, id);
   if (!before) throw new ReconciliationError("Statement line not found", 404);
   deleteLineQuery(db, id);
@@ -330,7 +329,7 @@ export function removeStatement(
   locals: App.Locals,
   id: number,
 ) {
-  const userId = authorize(locals, "delete"),
+  const userId = authorize(locals, "reconciliation.delete"),
     before = getStatement(db, id);
   if (!before) throw new ReconciliationError("Bank statement not found", 404);
   deleteStatementQuery(db, id);
@@ -357,7 +356,7 @@ export function workspace(
   from?: string | null,
   to?: string | null,
 ) {
-  authorize(locals, "view");
+  authorize(locals, "reconciliation.read");
   const statements = listStatements(db).map((s) => statementSummary(db, s));
   const accountIds = [
     ...new Set(
@@ -400,7 +399,7 @@ export function autoMatchMovements(
   locals: App.Locals,
   movementIds: number[],
 ) {
-  const userId = authorize(locals, "change");
+  const userId = authorize(locals, "reconciliation.match");
   const lines = lineRemainders(db);
   const remainingByLine = new Map(
     lines.map((line) => [line.id, line.remainingAmount]),
@@ -506,7 +505,7 @@ export function replaceMovementAllocations(
   movementId: number,
   inputs: { lineId: number; amount: number }[],
 ) {
-  const userId = authorize(locals, "change");
+  const userId = authorize(locals, "reconciliation.match");
   const movement = getMovementCandidate(db, movementId);
   if (!movement)
     throw new ReconciliationError("Reconciliation record not found", 404);
@@ -581,6 +580,41 @@ export function replaceMovementAllocations(
 }
 
 /**
+ * Which of these accounts a transfer from a line on `statementAccountId` may
+ * name. The records form's rule: two places money sits make a transfer;
+ * anything else (equity, a category, money owed with nobody named) is an
+ * adjustment. Without it the other account could be any open account, and a
+ * line could write a matched, locked record into Owner's Equity on
+ * `records.create` alone. The Transfer sheet offers only these.
+ */
+export function transferTargetIds(
+  db: ReconciliationDb,
+  locals: App.Locals,
+  statementAccountId: number,
+  accountIds: number[],
+): number[] {
+  const others = accountIds.filter((id) => id !== statementAccountId);
+  if (can(locals, "records.adjust")) return others;
+  const context = loadSidesContext(db, false);
+  if (!context.ok) return [];
+  return others.filter((id) => {
+    const derived = sidesFromAccounts(
+      {
+        fromAccountId: statementAccountId,
+        toAccountId: id,
+        amountMinor: 0,
+        contactId: null,
+      },
+      context.value,
+    );
+    return derived.ok && derived.value.kind === "transfer";
+  });
+}
+
+export const TRANSFER_NEEDS_ADJUSTMENTS =
+  "A transfer from a bank line goes between two places money sits. Any other account needs the Adjustments ability. Ask an administrator for it, or match the line to a record instead.";
+
+/**
  * Turn an unmatched bank line into a transfer between two accounts the user
  * holds, and match it in the same action (FR-023).
  *
@@ -596,10 +630,10 @@ export function createTransferForLine(
   lineId: number,
   input: { otherAccountId: number; description?: string },
 ) {
-  const userId = authorize(locals, "add");
+  const userId = authorize(locals, "reconciliation.create");
   // It writes a record, so it needs the ability to add one — not only the
   // reconciliation ability that lets someone match lines.
-  if (!hasPermission(locals, "records", "add"))
+  if (!can(locals, "records.create"))
     throw new ReconciliationError("Forbidden", 403);
   const line = getLine(db, lineId);
   if (!line) throw new ReconciliationError("Statement line not found", 404);
@@ -617,6 +651,11 @@ export function createTransferForLine(
       409,
     );
   requirePostingAccount(db, input.otherAccountId);
+  if (
+    transferTargetIds(db, locals, statement.accountId, [input.otherAccountId])
+      .length === 0
+  )
+    throw new ReconciliationError(TRANSFER_NEEDS_ADJUSTMENTS, 403);
   if (listAllocations(db).some((a) => a.lineId === lineId))
     throw new ReconciliationError(
       "This transaction is already matched. Undo the match before recording it as a transfer.",

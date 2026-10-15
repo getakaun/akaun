@@ -14,7 +14,7 @@ By default the assistant can only read. It can change data only when you give it
 ## What the assistant can read
 
 The assistant can read these items. It reads only the areas where the user has the **View**
-permission.
+permission, and where the token or the connection gives read access.
 
 | What the assistant can read | Permission that the user needs |
 |---|---|
@@ -37,27 +37,62 @@ suggest better descriptions in a table. It changes a description only after you 
 
 ## What the assistant can change
 
-The assistant can change data only if both of these are true:
+The assistant can change data only if all of these are true:
 
-- You gave the assistant change access when you connected it. See
-  [Connect with the sign-in](#connect-with-the-sign-in).
+- You gave the assistant the access. With the sign-in, you select change access when you connect.
+  With a token, you choose the level or the ability when you make the token. See
+  [Connect with the sign-in](#connect-with-the-sign-in) and
+  [Connect with a personal access token](#connect-with-a-personal-access-token).
+- The user may hand on the permission to tokens and apps. The administrator sets this on each
+  group, in **Members may hand on to tokens & apps**. See
+  [What members may hand on](./users-and-groups.md#what-members-may-hand-on).
 - The user has the permission in Akaun. The assistant can never do more than the user.
+
+Akaun checks these on each request. If the administrator removes a permission from the group, or
+from what the group may hand on, the assistant loses it immediately. A permission that the user has
+as an extra permission is never handed on to an assistant.
 
 | What the assistant can do | Permission that the user needs |
 |---|---|
 | Record an expense, income or transfer. Change a record. | **Add** or **Change** on **Records** |
 | Record a payment, and apply it to bills or invoices | **Add** on **Records** |
 | Attach a receipt to a record (PDF, JPEG or PNG, 15 MB or smaller) | **Change** on **Records** |
-| Add, rename or archive an account or a category. Set an opening balance. | **Add** or **Change** on **Accounts**. An opening balance also needs **Add** or **Change** on **Records**. |
-| Add or change a contact, or merge two contacts | **Add** or **Change** on **Contacts**. A merge also needs **Delete**. |
-| Make, change and send an invoice. Void an invoice. | **Add** or **Change** on **Invoices**. To send or void it also needs **Add** or **Change** on **Records**. |
-| Make, change, send, revise and convert a quotation | **Add** or **Change** on **Quotations** |
-| Match bank lines to records. Correct a bank line. Record a bank line as a transfer. | **Change** on **Reconciliation**. A transfer also needs **Add** on **Records**. |
-| Correct, confirm or skip a file on **Auto Import** | **Change** on **Auto Import** |
+| Add, rename or archive an account or a category. Set an opening balance. | **Add** or **Change** on **Accounts** |
+| Add or change a contact | **Add** or **Change** on **Contacts** |
+| Make and change an invoice | **Add** or **Change** on **Invoices** |
+| Send an invoice | **Send** on **Invoices** and **Add** on **Records** |
+| Void an invoice | **Void** on **Invoices** and **Change** on **Records**. To make a new invoice in its place, also **Add** on **Invoices**. |
+| Make and change a quotation, and change its status | **Add** or **Change** on **Quotations** |
+| Revise a quotation | **Revise** and **Add** on **Quotations** |
+| Convert a quotation into an invoice | **Convert** on **Quotations** and **Add** on **Invoices** |
+| Match bank lines to records | **Match** on **Reconciliation** |
+| Record a bank line as a transfer between two of your bank or cash accounts | **Add** on **Reconciliation** and **Add** on **Records** |
+| Correct a file on **Auto Import** | **Change** on **Auto Import** |
+| Confirm or skip a file on **Auto Import** | **Confirm** on **Auto Import** |
 
-To delete something, the assistant needs delete access as well, which is a separate choice when you
-connect. Then it can delete records, attachments, settlements, accounts, contacts, draft invoices,
-quotations, bank lines and import files, where the user has **Delete**.
+To delete something, the assistant needs delete access as well. With the sign-in, this is a
+separate choice when you connect. With a token, select **Full** for the area, or select **Custom**
+and switch on **Delete**. Then the assistant can delete records, settlements, accounts, contacts,
+draft invoices, quotations and import files, where the user has **Delete**. Setting an opening
+balance to zero deletes it, so that also needs **Delete** on **Records**.
+
+Skipping a file on **Auto Import** deletes the uploaded file, so the assistant asks you first.
+
+Some changes are only for you to make in Akaun, never for an assistant:
+
+- Merge two contacts.
+- Remove an attachment from a record.
+- Correct or delete a line of a bank statement.
+
+These cannot be undone, or they change the evidence that the books are checked against.
+
+### Adjustments
+
+A journal entry, or a record between any two accounts, needs **Adjustments** on **Records**. With
+the sign-in, the assistant also needs the separate **Adjust** choice when you connect. Change
+access to records does not include it. Give it only to an assistant that you trust with your
+books: an adjustment can change any balance and still add up. A bank line recorded as a transfer
+to anything other than a bank or cash account is an adjustment too.
 
 Akaun applies all its normal rules to the assistant. For example:
 
@@ -86,9 +121,9 @@ an assistant that you trust to act for you.
 - With the sign-in (OAuth), the assistant opens Akaun in a browser. You sign in and choose what
   the assistant can read, change and delete. Use this way when the assistant supports it. The
   administrator must enable it first.
-- With an API token, you put an API token in the settings of the assistant. Use this way when the
-  assistant cannot use the sign-in. A token can only read, unless the administrator allows changes.
-  See [Connect with an API token](#connect-with-an-api-token).
+- With a personal access token, you put a token in the settings of the assistant. Use this way when
+  the assistant cannot use the sign-in. The token can do only what you select when you make it.
+  See [Connect with a personal access token](#connect-with-a-personal-access-token).
 
 In both ways, the server address is the address of Akaun with `/mcp` at the end, for example
 `https://books.example.com/mcp`.
@@ -135,65 +170,84 @@ The app shows on your profile, on the **Connected apps** tab.
 
 The page shows the access that the app asks for, in up to three groups:
 
-- **Read** — Akaun selects each read permission that you have.
+- **Read** — Akaun selects each read permission that you can give.
 - **Change** — Akaun never selects these for you. Select each area that the assistant may add to
   and change, for example **Record and change records, payments and settlements, and attach
   files**.
 - **Delete** — Akaun never selects these for you. Select them only if the assistant must delete
   things.
 
-An app that does not ask for change or delete access gets read access only. If you do not have a
-permission, the page shows **Your account does not have this permission.** and you cannot select
-it. If you clear all the permissions, Akaun shows **Select at least one available permission.**
+Under each choice, **Includes** lists the abilities that the choice gives, for example
+**Invoices: Add, Invoices: Change, Invoices: Send, Invoices: Void**.
+
+The page offers only what you may hand on to tokens and apps. You cannot select the other choices:
+
+- If you do not have a permission, the page shows **Your account does not have this permission.**
+- If you have a permission, but your administrator does not let you hand it on, the page shows
+  **Your administrator does not allow apps to do this.** See
+  [What members may hand on](./users-and-groups.md#what-members-may-hand-on).
+
+If you clear all the permissions, Akaun shows **Select at least one available permission.**
 Click **Cancel** to refuse the connection.
 
-To give an app more access later, connect it again and select the new access.
+Usually an app asks for read access first. When the assistant needs a tool that changes data, the
+app asks again, and the **Connect** page opens again with the new access. You can also connect the
+app again to give it more access.
 
 A connection stays valid for 30 days or less. Then connect the assistant again.
 
-## Connect with an API token
+## Connect with a personal access token
 
 :::caution
 
-An API token can do more than read. Through the API of Akaun, a program with the token can do all
-the actions that the user can do, also changes and deletes. Do not use the token of a superuser.
-Make a separate user that has only the permissions that the assistant needs.
+A token can do more than read. A program with the token can do all the actions that you select for
+the token, also changes and deletes. Select only the permissions that the assistant needs. For a
+read-only assistant, select **View** for each area that it must read, and **None** for the other
+areas. If you are a superuser, do not give the token more than the assistant needs.
 
 :::
 
-1. As a superuser, make a group that has only the permissions that the assistant needs. For a
-   read-only assistant, give only **View**. See [Make a group](./users-and-groups.md#make-a-group).
-2. Add a user for the assistant, in this group only. See
-   [Add a user](./users-and-groups.md#add-a-user).
-3. Issue an API token for this user. See
-   [Issue an API token for a user](./users-and-groups.md#issue-an-api-token-for-a-user).
+1. Open your profile, and click the **Access tokens** tab.
+2. Click **New token**, and make a token with only the permissions that the assistant needs. See
+   [Make a token](./your-profile.md#make-a-token).
+3. Click **Copy** to copy the token. It starts with `akp_`.
 4. In the assistant, add a new MCP server of the type "Streamable HTTP".
 5. Type the server address, for example `https://books.example.com/mcp`.
 6. Add the header `Authorization` with the value `Bearer` and the token, for example
-   `Bearer akn_1234…`.
+   `Bearer akp_1234…`.
 
-The assistant can now read the data that the user can view.
+The assistant sees only the tools that the permissions of the token allow. For example, a token
+with only the **View** level gives the assistant no tools that change data.
 
-By default, an assistant that connects with an API token can only read. To let it change data, the
-administrator adds the setting `MCP_BEARER_WRITES=true` and starts Akaun again. This applies to
-every API token. The assistant can then do every change and delete that the user can do, so make
-the group of the user as small as possible.
+A token stops working at the end of the day in **Expires** (UTC). Then the assistant cannot connect. Make a new
+token, and put it in the settings of the assistant.
+
+For an assistant that does not act for one person, a superuser can add a separate user with only
+the permissions that the assistant needs. Then the superuser signs in as that user, and makes the
+token on the profile of that user. A superuser cannot make a token for a different user. See
+[Add a user](./users-and-groups.md#add-a-user) and
+[The tokens of a user](./users-and-groups.md#the-tokens-of-a-user).
 
 ## Disconnect an assistant
 
 - If you connected with the sign-in, open your profile, click **Connected apps**, and click
   **Revoke access** for the app. See [Your profile](./your-profile.md#connected-apps).
-- If you connected with an API token, revoke the token. See
-  [Replace or remove a token](./users-and-groups.md#replace-or-remove-a-token).
+- If you connected with a token, open your profile, click **Access tokens**, and click **Revoke**
+  for the token. See [Replace or remove a token](./your-profile.md#replace-or-remove-a-token).
+- A superuser can also revoke the tokens of each user on **Users & Groups**. See
+  [Revoke the tokens of a user](./users-and-groups.md#revoke-the-tokens-of-a-user).
 
-The assistant stops immediately. A new password also disconnects all the apps of the user that
-connected with the sign-in. **Sign out** does not disconnect them.
+The assistant stops immediately. A new password also disconnects all the apps and revokes all the
+tokens of the user. **Sign out** does not disconnect them.
 
 ## Notes and limits
 
 - Akaun checks the permissions of the user on each request. If you remove a permission from the
-  group, the assistant loses that ability on its next request.
-- With the sign-in, a superuser is also limited to the access that the superuser selected.
+  group, or from what the group may hand on, the assistant loses that ability on its next request.
+- A superuser is also limited to the access that the superuser selected for the connection or the
+  token. No token and no app can manage users and groups.
+- The API tokens of older versions do not work any more. See
+  [API tokens were replaced by personal access tokens](../10-help/troubleshooting.md#api-tokens-were-replaced-by-personal-access-tokens).
 - The assistant reads the data at the time of its question. It does not get live updates.
 - A list gives 50 rows at a time by default, and 200 rows at the most. A statement gives 500 lines or
   fewer. For a long period, ask about a shorter period.
@@ -202,4 +256,4 @@ connected with the sign-in. **Sign out** does not disconnect them.
 - The assistant can attach a file of 15 MB or less. One user can attach 30 files in 10 minutes.
 - The assistant cannot upload a new file to **Auto Import** or a new bank statement. Upload these in
   Akaun.
-- Use HTTPS for a connection over the internet. An API token sent over plain HTTP is not safe.
+- Use HTTPS for a connection over the internet. A token sent over plain HTTP is not safe.

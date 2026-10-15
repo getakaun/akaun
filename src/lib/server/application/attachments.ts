@@ -4,13 +4,10 @@ import { recordAudit } from "../audit.js";
 import {
   displayName,
   recordAttachmentPath,
-  releaseIfUnreferenced,
   storedNamePart,
 } from "../file-storage.js";
 import {
   addAttachment as addAttachmentRow,
-  deleteAttachment as deleteAttachmentRow,
-  getAttachment,
   getRecord,
   searchableAttachmentFilenames,
   setExtractedText,
@@ -56,7 +53,7 @@ export async function attachFile(
   ctx: AppContext,
   input: z.output<z.ZodObject<typeof attachFileShape>>,
 ): Promise<AppResult<Record<string, unknown>>> {
-  const refused = requirePermissions(ctx, [["records", "change"]]);
+  const refused = requirePermissions(ctx, ["records.update"]);
   if (refused) return refused;
   const record = getRecord(ctx.db, input.recordId);
   if (!record) return missing("That record no longer exists.");
@@ -137,44 +134,5 @@ export async function attachFile(
     },
     recordId: record.id,
     version: recordVersion(ctx.db, record.id),
-  });
-}
-
-/**
- * Removes one attachment. The row goes first: a file left behind is
- * recoverable, a row pointing at a file that is gone is not. The file stays
- * while another record still shows it.
- */
-export function deleteAttachment(
-  ctx: AppContext,
-  recordId: number,
-  attachmentId: number,
-): AppResult<Record<string, unknown>> {
-  const refused = requirePermissions(ctx, [["records", "change"]]);
-  if (refused) return refused;
-  const record = getRecord(ctx.db, recordId);
-  if (!record) return missing("That record no longer exists.");
-  if (!ctx.storageRoot)
-    return fail("REFUSED", "File storage is not available here.");
-  const attachment = getAttachment(ctx.db, attachmentId);
-  if (!attachment || attachment.recordId !== recordId)
-    return missing("That attachment no longer exists.");
-  if (!deleteAttachmentRow(ctx.db, attachmentId))
-    return missing("That attachment no longer exists.");
-  releaseIfUnreferenced(ctx.db, attachment.filename, ctx.storageRoot);
-  recordAudit(ctx.db, {
-    recordType: "record",
-    recordId,
-    userId: actor(ctx),
-    action: "update",
-    changes: [
-      { field: "attachments", before: attachment.displayName, after: null },
-    ],
-  });
-  emitRecordUpdate(ctx.db, recordId);
-  return ok({
-    id: attachmentId,
-    recordId,
-    version: recordVersion(ctx.db, recordId),
   });
 }

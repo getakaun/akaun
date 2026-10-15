@@ -73,8 +73,10 @@ reload the page.
 
 - You can attach and delete files on a locked record. A receipt does not change the amounts. See
   [Locked records](../02-concepts/locked-records.md).
-- To attach or delete a file on a saved record, you need the **Change** permission on **Records**.
-  The **Add** button shows also without this permission, but the upload fails with no message.
+- To attach a file to a saved record, you need the **Change** permission on **Records**. The **Add**
+  button shows also without this permission, but the upload fails with no message.
+- To delete a file, you need the **Delete** permission on **Records**. Without it, the **X** is
+  greyed out.
 - If a file does not upload after you save a new record, Akaun saves the record without it. A
   message tells you how many files did not upload. Open the record and attach them again.
 - On the page of a saved record, Akaun does not show a message when an upload fails. If the file

@@ -43,35 +43,84 @@ function digest(parts: unknown): string {
 export const ABSENT = "absent";
 
 export function recordVersion(db: LedgerDb, id: number): string {
-  const found = db
-    .select()
-    .from(ledgerRecords)
-    .where(eq(ledgerRecords.id, id))
-    .get();
-  if (!found) return ABSENT;
-  // The search text is derived, and is rewritten in the background after an
-  // attachment is indexed. Leaving it in would make the version an agent just
-  // got back from attach_file go stale with nobody having edited anything.
-  const { extractedText: _searchText, ...row } = found;
-  void _searchText;
-  const movements = db
-    .select({
-      id: ledgerMovements.id,
-      accountId: ledgerMovements.accountId,
-      amountMinor: ledgerMovements.amountMinor,
-      label: ledgerMovements.label,
-    })
-    .from(ledgerMovements)
-    .where(eq(ledgerMovements.recordId, id))
-    .orderBy(asc(ledgerMovements.id))
-    .all();
-  const attachments = db
-    .select({ id: recordAttachments.id })
-    .from(recordAttachments)
-    .where(eq(recordAttachments.recordId, id))
-    .orderBy(asc(recordAttachments.id))
-    .all();
-  return digest([row, movements, attachments]);
+  return recordVersions(db, [id])[id];
+}
+
+/**
+ * Several records' versions in three queries rather than three each, for a
+ * list that hands out a version per row. `recordVersion` is this with one id,
+ * so the two can never disagree — a list version that hashed differently
+ * from the one `checkVersion` recomputes would turn every update into a
+ * conflict.
+ */
+export function recordVersions(
+  db: LedgerDb,
+  ids: number[],
+): Record<number, string> {
+  const wanted = [...new Set(ids)];
+  const out: Record<number, string> = {};
+  if (wanted.length === 0) return out;
+  const rows = new Map(
+    db
+      .select()
+      .from(ledgerRecords)
+      .where(inArray(ledgerRecords.id, wanted))
+      .all()
+      .map((row) => [row.id, row]),
+  );
+  const movements = groupBy(
+    db
+      .select({
+        recordId: ledgerMovements.recordId,
+        id: ledgerMovements.id,
+        accountId: ledgerMovements.accountId,
+        amountMinor: ledgerMovements.amountMinor,
+        label: ledgerMovements.label,
+      })
+      .from(ledgerMovements)
+      .where(inArray(ledgerMovements.recordId, wanted))
+      .orderBy(asc(ledgerMovements.id))
+      .all(),
+  );
+  const attachments = groupBy(
+    db
+      .select({
+        recordId: recordAttachments.recordId,
+        id: recordAttachments.id,
+      })
+      .from(recordAttachments)
+      .where(inArray(recordAttachments.recordId, wanted))
+      .orderBy(asc(recordAttachments.id))
+      .all(),
+  );
+  for (const id of wanted) {
+    const found = rows.get(id);
+    if (!found) {
+      out[id] = ABSENT;
+      continue;
+    }
+    // The search text is derived, and is rewritten in the background after an
+    // attachment is indexed. Leaving it in would make the version an agent
+    // just got back from attach_file go stale with nobody having edited
+    // anything.
+    const { extractedText: _searchText, ...row } = found;
+    void _searchText;
+    out[id] = digest([row, movements.get(id) ?? [], attachments.get(id) ?? []]);
+  }
+  return out;
+}
+
+/** Child rows by their record, in the order queried, without the record id. */
+function groupBy<T extends { recordId: number }>(
+  rows: T[],
+): Map<number, Omit<T, "recordId">[]> {
+  const grouped = new Map<number, Omit<T, "recordId">[]>();
+  for (const { recordId, ...rest } of rows) {
+    const list = grouped.get(recordId) ?? [];
+    list.push(rest);
+    grouped.set(recordId, list);
+  }
+  return grouped;
 }
 
 export function accountVersion(db: LedgerDb, id: number): string {
@@ -174,24 +223,6 @@ export function importJobVersion(db: LedgerDb, id: string): string {
 export function importItemVersion(db: LedgerDb, id: string): string {
   const row = db.select().from(importItems).where(eq(importItems.id, id)).get();
   return row ? digest(row) : ABSENT;
-}
-
-/** Several contacts at once, for a merge that must see all of them unchanged. */
-export function contactVersions(
-  db: LedgerDb,
-  ids: number[],
-): Record<number, string> {
-  const present = new Set(
-    db
-      .select({ id: contacts.id })
-      .from(contacts)
-      .where(inArray(contacts.id, ids))
-      .all()
-      .map((row) => row.id),
-  );
-  return Object.fromEntries(
-    ids.map((id) => [id, present.has(id) ? contactVersion(db, id) : ABSENT]),
-  );
 }
 
 /**

@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { Database } from "bun:sqlite";
+import { asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -12,30 +14,20 @@ import {
   accountDefaults,
   auditLog,
   contacts,
+  ledgerMovements,
   ledgerRecords,
+  recordAttachments,
   settlements,
   users,
 } from "../db/schema.js";
 import { createAccount } from "../services/accounts.js";
 import { ledgerEvents } from "../ledger/events.js";
-import type { EffectivePermissions, ResourceName } from "../permissions.js";
-
-const ALL_RESOURCES: ResourceName[] = [
-  "dashboard",
-  "records",
-  "import",
-  "contacts",
-  "quotations",
-  "invoices",
-  "reconciliation",
-  "accounts",
-  "reports",
-  "adjustments",
-];
+import { LEAF_PERMISSIONS } from "$lib/permissions/catalog.js";
+import { localsFor } from "../permissions/test-locals.js";
 import type { LedgerDb } from "../ledger/types.js";
 import type { AppContext } from "./context.js";
 import { createRecord, deleteRecord, updateRecord } from "./records.js";
-import { recordVersion } from "./version.js";
+import { recordVersion, recordVersions } from "./version.js";
 import { setExtractedText } from "../queries/ledger.js";
 
 let sqlite: Database;
@@ -59,30 +51,16 @@ function account(name: string, type: number, subType?: number) {
   return result.value.id;
 }
 
-/** Everything granted except what `deny` names. */
-function ctx(deny: [string, string][] = []): AppContext {
-  const permissions = Object.fromEntries(
-    ALL_RESOURCES.map((resource) => [
-      resource,
-      { view: true, add: true, change: true, delete: true },
-    ]),
-  ) as EffectivePermissions;
-  for (const [resource, action] of deny)
-    (permissions as Record<string, Record<string, boolean>>)[resource][action] =
-      false;
+/** Every permission except the ones `deny` names. */
+function ctx(deny: string[] = []): AppContext {
   return {
     db,
-    locals: {
-      user: {
-        id: userId,
-        email: "u@test",
-        username: "u",
-        name: null,
-        role: "user",
+    locals: localsFor(
+      LEAF_PERMISSIONS.filter((leaf) => !deny.includes(leaf)),
+      {
+        userId,
       },
-      permissions,
-      isSuperuser: false,
-    },
+    ),
   };
 }
 
@@ -168,7 +146,7 @@ describe("createRecord", () => {
         { accountId: equity, amountMinor: 5000 },
       ],
     };
-    const refused = createRecord(ctx([["adjustments", "add"]]), journal);
+    const refused = createRecord(ctx(["records.adjust"]), journal);
     expect(refused.ok).toBe(false);
     if (!refused.ok) expect(refused.code).toBe("FORBIDDEN");
     expect(db.select().from(ledgerRecords).all()).toHaveLength(0);
@@ -176,7 +154,7 @@ describe("createRecord", () => {
   });
 
   it("gates two money pots with a third side, but not a split bill", () => {
-    const noAdjust = ctx([["adjustments", "add"]]);
+    const noAdjust = ctx(["records.adjust"]);
     const split = createRecord(noAdjust, {
       ...base,
       fromAccountId: bank,
@@ -306,40 +284,25 @@ describe("updateRecord", () => {
 
   it("gates extra lines restated without both accounts", () => {
     const written = expense();
-    const refused = updateRecord(
-      ctx([["adjustments", "change"]]),
-      written.record.id,
-      {
-        extraSides: [{ accountId: savings, amountMinor: 1000 }],
-      },
-    );
+    const refused = updateRecord(ctx(["records.adjust"]), written.record.id, {
+      extraSides: [{ accountId: savings, amountMinor: 1000 }],
+    });
     expect(refused.ok).toBe(false);
     if (!refused.ok) expect(refused.code).toBe("FORBIDDEN");
 
-    const everyday = updateRecord(
-      ctx([["adjustments", "change"]]),
-      written.record.id,
-      {
-        extraSides: [{ accountId: paper, amountMinor: 1000 }],
-      },
-    );
+    const everyday = updateRecord(ctx(["records.adjust"]), written.record.id, {
+      extraSides: [{ accountId: paper, amountMinor: 1000 }],
+    });
     expect(everyday.ok).toBe(true);
   });
 
   it("checks records:change and records:delete", () => {
     const written = expense();
-    const change = updateRecord(
-      ctx([["records", "change"]]),
-      written.record.id,
-      {
-        description: "x",
-      },
-    );
+    const change = updateRecord(ctx(["records.update"]), written.record.id, {
+      description: "x",
+    });
     expect(change.ok).toBe(false);
-    const remove = deleteRecord(
-      ctx([["records", "delete"]]),
-      written.record.id,
-    );
+    const remove = deleteRecord(ctx(["records.delete"]), written.record.id);
     expect(remove.ok).toBe(false);
     if (!remove.ok) expect(remove.code).toBe("FORBIDDEN");
     expect(deleteRecord(ctx(), written.record.id).ok).toBe(true);
@@ -347,11 +310,7 @@ describe("updateRecord", () => {
 });
 
 describe("the adjustments gate on kinds and single accounts", () => {
-  const noAdjust = () =>
-    ctx([
-      ["adjustments", "add"],
-      ["adjustments", "change"],
-    ]);
+  const noAdjust = () => ctx(["records.adjust"]);
 
   it("refuses an explicit expense paid from equity, or a payment out of a category", () => {
     const expense = createRecord(noAdjust(), {
@@ -379,6 +338,23 @@ describe("the adjustments gate on kinds and single accounts", () => {
     });
     expect(transfer.ok).toBe(true);
     expect(db.select().from(ledgerRecords).all()).toHaveLength(1);
+  });
+
+  it("refuses an explicit transfer the two accounts would not make", () => {
+    const sales = account("Sales", AccountType.Revenue);
+    // Revenue into the bank derives income, and equity into it derives a
+    // journal: filed as a "transfer", either is an adjustment.
+    for (const fromAccountId of [sales, equity]) {
+      const transfer = createRecord(noAdjust(), {
+        ...base,
+        kind: "transfer",
+        fromAccountId,
+        toAccountId: bank,
+      });
+      expect(transfer.ok).toBe(false);
+      if (!transfer.ok) expect(transfer.code).toBe("FORBIDDEN");
+    }
+    expect(db.select().from(ledgerRecords).all()).toHaveLength(0);
   });
 
   it("refuses moving one side of an expense onto equity without the ability", () => {
@@ -417,5 +393,67 @@ describe("the adjustments gate on kinds and single accounts", () => {
     expect(recordVersion(db, written.value.record.id)).toBe(
       written.value.version,
     );
+  });
+});
+
+describe("record versions read in bulk", () => {
+  /** The per-record hash as it was before the batch existed, kept verbatim. */
+  function oneByOne(id: number): string {
+    const found = db
+      .select()
+      .from(ledgerRecords)
+      .where(eq(ledgerRecords.id, id))
+      .get();
+    if (!found) return "absent";
+    const { extractedText: _searchText, ...row } = found;
+    void _searchText;
+    const movements = db
+      .select({
+        id: ledgerMovements.id,
+        accountId: ledgerMovements.accountId,
+        amountMinor: ledgerMovements.amountMinor,
+        label: ledgerMovements.label,
+      })
+      .from(ledgerMovements)
+      .where(eq(ledgerMovements.recordId, id))
+      .orderBy(asc(ledgerMovements.id))
+      .all();
+    const attachments = db
+      .select({ id: recordAttachments.id })
+      .from(recordAttachments)
+      .where(eq(recordAttachments.recordId, id))
+      .orderBy(asc(recordAttachments.id))
+      .all();
+    return createHash("sha256")
+      .update(JSON.stringify([row, movements, attachments]))
+      .digest("hex")
+      .slice(0, 16);
+  }
+
+  it("gives each record the version a single read gives, unchanged from before", () => {
+    const ids = [fuel, paper].map((to) => {
+      const written = createRecord(ctx(), {
+        ...base,
+        fromAccountId: bank,
+        toAccountId: to,
+      });
+      if (!written.ok) throw new Error(written.reason);
+      return written.value.record.id;
+    });
+    db.insert(recordAttachments)
+      .values([
+        { recordId: ids[0], filename: "a.pdf", displayName: "a.pdf" },
+        { recordId: ids[0], filename: "b.pdf", displayName: "b.pdf" },
+      ])
+      .run();
+
+    const batch = recordVersions(db, [...ids, 99_999]);
+    for (const id of ids) {
+      expect(batch[id]).toBe(recordVersion(db, id));
+      expect(batch[id]).toBe(oneByOne(id));
+    }
+    expect(batch[99_999]).toBe("absent");
+    expect(batch[ids[0]]).not.toBe(batch[ids[1]]);
+    expect(recordVersions(db, [])).toEqual({});
   });
 });

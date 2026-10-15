@@ -123,6 +123,10 @@ Akaun removes the allocation when you click the button. It does not ask you to c
 The bill is **Outstanding** or **Part paid** again. If nothing else locks the bill, you can change
 it again.
 
+A payment with no contact, which pays several people at once, must always be spent in full. When
+you take back one of its allocations, Akaun takes back all of them, and all of its bills are
+outstanding again.
+
 To use the money of the payment for a different bill, record a new payment. See
 [Bills you pay later](./bills-you-pay-later.md).
 

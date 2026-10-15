@@ -10,10 +10,10 @@ Revoke connections in **Profile → Connected apps**. Access tokens last 15 minu
 
 See [OAuth setup](OAUTH.md) for metadata endpoints, deployment configuration and verification.
 
-## Connect with an API token
+## Connect with a personal access token
 
-1. In **Users & Groups**, create a dedicated integration user and assign a group with **View** permissions for Records, Accounts, Contacts, Reports and Auto Import. Grant only the resources the agent needs. Do not make the user a superuser or grant Add/Change/Delete for read-only use.
-2. Issue the user's API token and store the one-time reveal in your MCP client's secret configuration. Revoking/regenerating it immediately affects subsequent requests.
+1. Under **Profile → Access tokens** (or, for a service user who never signs in, on that user in **Users & Groups**), create a token with only the permissions the agent needs and an expiry. Only what the owner may delegate is offered; the secret (`akp_…`) is shown once.
+2. Store it in your MCP client's secret configuration. Revoking or regenerating it affects the next request.
 3. Configure a **Streamable HTTP** connection to `https://<your-akaun-host>/mcp`, with `Authorization: Bearer <token>`.
 
 For Codex clients supporting remote HTTP MCP, the configuration is:
@@ -26,7 +26,7 @@ bearer_token_env_var = "AKAUN_MCP_TOKEN"
 
 Set `AKAUN_MCP_TOKEN` in the client's environment without committing its value. Other clients should use their own URL/header configuration. Configured bearer tokens remain supported alongside optional OAuth. No stdio bridge is bundled.
 
-The token inherits the user's existing REST permissions. Over MCP, an API token sees **read tools only** unless the server sets `MCP_BEARER_WRITES=true`; then it sees every write tool its user's RBAC allows (an API token carries no scopes). That flag does not restrict the token's REST access either way, so use the dedicated restricted user above.
+A personal access token carries its own permissions, chosen when it is made and always bounded by its owner's role and their groups' delegation ceiling (dev-notes/PERMISSIONS.md). It sees exactly the tools those permissions allow, and the same permissions bound it on the REST API.
 
 Use HTTPS for remote connections. For a desktop sidecar, use its actual local server address/port while the app is running; do not assume the Docker or desktop ports are identical.
 
@@ -97,25 +97,29 @@ Successful results expose the same envelope in structured MCP content and text:
 
 ## Write tools
 
-One tool per action; a lifecycle step gets its own tool wherever its MCP annotations differ (issuing an invoice is not destructive, voiding one is), so a client can tell which calls to confirm with the user. Scope is the OAuth scope a token must hold; RBAC is the app ability the user must have. Both are listed in one table, `src/lib/server/mcp/tool-requirements.ts`.
+One tool per action; a lifecycle step gets its own tool wherever its MCP annotations differ (issuing an invoice is not destructive, voiding one is), so a client can tell which calls to confirm with the user.
 
-| Area             | Tools                                                                                                                                                                                                     | Scope (RBAC)                                                                                                                                                                       |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Records          | `create_record` (from/to accounts, optional `extraSides`, `dryRun`), `record_payment` (with settlements, atomic), `update_record`, `settle_payment`, `attach_file`                                        | `records:write` (records add/change)                                                                                                                                               |
-|                  | `delete_record`, `undo_settlement`, `delete_attachment`                                                                                                                                                   | `records:delete`                                                                                                                                                                   |
-| Accounts         | `create_account`, `update_account` (archive with `active: false`), `set_opening_balance`, `delete_account`                                                                                               | `accounts:write`/`:delete`; the opening balance also `records:write` (records add or change)                                                                                      |
-| Contacts         | `create_contact`, `update_contact` (incl. roles), `delete_contact`, `merge_contacts`                                                                                                                      | `contacts:write`/`:delete`; merge needs both                                                                                                                                       |
-| Invoices         | `create_invoice`, `update_invoice`, `issue_invoice`, `void_invoice` (`reissue`), `delete_invoice`                                                                                                         | `invoices:write`/`:delete`; issue and void also `records:write` (records add / change)                                                                                            |
-| Quotations       | `create_quotation`, `update_quotation`, `set_quotation_status`, `revise_quotation`, `convert_quotation_to_invoice`, `delete_quotation`                                                                    | `quotations:write`/`:delete`; convert also `invoices:write`                                                                                                                        |
-| Reconciliation   | `update_statement_line`, `set_movement_matches`, `auto_match`, `record_transfer_from_line`, `delete_statement_line`                                                                                       | `reconciliation:write`/`:delete`; the transfer also `records:write` (records add)                                                                                                 |
-| Auto Import      | `update_import_item`, `confirm_import`, `skip_import`, `discard_import_job`                                                                                                                               | `import:write`/`:delete` (import change/delete only — confirm deliberately needs no records ability, 006 FR-045)                                                                   |
+**Deliberately not offered over MCP**, though the app does them: merging contacts and deleting an attachment (neither can be undone, and an agent rarely needs either), and editing or deleting a bank statement line (an agent that could rewrite the bank's evidence could also make it agree with the books). Their scopes went with them: `contacts:delete` no longer carries `contacts.merge`, and there is no `reconciliation:delete`. Scope is the OAuth scope a token must hold; RBAC is the app ability the user must have. Both are listed in one table, `src/lib/server/mcp/tool-requirements.ts`.
+
+| Area | Tools | Scope (RBAC) |
+| --- | --- | --- |
+| Records | `create_record` (from/to accounts, optional `extraSides`, `dryRun`), `record_payment` (with settlements, atomic), `update_record`, `settle_payment`, `attach_file` | `records:write` (records add/change) |
+|  | `delete_record`, `undo_settlement` (on a batch payment, takes back every allocation) | `records:delete` |
+|  | journals, any-to-any `create_record`, re-derived `update_record` | `records:adjust` (the explicit `records.adjust` leaf), checked when the derivation needs it |
+| Accounts | `create_account`, `update_account` (archive with `active: false`), `set_opening_balance`, `delete_account` | `accounts:write`/`:delete`; the opening balance also `records:write`, and setting it to zero needs records delete |
+| Contacts | `create_contact`, `update_contact` (incl. roles), `delete_contact` | `contacts:write`/`:delete` |
+| Invoices | `create_invoice`, `update_invoice`, `issue_invoice`, `void_invoice` (`reissue`), `delete_invoice` | `invoices:write`/`:delete`; issue and void also `records:write` (records add / change) |
+| Quotations | `create_quotation`, `update_quotation`, `set_quotation_status`, `revise_quotation`, `convert_quotation_to_invoice`, `delete_quotation` | `quotations:write`/`:delete`; convert also `invoices:write` |
+| Reconciliation | `set_movement_matches`, `auto_match`, `record_transfer_from_line` | `reconciliation:write`; the transfer also `records:write` (records add), and an account other than a place money sits needs records adjust |
+| Auto Import | `update_import_item`, `confirm_import`, `skip_import` (destructive: deletes the source file), `discard_import_job` | `import:write`/`:delete` (import change/delete only — confirm deliberately needs no records ability, 006 FR-045) |
 
 Semantics every write tool shares:
 
-- **Same rules as the app.** Each tool calls an authorized operation in `src/lib/server/application/`, the same one the REST route calls. Locks (settled or bank-matched records), sealed sent documents, archive-instead-of-delete, the adjustments gate and every other refusal come back as `REFUSED` with the app's own sentence.
+- **Same rules as the app.** Each tool calls an authorized operation in `src/lib/server/application/` (most REST routes call the same one; some still call the service under it, which holds the shared rule). Locks (settled or bank-matched records), sealed sent documents, archive-instead-of-delete, the adjustments gate and every other refusal come back as `REFUSED` with the app's own sentence.
 - **Versions.** Updates, deletes and lifecycle steps take `expectedVersion`. A stale one is refused with `CONFLICT` and the `currentVersion`; re-read and check with the user. Versions are hashes of the item and its child rows (`application/version.ts`), not `updatedAt`.
-- **Never movements.** `create_record` takes the two accounts money moved between; the kind is derived and `entry-builder.ts` builds the sides. `dryRun` returns the derived sides without saving.
+- **Never movements.** `create_record` takes the two accounts money moved between; the kind is derived and `entry-builder.ts` builds the sides. `dryRun` returns the derived sides without saving, marked `dryRun: true, saved: false`, with no record id or version (the rolled-back id is reused by the next real record).
 - **Audit and events.** Writes are audited under the signed-in user and emit the same SSE events as the screens, after commit. An import confirm is audited under the confirmer; the record stays the uploader's.
+- **A saved write is never reported as failed.** If the result is over the output budget after the change is committed, the tool returns success with `saved: true`, the ids it was called with and a note to read the item again — not `OUTPUT_TOO_LARGE`, which would invite a retry and a duplicate.
 - **Errors.** `FORBIDDEN`, `NOT_FOUND`, `INVALID_INPUT`, `REFUSED`, `CONFLICT`, `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`, `RATE_UNAVAILABLE`.
 - **Files.** `attach_file` takes the file as base64 (PDF/JPEG/PNG by content, 15 MB, 30 per user per 10 minutes). It is the one call allowed a body over 128 KiB (about 20.1 MiB); `inspectRpc` reads which tool is called before choosing the limit. `BODY_SIZE_LIMIT` must be at least `21M`.
 
@@ -157,7 +161,7 @@ Reverse proxies need to forward `/mcp`, Authorization, Accept, Content-Type, `Mc
 
 ### Inspector schema portability
 
-The ten data tools share the output envelope in `src/lib/server/mcp/common.ts`; `get_attachment` returns content blocks instead (see the limits above).
+Every data tool shares the output envelope in `src/lib/server/mcp/common.ts`; `get_attachment` returns content blocks instead (see the limits above).
 Its `data` field is a string-keyed record of JSON values (`z.json()`), including
 scalars, null, arrays and nested objects. The previous `z.unknown()` value schema
 emitted `additionalProperties: {}`, which accepts anything and triggers the

@@ -144,6 +144,12 @@ export function createRecord(
     legacyId?: number | null;
   },
   deferredEmits?: DeferredEmits,
+  /**
+   * Who the audit trail names, when that is not the record's owner. An import
+   * is confirmed by one person into a record owned by whoever uploaded the
+   * document; the trail should say who confirmed it.
+   */
+  auditUserId?: number,
 ): Refusable<RecordView> {
   // A foreign currency is offered on an expense or income only — see
   // `RecordForm.svelte`'s `looksLikeExpenseOrIncome` — and on an invoice, whose
@@ -213,7 +219,7 @@ export function createRecord(
   recordAudit(db, {
     recordType: "record",
     recordId: row.id,
-    userId: actingUserId,
+    userId: auditUserId ?? actingUserId,
     action: "create",
   });
 

@@ -34,7 +34,7 @@ ENV PORT=6969
 ENV DATABASE_PATH=/app/data/akaun.db
 ENV STORAGE_PATH=/app/data/storage
 ENV LOG_LEVEL=info
-ENV BODY_SIZE_LIMIT=15M
+ENV BODY_SIZE_LIMIT=21M
 ENV SSL_ENABLED=false
 EXPOSE 6969
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

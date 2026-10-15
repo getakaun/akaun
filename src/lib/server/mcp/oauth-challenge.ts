@@ -1,60 +1,97 @@
 import type { OAuthScope } from "../oauth/config.js";
+import { TOOL_REQUIREMENTS } from "./tool-requirements.js";
+import { MAX_ATTACHMENT_FILE_BYTES } from "../application/attachments.js";
 
-const toolScopes: Record<string, OAuthScope[]> = {
-  list_records: ["records:read"],
-  get_record: ["records:read"],
-  get_attachment: ["records:read"],
-  list_outstanding: ["records:read"],
-  get_account_statement: ["records:read"],
-  list_accounts: ["accounts:read"],
-  list_contacts: ["contacts:read"],
-  get_contact_balance: ["contacts:read", "records:read"],
-  get_financial_report: ["reports:read"],
-  list_import_jobs: ["import:read"],
-  get_import_job: ["import:read"],
-};
+/** Every request but a file upload. Reads and ordinary writes are small. */
+export const MAX_RPC_BYTES = 128 * 1024;
+/** Largest file `attach_file` accepts, the same as the upload form's limit. */
+export const MAX_ATTACH_FILE_BYTES = MAX_ATTACHMENT_FILE_BYTES;
+/** The file as base64 (4/3 of its size), plus room for the rest of the call. */
+export const MAX_ATTACH_RPC_BYTES =
+  Math.ceil((MAX_ATTACH_FILE_BYTES * 4) / 3) + 64 * 1024;
+/** The one tool allowed the larger body. */
+export const ATTACH_TOOL = "attach_file";
 
-/** Read only a bounded clone; the SDK still validates the original RPC request. */
-export async function scopeChallenge(
+const noStore = { "Cache-Control": "no-store" };
+const tooLarge = () =>
+  new Response("Request too large", { status: 413, headers: noStore });
+
+export type RpcInspection =
+  | { response: Response }
+  | { response: null; maxRequestBodySize: number };
+
+type Rpc = { method?: string; params?: { name?: string; uri?: string } };
+
+/**
+ * Looks at a bounded clone of the request before the SDK does, for two things
+ * the SDK cannot decide by itself.
+ *
+ * **Size.** Every call is held to 128 KiB except a single `attach_file`, which
+ * carries a whole file as base64. The SDK takes one body limit per handler, and
+ * a handler is made per request (`http.ts`), so this picks that limit — but
+ * only after reading which tool is being called, so a large body can never
+ * reach any other tool. Runs for OAuth and API-token requests alike.
+ *
+ * **Scope.** A tool called by an OAuth token that lacks one of the tool's
+ * scopes gets a 403 `insufficient_scope` challenge naming them, so the client
+ * can ask the user for more access (`TOOL_REQUIREMENTS`). An API token has no
+ * scopes; the tool itself refuses what its user may not do.
+ *
+ * The SDK still parses and validates the original request.
+ */
+export async function inspectRpc(
   request: Request,
   locals: App.Locals,
-): Promise<Response | null> {
-  if (!locals.oauth) return null;
+): Promise<RpcInspection> {
+  const declared = Number(request.headers.get("Content-Length"));
+  if (Number.isFinite(declared) && declared > MAX_ATTACH_RPC_BYTES)
+    return { response: tooLarge() };
+
   const reader = request.clone().body?.getReader();
-  if (!reader) return null;
+  if (!reader) return { response: null, maxRequestBodySize: MAX_RPC_BYTES };
   const chunks: Uint8Array[] = [];
   let size = 0;
-  let rpc: { method?: string; params?: { name?: string; uri?: string } };
+  let rpc: Rpc | Rpc[];
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 128 * 1024) {
+      if (size > MAX_ATTACH_RPC_BYTES) {
         // Awaiting cancellation of one tee branch can wait for the other branch.
         void reader.cancel();
-        return new Response("Request too large", {
-          status: 413,
-          headers: { "Cache-Control": "no-store" },
-        });
+        return { response: tooLarge() };
       }
       chunks.push(value);
     }
     rpc = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
-    return null;
+    // Not JSON: let the SDK refuse it, with the ordinary limit.
+    return size > MAX_RPC_BYTES
+      ? { response: tooLarge() }
+      : { response: null, maxRequestBodySize: MAX_RPC_BYTES };
   } finally {
     reader.releaseLock();
   }
-  if (!rpc || typeof rpc !== "object" || Array.isArray(rpc)) return null;
+
+  const single = rpc && typeof rpc === "object" && !Array.isArray(rpc);
+  const isAttach =
+    single &&
+    (rpc as Rpc).method === "tools/call" &&
+    (rpc as Rpc).params?.name === ATTACH_TOOL;
+  if (size > MAX_RPC_BYTES && !isAttach) return { response: tooLarge() };
+  const maxRequestBodySize = isAttach ? MAX_ATTACH_RPC_BYTES : MAX_RPC_BYTES;
+
+  if (!locals.oauth || !single) return { response: null, maxRequestBodySize };
+  const call = rpc as Rpc;
   let required: OAuthScope[] = [];
-  if (rpc.method === "tools/call" && typeof rpc.params?.name === "string")
-    required = toolScopes[rpc.params.name] ?? [];
+  if (call.method === "tools/call" && typeof call.params?.name === "string")
+    required = TOOL_REQUIREMENTS[call.params.name]?.scopes ?? [];
   const descriptions =
-    (rpc.method === "resources/read" &&
-      rpc.params?.uri === "akaun://description-policy") ||
-    (rpc.method === "prompts/get" &&
-      rpc.params?.name === "review-record-descriptions");
+    (call.method === "resources/read" &&
+      call.params?.uri === "akaun://description-policy") ||
+    (call.method === "prompts/get" &&
+      call.params?.name === "review-record-descriptions");
   if (
     descriptions &&
     !locals.oauth.scopes.some(
@@ -62,12 +99,15 @@ export async function scopeChallenge(
     )
   )
     required = ["records:read"];
-  if (required.every((s) => locals.oauth!.scopes.includes(s))) return null;
-  return new Response("Insufficient OAuth scope", {
-    status: 403,
-    headers: {
-      "Cache-Control": "no-store",
-      "WWW-Authenticate": `Bearer error="insufficient_scope", scope="${required.join(" ")}", resource_metadata="${new URL(locals.oauth.resource).origin}/.well-known/oauth-protected-resource/mcp"`,
-    },
-  });
+  if (required.every((s) => locals.oauth!.scopes.includes(s)))
+    return { response: null, maxRequestBodySize };
+  return {
+    response: new Response("Insufficient OAuth scope", {
+      status: 403,
+      headers: {
+        ...noStore,
+        "WWW-Authenticate": `Bearer error="insufficient_scope", scope="${required.join(" ")}", resource_metadata="${new URL(locals.oauth.resource).origin}/.well-known/oauth-protected-resource/mcp"`,
+      },
+    }),
+  };
 }

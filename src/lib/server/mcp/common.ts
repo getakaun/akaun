@@ -4,6 +4,9 @@ import type { LedgerDb } from "../ledger/types.js";
 import type { BlobStore } from "../storage/blob-store.js";
 import { type ResourceName } from "../permissions.js";
 import { canMcpRead } from "../oauth/scopes.js";
+import type { AppContext } from "../application/context.js";
+import type { AppResult } from "../application/result.js";
+import { TOOL_REQUIREMENTS, toolAllowed } from "./tool-requirements.js";
 import { isValidDate } from "../date.js";
 import { mainCurrencyCode } from "../currency/form.js";
 import { createLogger } from "../logger.js";
@@ -25,24 +28,40 @@ export const dateRangeShape = {
 };
 
 /**
- * What one MCP request reads from. The file store is passed in, never taken
- * from configuration here, so a test can hand it a folder under `os.tmpdir()`
- * and nothing it runs can reach the real `data/storage`.
+ * What one MCP request works against. The file store and its root are passed
+ * in, never taken from configuration here, so a test can hand it a folder
+ * under `os.tmpdir()` and nothing it runs can reach the real `data/storage`.
+ *
+ * It is an `AppContext`, so a write tool hands it straight to the authorized
+ * operation in `application/` that the REST route calls too.
  */
-export type ReadContext = {
+export type McpContext = AppContext & {
   db: LedgerDb;
-  locals: App.Locals;
   store: BlobStore;
+  /**
+   * Whether a request signed with an API token (not OAuth) may see write
+   * tools. Off by default: a token that was set up for phase one's reads must
+   * not start changing the books just because the server was upgraded.
+   */
+  bearerWrites?: boolean;
 };
-export class ReadError extends Error {
+
+export type McpErrorCode =
+  | "FORBIDDEN"
+  | "NOT_FOUND"
+  | "INVALID_INPUT"
+  | "OUTPUT_TOO_LARGE"
+  | "UNSUPPORTED"
+  | "RATE_LIMITED"
+  | "REFUSED"
+  | "CONFLICT"
+  | "PAYLOAD_TOO_LARGE"
+  | "UNSUPPORTED_MEDIA_TYPE"
+  | "RATE_UNAVAILABLE";
+
+export class McpToolError extends Error {
   constructor(
-    public code:
-      | "FORBIDDEN"
-      | "NOT_FOUND"
-      | "INVALID_INPUT"
-      | "OUTPUT_TOO_LARGE"
-      | "UNSUPPORTED"
-      | "RATE_LIMITED",
+    public code: McpErrorCode,
     message: string,
   ) {
     super(message);
@@ -50,14 +69,14 @@ export class ReadError extends Error {
 }
 
 export function requireView(
-  context: Pick<ReadContext, "locals">,
+  context: Pick<McpContext, "locals">,
   resources: ResourceName[],
 ) {
   if (
     !context.locals.user ||
     resources.some((resource) => !canMcpRead(context.locals, resource))
   ) {
-    throw new ReadError(
+    throw new McpToolError(
       "FORBIDDEN",
       "You do not have permission to read this data.",
     );
@@ -66,7 +85,7 @@ export function requireView(
 
 export function checkDateRange(input: { dateFrom?: string; dateTo?: string }) {
   if (input.dateFrom && input.dateTo && input.dateFrom > input.dateTo) {
-    throw new ReadError(
+    throw new McpToolError(
       "INVALID_INPUT",
       "dateFrom must be on or before dateTo.",
     );
@@ -120,7 +139,7 @@ const outputSchema = z.object({
  * the result.
  */
 async function runRead(
-  context: ReadContext,
+  context: McpContext,
   name: string,
   resources: ResourceName[],
   produce: () => CallToolResult | Promise<CallToolResult>,
@@ -140,9 +159,9 @@ async function runRead(
     );
     return result;
   } catch (error) {
-    const known = error instanceof ReadError || error instanceof z.ZodError;
+    const known = error instanceof McpToolError || error instanceof z.ZodError;
     const code =
-      error instanceof ReadError
+      error instanceof McpToolError
         ? error.code
         : error instanceof z.ZodError
           ? "INVALID_INPUT"
@@ -181,7 +200,7 @@ const readOnlyAnnotations = {
 /** Discovery is filtered, and authorization is checked again at execution. */
 export function registerRead<S extends z.ZodRawShape>(
   server: McpServer,
-  context: ReadContext,
+  context: McpContext,
   name: string,
   resources: ResourceName[],
   description: string,
@@ -221,7 +240,7 @@ export function registerRead<S extends z.ZodRawShape>(
         if (
           Buffer.byteLength(JSON.stringify(result), "utf8") > MAX_RESPONSE_BYTES
         ) {
-          throw new ReadError(
+          throw new McpToolError(
             "OUTPUT_TOO_LARGE",
             "Result exceeds the output budget. Narrow dates, reduce the limit or omit evidence.",
           );
@@ -238,7 +257,7 @@ export function registerRead<S extends z.ZodRawShape>(
  */
 export function registerFileRead<S extends z.ZodRawShape>(
   server: McpServer,
-  context: ReadContext,
+  context: McpContext,
   name: string,
   resources: ResourceName[],
   description: string,
@@ -254,3 +273,168 @@ export function registerFileRead<S extends z.ZodRawShape>(
     (args) => runRead(context, name, resources, () => read(schema.parse(args))),
   );
 }
+
+/** The ids a write touched, for the log line. Never amounts or text. */
+type WriteLogIds = Record<string, number | string | (number | string)[]>;
+
+export type WriteOptions<I> = {
+  /** Removes or voids something. Clients use this to decide whether to ask first. */
+  destructive?: boolean;
+  /** Repeating the same call leaves the books as one call did. */
+  idempotent?: boolean;
+  /** Which ids to log, from the parsed input. */
+  ids?: (input: I) => WriteLogIds;
+};
+
+function errorResult(
+  code: string,
+  message: string,
+  extra: Record<string, unknown> = {},
+): CallToolResult {
+  return {
+    isError: true,
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({ error: { code, message, ...extra } }),
+      },
+    ],
+  };
+}
+
+function structured(context: McpContext, data: Record<string, unknown>) {
+  const structuredContent = {
+    data,
+    meta: {
+      observedAt: new Date().toISOString(),
+      mainCurrency: mainCurrencyCode(context.db),
+      minorUnitScale: 100 as const,
+    },
+  };
+  const result = {
+    structuredContent,
+    content: [
+      { type: "text" as const, text: JSON.stringify(structuredContent) },
+    ],
+  };
+  if (Buffer.byteLength(JSON.stringify(result), "utf8") > MAX_RESPONSE_BYTES) {
+    throw new McpToolError(
+      "OUTPUT_TOO_LARGE",
+      "Result exceeds the output budget. Narrow dates, reduce the limit or omit evidence.",
+    );
+  }
+  return result;
+}
+
+/**
+ * A tool that changes the books.
+ *
+ * Listed only when the token holds every scope in `TOOL_REQUIREMENTS[name]`
+ * and the user holds every ability; an API token sees none unless the server
+ * was started with MCP_BEARER_WRITES. Checked again when it runs, because the
+ * user's abilities can change between listing and calling.
+ *
+ * `run` calls an operation in `application/` — the same one the REST route
+ * calls — and returns its `AppResult`. A refusal comes back as an error result
+ * carrying the operation's own sentence, and a CONFLICT also carries the
+ * `currentVersion` to re-read against.
+ */
+export function registerWrite<S extends z.ZodRawShape>(
+  server: McpServer,
+  context: McpContext,
+  name: string,
+  description: string,
+  shape: S,
+  run: (
+    input: z.output<z.ZodObject<S>>,
+  ) =>
+    | AppResult<Record<string, unknown>>
+    | Promise<AppResult<Record<string, unknown>>>,
+  options: WriteOptions<z.output<z.ZodObject<S>>> = {},
+) {
+  const requirement = TOOL_REQUIREMENTS[name];
+  if (!requirement)
+    throw new Error(`MCP tool ${name} has no entry in TOOL_REQUIREMENTS.`);
+  const allowed = () =>
+    toolAllowed(context.locals, requirement, context.bearerWrites ?? false);
+  if (!allowed()) return;
+  const schema = z.object(shape).strict();
+  server.registerTool<typeof outputSchema, typeof schema>(
+    name,
+    {
+      description,
+      inputSchema: schema,
+      outputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: options.destructive ?? false,
+        idempotentHint: options.idempotent ?? false,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      const startedAt = performance.now();
+      const logLine = (outcome: string, ids?: WriteLogIds) => ({
+        tool: name,
+        userId: context.locals.user?.id,
+        clientId: context.locals.oauth?.clientId,
+        ids,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        outcome,
+      });
+      let ids: WriteLogIds | undefined;
+      try {
+        if (!allowed())
+          throw new McpToolError(
+            "FORBIDDEN",
+            "You do not have permission to make this change.",
+          );
+        const input = schema.parse(args);
+        ids = options.ids?.(input);
+        const result = await run(input);
+        if (!result.ok) {
+          log.warn(logLine(result.code, ids), "MCP write refused");
+          return errorResult(result.code, result.reason, {
+            ...(result.currentVersion
+              ? { currentVersion: result.currentVersion }
+              : {}),
+            ...(result.issues ? { issues: result.issues } : {}),
+          });
+        }
+        const output = structured(context, result.value);
+        log.info(logLine("ok", ids), "MCP write");
+        return output;
+      } catch (error) {
+        const code =
+          error instanceof McpToolError
+            ? error.code
+            : error instanceof z.ZodError
+              ? "INVALID_INPUT"
+              : "INTERNAL_ERROR";
+        const message =
+          error instanceof McpToolError || error instanceof z.ZodError
+            ? error.message
+            : "The change could not be completed. Read the item again before retrying, in case part of it was saved.";
+        if (code === "INTERNAL_ERROR")
+          // The error's name only: a database message can quote what was sent.
+          log.error(
+            {
+              ...logLine(code, ids),
+              errorName: error instanceof Error ? error.name : typeof error,
+            },
+            "MCP write failed",
+          );
+        else log.warn(logLine(code, ids), "MCP write refused");
+        return errorResult(code, message);
+      }
+    },
+  );
+}
+
+/** The version an update or delete must name: the one the caller last read. */
+export const expectedVersion = z
+  .string()
+  .min(1)
+  .describe(
+    "The `version` from your most recent read of this item. A stale version is refused with CONFLICT and the current one, so re-read and retry.",
+  );

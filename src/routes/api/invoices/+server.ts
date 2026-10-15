@@ -1,12 +1,10 @@
 import type { RequestHandler } from '@sveltejs/kit';
 import { db } from '$lib/server/db/client.js';
 import { listInvoices } from '$lib/server/queries/invoices.js';
-import { createInvoice } from '$lib/server/services/invoices.js';
-import { resolveOrCreateContact } from '$lib/server/queries/contacts.js';
-import { Role } from '$lib/enums.js';
+import { createInvoice } from '$lib/server/application/sales.js';
+import { toResponse } from '$lib/server/application/http.js';
 import { hasPermission } from '$lib/server/permissions.js';
-import { isValidDate } from '$lib/server/date.js';
-import { salesLinesSchema, salesRateSchema, invalidLines } from '$lib/server/sales/schema.js';
+
 
 export const GET: RequestHandler = async ({ locals, url }) => {
 	if (!hasPermission(locals, 'invoices', 'view')) return new Response('Forbidden', { status: 403 });
@@ -30,37 +28,8 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 };
 
 export const POST: RequestHandler = async ({ locals, request }) => {
-	if (!hasPermission(locals, 'invoices', 'add')) return new Response('Forbidden', { status: 403 });
-	const user = locals.user!;
-	const body = await request.json();
-
-	if (!body.issueDate || !isValidDate(body.issueDate)) {
-		return Response.json({ error: 'issueDate is required (YYYY-MM-DD)' }, { status: 400 });
-	}
-	const lines = salesLinesSchema.safeParse(body.lines);
-	if (!lines.success) return invalidLines(lines.error);
-	if (body.exchangeRate !== undefined) {
-		const rate = salesRateSchema.safeParse(body.exchangeRate);
-		if (!rate.success) return invalidLines(rate.error);
-	}
-
-	let contactId: number | null = body.contactId ?? null;
-	if (!contactId && body.newContactName) {
-		contactId = resolveOrCreateContact(db, body.newContactName, Role.Customer, user.id);
-	}
-
-	const invoice = createInvoice(db, user.id, {
-		contactId,
-		reference: body.reference ?? null,
-		issueDate: body.issueDate,
-		dueDate: body.dueDate ?? null,
-		currency: body.currency,
-		exchangeRate: body.exchangeRate,
-		notes: body.notes ?? null,
-		terms: body.terms ?? null,
-		// `sourceQuotationId` is set only by converting a quotation, never taken
-		// from a request: a client could otherwise tie any invoice to any quote.
-		lines: lines.data
-	});
-	return Response.json(invoice, { status: 201 });
+	// Validation, the new-customer permission and the create itself are the one
+	// operation the MCP tools call too (`application/sales.ts`).
+	const body = await request.json().catch(() => null);
+	return toResponse(createInvoice({ db, locals }, body), 201, (written) => written.invoice);
 };

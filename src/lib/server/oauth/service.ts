@@ -13,7 +13,12 @@ import {
 } from "../db/schema.js";
 import { getEffectivePermissions } from "../permissions.js";
 import { bearerLocals } from "../bearer-auth.js";
-import { OAUTH_SCOPES, type OAuthConfig, type OAuthScope } from "./config.js";
+import {
+  OAUTH_SCOPES,
+  READ_SCOPES,
+  type OAuthConfig,
+  type OAuthScope,
+} from "./config.js";
 import { allowedScopes } from "./scopes.js";
 
 const DAY = 86400_000;
@@ -56,7 +61,9 @@ export function oauthError(error: unknown) {
   return oauthJson({ error: "server_error" }, 500);
 }
 export function parseScopes(scope: string | undefined): OAuthScope[] {
-  const scopes = scope === undefined ? [...OAUTH_SCOPES] : scope.split(" ");
+  // A client that names no scope gets reads only. A write or delete scope is
+  // always asked for by name, so no existing client gains one by upgrading.
+  const scopes = scope === undefined ? [...READ_SCOPES] : scope.split(" ");
   if (
     !scopes.length ||
     scopes.some((s) => !OAUTH_SCOPES.includes(s as OAuthScope))

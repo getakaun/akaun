@@ -38,7 +38,7 @@ You can install Akaun in two ways. Docker is the easier way, and we recommend it
          - ORIGIN=http://localhost:6969
          - PUID=1000
          - PGID=1000
-         - BODY_SIZE_LIMIT=15M
+         - BODY_SIZE_LIMIT=21M
    ```
 
 4. Change the value of `ORIGIN` to the address that the users will type.
@@ -119,7 +119,7 @@ Bun reads the `.env` file in the folder of the code. For Docker, put each settin
 | `HOST` | `0.0.0.0` | The network address that Akaun listens on. `0.0.0.0` accepts connections on all network addresses. |
 | `DATABASE_PATH` | `./data/akaun.db` (Docker: `/app/data/akaun.db`) | The location of the database file. A relative path starts at the folder where you start the server. |
 | `STORAGE_PATH` | `./data/storage` (Docker: `/app/data/storage`) | The folder for the files that users upload, for example receipts and attachments. |
-| `BODY_SIZE_LIMIT` | `15M` in `.env.example` and in Docker | The largest upload that the server accepts. Akaun accepts files up to 15 MB. Do not set a value smaller than `15M`. If you remove this setting, the limit is 512 KB and most uploads fail. |
+| `BODY_SIZE_LIMIT` | `21M` in `.env.example` and in Docker | The largest request that the server accepts. Akaun accepts files up to 15 MB. An AI assistant sends a file in a larger, encoded form, so a 15 MB file needs about 21 MB. Do not set a value smaller than `15M`; below `21M`, assistants cannot attach the largest files. If you remove this setting, the limit is 512 KB and most uploads fail. |
 | `LOG_LEVEL` | `info` in `.env.example` and in Docker | How much the server writes to its log: `trace`, `debug`, `info`, `warn` or `error`. A `trace` log can contain your financial data. Use it only for a short time. |
 | `SSL_ENABLED` | `false` | Set to `true` to serve Akaun over HTTPS without a reverse proxy. |
 | `SSL_KEY_PATH` | (none) | The path to the private key file. Necessary when `SSL_ENABLED` is `true`. |
@@ -128,6 +128,7 @@ Bun reads the `.env` file in the folder of the code. For Docker, put each settin
 | `PUBLIC_BASE_URL` | the value of `ORIGIN` | The public address for OAuth. If you set it, it must be the same as `ORIGIN`. |
 | `AUTH_ISSUER` | the public address | For OAuth only. If you set it, it must be the public address. |
 | `MCP_RESOURCE` | the public address with `/mcp` | For OAuth only. If you set it, it must be the public address with `/mcp` at the end. |
+| `MCP_BEARER_WRITES` | `false` | Set to `true` to let an AI assistant that connects with an API token change data. Without it, a token can only read. See [Connect AI assistants](../09-administration/connect-ai-assistants.md#connect-with-an-api-token). |
 | `PUID`, `PGID` | `1000` | Docker only. The user ID and group ID that own the `data` folder. |
 
 :::caution

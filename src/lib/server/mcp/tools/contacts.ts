@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { contactVersion } from "../../application/version.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { EntityType, Role, LedgerRecordKindLabels } from "$lib/enums.js";
 import {
@@ -15,8 +16,8 @@ import {
   id,
   pageShape,
   pagination,
-  ReadError,
-  type ReadContext,
+  McpToolError,
+  type McpContext,
 } from "../common.js";
 
 const roles = {
@@ -30,7 +31,7 @@ const entityTypes = {
   business: EntityType.Business,
 };
 
-export function registerContacts(server: McpServer, context: ReadContext) {
+export function registerContacts(server: McpServer, context: McpContext) {
   registerRead(
     server,
     context,
@@ -64,6 +65,7 @@ export function registerContacts(server: McpServer, context: ReadContext) {
           phone: contact.phone,
           address: contact.address,
           path: `/contacts/${contact.id}`,
+          version: contactVersion(context.db, contact.id),
         })),
         pagination: pagination(total, input, rows.length),
         filters: input,
@@ -81,7 +83,7 @@ export function registerContacts(server: McpServer, context: ReadContext) {
     (input) => {
       const contact = getContact(context.db, input.contactId);
       if (!contact)
-        throw new ReadError("NOT_FOUND", "That contact does not exist.");
+        throw new McpToolError("NOT_FOUND", "That contact does not exist.");
       const owedToUsMinor =
         contactBalances(context.db, "owed-to-us", contact.id)[0]
           ?.outstandingMinor ?? 0;

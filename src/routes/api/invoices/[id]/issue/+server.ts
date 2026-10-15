@@ -1,10 +1,9 @@
 import { z } from 'zod';
 import type { RequestHandler } from '@sveltejs/kit';
 import { db } from '$lib/server/db/client.js';
-import { getInvoice } from '$lib/server/queries/invoices.js';
-import { issueInvoice } from '$lib/server/services/invoices.js';
-import { hasPermission } from '$lib/server/permissions.js';
-import { badRequest, forbidden, notFound, refused } from '$lib/server/api-response.js';
+import { issueInvoice } from '$lib/server/application/sales.js';
+import { toResponse } from '$lib/server/application/http.js';
+import { badRequest } from '$lib/server/api-response.js';
 
 /**
  * Mark as sent. The app does not deliver the invoice; this records that it
@@ -19,18 +18,12 @@ const issueSchema = z.object({
 });
 
 export const POST: RequestHandler = async ({ locals, params, request }) => {
-	if (!hasPermission(locals, 'invoices', 'change')) return forbidden();
-
 	// An empty body is the ordinary case — post it into the seeded Sales account.
 	const raw = await request.json().catch(() => ({}));
 	const parsed = issueSchema.safeParse(raw ?? {});
 	if (!parsed.success) return badRequest(parsed.error);
-
 	const id = parseInt(params.id!);
-	if (!getInvoice(db, id)) return notFound('That invoice no longer exists.');
-
-	const result = issueInvoice(db, id, locals.user!.id, parsed.data);
-	if (!result.ok) return refused(result.reason);
-
-	return Response.json(result.value);
+	// Sending puts a record in the books, so the operation asks for
+	// `records:add` too, and checks the income account is one.
+	return toResponse(issueInvoice({ db, locals }, id, parsed.data), 200, (written) => written.invoice);
 };

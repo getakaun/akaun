@@ -41,11 +41,11 @@ import {
   ATTACHMENT_READ_LIMIT,
   MAX_ATTACHMENT_BYTES,
 } from "./tools/records.js";
-import { createReadServer } from "./server.js";
+import { createServer } from "./server.js";
 import {
   MAX_RESPONSE_BYTES,
   registerRead,
-  type ReadContext,
+  type McpContext,
 } from "./common.js";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -511,7 +511,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
             checkSchema(child);
         }
       };
-      expect(tools).toHaveLength(11);
+      expect(tools).toHaveLength(12);
       // get_attachment returns file content blocks, not structured data, so it
       // is the one tool with no output schema.
       for (const tool of tools)
@@ -529,13 +529,15 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       });
     });
 
-    it("connects with the official HTTP client and exposes only the eleven read tools", async () => {
+    // An API token without MCP_BEARER_WRITES sees reads only, as in phase one.
+    it("connects with the official HTTP client and exposes only the twelve read tools", async () => {
       const client = await connect();
       expect(client.getServerVersion()?.name).toBe("akaun");
       const { tools } = await client.listTools();
       expect(tools.map((tool) => tool.name).sort()).toEqual([
         "get_account_statement",
         "get_attachment",
+        "get_audit_history",
         "get_contact_balance",
         "get_financial_report",
         "get_import_job",
@@ -681,11 +683,13 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       ]);
       expect(directoryTools.tools.map((tool) => tool.name)).toEqual([
         "list_contacts",
+        "get_audit_history",
       ]);
-      expect(fullTools.tools).toHaveLength(11);
+      expect(fullTools.tools).toHaveLength(12);
       expect(importTools.tools.map((tool) => tool.name)).toEqual([
         "list_import_jobs",
         "get_import_job",
+        "get_audit_history",
       ]);
       await expect(
         call(directory, "get_contact_balance", { contactId }),
@@ -705,7 +709,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
 
     it("checks permissions at call time as well as discovery", async () => {
       const locals = actor();
-      const server = createReadServer({ db, store, locals });
+      const server = createServer({ db, store, locals });
       const client = new Client({ name: "direct-test", version: "1" });
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
@@ -721,7 +725,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
 
     it("honors a changed permission on the next HTTP request", async () => {
       const client = await connect();
-      expect((await client.listTools()).tools).toHaveLength(11);
+      expect((await client.listTools()).tools).toHaveLength(12);
       sqlite.exec("PRAGMA query_only = OFF");
       db.update(groupPermissions)
         .set({ canView: false })
@@ -750,7 +754,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
 
     it("bounds output and sanitizes unexpected failures", async () => {
       const server = new McpServer({ name: "budget-test", version: "1" });
-      const context: ReadContext = { db, store, locals: actor() };
+      const context: McpContext = { db, store, locals: actor() };
       registerRead(server, context, "large", ["records"], "budget", {}, () => ({
         text: "x".repeat(512 * 1024),
       }));

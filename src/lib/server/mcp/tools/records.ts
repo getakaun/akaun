@@ -18,6 +18,7 @@ import { renderWorkbook } from "../../extraction/spreadsheet/render.js";
 import { storedFileType } from "../../storage/file-type.js";
 import { settlementsForRecord } from "../../queries/settlements.js";
 import type { RecordView } from "../../ledger/types.js";
+import { recordVersion } from "../../application/version.js";
 import {
   registerFileRead,
   registerRead,
@@ -27,8 +28,8 @@ import {
   checkDateRange,
   pagination,
   evidence,
-  ReadError,
-  type ReadContext,
+  McpToolError,
+  type McpContext,
 } from "../common.js";
 
 /** Largest attached file `get_attachment` returns, in bytes. */
@@ -48,7 +49,7 @@ const kinds = z.enum([
   "journal",
 ]);
 
-function recordSummary(record: RecordView) {
+export function recordSummary(record: RecordView) {
   return {
     id: record.id,
     kind: LedgerRecordKindLabels[record.kind],
@@ -75,7 +76,7 @@ function recordSummary(record: RecordView) {
   };
 }
 
-export function registerRecords(server: McpServer, context: ReadContext) {
+export function registerRecords(server: McpServer, context: McpContext) {
   registerRead(
     server,
     context,
@@ -103,7 +104,7 @@ export function registerRecords(server: McpServer, context: ReadContext) {
         input.amountMax !== undefined &&
         input.amountMin > input.amountMax
       ) {
-        throw new ReadError(
+        throw new McpToolError(
           "INVALID_INPUT",
           "amountMin must be on or below amountMax.",
         );
@@ -139,7 +140,7 @@ export function registerRecords(server: McpServer, context: ReadContext) {
     (input) => {
       const record = getRecord(context.db, input.recordId);
       if (!record)
-        throw new ReadError("NOT_FOUND", "That record does not exist.");
+        throw new McpToolError("NOT_FOUND", "That record does not exist.");
       const attachments = listAttachments(context.db, record.id);
       const links = input.includeSettlements
         ? settlementsForRecord(context.db, record.id)
@@ -150,6 +151,7 @@ export function registerRecords(server: McpServer, context: ReadContext) {
           reference: record.reference,
           remark: record.remark,
           updatedAt: record.updatedAt,
+          version: recordVersion(context.db, record.id),
           locked: record.locked,
           lockedReason: record.lockedReason,
           reconciled: record.reconciled,
@@ -191,7 +193,7 @@ export function registerRecords(server: McpServer, context: ReadContext) {
         ? getAttachment(context.db, input.attachmentId)
         : null;
       if (!record || !attachment || attachment.recordId !== record.id)
-        throw new ReadError("NOT_FOUND", "That attachment does not exist.");
+        throw new McpToolError("NOT_FOUND", "That attachment does not exist.");
 
       const limit = hit(
         `mcp-attachment:${context.locals.user!.id}`,
@@ -199,19 +201,19 @@ export function registerRecords(server: McpServer, context: ReadContext) {
         ATTACHMENT_READ_LIMIT.windowMs,
       );
       if (limit.limited)
-        throw new ReadError(
+        throw new McpToolError(
           "RATE_LIMITED",
           `Too many files read. Try again in ${limit.retryAfterSeconds} seconds.`,
         );
 
       const stat = await context.store.stat(attachment.filename);
       if (!stat)
-        throw new ReadError(
+        throw new McpToolError(
           "NOT_FOUND",
           "The attached file is missing from storage.",
         );
       if (stat.size > MAX_ATTACHMENT_BYTES)
-        throw new ReadError(
+        throw new McpToolError(
           "OUTPUT_TOO_LARGE",
           `The file is ${(stat.size / (1024 * 1024)).toFixed(1)} MB; files over 5 MB cannot be read here. Use the record's stored evidence (get_record with includeEvidence) instead.`,
         );
@@ -220,7 +222,7 @@ export function registerRecords(server: McpServer, context: ReadContext) {
         attachment.filename,
       );
       if (!kind)
-        throw new ReadError(
+        throw new McpToolError(
           "UNSUPPORTED",
           "This file is not a PDF, an image or a spreadsheet.",
         );

@@ -413,8 +413,8 @@ A message shows below the drop area on **Auto Import**. It starts with the name 
 | "Upload failed" | The server refused the file before Akaun could read it. See the next paragraph. |
 
 If a file of less than 15 MB shows "Upload failed", the server can have a lower upload limit. The
-`BODY_SIZE_LIMIT` setting controls this limit. The Docker image sets it to `15M`. Without it, the
-server refuses files larger than about 0.5 MB. The administrator sets `BODY_SIZE_LIMIT=15M` and
+`BODY_SIZE_LIMIT` setting controls this limit. The Docker image sets it to `21M`. Without it, the
+server refuses files larger than about 0.5 MB. The administrator sets `BODY_SIZE_LIMIT=21M` and
 starts Akaun again. See
 [Install Akaun](../01-getting-started/install.md#environment-variables).
 
@@ -569,7 +569,7 @@ are the usual causes:
 
 1. Check the type and the size of the file.
 2. Check that you have the **Change** permission on **Records**.
-3. If a small PDF also fails, ask the administrator to set `BODY_SIZE_LIMIT=15M`.
+3. If a small PDF also fails, ask the administrator to set `BODY_SIZE_LIMIT=21M`.
 4. Add the file again.
 
 See [Attach receipts and documents](../03-everyday-tasks/attach-receipts.md) and

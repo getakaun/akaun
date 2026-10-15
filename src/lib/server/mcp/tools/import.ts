@@ -1,4 +1,13 @@
 import { z } from "zod";
+import { ImportState } from "$lib/enums.js";
+import { listGroupItems } from "../../services/import-items.js";
+import {
+  importItemVersion,
+  importJobVersion,
+} from "../../application/version.js";
+
+/** Items of a grouped document returned by get_import_job. */
+const MAX_ITEMS = 500;
 import type { McpServer } from "@modelcontextprotocol/server";
 import {
   DocumentTypeLabels,
@@ -13,8 +22,8 @@ import {
   checkDateRange,
   pagination,
   evidence,
-  ReadError,
-  type ReadContext,
+  McpToolError,
+  type McpContext,
 } from "../common.js";
 
 const states = z.enum([
@@ -48,7 +57,7 @@ function storedJson<T>(text: string | null, schema: z.ZodType<T>): T | null {
   }
 }
 
-export function registerImport(server: McpServer, context: ReadContext) {
+export function registerImport(server: McpServer, context: McpContext) {
   registerRead(
     server,
     context,
@@ -101,7 +110,7 @@ export function registerImport(server: McpServer, context: ReadContext) {
     (input) => {
       const job = getImportJob(context.db, input.jobId, input.includeEvidence);
       if (!job)
-        throw new ReadError("NOT_FOUND", "That import job does not exist.");
+        throw new McpToolError("NOT_FOUND", "That import job does not exist.");
       return {
         job: {
           id: job.id,
@@ -137,7 +146,20 @@ export function registerImport(server: McpServer, context: ReadContext) {
           confirmedAt: job.confirmedAt,
           completedAt: job.completedAt,
           path: "/import",
+          version: importJobVersion(context.db, job.id),
         },
+        ...(job.state === ImportState.Grouped
+          ? {
+              items: listGroupItems(context.db, job.id)
+                .slice(0, MAX_ITEMS)
+                .map(({ attention, ...item }) => ({
+                  ...item,
+                  state: ImportStateLabels[item.state],
+                  attention: attention ?? null,
+                  version: importItemVersion(context.db, item.id),
+                })),
+            }
+          : {}),
         ...(input.includeEvidence
           ? {
               evidence: evidence(

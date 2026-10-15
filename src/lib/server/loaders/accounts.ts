@@ -12,8 +12,8 @@ import {
   createAccount,
   patchAccount,
   removeAccount,
-  setOpeningBalance,
 } from "$lib/server/services/accounts.js";
+import { setOpeningBalance as setOpeningBalanceOp } from "$lib/server/application/accounts.js";
 import { toMinor } from "$lib/server/ledger/money.js";
 import { listStatementSummaries } from "$lib/server/services/reconciliation.js";
 import { isValidDate } from "$lib/server/date.js";
@@ -208,11 +208,15 @@ export const accountsActions: Actions = {
     if (Number.isNaN(amount)) return fail(400, { error: "Enter an amount." });
 
     // An opening balance is always in the main currency, so the rate is 1.
-    const result = setOpeningBalance(db, id, locals.user!.id, {
+    // The operation asks for `records` too: the opening balance is a record.
+    const result = setOpeningBalanceOp({ db, locals }, id, {
       date,
       amountMinor: toMinor(amount, 1),
     });
-    if (!result.ok) return fail(409, { error: result.reason });
+    if (!result.ok)
+      return fail(result.code === "FORBIDDEN" ? 403 : 409, {
+        error: result.reason,
+      });
     return { success: true, id };
   },
 };

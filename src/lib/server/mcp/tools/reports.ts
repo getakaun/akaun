@@ -10,11 +10,11 @@ import {
   registerRead,
   date,
   checkDateRange,
-  ReadError,
-  type ReadContext,
+  McpToolError,
+  type McpContext,
 } from "../common.js";
 
-export function registerReports(server: McpServer, context: ReadContext) {
+export function registerReports(server: McpServer, context: McpContext) {
   registerRead(
     server,
     context,
@@ -35,7 +35,7 @@ export function registerReports(server: McpServer, context: ReadContext) {
     (input) => {
       if (input.type === "balance-sheet") {
         if (!input.asAt || input.dateFrom || input.dateTo)
-          throw new ReadError(
+          throw new McpToolError(
             "INVALID_INPUT",
             "balance-sheet requires asAt and does not accept dateFrom/dateTo.",
           );
@@ -58,7 +58,7 @@ export function registerReports(server: McpServer, context: ReadContext) {
         };
       }
       if (!input.dateFrom || !input.dateTo || input.asAt)
-        throw new ReadError(
+        throw new McpToolError(
           "INVALID_INPUT",
           "This report requires dateFrom and dateTo and does not accept asAt.",
         );

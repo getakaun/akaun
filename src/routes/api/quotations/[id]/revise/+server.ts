@@ -1,10 +1,7 @@
-import { json } from "@sveltejs/kit";
 import type { RequestHandler } from "@sveltejs/kit";
 import { db } from "$lib/server/db/client.js";
-import { reviseQuotation } from "$lib/server/services/quotations.js";
-import { getQuotation } from "$lib/server/queries/quotations.js";
-import { hasPermission } from "$lib/server/permissions.js";
-import { forbidden, notFound, refused } from "$lib/server/api-response.js";
+import { reviseQuotation } from "$lib/server/application/sales.js";
+import { toResponse } from "$lib/server/application/http.js";
 
 /**
  * Revising a quotation that has gone to the customer: a new draft version of it
@@ -12,24 +9,9 @@ import { forbidden, notFound, refused } from "$lib/server/api-response.js";
  * quotation and changes one, so it needs both abilities.
  */
 export const POST: RequestHandler = async ({ locals, params }) => {
-  if (
-    !hasPermission(locals, "quotations", "add") ||
-    !hasPermission(locals, "quotations", "change")
-  ) {
-    return forbidden();
-  }
   const id = parseInt(params.id!);
-  if (!getQuotation(db, id))
-    return notFound("That quotation no longer exists.");
-
-  const result = reviseQuotation(db, id, locals.user!.id);
-  if (!result.ok) return refused(result.reason);
-
-  return json(
-    {
-      previous: getQuotation(db, result.value.previousId),
-      quotation: getQuotation(db, result.value.quotationId),
-    },
-    { status: 201 },
-  );
+  return toResponse(reviseQuotation({ db, locals }, id), 201, (written) => ({
+    previous: written.previous.quotation,
+    quotation: written.quotation,
+  }));
 };

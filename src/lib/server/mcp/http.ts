@@ -1,11 +1,11 @@
 import { createMcpHandler } from "@modelcontextprotocol/server";
-import { createReadServer } from "./server.js";
-import type { ReadContext } from "./common.js";
-import { scopeChallenge } from "./oauth-challenge.js";
+import { createServer } from "./server.js";
+import type { McpContext } from "./common.js";
+import { inspectRpc } from "./oauth-challenge.js";
 
 export async function handleMcpRequest(
   request: Request,
-  context: ReadContext,
+  context: McpContext,
   expectedOrigin: string,
 ): Promise<Response> {
   const headers = { "Cache-Control": "no-store" };
@@ -27,16 +27,18 @@ export async function handleMcpRequest(
       headers: { ...headers, Allow: "POST" },
     });
 
-  const challenge = await scopeChallenge(request, context.locals);
-  if (challenge) return challenge;
+  const inspection = await inspectRpc(request, context.locals);
+  if (inspection.response) return inspection.response;
   // Capture this request's authenticated context only. SDK v2 serves modern
   // per-request envelopes and stateless legacy traffic from the same factory.
-  const handler = createMcpHandler(() => createReadServer(context), {
+  const handler = createMcpHandler(() => createServer(context), {
     legacy: "stateless",
-    // Auto returns JSON for these synchronous reads; no handler emits related
+    // Auto returns JSON for these synchronous calls; no handler emits related
     // protocol notifications that would upgrade a modern response to SSE.
     responseMode: "auto",
-    maxRequestBodySize: 128 * 1024,
+    // 128 KiB, or enough for one file when the call is `attach_file`: chosen
+    // by `inspectRpc` after reading which tool this is.
+    maxRequestBodySize: inspection.maxRequestBodySize,
     // Akaun has no MCP change-notification channel. Do not hold a stream open
     // against a handler whose lifetime is a single authenticated request.
     maxSubscriptions: 0,

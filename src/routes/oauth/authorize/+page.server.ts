@@ -22,6 +22,9 @@ export const load: PageServerLoad = ({ url, cookies, locals, setHeaders }) => {
       scopes: p.scopes.map((scope) => ({
         scope,
         allowed: allowed.includes(scope),
+        // Reads start ticked. A change or delete grant is never pre-selected:
+        // the user ticks it on purpose or the app does not get it.
+        preselected: allowed.includes(scope) && scope.endsWith(":read"),
       })),
     };
   } catch {

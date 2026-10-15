@@ -219,6 +219,29 @@ in the client.
   action)` and return `403` if it fails. `src/routes/api/records/+server.ts` is the reference:
   `view` for GET, and `add`, `change` or `delete` for the other verbs.
 
+### Authorized Operations (`src/lib/server/application/`)
+
+A write that both a REST route and an MCP tool can make is **one function** in
+`application/<domain>.ts`, taking `(ctx: AppContext, input)` and returning an `AppResult`. It asks
+for every permission itself (`requirePermissions`) and enforces every rule a route used to hold —
+the adjustments gate, sealed sent documents, a payment and its settlements in one transaction. The
+route parses and calls `toResponse`; the MCP tool calls `registerWrite`. A rule written in the
+route alone is a hole the MCP tool walks through. That is how the explicit-journal and
+invoice-issue gaps existed.
+
+- **Nothing under `application/` imports `db/client.ts` or opens storage by default.** The database,
+  `locals`, `store` and `storageRoot` arrive in the context. A file helper is always called with
+  `ctx.storageRoot`, never its `STORAGE_PATH` default. `scripts/mcp-test-preload.ts` makes
+  `db/client.ts` throw and points `$env` at a temp folder, so a spec that breaks this rule fails
+  instead of touching `data/`.
+- **Every update/delete takes an optional `expectedVersion`** (`application/version.ts`: a hash
+  of the row and its children, never `updatedAt`). MCP tools require it; REST may omit it.
+- **Each MCP tool has one entry in `mcp/tool-requirements.ts`** (OAuth scopes + RBAC). Discovery,
+  the call-time check and the `insufficient_scope` challenge all read that table, and a spec fails
+  when a registered tool is missing from it.
+- **Deliberate exception:** import confirm needs only `import.change`, not `records.add` (006
+  FR-045). Do not "fix" it.
+
 ### Settings Page Patterns
 
 The Settings page (`src/routes/(app)/settings/+page.svelte`) has two patterns. Use them

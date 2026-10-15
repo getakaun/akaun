@@ -19,7 +19,7 @@ import {
   insertSettlements,
   recordIdsForSettlement,
 } from "../queries/settlements.js";
-import { emitSettlementChanged } from "./ledger.js";
+import { emitSettlementChanged, type DeferredEmits } from "./ledger.js";
 
 /**
  * Saying that this payment covered those items, and taking it back.
@@ -35,6 +35,8 @@ export function createSettlements(
   actingUserId: number,
   paymentMovementId: number,
   allocations: AllocationRequest[],
+  /** For a caller running this inside its own transaction (see `DeferredEmits`). */
+  deferredEmits?: DeferredEmits,
 ): Refusable<number[]> {
   if (allocations.length === 0) {
     return {
@@ -176,7 +178,9 @@ export function createSettlements(
     }
   }
 
-  emitSettlementChanged(db, [...touched]);
+  if (deferredEmits)
+    deferredEmits.push(() => emitSettlementChanged(db, [...touched]));
+  else emitSettlementChanged(db, [...touched]);
   return { ok: true, value: ids };
 }
 

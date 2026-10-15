@@ -43,9 +43,17 @@ Use the returned `client_id` and the client's exact callback URL. This registrat
 
 ## Scopes and credential boundaries
 
-Supported scopes are `records:read`, `accounts:read`, `contacts:read`, `reports:read` and `import:read`. Omitted scope requests default to those five read scopes; users choose a subset during consent. Unknown/write scopes are rejected. Permissions unavailable to the signed-in user cannot be approved.
+Scopes come in three tiers per resource (`src/lib/server/oauth/config.ts`):
 
-Tool discovery and calls require both token scopes and current Akaun View permissions. Contact balances require both Contacts and Records reads; account statements require Records read. Description policy and review prompts require an authorized Records or Import read. The context resource reports permissions after scope restrictions. There are no write scopes or MCP write tools.
+- `:read` — `records`, `accounts`, `contacts`, `reports`, `import`, `invoices`, `quotations`, `reconciliation`.
+- `:write` — add and change, for `records`, `accounts`, `contacts`, `invoices`, `quotations`, `reconciliation`, `import`.
+- `:delete` — permanent removal, for the same seven. Kept apart from `:write` so a client allowed to record things is not thereby allowed to destroy them.
+
+`reports` is read-only. `adjustments` has no scope: it rides on `records:write`, and RBAC alone decides it.
+
+Omitted scope requests default to the **read** scopes only; a write or delete scope is always asked for by name, so no existing client gained one by upgrading. On the consent page reads are pre-selected and change/delete scopes never are. Unknown scopes are rejected. Scopes the signed-in user's RBAC could not use are shown disabled and cannot be approved. To gain more access, a client gets a 403 `insufficient_scope` challenge naming the missing scopes and the user reconnects.
+
+Tool discovery and calls require both token scopes and current Akaun permissions — `canMcpRead` / `canMcpWrite` in `oauth/scopes.ts` check the scope before `hasPermission`'s superuser shortcut, and `mcp/tool-requirements.ts` lists each tool's scopes and RBAC in one table used by discovery, the call-time check and the challenge. A tool that changes two areas needs both scopes (`issue_invoice`: `invoices:write` + `records:write`). Contact balances require both Contacts and Records reads; account statements require Records read. Description policy and review prompts require an authorized Records or Import read. The context resource reports read/write/delete access per resource after scope restrictions.
 
 OAuth credentials are accepted only by `/mcp`, not `/api/*`. Legacy API tokens retain their existing REST/MCP semantics. Browser cookies never authenticate MCP requests.
 

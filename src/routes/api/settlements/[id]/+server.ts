@@ -1,8 +1,9 @@
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
 import { hasPermission } from "$lib/server/permissions.js";
-import { forbidden, notFound, refused } from "$lib/server/api-response.js";
-import { undoSettlement } from "$lib/server/services/settlements.js";
+import { forbidden, notFound } from "$lib/server/api-response.js";
+import { removeSettlement } from "$lib/server/application/records.js";
+import { toResponse } from "$lib/server/application/http.js";
 
 /**
  * Undoes one allocation. Both sides return to outstanding, and any field the
@@ -16,7 +17,5 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
     return notFound("That settlement no longer exists.");
   }
 
-  const result = undoSettlement(db, id, locals.user!.id);
-  if (!result.ok) return refused(result.reason);
-  return new Response(null, { status: 204 });
+  return toResponse(removeSettlement({ db, locals }, id), 204);
 };

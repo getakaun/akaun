@@ -34,7 +34,11 @@ import {
   updateStatement,
 } from "$lib/server/queries/reconciliation.js";
 import type { ReconciliationDb } from "$lib/server/queries/reconciliation.js";
-import { createRecord } from "$lib/server/services/ledger.js";
+import {
+  createRecord,
+  emitRecordUpdate,
+  type DeferredEmits,
+} from "$lib/server/services/ledger.js";
 
 export class ReconciliationError extends Error {
   constructor(
@@ -274,6 +278,18 @@ export function editLine(
   const userId = authorize(locals, "change"),
     before = getLine(db, id);
   if (!before) throw new ReconciliationError("Statement line not found", 404);
+  // A matched line's amount and direction are what the match was checked
+  // against (`replaceMovementAllocations`). Changing either under an existing
+  // match would leave it covering more than the line holds, or money the wrong
+  // way, without anything noticing.
+  const changesMoney =
+    (patch.amount !== undefined && patch.amount !== before.amount) ||
+    (patch.direction !== undefined && patch.direction !== before.direction);
+  if (changesMoney && listAllocations(db).some((a) => a.lineId === id))
+    throw new ReconciliationError(
+      "This line is matched. Undo the match before changing its amount or direction.",
+      409,
+    );
   const after = updateLineQuery(db, id, patch)!;
   recordAudit(db, {
     recordType: "reconciliation",
@@ -392,6 +408,7 @@ export function autoMatchMovements(
   let matched = 0;
   let skipped = 0;
   const matchedMovementIds: number[] = [];
+  const matchedRecordIds = new Set<number>();
 
   for (const movementId of movementIds) {
     const movement = getMovementCandidate(db, movementId);
@@ -461,6 +478,7 @@ export function autoMatchMovements(
     });
     matched += 1;
     matchedMovementIds.push(movement.movementId);
+    matchedRecordIds.add(movement.recordId);
   }
 
   // One event for the whole batch: every connected client reloads the
@@ -468,6 +486,9 @@ export function autoMatchMovements(
   // each open tab N redundant round-trips.
   if (matched)
     reconciliationEvents.emit("allocations-bulk-update", { matched });
+  // A match locks the record's amount and changes what it reads as cleared, so
+  // the records list hears about it too.
+  for (const recordId of matchedRecordIds) emitRecordUpdate(db, recordId);
   return { matched, skipped, matchedMovementIds };
 }
 
@@ -552,6 +573,7 @@ export function replaceMovementAllocations(
     movementId,
     lineIds: [...new Set([...before, ...saved].map((a) => a.lineId))],
   });
+  emitRecordUpdate(db, movement.recordId);
   return {
     movement: getMovementCandidate(db, movementId),
     allocations: saved,
@@ -575,6 +597,10 @@ export function createTransferForLine(
   input: { otherAccountId: number; description?: string },
 ) {
   const userId = authorize(locals, "add");
+  // It writes a record, so it needs the ability to add one — not only the
+  // reconciliation ability that lets someone match lines.
+  if (!hasPermission(locals, "records", "add"))
+    throw new ReconciliationError("Forbidden", 403);
   const line = getLine(db, lineId);
   if (!line) throw new ReconciliationError("Statement line not found", 404);
   const statement = getStatement(db, line.statementId);
@@ -604,6 +630,9 @@ export function createTransferForLine(
   const description =
     input.description?.trim() || line.description || "Transfer";
 
+  // Held until the transaction commits, so no tab hears about a transfer that
+  // a failed match then rolls back.
+  const deferredEmits: DeferredEmits = [];
   const written = db.transaction(() => {
     const created = createRecord(db, userId, {
       kind: "transfer",
@@ -614,7 +643,7 @@ export function createTransferForLine(
       exchangeRate: 1,
       fromAccountId: movesIn ? input.otherAccountId : statementAccountId,
       toAccountId: movesIn ? statementAccountId : input.otherAccountId,
-    });
+    }, deferredEmits);
     if (!created.ok) throw new ReconciliationError(created.reason, 409);
 
     const movement = findRecordMovementOnAccount(
@@ -637,6 +666,7 @@ export function createTransferForLine(
     });
     return { record: created.value, movementId: movement.id, allocation };
   });
+  for (const emit of deferredEmits) emit();
 
   recordAudit(db, {
     recordType: "reconciliation",

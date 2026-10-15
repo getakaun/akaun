@@ -18,7 +18,7 @@ services:
       # - PUBLIC_BASE_URL=https://books.example.com
       - PUID=1000   # Set to $(id -u) to match your host user
       - PGID=1000   # Set to $(id -g) to match your host group
-      - BODY_SIZE_LIMIT=15M
+      - BODY_SIZE_LIMIT=21M
       - LOG_LEVEL=debug
       # - SSL_ENABLED=true
       # - SSL_KEY_PATH=/app/data/ssl/key.pem

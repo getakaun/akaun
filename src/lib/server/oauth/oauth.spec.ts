@@ -33,10 +33,10 @@ import { createRequestHandle } from "../request-hook.js";
 import { handleMcpRequest } from "../mcp/http.js";
 import { LocalBlobStore } from "../storage/blob-store.js";
 import { requireView } from "../mcp/common.js";
-import { canMcpRead } from "./scopes.js";
+import { allowedScopes, canMcpRead, canMcpWrite } from "./scopes.js";
 import { handleOAuthProtocol } from "./http.js";
 import { isSameOriginRequest } from "../browser-origin.js";
-import { oauthConfig, type OAuthConfig } from "./config.js";
+import { oauthConfig, READ_SCOPES, type OAuthConfig } from "./config.js";
 import {
   BROWSER_COOKIE,
   createOAuth,
@@ -431,7 +431,7 @@ describe("OAuth authorization and persistence", () => {
         token_endpoint_auth_method: "private_key_jwt",
       },
       { redirect_uris: [redirectUri], grant_types: ["password"] },
-      { redirect_uris: [redirectUri], scope: "records:write" },
+      { redirect_uris: [redirectUri], scope: "records:admin" },
     ]) {
       expect(() => oauth.register(body)).toThrow();
     }
@@ -526,7 +526,7 @@ describe("OAuth authorization and persistence", () => {
       { code_challenge_method: "" },
       { resource: config.issuer },
       { redirect_uri: `${redirectUri}/` },
-      { scope: "records:write" },
+      { scope: "records:admin" },
       { response_type: "token" },
       { client_id: "unknown" },
     ]) {
@@ -535,6 +535,44 @@ describe("OAuth authorization and persistence", () => {
     expect(() =>
       parameters(new URLSearchParams("resource=a&resource=b")),
     ).toThrow();
+  });
+  it("asks for reads only when a client names no scope", () => {
+    const withoutScope: Record<string, string> = params();
+    delete withoutScope.scope;
+    const id = oauth.begin(withoutScope, browser);
+    expect(oauth.pending(id, browser).scopes).toEqual([...READ_SCOPES]);
+  });
+  it("bounds writes and deletes by their own scopes, ahead of superuser", async () => {
+    const reads = (await oauth.authenticate(
+      bearer((await tokens(["records:read"])).access_token),
+    ))!;
+    expect(reads.isSuperuser).toBe(true);
+    expect(canMcpWrite(reads, "records", "add")).toBe(false);
+    expect(canMcpWrite(reads, "adjustments", "add")).toBe(false);
+    const writes = (await oauth.authenticate(
+      bearer((await tokens(["records:read", "records:write"])).access_token),
+    ))!;
+    expect(canMcpWrite(writes, "records", "add")).toBe(true);
+    expect(canMcpWrite(writes, "records", "change")).toBe(true);
+    expect(canMcpWrite(writes, "adjustments", "add")).toBe(true);
+    expect(canMcpWrite(writes, "records", "delete")).toBe(false);
+    expect(canMcpWrite(writes, "contacts", "add")).toBe(false);
+  });
+  it("offers only the write and delete scopes the user's RBAC allows", () => {
+    const limited = actor(2);
+    const offered = allowedScopes(limited);
+    for (const scope of offered) {
+      const [resource, tier] = scope.split(":");
+      const actions =
+        tier === "read" ? ["view"] : tier === "delete" ? ["delete"] : ["add", "change"];
+      expect(
+        actions.some(
+          (action) =>
+            limited.permissions?.[resource as never]?.[action as never] === true,
+        ),
+      ).toBe(true);
+    }
+    expect(offered.length).toBeLessThan(allowedScopes(actor(1)).length);
   });
   it("binds pending consent to the browser and consumes it once", async () => {
     const id = oauth.begin(params(), browser);
@@ -1193,8 +1231,11 @@ describe("OAuth hook and MCP scope integration", () => {
           },
         }),
       );
+      // get_audit_history is listed to anyone who can read something; it
+      // checks the item's own resource when it runs.
       expect((await c.listTools()).tools.map((tool) => tool.name)).toEqual([
         "list_accounts",
+        "get_audit_history",
       ]);
       expect((await c.listPrompts()).prompts).toEqual([]);
       expect((await c.listResources()).resources.map((r) => r.uri)).toEqual([

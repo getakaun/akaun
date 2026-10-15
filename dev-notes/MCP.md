@@ -1,10 +1,10 @@
-# MCP: read-only bookkeeping access
+# MCP: bookkeeping access for agents
 
-Akaun serves MCP at **`https://<your-akaun-host>/mcp`**, alongside its existing REST API. Phase one exposes eleven read tools, two context resources and a description-review prompt. It does not save edits, upload documents, confirm imports or change reconciliation/settlements.
+Akaun serves MCP at **`https://<your-akaun-host>/mcp`**, alongside its existing REST API. It exposes read tools across the ledger, sales documents, reconciliation and Auto Import, two context resources and a description-review prompt — and, where the connection was granted change access, write tools for the same areas (phase two). It does not upload new import documents or bank statements, manage import profiles, or change account defaults.
 
 ## Connect with OAuth
 
-Enable `OAUTH_ENABLED=true` and configure `ORIGIN` as Akaun's public HTTPS origin, then restart. Add `https://<your-akaun-host>/mcp` to the client with OAuth authentication. Dynamic registration supplies client credentials matching the client’s authentication method (public, Basic or form-based client secret). Akaun prompts for login and consent to read scopes; every request also checks the user's current group permissions. No OAuth token grants REST access.
+Enable `OAUTH_ENABLED=true` and configure `ORIGIN` as Akaun's public HTTPS origin, then restart. Add `https://<your-akaun-host>/mcp` to the client with OAuth authentication. Dynamic registration supplies client credentials matching the client’s authentication method (public, Basic or form-based client secret). Akaun prompts for login and consent: read scopes are pre-selected, change (`:write`) and delete (`:delete`) scopes never are. Every request also checks the user's current group permissions. No OAuth token grants REST access.
 
 Revoke connections in **Profile → Connected apps**. Access tokens last 15 minutes; refresh tokens rotate, with a maximum grant lifetime of 30 days. Password changes and administrator password resets revoke OAuth grants. Browser logout alone does not disconnect apps.
 
@@ -26,7 +26,7 @@ bearer_token_env_var = "AKAUN_MCP_TOKEN"
 
 Set `AKAUN_MCP_TOKEN` in the client's environment without committing its value. Other clients should use their own URL/header configuration. Configured bearer tokens remain supported alongside optional OAuth. No stdio bridge is bundled.
 
-The token inherits the user's existing REST permissions. The absence of MCP write tools does not restrict a privileged token's access to REST mutations. Use the dedicated restricted user above.
+The token inherits the user's existing REST permissions. Over MCP, an API token sees **read tools only** unless the server sets `MCP_BEARER_WRITES=true`; then it sees every write tool its user's RBAC allows (an API token carries no scopes). That flag does not restrict the token's REST access either way, so use the dedicated restricted user above.
 
 Use HTTPS for remote connections. For a desktop sidecar, use its actual local server address/port while the app is running; do not assume the Docker or desktop ports are identical.
 
@@ -45,6 +45,20 @@ Use HTTPS for remote connections. For a desktop sidecar, use its actual local se
 | `get_financial_report`  | `type`, required dates or as-at date                                                                     | Reports View                  |
 | `list_import_jobs`      | States, upload date range, duplicate-only toggle, limit/offset                                           | Auto Import View              |
 | `get_import_job`        | `jobId`, optional evidence                                                                               | Auto Import View              |
+
+Phase two adds these reads:
+
+| Tool                   | Inputs                                                         | Permission                          |
+| ---------------------- | -------------------------------------------------------------- | ----------------------------------- |
+| `list_invoices`        | Status, contact, dates, overdue toggle, search, limit/offset   | Invoices View                       |
+| `get_invoice`          | `invoiceId` — includes `owedMovementId` for `record_payment`   | Invoices View                       |
+| `list_quotations`      | Status, contact, dates, search, limit/offset                   | Quotations View                     |
+| `get_quotation`        | `quotationId`                                                  | Quotations View                     |
+| `list_bank_statements` | Optional `accountId`                                           | Reconciliation View                 |
+| `get_bank_statement`   | `statementId`, `includeCandidates` (movements + suggestions)   | Reconciliation **and** Records View |
+| `get_audit_history`    | `recordType`, `recordId`, `limit`                              | View on the item's own resource     |
+
+Every `get_*` (and `list_accounts`, `list_contacts`) returns a `version` for each item: the token a write must send back as `expectedVersion`.
 
 Tool discovery reflects the authenticated user's permissions. Calls also enforce permissions, including direct calls to tools not listed for that user. Authentication and permissions are evaluated afresh on each HTTP request.
 
@@ -81,6 +95,30 @@ Successful results expose the same envelope in structured MCP content and text:
 }
 ```
 
+## Write tools
+
+One tool per action; a lifecycle step gets its own tool wherever its MCP annotations differ (issuing an invoice is not destructive, voiding one is), so a client can tell which calls to confirm with the user. Scope is the OAuth scope a token must hold; RBAC is the app ability the user must have. Both are listed in one table, `src/lib/server/mcp/tool-requirements.ts`.
+
+| Area             | Tools                                                                                                                                                                                                     | Scope (RBAC)                                                                                                                                                                       |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Records          | `create_record` (from/to accounts, optional `extraSides`, `dryRun`), `record_payment` (with settlements, atomic), `update_record`, `settle_payment`, `attach_file`                                        | `records:write` (records add/change)                                                                                                                                               |
+|                  | `delete_record`, `undo_settlement`, `delete_attachment`                                                                                                                                                   | `records:delete`                                                                                                                                                                   |
+| Accounts         | `create_account`, `update_account` (archive with `active: false`), `set_opening_balance`, `delete_account`                                                                                               | `accounts:write`/`:delete`; the opening balance also `records:write` (records add or change)                                                                                      |
+| Contacts         | `create_contact`, `update_contact` (incl. roles), `delete_contact`, `merge_contacts`                                                                                                                      | `contacts:write`/`:delete`; merge needs both                                                                                                                                       |
+| Invoices         | `create_invoice`, `update_invoice`, `issue_invoice`, `void_invoice` (`reissue`), `delete_invoice`                                                                                                         | `invoices:write`/`:delete`; issue and void also `records:write` (records add / change)                                                                                            |
+| Quotations       | `create_quotation`, `update_quotation`, `set_quotation_status`, `revise_quotation`, `convert_quotation_to_invoice`, `delete_quotation`                                                                    | `quotations:write`/`:delete`; convert also `invoices:write`                                                                                                                        |
+| Reconciliation   | `update_statement_line`, `set_movement_matches`, `auto_match`, `record_transfer_from_line`, `delete_statement_line`                                                                                       | `reconciliation:write`/`:delete`; the transfer also `records:write` (records add)                                                                                                 |
+| Auto Import      | `update_import_item`, `confirm_import`, `skip_import`, `discard_import_job`                                                                                                                               | `import:write`/`:delete` (import change/delete only — confirm deliberately needs no records ability, 006 FR-045)                                                                   |
+
+Semantics every write tool shares:
+
+- **Same rules as the app.** Each tool calls an authorized operation in `src/lib/server/application/`, the same one the REST route calls. Locks (settled or bank-matched records), sealed sent documents, archive-instead-of-delete, the adjustments gate and every other refusal come back as `REFUSED` with the app's own sentence.
+- **Versions.** Updates, deletes and lifecycle steps take `expectedVersion`. A stale one is refused with `CONFLICT` and the `currentVersion`; re-read and check with the user. Versions are hashes of the item and its child rows (`application/version.ts`), not `updatedAt`.
+- **Never movements.** `create_record` takes the two accounts money moved between; the kind is derived and `entry-builder.ts` builds the sides. `dryRun` returns the derived sides without saving.
+- **Audit and events.** Writes are audited under the signed-in user and emit the same SSE events as the screens, after commit. An import confirm is audited under the confirmer; the record stays the uploader's.
+- **Errors.** `FORBIDDEN`, `NOT_FOUND`, `INVALID_INPUT`, `REFUSED`, `CONFLICT`, `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`, `RATE_UNAVAILABLE`.
+- **Files.** `attach_file` takes the file as base64 (PDF/JPEG/PNG by content, 15 MB, 30 per user per 10 minutes). It is the one call allowed a body over 128 KiB (about 20.1 MiB); `inspectRpc` reads which tool is called before choosing the limit. `BODY_SIZE_LIMIT` must be at least `21M`.
+
 ## Reading the answers correctly
 
 - Reports use canonical ledger movements in whole cents of the **main currency**. Never sum every record's displayed amount: transfers and payment records are different events, and original currencies can differ.
@@ -92,14 +130,14 @@ Successful results expose the same envelope in structured MCP content and text:
 - Lists default to 50 rows, maximum 200. `pagination.total` describes the full filtered set, and `nextOffset` supports subsequent pages. Offset paging can shift if another user edits data; rerun the query when necessary. Account discovery reads the chart as one set before output paging.
 - Statements default to 100 movements, maximum 500. They do not accept offset or arbitrary filters. When truncated, `periodClosingBalanceMinor` is null and `returnedClosingBalanceMinor` covers only returned movements. Narrow the dates for a complete statement.
 - Stored evidence is optional, capped at 6,000 characters and labeled as untrusted content. Reads do not trigger OCR, extraction or provider calls. Attachment responses contain display metadata, not storage paths.
-- `get_attachment` (`records:read`) returns one attached file: JPEG/PNG as image content, PDF as an embedded blob resource (`akaun://records/{id}/attachments/{attachmentId}`), xlsx/csv as cell text capped at 200,000 characters. The type is sniffed from content, not the name. Files over 5 MB are refused (`OUTPUT_TOO_LARGE`); 60 files per user per 10 minutes (`RATE_LIMITED`, in-memory). It reads through the `store` in `ReadContext`, never `STORAGE_PATH`, so specs use a tmpdir store. No OCR, no paths, no audit row.
-- Tool results are limited to 512 KiB of serialized data, except `get_attachment`, which is limited by file size; requests are limited to 128 KiB. Narrow the query if the output budget is exceeded. Raw server errors, tokens, file paths and provider settings are withheld.
+- `get_attachment` (`records:read`) returns one attached file: JPEG/PNG as image content, PDF as an embedded blob resource (`akaun://records/{id}/attachments/{attachmentId}`), xlsx/csv as cell text capped at 200,000 characters. The type is sniffed from content, not the name. Files over 5 MB are refused (`OUTPUT_TOO_LARGE`); 60 files per user per 10 minutes (`RATE_LIMITED`, in-memory). It reads through the `store` in `McpContext`, never `STORAGE_PATH`, so specs use a tmpdir store. No OCR, no paths, no audit row.
+- Tool results are limited to 512 KiB of serialized data, except `get_attachment`, which is limited by file size; requests are limited to 128 KiB, except `attach_file`. Narrow the query if the output budget is exceeded. Raw server errors, tokens, file paths and provider settings are withheld.
 
 ## Description review
 
 `akaun://description-policy` provides the same versioned wording guidance used by Auto Import. It favors short noun phrases, sentence case, consistent terminology, supported product/service details and no invented billing periods. Default output is English; existing Auto Import custom instructions can request another language or supply preferred vocabulary.
 
-Use `review-record-descriptions` to ask the agent for a bounded before/after table with IDs, reasons, evidence and ambiguity flags. It is available to users who can read Records or Auto Import. Apply accepted suggestions manually in Akaun; MCP cannot save them in phase one.
+Use `review-record-descriptions` to ask the agent for a bounded before/after table with IDs, reasons, evidence and ambiguity flags. It is available to users who can read Records or Auto Import. The prompt tells the agent to change nothing until the user approves the table, then apply only approved rows with `update_record` (description only, each with its current `version`), reporting any conflict row by row. This replaces phase one's manual-only workflow and the persisted review/approve/undo batches the original phase-two proposal described.
 
 `akaun://context` describes money/date conventions, capabilities and query limits. Clients need not support resources/prompts to use tools: essential semantics are also present in tool descriptions/results.
 
@@ -136,10 +174,10 @@ more precise field documentation and validation in a future change.
 Akaun uses `@modelcontextprotocol/server` v2 in production and
 `@modelcontextprotocol/client` v2 in its integration tests. The v1 dependency
 has been removed. `src/lib/server/mcp/http.ts` serves both eras through
-`createMcpHandler(() => createReadServer(context))`, with `legacy: "stateless"`.
+`createMcpHandler(() => createServer(context))`, with `legacy: "stateless"`.
 The factory captures only the current authenticated request's database and locals.
 Bearer authentication, exact Origin checks, POST-only access, the 128 KiB request
-limit and per-call permission checks apply to both eras.
+limit (larger only for `attach_file`) and per-call permission checks apply to both eras.
 
 In MCP Inspector, select **Streamable HTTP**, enter the `/mcp` URL and configure
 the bearer header, then choose Protocol Era **Modern** or **Auto**. Auto probes
@@ -188,7 +226,7 @@ Primary references (researched 2026-10-07):
 
 The route and authentication hook connect callers to request-scoped tool registrations. Reads reuse existing query/report functions; contact counts and paged outstanding/import queries run against SQLite. No second database-owning service or model call is introduced.
 
-The integration suite uses the official MCP client and exclusively in-memory SQLite fixtures with `PRAGMA query_only = ON` during reads. It covers transport negotiation, authentication, permissions, concurrent actors, date/limit validation, mixed currency and settlements, statement truncation, safe evidence projections and output budgets.
+The read suite (`mcp.spec.ts`) uses the official MCP client and exclusively in-memory SQLite fixtures with `PRAGMA query_only = ON` during reads. The write suite (`mcp-write.spec.ts`) covers discovery by scope and RBAC, call-time re-checks, conflicts, locks, the adjustments gate, payment atomicity, events after commit, audit attribution, request size and every domain's tools; files go to a tmpdir store. It covers transport negotiation, authentication, permissions, concurrent actors, date/limit validation, mixed currency and settlements, statement truncation, safe evidence projections and output budgets.
 
 ```sh
 bun run check
@@ -197,6 +235,6 @@ bun run test:mcp
 bun run test:oauth
 ```
 
-`test:mcp` runs the MCP integration specs and relevant bookkeeping regressions directly with Bun. A small preload maps the shared Vitest assertion/hook imports to Bun's native test API, avoiding the current Vitest 4/Bun worker-startup failure. The specs also remain usable by the normal Vitest runner when its workers are compatible. The adapter supports only the APIs these selected fixtures use; it is not a replacement for the repository's full test suite.
+`test:mcp` runs the MCP integration specs and relevant bookkeeping regressions directly with Bun. A small preload maps the shared Vitest assertion/hook imports to Bun's native test API, avoiding the current Vitest 4/Bun worker-startup failure. It also stands in for `$env/dynamic/private` with a temp folder (so `file-storage.ts` can load without ever pointing at `data/`) and makes any import of `db/client.ts` throw. The specs also remain usable by the normal Vitest runner when its workers are compatible. The adapter supports only the APIs these selected fixtures use; it is not a replacement for the repository's full test suite.
 
-Phase two will add aggregates and persisted description review/apply/undo workflows, with narrow write permissions and conflict checks.
+Not yet built: `aggregate_records`, description-candidate worklists, contact duplicate preview, and uploads of new import documents or bank statements.

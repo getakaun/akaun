@@ -150,8 +150,7 @@ when the conversion had to make decisions without you. Each part lists the recor
 conversion changed, for example **Uncategorised records** or **Files that could not be found**.
 Check each record in the list.
 
-One message in this part names the folder `data/backups`. This is not correct. Akaun keeps the
-previous files in a `pre-chart-` folder next to the database. See
+Akaun keeps the previous files in a `pre-chart-` folder next to the database. See
 [Backups and upgrades](./backups-and-upgrades.md#what-happens-at-the-first-start).
 
 ## Intelligence

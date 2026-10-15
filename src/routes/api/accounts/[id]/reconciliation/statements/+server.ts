@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { db } from "$lib/server/db/client.js";
 import {
+  deleteStatementFile,
   MAX_UPLOAD_BYTES,
   saveReconciliationStatement,
   sniffAllowedType,
@@ -62,27 +63,30 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       { error: "Only PDF, JPEG, and PNG statements are supported" },
       { status: 400 },
     );
+  const path = await saveReconciliationStatement(
+    buffer,
+    randomUUID(),
+    file.name,
+  );
+  let statement;
   try {
-    const path = await saveReconciliationStatement(
-      buffer,
-      randomUUID(),
-      file.name,
-    );
-    const statement = createStatement(db, locals, {
+    statement = createStatement(db, locals, {
       originalFilename: file.name,
       storedFilePath: path,
       accountId: accountId.data,
     });
-    void processStatementImport(db, {
-      statementId: statement.id,
-      relativePath: path,
-      originalFilename: file.name,
-      userId: locals.user.id,
-    });
-    return Response.json(statement, { status: 202 });
   } catch (e) {
+    // No statement row points at the file, so nothing ever would.
+    deleteStatementFile(path);
     if (e instanceof ReconciliationError)
       return Response.json({ error: e.message }, { status: e.status });
     throw e;
   }
+  void processStatementImport(db, {
+    statementId: statement.id,
+    relativePath: path,
+    originalFilename: file.name,
+    userId: locals.user.id,
+  });
+  return Response.json(statement, { status: 202 });
 };

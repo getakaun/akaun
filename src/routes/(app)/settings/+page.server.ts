@@ -105,7 +105,14 @@ async function applyCompanyImage(change: CompanyImageChange, key: string) {
   if (change.kind === "none") return;
   const oldPath = getSetting(db, key);
   if (change.kind === "replace") {
-    setSetting(db, key, await saveCompanyImage(change.buffer, change.type));
+    const newPath = await saveCompanyImage(change.buffer, change.type);
+    try {
+      setSetting(db, key, newPath);
+    } catch (e) {
+      // The setting still names the old image, so the new file is nobody's.
+      deleteFile(newPath);
+      throw e;
+    }
   } else if (oldPath) {
     setSetting(db, key, "");
   }

@@ -3,7 +3,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { randomUUID, createHash } from 'crypto';
 import { db } from '$lib/server/db/client.js';
 import { importQueue } from '$lib/server/db/schema.js';
-import { saveToTemp, MAX_UPLOAD_BYTES } from '$lib/server/file-storage.js';
+import { saveToTemp, MAX_UPLOAD_BYTES, releaseIfUnreferenced } from '$lib/server/file-storage.js';
 import { importUploadNameRefusal, sniffImportUpload } from '$lib/server/import/upload-type.js';
 import { importEvents } from '$lib/server/import/events.js';
 import { jobForEvent } from '$lib/server/import/job-event.js';
@@ -113,22 +113,28 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const fileHash = createHash('sha256').update(buffer).digest('hex');
 
 	const jobId = randomUUID();
-	db.insert(importQueue)
-		.values({
-			id: jobId,
-			createdBy: locals.user.id,
-			state: ImportState.Queued,
-			tempFilePath,
-			originalFilename: file.name,
-			fileHash,
-			preExtractedText,
-			readAs: reading.readAs,
-			readHow: reading.readHow,
-			profileId: reading.profileId,
-			profileSnapshot,
-			importMode: reading.importMode
-		})
-		.run();
+	try {
+		db.insert(importQueue)
+			.values({
+				id: jobId,
+				createdBy: locals.user.id,
+				state: ImportState.Queued,
+				tempFilePath,
+				originalFilename: file.name,
+				fileHash,
+				preExtractedText,
+				readAs: reading.readAs,
+				readHow: reading.readHow,
+				profileId: reading.profileId,
+				profileSnapshot,
+				importMode: reading.importMode
+			})
+			.run();
+	} catch (e) {
+		// No job points at the upload, so nothing would ever discard it.
+		releaseIfUnreferenced(db, tempFilePath);
+		throw e;
+	}
 
 	const newJob = db.select().from(importQueue).where(eq(importQueue.id, jobId)).get();
 	if (newJob) importEvents.emit('job-update', { userId: locals.user.id, job: jobForEvent(newJob) });

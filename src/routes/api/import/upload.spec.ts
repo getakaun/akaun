@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { eq } from "drizzle-orm";
-import { existsSync, mkdtempSync, rmSync } from "fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -214,6 +214,24 @@ describe("POST /api/import with a spreadsheet", () => {
     expect(((await broken.json()) as { error: string }).error).toBe(
       "File content is not a valid PDF, JPG, or PNG.",
     );
+  });
+});
+
+describe("POST /api/import when the job cannot be saved", () => {
+  it("removes the stored upload again", async () => {
+    const form = new FormData();
+    form.set("file", new File([new Uint8Array(PDF)], "fees.pdf"));
+    form.set("readAs", "items");
+    // No user 999, so the job row fails its foreign key after the file is saved.
+    const saving = (POST as Handler)({
+      locals: { user: { id: 999 } },
+      request: new Request("http://test.local/api/import", {
+        method: "POST",
+        body: form,
+      }),
+    } as never);
+    await expect(saving).rejects.toThrow();
+    expect(readdirSync(join(holder.storageRoot, "import/temp"))).toEqual([]);
   });
 });
 

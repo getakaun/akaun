@@ -3,7 +3,7 @@
   import { Button } from "$lib/components/ui/button/index.js";
   let { data, form }: { data: PageData; form: ActionData } = $props();
   const labels: Record<string, string> = {
-    "records:read": "Read records, statements and outstanding amounts",
+    "records:read": "Read records, their attached files, statements and outstanding amounts",
     "accounts:read": "Read accounts and balances",
     "contacts:read": "Read contacts",
     "reports:read": "Read financial reports",

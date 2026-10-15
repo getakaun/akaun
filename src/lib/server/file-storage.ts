@@ -3,7 +3,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
-  rmSync,
+  rmdirSync,
   statSync,
   unlinkSync,
 } from "fs";
@@ -23,38 +23,9 @@ export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15 MB
 /** Largest accepted company logo upload, in bytes. */
 export const MAX_LOGO_BYTES = 5 * 1024 * 1024; // 5 MB
 
-/**
- * Verify the buffer's leading "magic bytes" identify an allowed type (PDF/JPEG/PNG).
- * This is content-based and cannot be spoofed by the client-supplied MIME or extension.
- */
-export function sniffAllowedType(
-  buffer: Buffer,
-): "pdf" | "jpeg" | "png" | null {
-  if (buffer.length >= 4 && buffer.toString("ascii", 0, 4) === "%PDF")
-    return "pdf";
-  if (
-    buffer.length >= 3 &&
-    buffer[0] === 0xff &&
-    buffer[1] === 0xd8 &&
-    buffer[2] === 0xff
-  ) {
-    return "jpeg";
-  }
-  if (
-    buffer.length >= 8 &&
-    buffer[0] === 0x89 &&
-    buffer[1] === 0x50 &&
-    buffer[2] === 0x4e &&
-    buffer[3] === 0x47 &&
-    buffer[4] === 0x0d &&
-    buffer[5] === 0x0a &&
-    buffer[6] === 0x1a &&
-    buffer[7] === 0x0a
-  ) {
-    return "png";
-  }
-  return null;
-}
+// Content sniffing lives with the store, in a module that reads no
+// configuration, so MCP code can use it under a plain `bun test`.
+export { sniffAllowedType } from "./storage/file-type.js";
 
 /**
  * True when a stored path is still in the upload folder `saveToTemp` writes
@@ -433,12 +404,26 @@ export function releaseIfUnreferenced(
   return true;
 }
 
-export function deleteReconciliationFolder(statementId: number): void {
-  if (!Number.isInteger(statementId) || statementId <= 0) return;
-  const dir = resolve(STORAGE_PATH, "reconciliation", String(statementId));
-  const root = resolve(STORAGE_PATH, "reconciliation");
-  if (!dir.startsWith(root + sep)) return;
-  if (existsSync(dir)) rmSync(dir, { recursive: true });
+/**
+ * Deletes a bank statement's file and then its folder
+ * (`reconciliation/<key>/`), which `saveReconciliationStatement` made for it
+ * alone. The folder is removed only when it is empty, so a file that is not
+ * this statement's is never deleted with it.
+ */
+export function deleteStatementFile(
+  storedFilePath: string,
+  root = STORAGE_PATH,
+): void {
+  const statementsRoot = resolve(root, "reconciliation");
+  const file = resolve(root, storedFilePath);
+  const dir = dirname(file);
+  if (dirname(dir) !== statementsRoot) return;
+  deleteFile(storedFilePath, root);
+  try {
+    rmdirSync(dir);
+  } catch {
+    // not empty, or already gone
+  }
 }
 
 // ---------------------------------------------------------------------------

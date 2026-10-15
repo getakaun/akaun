@@ -31,6 +31,7 @@ import { createSession } from "../auth.js";
 import { bearerLocals } from "../bearer-auth.js";
 import { createRequestHandle } from "../request-hook.js";
 import { handleMcpRequest } from "../mcp/http.js";
+import { LocalBlobStore } from "../storage/blob-store.js";
 import { requireView } from "../mcp/common.js";
 import { canMcpRead } from "./scopes.js";
 import { handleOAuthProtocol } from "./http.js";
@@ -201,7 +202,12 @@ async function throughHook(
       event,
       resolve: async (e) =>
         e.url.pathname === "/mcp"
-          ? handleMcpRequest(e.request, { db, locals: e.locals }, config.issuer)
+          ? handleMcpRequest(
+              e.request,
+              // No tool here reads a file; the store is an empty folder.
+              { db, locals: e.locals, store: new LocalBlobStore(tmpdir()) },
+              config.issuer,
+            )
           : new Response(JSON.stringify({ userId: e.locals.user?.id }), {
               headers: { "Content-Type": "application/json" },
             }),
@@ -979,6 +985,33 @@ describe("OAuth hook and MCP scope integration", () => {
     );
     expect(response.headers.get("WWW-Authenticate")).toContain("records:read");
   });
+  it("asks for records:read before an attached file is read", async () => {
+    const t = await tokens();
+    const response = await throughHook(
+      new Request(config.resource, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${t.access_token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "get_attachment",
+            arguments: { recordId: 1, attachmentId: 1 },
+          },
+        }),
+      }),
+    );
+    expect(response.status).toBe(403);
+    expect(response.headers.get("WWW-Authenticate")).toContain(
+      'error="insufficient_scope"',
+    );
+    expect(response.headers.get("WWW-Authenticate")).toContain("records:read");
+  });
   it("handles protocol form POSTs without ambient login and refuses ambiguous/oversized input", async () => {
     const c = await code();
     const res = await throughHook(
@@ -1059,9 +1092,7 @@ describe("OAuth hook and MCP scope integration", () => {
     expect(locals.isSuperuser).toBe(true);
     expect(canMcpRead(locals, "contacts")).toBe(true);
     expect(canMcpRead(locals, "records")).toBe(false);
-    expect(() =>
-      requireView({ db, locals }, ["contacts", "records"]),
-    ).toThrow();
+    expect(() => requireView({ locals }, ["contacts", "records"])).toThrow();
     const limited = await tokens(["contacts:read"], 2);
     db.update(schema.groupPermissions)
       .set({ canView: false })

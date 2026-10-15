@@ -1,7 +1,7 @@
 import { StatementDirection, StatementExtractionState } from "$lib/enums.js";
 import { diffRecords, recordAudit } from "$lib/server/audit.js";
 import { mainCurrencyCode } from "$lib/server/currency/form.js";
-import { deleteFile } from "$lib/server/file-storage.js";
+import { deleteStatementFile } from "$lib/server/file-storage.js";
 import { hasPermission } from "$lib/server/permissions.js";
 import { reconciliationEvents } from "$lib/server/reconciliation/events.js";
 import {
@@ -318,7 +318,7 @@ export function removeStatement(
     before = getStatement(db, id);
   if (!before) throw new ReconciliationError("Bank statement not found", 404);
   deleteStatementQuery(db, id);
-  deleteFile(before.storedFilePath);
+  deleteStatementFile(before.storedFilePath);
   recordAudit(db, {
     recordType: "reconciliation",
     recordId: id,

@@ -1,21 +1,5 @@
-import { extname } from "path";
-import { sniffAllowedType } from "./file-storage.js";
+import { storedFileType } from "./storage/file-type.js";
 import type { BlobStore } from "./storage/blob-store.js";
-
-/** The types a stored file may be shown in the page as, found by content. */
-const INLINE_MIME = {
-  pdf: "application/pdf",
-  jpeg: "image/jpeg",
-  png: "image/png",
-} as const;
-
-// A spreadsheet is offered as a download rather than shown in the page
-// (006 FR-050): a browser has no viewer for a workbook, and a CSV file shown
-// as text would be the uploader's content rendered under the app's address.
-const DOWNLOAD_MIME: Record<string, string> = {
-  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  csv: "text/csv",
-};
 
 /**
  * `Content-Disposition` for a name the user chose. Control characters and
@@ -57,21 +41,20 @@ export async function storedFileResponse(
     return new Response(null, { status: 304, headers });
   }
 
-  // The type shown inline is read from the content, not the name, so a PDF
-  // stored under a misleading name is still a PDF, and anything that is not a
-  // PDF or an image is downloaded rather than rendered.
-  const head = await store.head(key, 8);
-  const sniffed = head ? sniffAllowedType(Buffer.from(head)) : null;
-  const contentType = sniffed
-    ? INLINE_MIME[sniffed]
-    : (DOWNLOAD_MIME[extname(key).slice(1).toLowerCase()] ??
-      "application/octet-stream");
-  const mode = sniffed ? "inline" : "attachment";
+  // Only a PDF or an image is shown in the page. A spreadsheet is offered as
+  // a download (006 FR-050): a browser has no viewer for a workbook, and a CSV
+  // file shown as text would be the uploader's content rendered under the
+  // app's address. Anything else is downloaded too.
+  const { kind, mime } = await storedFileType(store, key);
+  const mode =
+    kind === "pdf" || kind === "jpeg" || kind === "png"
+      ? "inline"
+      : "attachment";
 
   return new Response(store.stream(key), {
     headers: {
       ...headers,
-      "Content-Type": contentType,
+      "Content-Type": mime,
       "Content-Length": String(stat.size),
       "Content-Disposition": contentDisposition(mode, downloadName),
     },

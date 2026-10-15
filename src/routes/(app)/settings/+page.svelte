@@ -1613,8 +1613,8 @@
 								<AlertTriangle size={14} />
 								<span>
 									The update could not prove it left everything as it found it, so nothing old
-									was thrown away. A copy of your data from before it ran is kept in
-									<code>data/backups</code>.
+									was thrown away. A copy of your data from before it ran is kept in the
+									<code>pre-chart-</code> folder next to the database.
 								</span>
 							</p>
 							<ul class="books-list">

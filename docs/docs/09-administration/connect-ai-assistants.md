@@ -17,6 +17,7 @@ permission.
 |---|---|
 | The list of records, with filters for dates, kinds, accounts, categories, contacts, text, amounts, paid and cleared | **View** on **Records** |
 | One record, with its lines. It can also read the settlements and the stored text of the documents. | **View** on **Records** |
+| A file attached to a record: a receipt or bill as an image or a PDF, or a spreadsheet as text | **View** on **Records** |
 | The statement of one account | **View** on **Records** |
 | The outstanding amounts: what customers owe you, and what you owe | **View** on **Records** |
 | The list of accounts, with their balances | **View** on **Accounts** |
@@ -34,7 +35,8 @@ match bank lines or record payments.
 :::caution
 
 The assistant sends the data that it reads to the AI service of the assistant. This can include
-amounts, contact names, descriptions and the text of your receipts and bills. Connect an assistant
+amounts, contact names, descriptions, the text of your receipts and bills, and the receipt and
+bill files themselves. Connect an assistant
 only if you agree that this service can read this data. Give the assistant only the permissions
 that it needs.
 
@@ -93,7 +95,7 @@ tab.
 
 The page shows each permission that the app asks for, from this list:
 
-- **Read records, statements and outstanding amounts**
+- **Read records, their attached files, statements and outstanding amounts**
 - **Read accounts and balances**
 - **Read contacts**
 - **Read financial reports**
@@ -147,4 +149,6 @@ connected with the sign-in. **Sign out** does not disconnect them.
 - The assistant reads the data at the time of its question. It does not get live updates.
 - A list gives 50 rows at a time by default, and 200 rows at the most. A statement gives 500 lines or
   fewer. For a long period, ask about a shorter period.
+- The assistant can read an attached file of 5 MB or less. One user can read 60 files in 10
+  minutes. After that, the assistant must wait.
 - Use HTTPS for a connection over the internet. An API token sent over plain HTTP is not safe.

@@ -204,8 +204,8 @@ You need the **View** permission on **Reports** to see the **Books** tab. A supe
 If all records balance, Akaun shows **All good. Every record balances, and so does everything
 added up together.** See [Settings reference](./settings-reference.md#books).
 
-**Migration results** can say that a copy of your data is in `data/backups`. This is not correct.
-The copy is in the `pre-chart-` folder next to the database.
+If **Migration results** says that nothing old was thrown away, the copy of your data from before
+the upgrade is in the `pre-chart-` folder next to the database.
 
 If a figure is wrong, do these steps:
 

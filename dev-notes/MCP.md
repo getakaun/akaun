@@ -1,6 +1,6 @@
 # MCP: read-only bookkeeping access
 
-Akaun serves MCP at **`https://<your-akaun-host>/mcp`**, alongside its existing REST API. Phase one exposes ten read tools, two context resources and a description-review prompt. It does not save edits, upload documents, confirm imports or change reconciliation/settlements.
+Akaun serves MCP at **`https://<your-akaun-host>/mcp`**, alongside its existing REST API. Phase one exposes eleven read tools, two context resources and a description-review prompt. It does not save edits, upload documents, confirm imports or change reconciliation/settlements.
 
 ## Connect with OAuth
 
@@ -36,6 +36,7 @@ Use HTTPS for remote connections. For a desktop sidecar, use its actual local se
 | ----------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------- |
 | `list_records`          | Date range, kinds, account/category/contact IDs, search, paid/cleared, amount bounds, sort, limit/offset | Records View                  |
 | `get_record`            | `recordId`, optional `includeEvidence`/`includeSettlements`                                              | Records View                  |
+| `get_attachment`        | `recordId`, `attachmentId`                                                                               | Records View                  |
 | `list_accounts`         | Type, category toggle, search, archived toggle, limit/offset                                             | Accounts View                 |
 | `get_account_statement` | `accountId`, optional dates, limit                                                                       | Records View                  |
 | `list_contacts`         | Search, role, entity type, limit/offset                                                                  | Contacts View                 |
@@ -91,7 +92,8 @@ Successful results expose the same envelope in structured MCP content and text:
 - Lists default to 50 rows, maximum 200. `pagination.total` describes the full filtered set, and `nextOffset` supports subsequent pages. Offset paging can shift if another user edits data; rerun the query when necessary. Account discovery reads the chart as one set before output paging.
 - Statements default to 100 movements, maximum 500. They do not accept offset or arbitrary filters. When truncated, `periodClosingBalanceMinor` is null and `returnedClosingBalanceMinor` covers only returned movements. Narrow the dates for a complete statement.
 - Stored evidence is optional, capped at 6,000 characters and labeled as untrusted content. Reads do not trigger OCR, extraction or provider calls. Attachment responses contain display metadata, not storage paths.
-- Tool results are limited to 512 KiB of serialized data; requests are limited to 128 KiB. Narrow the query if the output budget is exceeded. Raw server errors, tokens, file paths and provider settings are withheld.
+- `get_attachment` (`records:read`) returns one attached file: JPEG/PNG as image content, PDF as an embedded blob resource (`akaun://records/{id}/attachments/{attachmentId}`), xlsx/csv as cell text capped at 200,000 characters. The type is sniffed from content, not the name. Files over 5 MB are refused (`OUTPUT_TOO_LARGE`); 60 files per user per 10 minutes (`RATE_LIMITED`, in-memory). It reads through the `store` in `ReadContext`, never `STORAGE_PATH`, so specs use a tmpdir store. No OCR, no paths, no audit row.
+- Tool results are limited to 512 KiB of serialized data, except `get_attachment`, which is limited by file size; requests are limited to 128 KiB. Narrow the query if the output budget is exceeded. Raw server errors, tokens, file paths and provider settings are withheld.
 
 ## Description review
 
@@ -117,7 +119,7 @@ Reverse proxies need to forward `/mcp`, Authorization, Accept, Content-Type, `Mc
 
 ### Inspector schema portability
 
-All ten tools share the output envelope in `src/lib/server/mcp/common.ts`.
+The ten data tools share the output envelope in `src/lib/server/mcp/common.ts`; `get_attachment` returns content blocks instead (see the limits above).
 Its `data` field is a string-keyed record of JSON values (`z.json()`), including
 scalars, null, arrays and nested objects. The previous `z.unknown()` value schema
 emitted `additionalProperties: {}`, which accepts anything and triggers the

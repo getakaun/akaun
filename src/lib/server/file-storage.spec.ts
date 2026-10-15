@@ -37,6 +37,7 @@ vi.mock("$lib/server/env.js", () => ({
 const schema = await import("./db/schema.js");
 const { importQueue, ledgerRecords, recordAttachments, users } = schema;
 const {
+  deleteStatementFile,
   displayName,
   fileExists,
   moveToRecordStorage,
@@ -217,5 +218,29 @@ describe("saving an upload", () => {
     const rel = await saveCompanyImage(Buffer.from([0xff, 0xd8, 0xff]), "jpeg");
     expect(rel).toMatch(/^company\/[0-9a-f-]{36}\.jpg$/);
     expect(existsSync(join(configuredRoot, rel))).toBe(true);
+  });
+});
+
+describe("deleteStatementFile", () => {
+  it("deletes the statement's file and its now-empty folder", () => {
+    putFile("reconciliation/k1/a_august.pdf");
+    deleteStatementFile("reconciliation/k1/a_august.pdf", root);
+    expect(existsSync(join(root, "reconciliation/k1"))).toBe(false);
+    expect(existsSync(join(root, "reconciliation"))).toBe(true);
+  });
+
+  it("keeps the folder while another file is in it", () => {
+    putFile("reconciliation/k2/a_august.pdf");
+    putFile("reconciliation/k2/b_other.pdf");
+    deleteStatementFile("reconciliation/k2/a_august.pdf", root);
+    expect(fileExists("reconciliation/k2/a_august.pdf", root)).toBe(false);
+    expect(fileExists("reconciliation/k2/b_other.pdf", root)).toBe(true);
+  });
+
+  it("touches nothing outside a statement folder", () => {
+    putFile("records/2026/08/receipt.pdf");
+    deleteStatementFile("records/2026/08/receipt.pdf", root);
+    deleteStatementFile("reconciliation/../records/2026/08/receipt.pdf", root);
+    expect(fileExists("records/2026/08/receipt.pdf", root)).toBe(true);
   });
 });

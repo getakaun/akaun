@@ -3,6 +3,7 @@ import type { OAuthScope } from "../oauth/config.js";
 const toolScopes: Record<string, OAuthScope[]> = {
   list_records: ["records:read"],
   get_record: ["records:read"],
+  get_attachment: ["records:read"],
   list_outstanding: ["records:read"],
   get_account_statement: ["records:read"],
   list_accounts: ["accounts:read"],

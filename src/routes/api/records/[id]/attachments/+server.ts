@@ -17,6 +17,7 @@ import {
   displayName,
   MAX_UPLOAD_BYTES,
   moveToRecordStorage,
+  releaseIfUnreferenced,
   saveToTemp,
   sniffAllowedType,
 } from "$lib/server/file-storage.js";
@@ -75,16 +76,16 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     return refused("Only PDF, JPEG and PNG files can be attached.");
   }
 
-  const finalPath = moveToRecordStorage(
-    await saveToTemp(buffer, file.name),
-    record.date,
-  );
-  const attachment = addAttachment(
-    db,
-    id,
-    finalPath,
-    displayName(finalPath),
-  );
+  let finalPath = await saveToTemp(buffer, file.name);
+  let attachment;
+  try {
+    finalPath = moveToRecordStorage(finalPath, record.date);
+    attachment = addAttachment(db, id, finalPath, displayName(finalPath));
+  } catch (e) {
+    // No row points at the upload, so remove it wherever it got to.
+    releaseIfUnreferenced(db, finalPath);
+    throw e;
+  }
 
   // Re-run over every attachment, not just the new one, so the record's
   // searchable text matches what "Rebuild search index" would produce. A file

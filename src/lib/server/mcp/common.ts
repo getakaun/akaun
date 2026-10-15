@@ -1,6 +1,7 @@
 import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/server";
+import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import type { LedgerDb } from "../ledger/types.js";
+import type { BlobStore } from "../storage/blob-store.js";
 import { type ResourceName } from "../permissions.js";
 import { canMcpRead } from "../oauth/scopes.js";
 import { isValidDate } from "../date.js";
@@ -23,21 +24,35 @@ export const dateRangeShape = {
   dateTo: date.optional(),
 };
 
-export type ReadContext = { db: LedgerDb; locals: App.Locals };
+/**
+ * What one MCP request reads from. The file store is passed in, never taken
+ * from configuration here, so a test can hand it a folder under `os.tmpdir()`
+ * and nothing it runs can reach the real `data/storage`.
+ */
+export type ReadContext = {
+  db: LedgerDb;
+  locals: App.Locals;
+  store: BlobStore;
+};
 export class ReadError extends Error {
   constructor(
     public code:
       | "FORBIDDEN"
       | "NOT_FOUND"
       | "INVALID_INPUT"
-      | "OUTPUT_TOO_LARGE",
+      | "OUTPUT_TOO_LARGE"
+      | "UNSUPPORTED"
+      | "RATE_LIMITED",
     message: string,
   ) {
     super(message);
   }
 }
 
-export function requireView(context: ReadContext, resources: ResourceName[]) {
+export function requireView(
+  context: Pick<ReadContext, "locals">,
+  resources: ResourceName[],
+) {
   if (
     !context.locals.user ||
     resources.some((resource) => !canMcpRead(context.locals, resource))
@@ -98,6 +113,71 @@ const outputSchema = z.object({
   }),
 });
 
+/**
+ * Runs one read: checks the caller may read every resource it touches, then
+ * logs the outcome and turns a failure into an MCP error result. No raw
+ * inputs, document text, tokens or database error strings reach the logs or
+ * the result.
+ */
+async function runRead(
+  context: ReadContext,
+  name: string,
+  resources: ResourceName[],
+  produce: () => CallToolResult | Promise<CallToolResult>,
+): Promise<CallToolResult> {
+  const startedAt = performance.now();
+  try {
+    requireView(context, resources);
+    const result = await produce();
+    log.info(
+      {
+        tool: name,
+        userId: context.locals.user?.id,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        outcome: "ok",
+      },
+      "MCP read",
+    );
+    return result;
+  } catch (error) {
+    const known = error instanceof ReadError || error instanceof z.ZodError;
+    const code =
+      error instanceof ReadError
+        ? error.code
+        : error instanceof z.ZodError
+          ? "INVALID_INPUT"
+          : "INTERNAL_ERROR";
+    const message = known
+      ? error.message
+      : "The read could not be completed. Check the server logs or try a narrower query.";
+    log.warn(
+      {
+        tool: name,
+        userId: context.locals.user?.id,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        outcome: code,
+      },
+      "MCP read refused",
+    );
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({ error: { code, message } }),
+        },
+      ],
+    };
+  }
+}
+
+const readOnlyAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+};
+
 /** Discovery is filtered, and authorization is checked again at execution. */
 export function registerRead<S extends z.ZodRawShape>(
   server: McpServer,
@@ -117,17 +197,10 @@ export function registerRead<S extends z.ZodRawShape>(
       description,
       inputSchema: schema,
       outputSchema,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
+      annotations: readOnlyAnnotations,
     },
-    async (args) => {
-      const startedAt = performance.now();
-      try {
-        requireView(context, resources);
+    (args) =>
+      runRead(context, name, resources, () => {
         const data = read(schema.parse(args));
         const structuredContent = {
           data,
@@ -153,47 +226,31 @@ export function registerRead<S extends z.ZodRawShape>(
             "Result exceeds the output budget. Narrow dates, reduce the limit or omit evidence.",
           );
         }
-        log.info(
-          {
-            tool: name,
-            userId: context.locals.user?.id,
-            elapsedMs: Math.round(performance.now() - startedAt),
-            outcome: "ok",
-          },
-          "MCP read",
-        );
         return result;
-      } catch (error) {
-        const known = error instanceof ReadError || error instanceof z.ZodError;
-        const code =
-          error instanceof ReadError
-            ? error.code
-            : error instanceof z.ZodError
-              ? "INVALID_INPUT"
-              : "INTERNAL_ERROR";
-        const message = known
-          ? error.message
-          : "The read could not be completed. Check the server logs or try a narrower query.";
-        // No raw inputs, document text, tokens or database error strings in logs/results.
-        log.warn(
-          {
-            tool: name,
-            userId: context.locals.user?.id,
-            elapsedMs: Math.round(performance.now() - startedAt),
-            outcome: code,
-          },
-          "MCP read refused",
-        );
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({ error: { code, message } }),
-            },
-          ],
-        };
-      }
-    },
+      }),
+  );
+}
+
+/**
+ * A read whose result is content blocks (an image, a document) rather than
+ * structured data, so it declares no output schema. Discovery and the check at
+ * execution are the same as `registerRead`.
+ */
+export function registerFileRead<S extends z.ZodRawShape>(
+  server: McpServer,
+  context: ReadContext,
+  name: string,
+  resources: ResourceName[],
+  description: string,
+  shape: S,
+  read: (input: z.output<z.ZodObject<S>>) => Promise<CallToolResult>,
+) {
+  if (resources.some((resource) => !canMcpRead(context.locals, resource)))
+    return;
+  const schema = z.object(shape).strict();
+  server.registerTool(
+    name,
+    { description, inputSchema: schema, annotations: readOnlyAnnotations },
+    (args) => runRead(context, name, resources, () => read(schema.parse(args))),
   );
 }

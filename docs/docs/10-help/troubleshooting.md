@@ -126,13 +126,14 @@ See [Install Akaun](../01-getting-started/install.md#environment-variables).
 ### Cause
 
 The user has no **View** permission on **Records**. After the sign-in, Akaun tries **Records**,
-then the **Dashboard**, and then opens **Settings**. These users see this:
+then the **Dashboard**, and then opens **Settings**. For example, a user in the **Data Entry** group
+only sees this. This group can add records, but it has no **View** permission on **Records**.
 
-- A user in no group. Such a user has no permissions, and extra permissions have no effect. The
-  sidebar shows no screens.
+If the user also has no **View** permission on **Settings**, Akaun opens their **Profile**
+instead. These users see this:
+
+- A user in no group, and with no extra permissions.
 - A user in a group with no permissions, for example a group that stops access.
-- A user in the **Data Entry** group only. This group can add records, but it has no **View**
-  permission on **Records**.
 
 A user who opens Akaun from the home screen of a phone can also see **Settings**. The home-screen
 icon opens the **Dashboard**, and only **Administrators** have **View** on **Dashboard**. Click
@@ -164,9 +165,14 @@ conditions.
 | **New record** | You have no **Add** permission on **Records**. |
 | **Delete** or **Take this back** | You have no **Delete** permission on **Records**. No group except **Administrators** gives it. |
 | **Users & Groups** | Only a superuser sees it. |
+| **Settings** in the sidebar | You have no **View** permission on **Settings**. |
+| The fields and the **Save** buttons in **Settings** | You have no **Manage** permission on **Settings**. A note at the top of the page tells this. The groups that Akaun makes do not give it. |
 | **Reconcile** on an account page | You have no **View** permission on **Reconciliation**, or the account is inactive. |
 | The **Books** tab in **Settings** | You have no **View** permission on **Reports**. |
-| **Quotations** and **Invoices** | Your groups do not give these permissions. A group that you make has none, and the permission grid cannot add them. |
+| **Quotations** and **Invoices** | You have no **View** permission on these areas. A group that you make has none until you choose a level for them in the group. |
+| **Convert** on a quotation | The status is not **Sent** or **Accepted**. Or you do not have **Convert** on **Quotations** and **Add** on **Invoices**. |
+| **Cancel invoice** | The invoice is a draft, or a payment is recorded against it. Or you do not have **Void** on **Invoices** and **Change** on **Records**. |
+| **Record payment** on an invoice | The invoice is a draft, is cancelled or is fully paid. Or you have no **Add** permission on **Records**. |
 | The **Partners' Equity** tab | No contact has the **Partner** role. |
 | **Pay all outstanding** | The business owes money to one contact only, or to none. Or you have no **Add** permission on **Records**. |
 | **Payment account** on a payment | The book has only one money account. Akaun uses that account. |
@@ -179,10 +185,31 @@ Ask a superuser for the permission. See
 [Permissions explained](../09-administration/permissions-explained.md).
 
 **Confirm & import** and **Skip** show for all users, but Akaun refuses them without the
-**Change** permission on **Auto Import**. **Read again** shows only with the **Add** and **Change**
-permissions on **Auto Import**. The **Bookkeeper** group does not give **Change** on
-**Auto Import**. See
+**Confirm** permission on **Auto Import**. **Read again** shows only with the **Upload** and
+**Change** permissions on **Auto Import**. The **Bookkeeper** group does not give **Change** or
+**Confirm** on **Auto Import**. See
 [Users and groups](../09-administration/users-and-groups.md#the-groups-that-akaun-makes).
+
+## API tokens were replaced by personal access tokens
+
+The full message is "API tokens were replaced by personal access tokens. Create one under Profile →
+Access tokens." A program or an AI assistant gets this message, and it cannot connect.
+
+### Cause
+
+The program uses an API token of an older version of Akaun. The upgrade revoked all these tokens.
+They do not work any more.
+
+### What to do
+
+1. Open your profile, and click the **Access tokens** tab.
+2. Make a new token with only the permissions that the program needs. See
+   [Make a token](../09-administration/your-profile.md#make-a-token).
+3. In the program, replace the old token with the new token. The new token starts with `akp_`.
+
+If **Permissions** offers nothing, ask your administrator to let your group hand on permissions to
+tokens and apps. See
+[What members may hand on](../09-administration/users-and-groups.md#what-members-may-hand-on).
 
 ## The amount, the date or the account of a record is read only
 
@@ -208,7 +235,7 @@ Remove each thing that locks the record.
 8. Change the record.
 
 **Take this back** needs the **Delete** permission on **Records**. **Save & Next** and **Save**
-need the **Change** permission on **Reconciliation**. You can still change the
+need the **Match** permission on **Reconciliation**. You can still change the
 description, contact, reference, remark and attachments of a locked record. On a locked expense or
 income, you can also change the categories.
 
@@ -222,23 +249,43 @@ See [Locked records](../02-concepts/locked-records.md) and
 
 ### Cause
 
-The record is an **Invoice** record. Akaun made it when you clicked **Send** on an
-invoice. Some fields on the record page look editable, but Akaun refuses each change. If you
-delete the record, the page shows "This record was created by issuing an invoice. Cancel the invoice instead."
+The record is an **Invoice** record. Akaun made it when you clicked **Mark as sent** on an
+invoice. The record belongs to the invoice, so its record page is read only. If you try to delete
+it, Akaun shows "This record was created by issuing an invoice. Cancel the invoice instead."
 
 ### What to do
 
-At this time, no screen can correct a sent invoice. You cannot change it, cancel
-it or delete it. Check each invoice carefully before you click **Send**.
+1. In the rail of the record page, click the **Invoice** card.
 
-:::caution
+   The invoice opens.
 
-The **Delete** button in the bar of the **Records** list does not refuse an **Invoice** record.
-Do not select an **Invoice** record for a bulk delete.
+2. To change the due date, the reference, the notes or the terms, click **Edit**.
+3. If the customer, the date, the currency or a line is wrong, click **Cancel invoice**. Then make
+   a new invoice.
 
-:::
+See [Change a sent invoice](../05-sales/invoices.md#change-a-sent-invoice) and
+[Cancel an invoice](../05-sales/invoices.md#cancel-an-invoice).
 
-See [Invoices](../05-sales/invoices.md) and [Locked records](../02-concepts/locked-records.md).
+## A payment has been recorded against this invoice
+
+The full message is "A payment has been recorded against this invoice. Remove that payment first,
+then cancel the invoice."
+
+### Cause
+
+A payment settles the invoice, in full or in part. While a payment settles an invoice,
+**Cancel invoice** does not show. The message shows when someone recorded the payment after you
+opened the invoice page.
+
+### What to do
+
+1. On the invoice page, in the **Payments** card, click the payment.
+2. Beside the allocation to the invoice, click **Take this back**.
+3. Open the invoice again, and click **Cancel invoice**.
+
+**Take this back** needs the **Delete** permission on **Records**.
+
+See [Cancel an invoice](../05-sales/invoices.md#cancel-an-invoice).
 
 ## You cannot choose Accounts Payable on a new record
 
@@ -335,7 +382,7 @@ this message.
 2. On **Auto Import**, click **Read again** on each failed row.
 3. In the dialog, click **Read again**.
 
-**Read again** needs the **Add** and **Change** permissions on **Auto Import**.
+**Read again** needs the **Upload** and **Change** permissions on **Auto Import**.
 
 A spreadsheet that a **Table rows** import profile reads does not need a provider. See
 [Import profiles](../04-auto-import/import-profiles.md).
@@ -390,8 +437,8 @@ A message shows below the drop area on **Auto Import**. It starts with the name 
 | "Upload failed" | The server refused the file before Akaun could read it. See the next paragraph. |
 
 If a file of less than 15 MB shows "Upload failed", the server can have a lower upload limit. The
-`BODY_SIZE_LIMIT` setting controls this limit. The Docker image sets it to `15M`. Without it, the
-server refuses files larger than about 0.5 MB. The administrator sets `BODY_SIZE_LIMIT=15M` and
+`BODY_SIZE_LIMIT` setting controls this limit. The Docker image sets it to `21M`. Without it, the
+server refuses files larger than about 0.5 MB. The administrator sets `BODY_SIZE_LIMIT=21M` and
 starts Akaun again. See
 [Install Akaun](../01-getting-started/install.md#environment-variables).
 
@@ -546,7 +593,7 @@ are the usual causes:
 
 1. Check the type and the size of the file.
 2. Check that you have the **Change** permission on **Records**.
-3. If a small PDF also fails, ask the administrator to set `BODY_SIZE_LIMIT=15M`.
+3. If a small PDF also fails, ask the administrator to set `BODY_SIZE_LIMIT=21M`.
 4. Add the file again.
 
 See [Attach receipts and documents](../03-everyday-tasks/attach-receipts.md) and

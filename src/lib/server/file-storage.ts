@@ -3,10 +3,9 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
-  rmSync,
+  rmdirSync,
   statSync,
   unlinkSync,
-  writeFileSync,
 } from "fs";
 import { dirname, basename, extname, join, resolve, sep } from "path";
 import { existsSync } from "fs";
@@ -16,6 +15,7 @@ import { ImportState } from "$lib/enums.js";
 import { STORAGE_PATH } from "./env.js";
 import { importQueue, recordAttachments } from "./db/schema.js";
 import type { LedgerDb } from "./ledger/types.js";
+import { LocalBlobStore, type BlobStore } from "./storage/blob-store.js";
 
 /** Largest accepted upload, in bytes. */
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15 MB
@@ -23,38 +23,9 @@ export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15 MB
 /** Largest accepted company logo upload, in bytes. */
 export const MAX_LOGO_BYTES = 5 * 1024 * 1024; // 5 MB
 
-/**
- * Verify the buffer's leading "magic bytes" identify an allowed type (PDF/JPEG/PNG).
- * This is content-based and cannot be spoofed by the client-supplied MIME or extension.
- */
-export function sniffAllowedType(
-  buffer: Buffer,
-): "pdf" | "jpeg" | "png" | null {
-  if (buffer.length >= 4 && buffer.toString("ascii", 0, 4) === "%PDF")
-    return "pdf";
-  if (
-    buffer.length >= 3 &&
-    buffer[0] === 0xff &&
-    buffer[1] === 0xd8 &&
-    buffer[2] === 0xff
-  ) {
-    return "jpeg";
-  }
-  if (
-    buffer.length >= 8 &&
-    buffer[0] === 0x89 &&
-    buffer[1] === 0x50 &&
-    buffer[2] === 0x4e &&
-    buffer[3] === 0x47 &&
-    buffer[4] === 0x0d &&
-    buffer[5] === 0x0a &&
-    buffer[6] === 0x1a &&
-    buffer[7] === 0x0a
-  ) {
-    return "png";
-  }
-  return null;
-}
+// Content sniffing lives with the store, in a module that reads no
+// configuration, so MCP code can use it under a plain `bun test`.
+export { sniffAllowedType } from "./storage/file-type.js";
 
 /**
  * True when a stored path is still in the upload folder `saveToTemp` writes
@@ -64,34 +35,61 @@ export function isImportTempPath(relativePath: string): boolean {
   return relativePath.startsWith("import/temp/");
 }
 
-export function saveToTemp(buffer: Buffer, originalFilename: string): string {
-  const uuid = randomUUID();
-  const rel = `import/temp/${uuid}_${originalFilename}`;
-  const abs = join(STORAGE_PATH, rel);
-  mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, buffer);
+/**
+ * The configured file store. Every new write goes through it. Built on each
+ * call, not once at module load, so the root is read when it is used — the
+ * same as every helper here that reads `STORAGE_PATH`.
+ */
+export function fileStore(): BlobStore {
+  return new LocalBlobStore(STORAGE_PATH);
+}
+
+/** Longest original name kept in a stored file's name, in characters. */
+const MAX_STORED_NAME_LENGTH = 120;
+
+/**
+ * The part of a client-supplied filename that is safe to put in a stored
+ * file's name. The name comes from the multipart request, which the client
+ * controls completely: a browser sends only the base name, but a crafted
+ * request can send `../../x` or `C:\x`. So both kinds of separator, control
+ * characters and the `.`/`..` names are removed, and a long name is cut,
+ * keeping its extension. Spaces and non-ASCII letters stay, because
+ * `displayName` shows this part to the user.
+ */
+export function storedNamePart(originalFilename: string): string {
+  const base = originalFilename.split(/[/\\]/).pop() ?? "";
+  // eslint-disable-next-line no-control-regex
+  let name = base.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  if (name === "" || name === "." || name === "..") return "file";
+  if (name.length > MAX_STORED_NAME_LENGTH) {
+    const extension = extname(name).slice(0, 10);
+    name = name.slice(0, MAX_STORED_NAME_LENGTH - extension.length) + extension;
+  }
+  return name;
+}
+
+export async function saveToTemp(
+  buffer: Buffer,
+  originalFilename: string,
+): Promise<string> {
+  const rel = `import/temp/${randomUUID()}_${storedNamePart(originalFilename)}`;
+  await fileStore().put(rel, buffer);
   return rel;
 }
 
-export function saveReconciliationStatement(
+export async function saveReconciliationStatement(
   buffer: Buffer,
   statementKey: number | string,
   originalFilename: string,
-): string {
+): Promise<string> {
   if (!/^[a-zA-Z0-9-]+$/.test(String(statementKey)))
     throw new Error("Invalid bank statement key");
-  const safeName = basename(originalFilename).replace(/[^a-zA-Z0-9._-]/g, "_");
-  const rel = join(
-    "reconciliation",
-    String(statementKey),
-    `${randomUUID()}_${safeName}`,
+  const safeName = storedNamePart(originalFilename).replace(
+    /[^a-zA-Z0-9._-]/g,
+    "_",
   );
-  const abs = resolve(STORAGE_PATH, rel);
-  const root = resolve(STORAGE_PATH);
-  if (!abs.startsWith(root + sep))
-    throw new Error("Resolved destination escapes storage root");
-  mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, buffer);
+  const rel = `reconciliation/${statementKey}/${randomUUID()}_${safeName}`;
+  await fileStore().put(rel, buffer);
   return rel;
 }
 
@@ -406,31 +404,41 @@ export function releaseIfUnreferenced(
   return true;
 }
 
-export function deleteReconciliationFolder(statementId: number): void {
-  if (!Number.isInteger(statementId) || statementId <= 0) return;
-  const dir = resolve(STORAGE_PATH, "reconciliation", String(statementId));
-  const root = resolve(STORAGE_PATH, "reconciliation");
-  if (!dir.startsWith(root + sep)) return;
-  if (existsSync(dir)) rmSync(dir, { recursive: true });
+/**
+ * Deletes a bank statement's file and then its folder
+ * (`reconciliation/<key>/`), which `saveReconciliationStatement` made for it
+ * alone. The folder is removed only when it is empty, so a file that is not
+ * this statement's is never deleted with it.
+ */
+export function deleteStatementFile(
+  storedFilePath: string,
+  root = STORAGE_PATH,
+): void {
+  const statementsRoot = resolve(root, "reconciliation");
+  const file = resolve(root, storedFilePath);
+  const dir = dirname(file);
+  if (dirname(dir) !== statementsRoot) return;
+  deleteFile(storedFilePath, root);
+  try {
+    rmdirSync(dir);
+  } catch {
+    // not empty, or already gone
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Company logo helper
+// Company image helper
 // ---------------------------------------------------------------------------
 
 /**
- * Save the company logo image. Returns the relative path within STORAGE_PATH.
- * Caller must validate file type (jpeg/png only) before calling.
+ * Save a company image (the logo or the letterhead). Returns the relative path within STORAGE_PATH.
+ * The extension comes from the sniffed type, never from the client's filename.
  */
-export function saveCompanyLogo(
+export async function saveCompanyImage(
   buffer: Buffer,
-  originalFilename: string,
-): string {
-  const uuid = randomUUID();
-  const ext = extname(originalFilename).toLowerCase();
-  const filename = `${uuid}${ext}`;
-  const dir = join(STORAGE_PATH, "company");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, filename), buffer);
-  return join("company", filename);
+  type: "jpeg" | "png",
+): Promise<string> {
+  const rel = `company/${randomUUID()}.${type === "jpeg" ? "jpg" : "png"}`;
+  await fileStore().put(rel, buffer);
+  return rel;
 }

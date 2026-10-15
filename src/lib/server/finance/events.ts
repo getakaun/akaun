@@ -13,7 +13,7 @@ export const quotationEvents = new EventEmitter();
 export const invoiceEvents = new EventEmitter();
 
 // Each open SSE connection registers 2 listeners (an `*-update` + an `*-delete`
-// handler) and removes both on disconnect (see the stream endpoints' `cancel()`).
+// handler) and removes both on disconnect (`cancel()` in `eventStream`, sse-stream.ts).
 // So the ceiling is connections × 2; this caps each domain at ~100 concurrent
 // streams before Node's leak warning. Listeners are cleaned up reliably, so the
 // limit only guards against a genuine leak, not normal load.

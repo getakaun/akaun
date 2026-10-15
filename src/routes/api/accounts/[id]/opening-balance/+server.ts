@@ -1,14 +1,9 @@
 import { z } from "zod";
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
-import {
-  badRequest,
-  forbidden,
-  notFound,
-  refused,
-} from "$lib/server/api-response.js";
-import { setOpeningBalance } from "$lib/server/services/accounts.js";
+import { badRequest, notFound } from "$lib/server/api-response.js";
+import { setOpeningBalance } from "$lib/server/application/accounts.js";
+import { toResponse } from "$lib/server/application/http.js";
 import { isValidDate } from "$lib/server/date.js";
 
 const schema = z
@@ -22,8 +17,6 @@ const schema = z
   .strict();
 
 export const PUT: RequestHandler = async ({ locals, params, request }) => {
-  if (!hasPermission(locals, "accounts", "change")) return forbidden();
-
   const id = Number((params as { id: string }).id);
   if (!Number.isInteger(id) || id <= 0) {
     return notFound("That account no longer exists.");
@@ -35,8 +28,7 @@ export const PUT: RequestHandler = async ({ locals, params, request }) => {
   // Creates or replaces the account's single opening balance — there is only
   // ever one, so sending this again corrects it rather than adding a second
   // (FR-010).
-  const result = setOpeningBalance(db, id, locals.user!.id, parsed.data);
-  if (!result.ok) return refused(result.reason);
-
-  return new Response(null, { status: 204 });
+  // The opening balance is a record, so the operation also asks for the
+  // records ability the write amounts to (`application/accounts.ts`).
+  return toResponse(setOpeningBalance({ db, locals }, id, parsed.data), 204);
 };

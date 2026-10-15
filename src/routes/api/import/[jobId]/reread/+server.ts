@@ -7,7 +7,7 @@ import {
   refused,
 } from "$lib/server/api-response.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { readDocumentAgain } from "$lib/server/services/import-read-again.js";
 import type { RequestHandler } from "./$types.js";
 
@@ -37,8 +37,8 @@ const bodySchema = z.object({
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
   if (
-    !hasPermission(locals, "import", "add") ||
-    !hasPermission(locals, "import", "change")
+    !can(locals, "import.create") ||
+    !can(locals, "import.update")
   ) {
     return forbidden();
   }

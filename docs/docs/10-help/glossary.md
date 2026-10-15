@@ -68,17 +68,18 @@ See [Getting paid](../05-sales/getting-paid.md).
 
 ### Adjustments
 
-**Adjustments** is a permission. It lets a user save a record between any two accounts. It also
-lets a user add more than two lines to a record that is not an everyday split. Of the groups that
-Akaun creates, only **Administrators** has it, because that group is a superuser group. Give it
-only to a person that you trust with the books.
+**Adjustments** is an ability in the **Records** permission area. It lets a user save a record
+between any two accounts. It also lets a user add more than two lines to a record that is not an
+everyday split. Of the groups that Akaun creates, only **Administrators** has it, because that
+group is a superuser group. When you select the whole **Records** area, Akaun does not select
+**Adjustments**. Give it only to a person that you trust with the books.
 
 See [Permissions explained](../09-administration/permissions-explained.md).
 
 ### AI assistant
 
 An AI assistant is a chat program, for example Claude or ChatGPT, that can connect to Akaun. It
-can read your books but cannot change them.
+can read your books. If you give it the access, it can also change them.
 
 See [Connect AI assistants](../09-administration/connect-ai-assistants.md).
 
@@ -107,11 +108,10 @@ See [Owed, part paid and paid](../02-concepts/owed-and-paid.md).
 
 ### API token
 
-An API token is a secret key that lets a program use Akaun as you. You find it on your profile,
-on the **API Token** tab. Akaun shows the full token one time only. A program with your token can read and change data, the same as you
-can. Keep the token secret.
+An API token was the secret key of older versions of Akaun. The upgrade revoked all API tokens,
+and they do not work any more. Use a [personal access token](#personal-access-token).
 
-See [Connect AI assistants](../09-administration/connect-ai-assistants.md).
+See [Troubleshooting](./troubleshooting.md#api-tokens-were-replaced-by-personal-access-tokens).
 
 ### Attachment
 
@@ -197,7 +197,8 @@ See [Bank reconciliation](../07-bank-reconciliation.md).
 
 ### Connected app
 
-A connected app is a program, for example an AI assistant, that you let read your Akaun data.
+A connected app is a program, for example an AI assistant, that you let read or change your Akaun
+data.
 You find the list on your profile, on the **Connected apps** tab. Click **Revoke access** to
 disconnect an app immediately.
 
@@ -338,8 +339,9 @@ See [Record an expense or income](../03-everyday-tasks/record-expense-or-income.
 
 ### Invoice
 
-An invoice is a document that asks a customer to pay. When you click **Send**, the customer owes
-the amount and Akaun adds an **Invoice** record to the books. A sent invoice cannot be deleted.
+An invoice is a document that asks a customer to pay. When you click **Mark as sent**, the
+customer owes the amount and Akaun adds an **Invoice** record to the books. A sent invoice cannot
+be deleted, but you can cancel it.
 
 See [Invoices](../05-sales/invoices.md).
 
@@ -351,9 +353,10 @@ An invoice shows one of these statuses:
 - **Sent**: the customer owes the amount.
 - **Part paid**: payments cover some of the amount, but not all of it.
 - **Paid**: payments cover the full amount. Akaun calculates this from the payments.
-- **Cancelled**: the invoice does not count. At this time, the screen cannot cancel an invoice.
-- **Overdue**: the due date is in the past, and the invoice is not paid or cancelled. The
-  **Overdue** filter also counts a draft with a past due date.
+- **Cancelled**: the invoice does not count. It keeps its number, and its amount is not in the
+  books.
+- **Overdue**: the invoice is sent, the due date is in the past, and the invoice is not fully
+  paid.
 
 See [Invoices](../05-sales/invoices.md).
 
@@ -498,11 +501,23 @@ See [Owed, part paid and paid](../02-concepts/owed-and-paid.md).
 
 ### Permission
 
-A permission lets a user do one action on one area of Akaun. The actions are **View**, **Add**,
-**Change** and **Delete**. The areas include **Records**, **Contacts**, **Accounts** and
-**Reports**. Reports are view only.
+A permission lets a user do one thing in one area of Akaun. Each area, for example **Records**,
+**Contacts** or **Invoices**, has a list of abilities. Most areas have **View**, **Add**, **Change**
+and **Delete**. Some areas have more, for example **Send** and **Void** on **Invoices**. Reports are
+view only. On the screens, you choose a level for each area: **None**, **View**, **Edit**, **Full**
+or **Custom**.
 
 See [Permissions explained](../09-administration/permissions-explained.md).
+
+### Personal access token
+
+A personal access token is a secret key that lets a program, for example an AI assistant, use
+Akaun as you. You make it on your profile, on the **Access tokens** tab. Only you can make a token
+for yourself. Each token has a name, an expiry date or no expiry, and its own permissions. A token never does more than what you may hand on to tokens
+and apps. Akaun shows the full token one time only. It starts with `akp_`. Keep the token secret.
+
+See [Your profile](../09-administration/your-profile.md#access-tokens) and
+[Connect AI assistants](../09-administration/connect-ai-assistants.md).
 
 ### Possible duplicate
 
@@ -525,16 +540,16 @@ See [Profit & Loss](../08-reports/profit-and-loss.md).
 ### Quotation
 
 A quotation is a document that offers a price to a customer before the work. A quotation does not
-change the books. At this time, the screen cannot make an invoice from a quotation, because it
-cannot change the status of a quotation.
+change the books. Click **Convert** on a sent or accepted quotation to make a draft invoice from it.
 
 See [Quotations](../05-sales/quotations.md).
 
 ### Quotation status
 
 A quotation shows one of these statuses: **Draft**, **Sent**, **Accepted**, **Declined**,
-**Converted** or **Expired**. **Expired** shows that the expiry date is in the past. At this time,
-a new quotation stays **Draft**, because the screen cannot change its status.
+**Converted** or **Expired**. You change the status with the buttons on the quotation page.
+**Converted** shows that you made an invoice from the quotation. **Expired** shows that the expiry
+date of a draft or sent quotation is in the past.
 
 See [Quotations](../05-sales/quotations.md).
 
@@ -624,7 +639,8 @@ See [Accounts and categories](../02-concepts/accounts-and-categories.md).
 
 ### Superuser
 
-A superuser can do all actions in all areas. The permission grid does not apply to a superuser.
+A superuser can do all actions in all areas. The permissions of the groups do not limit a superuser.
+Only a superuser can open **Users & Groups**.
 The **Administrators** group is a superuser group.
 
 See [Users and groups](../09-administration/users-and-groups.md).
@@ -673,5 +689,5 @@ words that do not match a feature of Akaun.
 | log in, log on | sign in |
 | role (for a group of users) | group |
 | admin rights | superuser |
-| key (for API access) | API token |
+| key (for API access), API token | personal access token |
 | void | cancel |

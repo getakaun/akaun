@@ -80,7 +80,7 @@ All planned endpoints are live. Every resource also has an SSE stream endpoint (
 | Contacts | Full API — see [Beyond Plan](#beyond-plan-features) |
 
 **Additional endpoints not in plan:**
-- `/api/files/[...path]` — serves attachment files; validates path against DB before serving (prevents arbitrary file access)
+- `/api/records/[id]/attachments/[attachmentId]`, `/api/reconciliation/statements/[statementId]/file`, `/api/company/[image]` — serve stored files by id, each behind its own permission (replaced `/api/files/[...path]`)
 - `/api/exchange-rate` — live rate lookup from Frankfurter API, used by forms
 - `/api/dashboard/stream` — SSE stream that emits `data-changed` across income/expense/claim events
 

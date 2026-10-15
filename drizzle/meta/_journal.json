@@ -218,6 +218,27 @@
       "when": 1791438000000,
       "tag": "0030_chatgpt_device_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1791961108207,
+      "tag": "0031_quote_revisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1792038720312,
+      "tag": "0032_permission_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1792038728212,
+      "tag": "0033_permission_grants_data",
+      "breakpoints": true
     }
   ]
 }

@@ -1,3 +1,4 @@
+import { can } from "$lib/server/permissions.js";
 import { json } from "@sveltejs/kit";
 import {
   peekConnection,
@@ -13,6 +14,9 @@ import type { RequestHandler } from "./$types.js";
  */
 export const GET: RequestHandler = async ({ locals, url, fetch }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
+  // AI provider set-up belongs to Settings.
+  if (!can(locals, "settings.manage"))
+    return new Response("Forbidden", { status: 403 });
   const connectionId = url.searchParams.get("connection") ?? "";
   const credentials = peekConnection(locals.user.id, connectionId);
   if (!credentials)

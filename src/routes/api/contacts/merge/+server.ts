@@ -1,11 +1,13 @@
 import type { RequestHandler } from '@sveltejs/kit';
 import { db } from '$lib/server/db/client.js';
 import { mergeContacts } from '$lib/server/services/contacts.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import { can } from '$lib/server/permissions.js';
 
 export const POST: RequestHandler = async ({ locals, request }) => {
 	// Merge repoints records AND hard-deletes losers → needs both change and delete.
-	if (!hasPermission(locals, 'contacts', 'change') || !hasPermission(locals, 'contacts', 'delete')) {
+	if (!can(locals, 'contacts.merge') ||
+      !can(locals, 'contacts.update') ||
+      !can(locals, 'contacts.delete')) {
 		return new Response('Forbidden', { status: 403 });
 	}
 	const user = locals.user!;

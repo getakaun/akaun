@@ -23,6 +23,7 @@ describe("what an invoice has been paid", () => {
       paidMinor: 0,
       outstandingMinor: 50_000,
       paid: false,
+      owedMovementId: 1,
     });
   });
 
@@ -34,6 +35,7 @@ describe("what an invoice has been paid", () => {
       paidMinor: 20_000,
       outstandingMinor: 30_000,
       paid: false,
+      owedMovementId: 1,
     });
   });
 
@@ -66,6 +68,7 @@ describe("an invoice with no ledger history behind it", () => {
       paidMinor: 0,
       outstandingMinor: 0,
       paid: false,
+      owedMovementId: null,
     });
   });
 
@@ -83,12 +86,14 @@ describe("an invoice with no ledger history behind it", () => {
       paidMinor: 50_000,
       outstandingMinor: 0,
       paid: true,
+      owedMovementId: null,
     });
     expect(invoicePaymentState(50_000, InvoiceStatus.Sent, null)).toEqual({
       totalMinor: 50_000,
       paidMinor: 0,
       outstandingMinor: 50_000,
       paid: false,
+      owedMovementId: null,
     });
   });
 });

@@ -16,7 +16,7 @@ Sign in as a superuser, for example `admin`, to do all the steps on this page.
 ## Checklist
 
 - [ ] 1. [Choose the main currency](#1-choose-the-main-currency)
-- [ ] 2. [Add the company details and logo](#2-add-the-company-details-and-logo)
+- [ ] 2. [Add the company details](#2-add-the-company-details)
 - [ ] 3. [Choose the document numbers](#3-choose-the-document-numbers)
 - [ ] 4. [Check the accounts](#4-check-the-accounts)
 - [ ] 5. [Enter the starting balances](#5-enter-the-starting-balances)
@@ -44,18 +44,21 @@ If the field shows a lock icon, the currency is already locked.
 
 See [Foreign currency](../02-concepts/foreign-currency.md).
 
-## 2. Add the company details and logo
+## 2. Add the company details
 
 Akaun shows these details on printed quotations and invoices.
 
 1. In **Settings**, click the **Company** tab.
 2. Under **Logo**, click **Upload** and choose a JPEG or PNG image of 5 MB or smaller.
-3. In **Company Name**, type the name of the business.
-4. In **Address**, type the address.
-5. In **Registration No.**, type the registration number of the business.
-6. Click **Save**.
+3. Optional: under **Letterhead**, click **Upload** and choose a JPEG or PNG image of your
+   letterhead.
+4. In **Company Name**, type the name of the business.
+5. In **Address**, type the address.
+6. In **Registration No.**, type the registration number of the business.
+7. Click **Save**.
 
-The **Templates** tab controls the layout of printed documents. See
+The **Templates** tab controls printed documents. To print the letterhead in place of the company
+name, set **Header** to **Letterhead** there. See
 [Settings reference](../09-administration/settings-reference.md).
 
 ## 3. Choose the document numbers
@@ -168,7 +171,8 @@ most businesses.
 :::info
 
 The **Books** tab shows only for a user with the **View** permission on **Reports**. To change a
-default account, the user needs the **Change** permission on **Accounts**.
+default account, the user needs the **Change** permission on **Accounts** and the **Manage**
+permission on **Settings**.
 
 :::
 

@@ -1,40 +1,42 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types.js';
 import { hash } from 'argon2';
-import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '$lib/server/db/client.js';
 import { oauth } from '$lib/server/oauth/runtime.js';
-import { users, userGroups, groups } from '$lib/server/db/schema.js';
+import { users } from '$lib/server/db/schema.js';
+import { can } from '$lib/server/permissions.js';
+import {
+	keepsASuperuser,
+	LAST_SUPERUSER_MESSAGE,
+	memberships,
+	readUserGrants
+} from '$lib/server/admin/access.js';
+import { listTokens, revokeAllTokens } from '$lib/server/tokens/manage.js';
 
 export const GET: RequestHandler = async ({ locals, params }) => {
-	if (!locals.isSuperuser) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'users.manage')) return new Response('Forbidden', { status: 403 });
 
 	const userId = parseInt(params.id);
 	const user = db.select().from(users).where(eq(users.id, userId)).get();
 	if (!user) return new Response('Not Found', { status: 404 });
 
-	const memberships = db
-		.select({ groupId: userGroups.groupId, groupName: groups.name, isSuperuser: groups.isSuperuser })
-		.from(userGroups)
-		.innerJoin(groups, eq(userGroups.groupId, groups.id))
-		.where(eq(userGroups.userId, userId))
-		.all();
-
+	const groupsOf = memberships(db, userId);
 	return json({
 		id: user.id,
 		name: user.name,
 		email: user.email,
 		username: user.username,
-		hasBearerToken: !!user.bearerToken,
-		groups: memberships.map((m) => ({ id: m.groupId, name: m.groupName })),
-		isSuperuser: memberships.some((m) => m.isSuperuser),
+		tokenCount: listTokens(db, userId).length,
+		groups: groupsOf.map((m) => ({ id: m.id, name: m.name })),
+		isSuperuser: groupsOf.some((m) => m.isSuperuser),
+		extraGrants: readUserGrants(db, userId),
 		createdAt: user.createdAt
 	});
 };
 
 export const PATCH: RequestHandler = async ({ locals, params, request }) => {
-	if (!locals.isSuperuser) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'users.manage')) return new Response('Forbidden', { status: 403 });
 
 	const userId = parseInt(params.id);
 	const user = db.select({ id: users.id }).from(users).where(eq(users.id, userId)).get();
@@ -47,29 +49,21 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 	if (body.email) patch.email = body.email;
 	if (body.username) patch.username = body.username;
 	if (body.password) patch.passwordHash = await hash(body.password);
-	if (body.regenerateToken) {
-		patch.bearerToken = 'akn_' + randomBytes(24).toString('hex');
-	}
-	if (body.revokeToken) {
-		patch.bearerToken = null;
-	}
 
 	if (Object.keys(patch).length > 0) {
 		db.update(users).set(patch).where(eq(users.id, userId)).run();
-		if (body.password) oauth?.revokeUser(userId);
+		// A new password ends every way in that the old one could have set up:
+		// connected apps and personal access tokens alike.
+		if (body.password) {
+			oauth?.revokeUser(userId);
+			revokeAllTokens(db, userId);
+		}
 	}
-
-	// Return full token only on regenerate (one-time reveal)
-	const updated = db.select({ bearerToken: users.bearerToken }).from(users).where(eq(users.id, userId)).get();
-	const responseBody: Record<string, unknown> = { success: true };
-	if (body.regenerateToken && updated?.bearerToken) {
-		responseBody.newToken = updated.bearerToken;
-	}
-	return json(responseBody);
+	return json({ success: true });
 };
 
 export const DELETE: RequestHandler = async ({ locals, params }) => {
-	if (!locals.isSuperuser) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'users.manage')) return new Response('Forbidden', { status: 403 });
 
 	const userId = parseInt(params.id);
 	if (locals.user?.id === userId) {
@@ -78,6 +72,9 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
 
 	const user = db.select({ id: users.id }).from(users).where(eq(users.id, userId)).get();
 	if (!user) return new Response('Not Found', { status: 404 });
+
+	if (!keepsASuperuser(db, { deleteUserId: userId }))
+		return json({ error: LAST_SUPERUSER_MESSAGE }, { status: 400 });
 
 	db.delete(users).where(eq(users.id, userId)).run();
 	return json({ success: true });

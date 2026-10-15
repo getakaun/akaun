@@ -2,28 +2,17 @@ import type { Actions } from '@sveltejs/kit';
 import { db } from '$lib/server/db/client.js';
 import { getQuotation, listQuotations } from '$lib/server/queries/quotations.js';
 import { removeQuotation } from '$lib/server/services/quotations.js';
-import { QuotationStatus } from '$lib/enums.js';
 import { fail, redirect } from '@sveltejs/kit';
-import { hasPermission } from '$lib/server/permissions.js';
+import { can } from '$lib/server/permissions.js';
+import { documentDefaults } from '$lib/server/sales/defaults.js';
 
 export function loadQuotationsPage(locals: App.Locals) {
-	if (!hasPermission(locals, 'quotations', 'view')) throw redirect(302, '/dashboard');
-	const allQuotations = listQuotations(db, { limit: 1000 });
-
-	const counts = { all: 0, draft: 0, sent: 0, accepted: 0, declined: 0, converted: 0 };
-	allQuotations.forEach((q) => {
-		counts.all++;
-		if (q.status === QuotationStatus.Draft) counts.draft++;
-		else if (q.status === QuotationStatus.Sent) counts.sent++;
-		else if (q.status === QuotationStatus.Accepted) counts.accepted++;
-		else if (q.status === QuotationStatus.Declined) counts.declined++;
-		else if (q.status === QuotationStatus.Converted) counts.converted++;
-	});
-
+	if (!can(locals, 'quotations.read')) throw redirect(302, '/dashboard');
+	// The tab counts are worked out on the page, from the live list the stream
+	// keeps current.
 	return {
-		quotations: allQuotations,
-		counts,
-		perms: { add: hasPermission(locals, 'quotations', 'add') }
+		quotations: listQuotations(db, { limit: 1000 }),
+		perms: { add: can(locals, 'quotations.create') }
 	};
 }
 
@@ -35,8 +24,10 @@ export function loadQuotationsPage(locals: App.Locals) {
  * that would 403 on submit.
  */
 export function loadQuotationNew(locals: App.Locals) {
-	if (!hasPermission(locals, 'quotations', 'add')) throw redirect(302, '/quotations');
-	return {};
+	if (!can(locals, 'quotations.create')) throw redirect(302, '/quotations');
+	// Days from the issue date to the expiry date a new quotation starts with;
+	// null when the setting is empty (no expiry).
+	return { defaultDays: documentDefaults(db).quotationValidDays };
 }
 
 /**
@@ -46,7 +37,7 @@ export function loadQuotationNew(locals: App.Locals) {
  * opening — so the table a reader came for arrived a moment after the panel.
  */
 export function loadQuotationDetail(locals: App.Locals, id: number) {
-	if (!hasPermission(locals, 'quotations', 'view')) throw redirect(302, '/dashboard');
+	if (!can(locals, 'quotations.read')) throw redirect(302, '/dashboard');
 
 	const quotation = getQuotation(db, id);
 	if (!quotation) throw redirect(302, '/quotations');
@@ -54,15 +45,22 @@ export function loadQuotationDetail(locals: App.Locals, id: number) {
 	return {
 		quotation,
 		perms: {
-			change: hasPermission(locals, 'quotations', 'change'),
-			delete: hasPermission(locals, 'quotations', 'delete')
+			change: can(locals, 'quotations.update'),
+			delete: can(locals, 'quotations.delete'),
+			// Converting makes an invoice from this quotation — the same pair the
+			// convert endpoint checks.
+			convert:
+				can(locals, 'quotations.convert') && can(locals, 'invoices.create'),
+			// Revising adds a new quotation in this one's place.
+			revise:
+				can(locals, 'quotations.revise') && can(locals, 'quotations.create')
 		}
 	};
 }
 
 export const quotationsActions: Actions = {
 	delete: async ({ locals, request }) => {
-		if (!hasPermission(locals, 'quotations', 'delete')) return fail(403, { error: 'Forbidden' });
+		if (!can(locals, 'quotations.delete')) return fail(403, { error: 'Forbidden' });
 		const userId = locals.user!.id;
 		const data = await request.formData();
 		const id = parseInt(String(data.get('id') ?? '0'));
@@ -71,6 +69,8 @@ export const quotationsActions: Actions = {
 		if (!result.ok) {
 			if (result.reason === 'converted')
 				return fail(409, { error: 'Converted quotations cannot be deleted.' });
+			if (result.reason === 'superseded')
+				return fail(409, { error: 'A quotation replaced by a revision is kept, so it cannot be deleted.' });
 			return fail(404, { error: 'Not found' });
 		}
 		return { success: true };

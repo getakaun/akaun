@@ -7,9 +7,10 @@ import * as schema from "../db/schema.js";
 import { users } from "../db/schema.js";
 import { createAccount, patchAccount } from "./accounts.js";
 import { createStatement, ReconciliationError } from "./reconciliation.js";
+import { localsFor } from "../permissions/test-locals.js";
 
 let sqlite: Database; let db: any;
-const locals = { user: { id: 1 }, isSuperuser: true } as App.Locals;
+const locals = localsFor([], { superuser: true });
 beforeEach(()=>{sqlite=new Database(":memory:");db=drizzle(sqlite,{schema});migrate(db,{migrationsFolder:"drizzle"});db.insert(users).values({email:"r@test",username:"r",passwordHash:"x"}).run();});
 afterEach(()=>sqlite.close());
 

@@ -1,11 +1,13 @@
-export const OAUTH_SCOPES = [
-  "records:read",
-  "accounts:read",
-  "contacts:read",
-  "reports:read",
-  "import:read",
-] as const;
-export type OAuthScope = (typeof OAUTH_SCOPES)[number];
+// The scope strings, and what each expands to, live in
+// `$lib/permissions/oauth-scopes.ts` so the consent page can read them too.
+export {
+  DELETE_SCOPES,
+  OAUTH_SCOPES,
+  READ_SCOPES,
+  WRITE_RESOURCES,
+  WRITE_SCOPES,
+  type OAuthScope,
+} from "$lib/permissions/oauth-scopes.js";
 export type OAuthConfig = { issuer: string; resource: string };
 
 /** Public identity is configuration, never caller-controlled Host headers. */

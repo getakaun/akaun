@@ -2,7 +2,7 @@ import { json } from "@sveltejs/kit";
 import { db } from "$lib/server/db/client.js";
 import { badRequest, forbidden, refused } from "$lib/server/api-response.js";
 import { reviewOverridesSchema } from "$lib/server/import/settle-review.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { updateGroupItem } from "$lib/server/services/import-items.js";
 import type { RequestHandler } from "./$types.js";
 
@@ -16,7 +16,7 @@ import type { RequestHandler } from "./$types.js";
  */
 export const PATCH: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "import", "change")) return forbidden();
+  if (!can(locals, "import.update")) return forbidden();
 
   const parsed = reviewOverridesSchema.safeParse(
     await request.json().catch(() => null),

@@ -1,6 +1,6 @@
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { forbidden, notFound, refused } from "$lib/server/api-response.js";
 import {
   addAttachment,
@@ -9,7 +9,7 @@ import {
   searchableAttachmentFilenames,
   setExtractedText,
 } from "$lib/server/queries/ledger.js";
-import { resourceForKind } from "$lib/server/ledger/record-permissions.js";
+import { permissionForKind } from "$lib/server/ledger/record-permissions.js";
 import { recordAudit } from "$lib/server/audit.js";
 import { emitRecordUpdate } from "$lib/server/services/ledger.js";
 import { extractAttachmentsText } from "$lib/server/extraction/attachment-text.js";
@@ -17,6 +17,7 @@ import {
   displayName,
   MAX_UPLOAD_BYTES,
   moveToRecordStorage,
+  releaseIfUnreferenced,
   saveToTemp,
   sniffAllowedType,
 } from "$lib/server/file-storage.js";
@@ -39,7 +40,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 
   const record = getRecord(db, id);
   if (!record) return notFound("That record no longer exists.");
-  if (!hasPermission(locals, resourceForKind(record.kind), "view")) {
+  if (!can(locals, permissionForKind(record.kind, "read"))) {
     return forbidden();
   }
 
@@ -54,7 +55,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 
   const record = getRecord(db, id);
   if (!record) return notFound("That record no longer exists.");
-  if (!hasPermission(locals, resourceForKind(record.kind), "change")) {
+  if (!can(locals, permissionForKind(record.kind, "update"))) {
     return forbidden();
   }
 
@@ -75,16 +76,16 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     return refused("Only PDF, JPEG and PNG files can be attached.");
   }
 
-  const finalPath = moveToRecordStorage(
-    saveToTemp(buffer, file.name),
-    record.date,
-  );
-  const attachment = addAttachment(
-    db,
-    id,
-    finalPath,
-    displayName(finalPath),
-  );
+  let finalPath = await saveToTemp(buffer, file.name);
+  let attachment;
+  try {
+    finalPath = moveToRecordStorage(finalPath, record.date);
+    attachment = addAttachment(db, id, finalPath, displayName(finalPath));
+  } catch (e) {
+    // No row points at the upload, so remove it wherever it got to.
+    releaseIfUnreferenced(db, finalPath);
+    throw e;
+  }
 
   // Re-run over every attachment, not just the new one, so the record's
   // searchable text matches what "Rebuild search index" would produce. A file

@@ -10,11 +10,11 @@ import { jobEvents } from '$lib/server/import/group-state.js';
 import { discardGroup, setGroupSourceAccount } from '$lib/server/services/import-items.js';
 import { ImportState } from '$lib/enums.js';
 import type { RequestHandler } from './$types.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import { can } from '$lib/server/permissions.js';
 
 export const GET: RequestHandler = async ({ locals, params }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'import', 'view')) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'import.read')) return new Response('Forbidden', { status: 403 });
 
 	const row = db.select().from(importQueue).where(eq(importQueue.id, params.jobId)).get();
 
@@ -34,7 +34,7 @@ const patchSchema = z.object({
 
 export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'import', 'change')) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'import.update')) return new Response('Forbidden', { status: 403 });
 
 	const parsed = patchSchema.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) return badRequest(parsed.error);
@@ -51,7 +51,7 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 
 export const DELETE: RequestHandler = async ({ locals, params }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'import', 'delete')) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'import.delete')) return new Response('Forbidden', { status: 403 });
 
 	const row = db.select().from(importQueue).where(eq(importQueue.id, params.jobId)).get();
 

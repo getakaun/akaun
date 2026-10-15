@@ -2,7 +2,7 @@ import { json } from "@sveltejs/kit";
 import { forbidden } from "$lib/server/api-response.js";
 import { inspectSample } from "$lib/server/import/sample-inspect.js";
 import { readSampleUpload } from "$lib/server/import/sample-upload.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import type { RequestHandler } from "@sveltejs/kit";
 
 /**
@@ -20,7 +20,7 @@ import type { RequestHandler } from "@sveltejs/kit";
  */
 export const POST: RequestHandler = async ({ locals, request }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "import", "change")) return forbidden();
+  if (!can(locals, "import.profiles")) return forbidden();
 
   const form = await request.formData().catch(() => null);
   if (!form)

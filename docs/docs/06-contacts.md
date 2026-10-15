@@ -14,8 +14,8 @@ To learn how Akaun calculates the balance of a contact, read
 :::info
 
 To add a contact, you need the **Add** permission on contacts. To change one, you need **Change**.
-To delete one, you need **Delete**. To find duplicates or merge contacts, you need **Change** and
-**Delete**.
+To delete one, you need **Delete**. To find duplicates or merge contacts, you need **Merge**,
+**Change** and **Delete**.
 
 :::
 

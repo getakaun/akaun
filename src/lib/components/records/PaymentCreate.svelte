@@ -23,6 +23,14 @@
 	async function save() {
 		const saved = await formRef?.submit();
 		if (!saved) return;
+		// Opened from an invoice: back to it, where the payment now shows. The
+		// form is replaced in history rather than kept behind the invoice, so
+		// Back cannot land on it and record the same payment twice.
+		if (data.returnTo) {
+			// eslint-disable-next-line svelte/no-navigation-without-resolve -- built by the loader from the invoice's id, never from the address bar.
+			void goto(data.returnTo.href, { replaceState: true });
+			return;
+		}
 		void goto(resolve('/(app)/records/[id]', { id: String(saved.id) }));
 	}
 </script>
@@ -30,8 +38,8 @@
 <svelte:head><title>{title} - Akaun</title></svelte:head>
 
 <DetailPage
-	backHref="/records"
-	backLabel="Records"
+	backHref={data.returnTo?.href ?? '/records'}
+	backLabel={data.returnTo?.label ?? 'Records'}
 	{dirty}
 	{saving}
 	saveLabel="Save"
@@ -57,6 +65,7 @@
 			defaultAccountId={data.defaultAccountId}
 			contactId={data.contactId}
 			batch={data.batch}
+			preselectMovementId={data.preselectMovementId}
 		/>
 	{/snippet}
 </DetailPage>

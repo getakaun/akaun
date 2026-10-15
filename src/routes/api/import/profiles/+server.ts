@@ -3,7 +3,7 @@ import { z } from "zod";
 import { badRequest, forbidden } from "$lib/server/api-response.js";
 import { db } from "$lib/server/db/client.js";
 import { profileRefused } from "$lib/server/import/profile-reply.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import {
   createImportProfile,
   listImportProfiles,
@@ -31,7 +31,7 @@ const profileBody = z.record(z.string(), z.unknown());
 
 export const GET: RequestHandler = async ({ locals, url }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "import", "view")) return forbidden();
+  if (!can(locals, "import.read")) return forbidden();
 
   // `?enabled=1` gives only the ones "Read as" offers (US6 AS5, AS12).
   const enabledOnly = url.searchParams.get("enabled") === "1";
@@ -40,7 +40,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 
 export const POST: RequestHandler = async ({ locals, request }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "import", "change")) return forbidden();
+  if (!can(locals, "import.profiles")) return forbidden();
 
   const parsed = profileBody.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return badRequest(parsed.error);

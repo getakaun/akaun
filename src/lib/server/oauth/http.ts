@@ -1,5 +1,5 @@
 import type { Cookies } from "@sveltejs/kit";
-import { OAUTH_SCOPES, type OAuthConfig } from "./config.js";
+import { OAUTH_SCOPES, READ_SCOPES, type OAuthConfig } from "./config.js";
 import {
   BROWSER_COOKIE,
   opaque,
@@ -83,7 +83,11 @@ export async function handleOAuthProtocol(
         return oauthJson({
           resource: config.resource,
           authorization_servers: [config.issuer],
-          scopes_supported: OAUTH_SCOPES,
+          // The minimal set a client asks for first (MCP 2026-07-28, Scope
+          // Selection Strategy): reads. Change and delete scopes are asked
+          // for when a tool needs them, through a 403 insufficient_scope
+          // challenge, and the authorization server below lists them all.
+          scopes_supported: READ_SCOPES,
           bearer_methods_supported: ["header"],
         });
       return oauthJson({

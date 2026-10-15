@@ -19,6 +19,8 @@ import {
 } from "../../ledger/account-type.js";
 import { historyGapNotes } from "../../ledger/reports/notes.js";
 import type { AccountView } from "../../ledger/types.js";
+import { accountVersion } from "../../application/version.js";
+import { openingBalanceVersion } from "../../application/accounts.js";
 import {
   registerRead,
   id,
@@ -26,11 +28,11 @@ import {
   pageShape,
   checkDateRange,
   pagination,
-  ReadError,
-  type ReadContext,
+  McpToolError,
+  type McpContext,
 } from "../common.js";
 
-function accountSummary(account: AccountView) {
+function accountSummary(context: McpContext, account: AccountView) {
   return {
     id: account.id,
     code: account.code,
@@ -46,15 +48,17 @@ function accountSummary(account: AccountView) {
     displayBalanceMinor:
       account.balanceMinor * displaySignForAccountType(account.type),
     path: `/accounts/${account.id}`,
+    version: accountVersion(context.db, account.id),
+    /** For set_opening_balance: its record's version, or "absent". */
+    openingBalanceVersion: openingBalanceVersion(context.db, account.id),
   };
 }
 
-export function registerAccounts(server: McpServer, context: ReadContext) {
+export function registerAccounts(server: McpServer, context: McpContext) {
   registerRead(
     server,
     context,
     "list_accounts",
-    ["accounts"],
     "Discover accounts and categories (categories are accounts). Balances are current signed ledger amounts; displayBalanceMinor applies the app's normal-balance sign. Archived accounts are optionally included. The chart is small and is read as one set before output paging.",
     {
       ...pageShape,
@@ -78,7 +82,7 @@ export function registerAccounts(server: McpServer, context: ReadContext) {
       );
       const accounts = rows
         .slice(input.offset, input.offset + input.limit)
-        .map(accountSummary);
+        .map((account) => accountSummary(context, account));
       return {
         accounts,
         pagination: pagination(rows.length, input, accounts.length),
@@ -93,7 +97,6 @@ export function registerAccounts(server: McpServer, context: ReadContext) {
     server,
     context,
     "get_account_statement",
-    ["records"],
     "Read an account's chronological movements and signed running balances. Dates are inclusive. No offset or additional filters: skipping movements would corrupt running balances. When truncated, returnedClosingBalanceMinor is only through returned rows; periodClosingBalanceMinor is null. Narrow dates to obtain a complete statement.",
     {
       accountId: id,
@@ -104,13 +107,13 @@ export function registerAccounts(server: McpServer, context: ReadContext) {
       checkDateRange(input);
       const accountId = canonicalAccountId(context.db, input.accountId);
       if (accountId === null)
-        throw new ReadError("NOT_FOUND", "That account does not exist.");
+        throw new McpToolError("NOT_FOUND", "That account does not exist.");
       const history = accountHistory(context.db, accountId, input);
       if (!history)
-        throw new ReadError("NOT_FOUND", "That account does not exist.");
+        throw new McpToolError("NOT_FOUND", "That account does not exist.");
       const truncated = history.total > history.entries.length;
       return {
-        account: accountSummary(history.account),
+        account: accountSummary(context, history.account),
         requestedAccountId: input.accountId,
         openingBalanceMinor: history.openingBalanceMinor,
         returnedClosingBalanceMinor: history.closingBalanceMinor,

@@ -28,6 +28,7 @@
 		defaultAccountId = null,
 		contactId: initialContactId = null,
 		batch: initialBatch = false,
+		preselectMovementId = null,
 		// Write-only out-parameters: the frame around this form reads them to
 		// decide whether to show a save bar and what to put on it.
 		// eslint-disable-next-line no-useless-assignment
@@ -46,6 +47,11 @@
 		contactId?: number | null;
 		/** Opens in batch mode, every contact's outstanding items already ticked. */
 		batch?: boolean;
+		/**
+		 * One owed item to tick on arrival — the invoice "Record payment" came
+		 * from. Ticked once, when the opening contact's items first load.
+		 */
+		preselectMovementId?: number | null;
 		dirty?: boolean;
 		saving?: boolean;
 		error?: string;
@@ -130,6 +136,25 @@
 	// A stale answer must never overwrite a newer one, so each request carries a
 	// token and only the newest one is allowed to land.
 	let loadToken = 0;
+
+	// Not reactive: once used — or once the opening contact's items have come
+	// back without it, already paid — it never ticks anything again.
+	let preselectDone = false;
+
+	/**
+	 * Ticks the preselected item at its full outstanding amount, exactly as a
+	 * click on its box would. Runs when the items land, which is always after
+	 * the effect below has cleared the picks for the opening contact, so the
+	 * tick is not wiped; and because it is a change from the seeded snapshot,
+	 * the form is dirty and the save bar shows, as it would for a user's tick.
+	 */
+	function applyPreselect(person: number) {
+		if (preselectDone || preselectMovementId === null) return;
+		if (person !== initialContactId) return;
+		preselectDone = true;
+		const item = items.find((i) => i.movementId === preselectMovementId);
+		if (item) picked = { [item.movementId]: (item.outstandingMinor / 100).toFixed(2) };
+	}
 	$effect(() => {
 		const currentMode = mode;
 		const person = contactId;
@@ -149,6 +174,7 @@
 					if (token !== loadToken) return;
 					items = body?.items ?? [];
 					loading = false;
+					applyPreselect(person);
 				})
 				.catch(() => {
 					if (token !== loadToken) return;

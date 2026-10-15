@@ -1,7 +1,7 @@
 import type { RequestHandler } from "./$types.js";
 import { quotationEvents, invoiceEvents } from "$lib/server/finance/events.js";
 import { ledgerEvents } from "$lib/server/ledger/events.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { eventStream } from "$lib/server/sse-stream.js";
 
 /**
@@ -16,7 +16,7 @@ import { eventStream } from "$lib/server/sse-stream.js";
  */
 export const GET: RequestHandler = ({ locals }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "dashboard", "view"))
+  if (!can(locals, "dashboard.read"))
     return new Response("Forbidden", { status: 403 });
 
   const changed = "data-changed";

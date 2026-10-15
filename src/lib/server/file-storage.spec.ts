@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import {
@@ -36,8 +36,16 @@ vi.mock("$lib/server/env.js", () => ({
 
 const schema = await import("./db/schema.js");
 const { importQueue, ledgerRecords, recordAttachments, users } = schema;
-const { fileExists, moveToRecordStorage, releaseIfUnreferenced } =
-  await import("./file-storage.js");
+const {
+  deleteStatementFile,
+  displayName,
+  fileExists,
+  moveToRecordStorage,
+  releaseIfUnreferenced,
+  saveCompanyImage,
+  saveToTemp,
+  storedNamePart,
+} = await import("./file-storage.js");
 type LedgerDb = import("./ledger/types.js").LedgerDb;
 
 let sqlite: Database;
@@ -166,5 +174,73 @@ describe("releaseIfUnreferenced", () => {
     writeFileSync(outside, "keep");
     expect(releaseIfUnreferenced(db, "../outside.pdf", root)).toBe(false);
     expect(fileExists("outside.pdf", sandbox)).toBe(true);
+  });
+});
+
+describe("storedNamePart", () => {
+  it("keeps only the base name of a client filename", () => {
+    expect(storedNamePart("../../evil.pdf")).toBe("evil.pdf");
+    expect(storedNamePart("C:\\Users\\me\\receipt.pdf")).toBe("receipt.pdf");
+    expect(storedNamePart("a/b/c.png")).toBe("c.png");
+  });
+
+  it("keeps spaces and non-ASCII letters, drops control characters", () => {
+    expect(storedNamePart("Kedai Runcit\u0000 收据.pdf")).toBe(
+      "Kedai Runcit 收据.pdf",
+    );
+  });
+
+  it("never returns an empty or dot name", () => {
+    for (const name of ["", "..", ".", "../", "\u0001"]) {
+      expect(storedNamePart(name)).toBe("file");
+    }
+  });
+
+  it("cuts a long name and keeps its extension", () => {
+    const name = storedNamePart(`${"x".repeat(300)}.pdf`);
+    expect(name.length).toBe(120);
+    expect(name.endsWith(".pdf")).toBe(true);
+  });
+});
+
+describe("saving an upload", () => {
+  const configuredRoot = join(sandbox, "default-root");
+
+  it("keeps a traversal filename inside the upload folder", async () => {
+    const rel = await saveToTemp(Buffer.from("%PDF-1.4"), "../../../evil.pdf");
+    expect(rel).toMatch(/^import\/temp\/[0-9a-f-]{36}_evil\.pdf$/);
+    expect(existsSync(join(configuredRoot, rel))).toBe(true);
+    expect(existsSync(join(sandbox, "evil.pdf"))).toBe(false);
+    expect(displayName(rel)).toBe("evil.pdf");
+  });
+
+  it("names a company image by its sniffed type, not the client name", async () => {
+    const rel = await saveCompanyImage(Buffer.from([0xff, 0xd8, 0xff]), "jpeg");
+    expect(rel).toMatch(/^company\/[0-9a-f-]{36}\.jpg$/);
+    expect(existsSync(join(configuredRoot, rel))).toBe(true);
+  });
+});
+
+describe("deleteStatementFile", () => {
+  it("deletes the statement's file and its now-empty folder", () => {
+    putFile("reconciliation/k1/a_august.pdf");
+    deleteStatementFile("reconciliation/k1/a_august.pdf", root);
+    expect(existsSync(join(root, "reconciliation/k1"))).toBe(false);
+    expect(existsSync(join(root, "reconciliation"))).toBe(true);
+  });
+
+  it("keeps the folder while another file is in it", () => {
+    putFile("reconciliation/k2/a_august.pdf");
+    putFile("reconciliation/k2/b_other.pdf");
+    deleteStatementFile("reconciliation/k2/a_august.pdf", root);
+    expect(fileExists("reconciliation/k2/a_august.pdf", root)).toBe(false);
+    expect(fileExists("reconciliation/k2/b_other.pdf", root)).toBe(true);
+  });
+
+  it("touches nothing outside a statement folder", () => {
+    putFile("records/2026/08/receipt.pdf");
+    deleteStatementFile("records/2026/08/receipt.pdf", root);
+    deleteStatementFile("reconciliation/../records/2026/08/receipt.pdf", root);
+    expect(fileExists("records/2026/08/receipt.pdf", root)).toBe(true);
   });
 });

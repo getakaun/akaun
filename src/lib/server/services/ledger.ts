@@ -3,6 +3,7 @@ import { diffRecords, recordAudit } from "../audit.js";
 import { buildMovements } from "../ledger/entry-builder.js";
 import { ledgerEvents } from "../ledger/events.js";
 import { canDeleteRecord, canEditField } from "../ledger/locking.js";
+import { isReadOnlyKind } from "../ledger/record-permissions.js";
 import { remainderMinor, toMinor } from "../ledger/money.js";
 import type {
   BuildInput,
@@ -26,6 +27,8 @@ import {
   snapshotForAudit,
   updateRecord,
 } from "../queries/ledger.js";
+import { getInvoice, invoiceIdsForLedgerRecords } from "../queries/invoices.js";
+import { invoiceEvents } from "../finance/events.js";
 import { touchAccounts } from "./accounts.js";
 import { requireAccountDefault } from "./account-defaults.js";
 
@@ -141,24 +144,37 @@ export function createRecord(
     legacyId?: number | null;
   },
   deferredEmits?: DeferredEmits,
+  /**
+   * Who the audit trail names, when that is not the record's owner. An import
+   * is confirmed by one person into a record owned by whoever uploaded the
+   * document; the trail should say who confirmed it.
+   */
+  auditUserId?: number,
 ): Refusable<RecordView> {
   // A foreign currency is offered on an expense or income only — see
-  // `RecordForm.svelte`'s `looksLikeExpenseOrIncome`. Checked here, the one
-  // choke point every caller passes through (the records API, auto-import,
-  // reconciliation's transfer action, `services/invoices.ts`), rather than in
-  // each route (FR-031c's pattern: enforced on the server, never by hiding a
-  // control on just one of them). A rate other than 1 is what "foreign" means
-  // on a record — a main-currency one is always sent with `exchangeRate: 1` —
-  // so that alone is the signal, with no need to know the main currency itself.
+  // `RecordForm.svelte`'s `looksLikeExpenseOrIncome` — and on an invoice, whose
+  // issue posting carries the invoice's own currency and rate so the amount
+  // owed is `toMinor(total, rate)`. Checked here, the one choke point every
+  // caller passes through (the records API, auto-import, reconciliation's
+  // transfer action, `services/invoices.ts`), rather than in each route
+  // (FR-031c's pattern: enforced on the server, never by hiding a control on
+  // just one of them). A rate other than 1 is what "foreign" means on a record
+  // — a main-currency one is always sent with `exchangeRate: 1` — so that alone
+  // is the signal, with no need to know the main currency itself.
+  //
+  // The customer's payment is recorded in the main currency at that day's rate.
+  // When it differs from the invoice's rate the settlement leaves a few cents
+  // either way; there is no exchange gain/loss account to put them in.
   if (
     data.kind !== "expense" &&
     data.kind !== "income" &&
+    data.kind !== "invoice-issue" &&
     data.exchangeRate !== 1
   ) {
     return {
       ok: false,
       reason:
-        "Only expense and income records can be recorded in another currency.",
+        "Only expense, income and invoice records can be recorded in another currency.",
     };
   }
 
@@ -203,7 +219,7 @@ export function createRecord(
   recordAudit(db, {
     recordType: "record",
     recordId: row.id,
-    userId: actingUserId,
+    userId: auditUserId ?? actingUserId,
     action: "create",
   });
 
@@ -604,13 +620,31 @@ function sidesFor(
   }
 }
 
+/**
+ * Removes a record and both of its sides.
+ *
+ * An invoice's issue posting is refused: it is the invoice's to remove, when the
+ * invoice is voided, and deleting it from the records side would leave a sent
+ * invoice with nothing owed behind it. `allowReadOnlyKind` is for voiding the
+ * invoice itself, and `deferredEmits` for a caller running this inside its own
+ * transaction (see `DeferredEmits`).
+ */
 export function removeRecord(
   db: LedgerDb,
   id: number,
   actingUserId: number,
+  opts: { allowReadOnlyKind?: boolean; deferredEmits?: DeferredEmits } = {},
 ): Refusable<null> {
   const existing = getRecord(db, id);
   if (!existing) return { ok: false, reason: "That record no longer exists." };
+
+  if (isReadOnlyKind(existing.kind) && !opts.allowReadOnlyKind) {
+    return {
+      ok: false,
+      reason:
+        "This record was created by issuing an invoice. Cancel the invoice instead.",
+    };
+  }
 
   const allowed = canDeleteRecord(lockStateFor(db, id));
   if (!allowed.ok) return allowed;
@@ -629,8 +663,12 @@ export function removeRecord(
     action: "delete",
     changes: diffRecords(before, null),
   });
-  ledgerEvents.emit("record-deleted", { id });
-  touchAccounts(db, touched);
+  const emit = () => {
+    ledgerEvents.emit("record-deleted", { id });
+    touchAccounts(db, touched);
+  };
+  if (opts.deferredEmits) opts.deferredEmits.push(emit);
+  else emit();
   return { ok: true, value: null };
 }
 
@@ -638,12 +676,19 @@ export function removeRecord(
  * Tells every open view that a record's derived paid state may have moved,
  * without anyone having edited it. Settling is the one action that does that,
  * which is why it has its own event (contracts/events.md).
+ *
+ * An invoice's paid state is its issue posting's, so the invoices list hears
+ * about it too — otherwise a payment shows there only after a reload.
  */
 export function emitSettlementChanged(db: LedgerDb, recordIds: number[]): void {
   ledgerEvents.emit("settlement-changed", { recordIds });
   for (const id of recordIds) {
     const record = getRecord(db, id);
     if (record) ledgerEvents.emit("record-update", { record });
+  }
+  for (const invoiceId of invoiceIdsForLedgerRecords(db, recordIds)) {
+    const item = getInvoice(db, invoiceId);
+    if (item) invoiceEvents.emit("invoice-update", { item });
   }
 }
 

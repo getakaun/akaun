@@ -4,7 +4,6 @@
 	import {
 		Search,
 		Plus,
-		Calendar,
 		SlidersHorizontal,
 		X,
 		FileText
@@ -12,15 +11,15 @@
 	import StatusBadge from '$lib/components/ui/StatusBadge.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
-	import FilterDropdown from '$lib/components/ui/FilterDropdown.svelte';
+	import DateRangeFilter from '$lib/components/ui/DateRangeFilter.svelte';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import DatePicker from '$lib/components/ui/date-picker/DatePicker.svelte';
 	import { formatMoney, formatMoneyRM, formatDateShort } from '$lib/format.js';
 	import { mainCurrency, mainCurrencySymbol } from '$lib/currency-state.svelte.js';
 	import { formatCurrencyAmount } from '$lib/currency.js';
-	import { QuotationStatus, QuotationStatusLabels } from '$lib/enums.js';
+	import { QuotationStatus } from '$lib/enums.js';
+	import { quotationStatusKey } from '$lib/sales/status.js';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import type { loadQuotationsPage } from '$lib/server/loaders/quotations.js';
@@ -30,15 +29,6 @@
 	let {
 		data,
 	}: { data: PageData } = $props();
-
-	// Status tab id → QuotationStatus INT code
-	const STATUS_CODE: Record<string, number> = {
-		draft: QuotationStatus.Draft,
-		sent: QuotationStatus.Sent,
-		accepted: QuotationStatus.Accepted,
-		declined: QuotationStatus.Declined,
-		converted: QuotationStatus.Converted
-	};
 
 	// Local reactive list — updated by SSE events and re-synced on SvelteKit data reload
 	// svelte-ignore state_referenced_locally
@@ -50,6 +40,10 @@
 	// --- State ---
 	let searchRaw = $state('');
 	let search = $state('');
+	// Which ids the server matched for the current search term — server-side
+	// because the search text (notes, terms, line items) isn't part of the row
+	// already loaded into the browser. `null` means no search is active.
+	let searchMatchedIds = $state<Set<number> | null>(null);
 	let statusTab = $state('all');
 	let dateFrom = $state('');
 	let dateTo = $state('');
@@ -68,20 +62,67 @@
 		return () => clearTimeout(t);
 	});
 
+	// A keyword can live in a line item, a note or the terms — none of which is
+	// in the rows already loaded into the browser — so the term goes to the
+	// server instead of a client-only field check (the same as the invoices list).
+	$effect(() => {
+		const term = search.trim();
+		if (!term) {
+			searchMatchedIds = null;
+			return;
+		}
+		// A newer term (or clearing it) supersedes this request: a slow reply for
+		// "ab" must not land after the one for "abc".
+		let stale = false;
+		fetch(`/api/quotations?search=${encodeURIComponent(term)}&limit=500`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((rows: Quotation[] | null) => {
+				if (stale) return;
+				if (!rows) {
+					searchMatchedIds = new Set();
+					return;
+				}
+				quotations = mergeById(quotations, rows);
+				searchMatchedIds = new Set(rows.map((r) => r.id));
+			})
+			.catch(() => {
+				if (stale) return;
+				searchMatchedIds = new Set();
+			});
+		return () => {
+			stale = true;
+		};
+	});
+
 	// SSE — real-time updates from server
 	type QuotationStreamMsg =
 		| { type: 'quotation-update'; item: (typeof data.quotations)[0] }
 		| { type: 'quotation-delete'; id: number };
 
+	type Quotation = (typeof data.quotations)[0];
+
+	// Which tab a quotation belongs under. An expired draft or sent quote is
+	// listed under Expired only, the same as its badge says.
+	const IN_TAB: Record<string, (q: Quotation) => boolean> = {
+		draft: (q) => q.status === QuotationStatus.Draft && !q.isExpired,
+		sent: (q) => q.status === QuotationStatus.Sent && !q.isExpired,
+		accepted: (q) => q.status === QuotationStatus.Accepted,
+		declined: (q) => q.status === QuotationStatus.Declined,
+		converted: (q) => q.status === QuotationStatus.Converted,
+		superseded: (q) => q.status === QuotationStatus.Superseded,
+		expired: (q) => q.isExpired
+	};
+
 	// Derived counts (from local state for real-time accuracy)
 	const counts = $derived.by(() => ({
 		all: quotations.length,
-		draft: quotations.filter((q) => q.status === QuotationStatus.Draft).length,
-		sent: quotations.filter((q) => q.status === QuotationStatus.Sent).length,
-		accepted: quotations.filter((q) => q.status === QuotationStatus.Accepted).length,
-		declined: quotations.filter((q) => q.status === QuotationStatus.Declined).length,
-		converted: quotations.filter((q) => q.status === QuotationStatus.Converted).length,
-		expired: quotations.filter((q) => q.isExpired).length
+		draft: quotations.filter(IN_TAB.draft).length,
+		sent: quotations.filter(IN_TAB.sent).length,
+		accepted: quotations.filter(IN_TAB.accepted).length,
+		declined: quotations.filter(IN_TAB.declined).length,
+		converted: quotations.filter(IN_TAB.converted).length,
+		superseded: quotations.filter(IN_TAB.superseded).length,
+		expired: quotations.filter(IN_TAB.expired).length
 	}));
 
 	// Stats
@@ -105,21 +146,12 @@
 	// Filtered + sorted list
 	const filtered = $derived.by(() => {
 		let rows = quotations.slice();
-		if (statusTab === 'expired') {
-			rows = rows.filter((q) => q.isExpired);
-		} else if (statusTab !== 'all') {
-			rows = rows.filter((q) => q.status === STATUS_CODE[statusTab]);
-		}
+		if (statusTab !== 'all') rows = rows.filter(IN_TAB[statusTab]);
 		if (dateFrom) rows = rows.filter((q) => q.issueDate >= dateFrom);
 		if (dateTo) rows = rows.filter((q) => q.issueDate <= dateTo);
-		if (search.trim()) {
-			const s = search.toLowerCase();
-			rows = rows.filter(
-				(q) =>
-					q.quotationNumber.toLowerCase().includes(s) ||
-					(q.contactName ?? '').toLowerCase().includes(s) ||
-					(q.reference ?? '').toLowerCase().includes(s)
-			);
+		if (searchMatchedIds) {
+			const matched = searchMatchedIds;
+			rows = rows.filter((q) => matched.has(q.id));
 		}
 		rows.sort((a, b) => {
 			const ak = sort.key as keyof typeof a;
@@ -148,17 +180,6 @@
 		dateTo = '';
 		searchRaw = '';
 		statusTab = 'all';
-	}
-
-	// Derive the display status label — 'expired' overrides stored status for Draft/Sent
-	function getStatusLabel(q: { status: number; isExpired: boolean }): string {
-		if (
-			q.isExpired &&
-			(q.status === QuotationStatus.Draft || q.status === QuotationStatus.Sent)
-		) {
-			return 'expired';
-		}
-		return QuotationStatusLabels[q.status];
 	}
 
 	function quotationHref(id: number): string {
@@ -270,7 +291,7 @@
 			<!-- Toolbar -->
 			<div class="toolbar">
 				<div class="status-tabs">
-					{#each [['all', 'All'], ['draft', 'Draft'], ['sent', 'Sent'], ['accepted', 'Accepted'], ['declined', 'Declined'], ['converted', 'Converted'], ['expired', 'Expired']] as [id, label]}
+					{#each [['all', 'All'], ['draft', 'Draft'], ['sent', 'Sent'], ['accepted', 'Accepted'], ['declined', 'Declined'], ['converted', 'Converted'], ['superseded', 'Superseded'], ['expired', 'Expired']] as [id, label]}
 						<button
 							class="status-tab"
 							class:active={statusTab === id}
@@ -299,36 +320,7 @@
 							<X size={13} /> Clear
 						</button>
 					{/if}
-					<FilterDropdown label="Date" active={!!(dateFrom || dateTo)}>
-						{#snippet icon()}<Calendar size={14} />{/snippet}
-						<div style="padding:12px 14px;">
-							<div
-								style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;"
-							>
-								<div
-									style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted-foreground);"
-								>
-									Date range
-								</div>
-								{#if dateFrom || dateTo}
-									<button
-										onclick={() => {
-											dateFrom = '';
-											dateTo = '';
-										}}
-										style="border:none; background:none; color:var(--primary); cursor:pointer; font-size:11px; font-weight:600; padding:0;"
-										>Clear</button
-									>
-								{/if}
-							</div>
-							<div style="display:flex; flex-direction:column; gap:8px;">
-								<span style="font-size:11.5px; color:var(--muted-foreground);">From</span>
-								<DatePicker bind:value={dateFrom} placeholder="From date" />
-								<span style="font-size:11.5px; color:var(--muted-foreground);">To</span>
-								<DatePicker bind:value={dateTo} placeholder="To date" />
-							</div>
-						</div>
-					</FilterDropdown>
+					<DateRangeFilter variant="dropdown" bind:from={dateFrom} bind:to={dateTo} />
 				</div>
 			</div>
 
@@ -428,7 +420,7 @@
 									</a>
 								</td>
 								<td class="td-status" data-label="Status">
-									<StatusBadge status={getStatusLabel(q)} />
+									<StatusBadge status={quotationStatusKey(q)} />
 								</td>
 								<td class="td-date" data-label="Date">
 									{formatDateShort(q.issueDate)}<span class="td-year"
@@ -503,29 +495,7 @@
 				<div style="font-size:15px; font-weight:600;">Filters</div>
 				<Sheet.Close class="sheet-close"><X size={16} /></Sheet.Close>
 			</div>
-			<div style="margin-bottom:16px;">
-				<div
-					style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted-foreground); margin-bottom:10px; display:flex; align-items:center; justify-content:space-between;"
-				>
-					<span>Date range</span>
-					{#if dateFrom || dateTo}
-						<button
-							onclick={() => {
-								dateFrom = '';
-								dateTo = '';
-							}}
-							style="border:none; background:none; color:var(--primary); cursor:pointer; font-size:11px; font-weight:600;"
-							>Clear</button
-						>
-					{/if}
-				</div>
-				<div style="display:flex; flex-direction:column; gap:8px;">
-					<span style="font-size:11.5px; color:var(--muted-foreground);">From</span>
-					<DatePicker bind:value={dateFrom} placeholder="From date" />
-					<span style="font-size:11.5px; color:var(--muted-foreground);">To</span>
-					<DatePicker bind:value={dateTo} placeholder="To date" />
-				</div>
-			</div>
+			<DateRangeFilter variant="sheet" bind:from={dateFrom} bind:to={dateTo} />
 			<Button class="w-full" onclick={() => (mobileFilterOpen = false)}>Show results</Button>
 		</Sheet.Content>
 </Sheet.Root>
@@ -543,113 +513,6 @@
 		outline-offset: 2px;
 		border-radius: 4px;
 	}
-	.qt-lines {
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		overflow: hidden;
-	}
-
-	.qt-line {
-		display: grid;
-		grid-template-columns: 1fr auto auto;
-		gap: 12px;
-		padding: 10px 14px;
-		border-bottom: 1px solid var(--border);
-		align-items: start;
-	}
-
-	.qt-line:last-child {
-		border-bottom: none;
-	}
-
-	.qt-line-desc {
-		font-size: 13.5px;
-		color: var(--foreground);
-	}
-
-	.qt-line-meta {
-		font-size: 12px;
-		color: var(--muted-foreground);
-		white-space: nowrap;
-		text-align: right;
-	}
-
-	.qt-line-total {
-		font-size: 13px;
-		font-weight: 500;
-		color: var(--foreground);
-		white-space: nowrap;
-		text-align: right;
-		min-width: 80px;
-	}
-
-	.qt-lines-total {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		padding: 10px 14px;
-		background: var(--accent);
-		border-top: 1px solid var(--border);
-	}
-
-	.qt-lines-total-label {
-		font-size: 12.5px;
-		font-weight: 600;
-		color: var(--muted-foreground);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-	}
-
-	.qt-lines-total-val {
-		font-size: 14px;
-		font-weight: 600;
-		color: var(--foreground);
-	}
-
-	.linked-invoice-card {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		width: 100%;
-		padding: 10px 12px;
-		margin-top: 12px;
-		margin-bottom: 4px;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		background: var(--background);
-		text-align: left;
-		font-family: inherit;
-	}
-
-	.linked-invoice-icon {
-		width: 34px;
-		height: 34px;
-		border-radius: 7px;
-		background: var(--accent);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		color: var(--foreground);
-	}
-
-	.linked-invoice-body {
-		flex: 1;
-		min-width: 0;
-	}
-
-	.linked-invoice-title {
-		font-size: 13.5px;
-		font-weight: 500;
-		color: var(--foreground);
-	}
-
-	.linked-invoice-sub {
-		font-size: 12px;
-		color: var(--muted-foreground);
-		margin-top: 1px;
-	}
-
 	.result-total {
 		color: var(--muted-foreground);
 	}

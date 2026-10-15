@@ -4,8 +4,9 @@ sidebar_position: 7
 
 # Foreign currency
 
-Your book has one main currency. You can also record an expense or an income in a different
-currency. This page tells how Akaun changes a foreign amount into the main currency.
+Your book has one main currency. You can also record an expense, an income, a quotation or an
+invoice in a different currency. This page tells how Akaun changes a foreign amount into the main
+currency.
 
 ## The main currency
 
@@ -54,6 +55,17 @@ record amount is 450.00 MYR.
 
 The **Records** screen shows the main-currency amount. Under it, the screen shows the foreign
 amount and its currency.
+
+## A quotation or an invoice in a foreign currency
+
+A quotation and an invoice have their own **Currency** field and rate field. The line items and
+the PDF use the currency of the document.
+
+When you mark an invoice in a foreign currency as sent, Akaun records the amount in the main
+currency. It uses the rate of the invoice. A payment from the customer is always in the main
+currency. If the rate on the day of the payment is different, a few cents can stay outstanding on
+the invoice. Akaun has no account for exchange gains and losses, so it cannot clear this
+difference. See [Invoices](../05-sales/invoices.md#an-invoice-in-a-foreign-currency).
 
 ## Reports use the main currency
 

@@ -869,7 +869,7 @@
 							{job}
 							busy={skippingGroups[job.id] ?? false}
 							error={confirmErrors[job.id] ?? null}
-							onskip={data.perms.change ? () => askSkipGroup(job) : undefined}
+							onskip={data.perms.confirm ? () => askSkipGroup(job) : undefined}
 						/>
 					{/each}
 					{#each review as job (job.id)}

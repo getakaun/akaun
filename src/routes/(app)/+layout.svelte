@@ -34,7 +34,8 @@
 		user={data.user}
 		activePage={$page.url.pathname}
 		unpaidCount={data.unpaidCount}
-		isSuperuser={data.isSuperuser}
+		canManageUsers={data.canManageUsers}
+		canSeeSettings={data.canSeeSettings}
 		navItems={data.navItems}
 	/>
 	<main class="main">
@@ -55,7 +56,8 @@
 <MobileDrawer
 	bind:open={drawerOpen}
 	user={data.user}
-	isSuperuser={data.isSuperuser}
+	canManageUsers={data.canManageUsers}
+		canSeeSettings={data.canSeeSettings}
 	navItems={data.navItems}
 />
 

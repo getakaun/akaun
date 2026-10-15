@@ -1,6 +1,6 @@
 # MCP and record-description standardization plan
 
-Date: 2026-10-03. Status: phase one implemented; phase two remains proposed. See [MCP.md](MCP.md) for the implemented connection and tool contracts. The remaining sections preserve design intent; limits and interfaces in MCP.md describe the shipped phase-one behavior.
+Date: 2026-10-03; phase two revised 2026-10-15. Status: phase one implemented; phase two implemented as **direct, gated writes** (see "Phase two as built" below), replacing the review-batch design. See [MCP.md](MCP.md) for the implemented connection and tool contracts. The remaining sections preserve design intent; limits and interfaces in MCP.md describe the shipped behavior.
 
 ## Recommendation and pain points
 
@@ -151,7 +151,18 @@ Illustrative examples, only when supported by the source:
 
 The existing service permits description changes on settled/reconciled ordinary records without rebuilding movements. The record REST route separately forbids edits to invoice-issue records; the cleanup service must preserve that restriction rather than bypass it through a direct `patchRecord` call. Support invoice-source edits later through the invoice service if desired.
 
-## Phase two: deeper analysis and reviewed cleanup
+## Phase two as built (2026-10-15)
+
+The maintainer chose direct writes over the review-batch workflow proposed below: an agent with change access edits the books immediately, as the user could, instead of filing proposals for in-app approval. What makes that safe enough:
+
+- **Two gates per call.** A write needs the OAuth scope (`<resource>:write`, or `<resource>:delete` for permanent removal) **and** the user's RBAC ability, checked at discovery and again at call time. Delete scopes are separate and never pre-selected. Personal access tokens carry their own fine-grained permissions (the raw phase-one API tokens were revoked); see dev-notes/PERMISSIONS.md.
+- **One authorized operation per write**, in `src/lib/server/application/`, called by the REST route and the MCP tool alike. Moving the route-only rules there (adjustments gate, payment + settlements, sealing of sent documents, the new-contact check) closed several REST gaps at the same time: an explicit `kind: "journal"` now needs `adjustments:add`; a patch restating `extraSides` runs the everyday test; issuing an invoice needs `records:add` and a Revenue account; voiding needs `records:change`; a transfer from a bank line needs `records:add` and emits after commit; matching emits `record-update`; a matched line's amount and direction are locked; an opening balance needs `records:add`/`change` and emits ledger events; a new customer named on an invoice or quotation needs `contacts:add`. Import confirm stays on `import:change` alone (006 FR-045), but its audit row now names the confirmer.
+- **Optimistic concurrency** with content-hash `version` tokens (`application/version.ts`), returned by every read and required by every update, delete and lifecycle tool.
+- **Payment + settlements in one transaction**, with SSE emits deferred to commit.
+
+The description-cleanup use case is served by the `review-record-descriptions` prompt plus `update_record`: the agent proposes a table, the user approves rows in the conversation, and the agent applies them with versions. No review tables were added. The reads in the table below that are not yet built (`aggregate_records`, `find_description_candidates`, contact duplicate preview) remain open.
+
+## Phase two: deeper analysis and reviewed cleanup (original proposal, superseded)
 
 Add tools in this order, based on observed phase-one use:
 

@@ -12,9 +12,11 @@ To open the settings, click **Settings** in the sidebar. The tabs are **General*
 
 :::info
 
-**Settings** has no permission. All users who can sign in can open it and change most settings.
-On the **Groups** tab in **Users & Groups**, the text for a superuser group says that settings are
-for superusers only. This is not correct at this time. See [Permissions explained](./permissions-explained.md#settings).
+To open **Settings**, you need the **View** permission on **Settings**. To change a setting, you
+need the **Manage** permission on **Settings**. Without **Manage**, Akaun shows all the tabs as read
+only, with a note at the top. The groups that Akaun makes give **View** only. Thus at the start,
+only a superuser can change the settings. Akaun never shows the key of an AI provider. See
+[Permissions explained](./permissions-explained.md#settings).
 
 :::
 
@@ -83,12 +85,17 @@ tokens and the **Save** button do not show, and you cannot change the format.
 Akaun shows these details on printed quotations and invoices.
 
 - **Logo**: click **Upload** to add a JPEG or PNG image of 5 MB or smaller. Click **Replace** to
-  use a different image, or **Remove** to remove it.
+  use a different image, or **Remove** to remove it. At this time, the logo does not print on
+  quotations or invoices.
+- **Letterhead**: a JPEG or PNG image of 5 MB or smaller, usually a wide banner with your logo,
+  name and address. It prints at the top of quotations and invoices, in place of the company name,
+  when **Header** on the **Templates** tab is **Letterhead**. **Upload**, **Replace** and **Remove**
+  work as for the logo.
 - **Company Name**: the name of the business.
 - **Address**: the address of the business.
 - **Registration No.**: the registration number of the business.
 
-Click **Save** to save the four fields.
+Click **Save** to save the fields.
 
 ## Books
 
@@ -114,8 +121,15 @@ accounts that fit the default.
 | **Uncategorised income** | An imported income with no matching revenue account. |
 
 Click **Save defaults** to save. Akaun shows **Default accounts updated**. To change a default,
-you need the **Change** permission on **Accounts**. Without it, the lists and the button are
-not available.
+you need the **Change** permission on **Accounts** and the **Manage** permission on **Settings**.
+Without them, the lists and the button are not available.
+
+:::caution
+
+Do not change **Accounts receivable** after you send invoices. A payment from a customer then
+cannot settle an invoice that you sent before the change.
+
+:::
 
 See [Prepare your book](../01-getting-started/set-up-your-book.md#6-check-the-default-accounts).
 
@@ -138,8 +152,7 @@ when the conversion had to make decisions without you. Each part lists the recor
 conversion changed, for example **Uncategorised records** or **Files that could not be found**.
 Check each record in the list.
 
-One message in this part names the folder `data/backups`. This is not correct. Akaun keeps the
-previous files in a `pre-chart-` folder next to the database. See
+Akaun keeps the previous files in a `pre-chart-` folder next to the database. See
 [Backups and upgrades](./backups-and-upgrades.md#what-happens-at-the-first-start).
 
 ## Intelligence
@@ -155,14 +168,32 @@ See [Connect an AI provider](../04-auto-import/connect-an-ai-provider.md) and
 
 ## Templates
 
-The **Templates** tab controls printed quotations and invoices.
+The **Templates** tab controls printed quotations and invoices, and the terms that new ones start
+with.
+
+Under **Printed documents**:
 
 - **Layout**: shows **Standard**. At this time, Akaun has one layout only, and you cannot change
   it.
 - **Accent color**: the color of the printed documents. Choose a preset color, or choose a
   different color.
+- **Header**: what prints at the top of the page. **Company name** prints the name as text.
+  **Letterhead** prints the letterhead image from the **Company** tab in its place. The layout
+  decides where the header goes. You can choose **Letterhead** only after you upload a letterhead.
+  If you later remove the letterhead, the documents print the company name again.
 
-Click **Save** to save the color.
+Under **Default terms**:
+
+- **Invoice due in (days)**: a new invoice is due this number of days after its issue date. Type
+  0 for due on receipt. Leave it empty for no due date.
+- **Quotation valid for (days)**: a new quotation expires this number of days after its issue
+  date. Leave it empty for no expiry date.
+
+Type a whole number from 0 to 365. The default for each setting is 30. A change applies only to new
+invoices and quotations. The due date of an invoice that you make from a quotation also comes from
+**Invoice due in (days)**.
+
+Click **Save** to save the color and the terms.
 
 ## Advanced
 

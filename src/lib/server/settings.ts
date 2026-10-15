@@ -31,10 +31,22 @@ export const SETTING_KEYS = {
   companyAddress: "company.address",
   companyRegistrationNo: "company.registrationNo",
   companyLogoPath: "company.logoPath",
+  companyLetterheadPath: "company.letterheadPath",
   pdfInvoiceLayoutKey: "pdf.invoiceLayoutKey",
   pdfQuotationLayoutKey: "pdf.quotationLayoutKey",
   pdfThemeColor: "pdf.themeColor",
+  // What a PDF prints at the top: the company name as text, or the letterhead
+  // image. A choice of content, so it is one setting for every layout.
+  pdfHeader: "pdf.header",
   sequenceTemplate: "documentNumbers.template",
+  // Days from issue to due (invoices) and to expiry (quotations) that a new
+  // document starts with. Read through `documentDefaults` in
+  // sales/defaults.ts, which owns the parsing: unset means 30, empty means none.
+  invoiceDueDays: "documents.invoiceDueDays",
+  quotationValidDays: "documents.quotationValidDays",
+  // Set once the default groups have been written, so a default group an
+  // administrator deleted is not written again (admin/seed-groups.ts).
+  groupsSeeded: "groups.seeded",
 } as const;
 
 export function getSetting(

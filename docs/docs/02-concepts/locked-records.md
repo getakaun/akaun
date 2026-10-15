@@ -65,10 +65,21 @@ When nothing settles or matches the record, it is unlocked. You can then change 
 
 ## Records made by an invoice
 
-When you send an invoice, Akaun makes an **Invoice** record. You cannot change or delete this
-record on its record page. The record page tells you to change it on the invoice. After you send
-an invoice, you cannot change its amounts on the invoice page either. See
-[Invoices](../05-sales/invoices.md).
+When you mark an invoice as sent, Akaun makes an **Invoice** record. This record belongs to the
+invoice:
+
+- All fields on its record page are read only. A note above the form says "This record was created
+  by issuing an invoice. Change it on the invoice instead."
+- **Delete** on its record page is disabled. Put the pointer on it to see the reason: "Cancel the
+  invoice instead".
+- A delete of many records on the **Records** list does not delete it. Akaun deletes the other
+  selected records and shows the reason.
+- The **Invoice** card in the rail opens the invoice.
+
+On the invoice page, you can still change the due date, the reference, the notes and the terms.
+You cannot change the customer, the issue date, the currency or the lines. To remove the
+**Invoice** record from the books, cancel the invoice. See
+[Cancel an invoice](../05-sales/invoices.md#cancel-an-invoice).
 
 ## Related
 

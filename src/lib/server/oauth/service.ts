@@ -1,7 +1,7 @@
 import OAuth2Server from "@node-oauth/oauth2-server";
 import basicAuth from "basic-auth";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { and, eq, gt, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 import type { LedgerDb } from "../ledger/types.js";
 import {
   oauthClients,
@@ -11,9 +11,15 @@ import {
   oauthTokens,
   users,
 } from "../db/schema.js";
-import { getEffectivePermissions } from "../permissions.js";
-import { bearerLocals } from "../bearer-auth.js";
-import { OAUTH_SCOPES, type OAuthConfig, type OAuthScope } from "./config.js";
+import { resolveAccess } from "../permissions.js";
+import { expandScopes } from "$lib/permissions/oauth-scopes.js";
+import { LAST_USED_WRITE_MS, patLocals } from "../tokens/pat.js";
+import {
+  OAUTH_SCOPES,
+  READ_SCOPES,
+  type OAuthConfig,
+  type OAuthScope,
+} from "./config.js";
 import { allowedScopes } from "./scopes.js";
 
 const DAY = 86400_000;
@@ -56,7 +62,9 @@ export function oauthError(error: unknown) {
   return oauthJson({ error: "server_error" }, 500);
 }
 export function parseScopes(scope: string | undefined): OAuthScope[] {
-  const scopes = scope === undefined ? [...OAUTH_SCOPES] : scope.split(" ");
+  // A client that names no scope gets reads only. A write or delete scope is
+  // always asked for by name, so no existing client gains one by upgrading.
+  const scopes = scope === undefined ? [...READ_SCOPES] : scope.split(" ");
   if (
     !scopes.length ||
     scopes.some((s) => !OAUTH_SCOPES.includes(s as OAuthScope))
@@ -599,10 +607,11 @@ export function createOAuth(db: LedgerDb, config: OAuthConfig) {
     selected: string[],
     approve: boolean,
   ) {
-    if (!locals.user || locals.oauth)
+    // Consent is given in a browser session only: never by a token or an app.
+    if (!locals.user || locals.credential || !locals.role)
       throw new OAuthFailure("access_denied", 403);
     const p = pending(id, browser);
-    const allowed = allowedScopes(locals);
+    const allowed = allowedScopes(locals.role);
     if (
       approve &&
       (!selected.length ||
@@ -701,7 +710,7 @@ export function createOAuth(db: LedgerDb, config: OAuthConfig) {
     const match = header?.match(/^Bearer ([^\s]+)$/i);
     if (!match) return null;
     if (!match[1].startsWith("akno_") && !match[1].startsWith("aknr_"))
-      return bearerLocals(db, header);
+      return patLocals(db, header);
     if (!match[1].startsWith("akno_")) return null;
     try {
       const token = await protocol(config.resource).authenticate(
@@ -716,18 +725,38 @@ export function createOAuth(db: LedgerDb, config: OAuthConfig) {
       );
       const u = user(token.user.id as number);
       if (!u) return null;
+      // Throttled like a personal access token's: a busy client must not turn
+      // every read into a write.
+      const now = Date.now();
       db.update(oauthGrants)
-        .set({ lastUsedAt: Date.now() })
-        .where(eq(oauthGrants.id, token.user.grantId as string))
+        .set({ lastUsedAt: now })
+        .where(
+          and(
+            eq(oauthGrants.id, token.user.grantId as string),
+            or(
+              isNull(oauthGrants.lastUsedAt),
+              lt(oauthGrants.lastUsedAt, now - LAST_USED_WRITE_MS + 1),
+            ),
+          ),
+        )
         .run();
+      const scopes = token.scope as OAuthScope[];
       return {
         user: u,
-        ...getEffectivePermissions(db, u.id),
+        // What the app may do: its scopes, expanded to catalog permissions,
+        // ∩ the user's role ∩ their groups' delegation ceiling — on every
+        // request, so narrowing either takes effect at once.
+        ...resolveAccess(db, u.id, expandScopes(scopes)),
+        credential: {
+          kind: "oauth" as const,
+          grantId: token.user.grantId as string,
+          clientId: token.client.id,
+        },
         oauth: {
           clientId: token.client.id,
           grantId: token.user.grantId as string,
           resource: config.resource,
-          scopes: token.scope as OAuthScope[],
+          scopes,
         },
       };
     } catch (error) {

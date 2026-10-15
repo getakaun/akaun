@@ -10,16 +10,15 @@ import {
   registerRead,
   date,
   checkDateRange,
-  ReadError,
-  type ReadContext,
+  McpToolError,
+  type McpContext,
 } from "../common.js";
 
-export function registerReports(server: McpServer, context: ReadContext) {
+export function registerReports(server: McpServer, context: McpContext) {
   registerRead(
     server,
     context,
     "get_financial_report",
-    ["reports"],
     "Read the app's canonical financial report in main-currency minor units. balance-sheet requires asAt only; other types require inclusive dateFrom/dateTo only. Preserve report notes about incomplete history or accounts needing classification. Totals come from ledger movements, never a sum of record display amounts. Account lines have list_records drill-down filters; cash-flow lines represent activities rather than individual accounts.",
     {
       type: z.enum([
@@ -35,7 +34,7 @@ export function registerReports(server: McpServer, context: ReadContext) {
     (input) => {
       if (input.type === "balance-sheet") {
         if (!input.asAt || input.dateFrom || input.dateTo)
-          throw new ReadError(
+          throw new McpToolError(
             "INVALID_INPUT",
             "balance-sheet requires asAt and does not accept dateFrom/dateTo.",
           );
@@ -58,7 +57,7 @@ export function registerReports(server: McpServer, context: ReadContext) {
         };
       }
       if (!input.dateFrom || !input.dateTo || input.asAt)
-        throw new ReadError(
+        throw new McpToolError(
           "INVALID_INPUT",
           "This report requires dateFrom and dateTo and does not accept asAt.",
         );

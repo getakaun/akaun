@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { badRequest, forbidden, refused } from "$lib/server/api-response.js";
 import { accountEvents } from "$lib/server/ledger/events.js";
 import {
@@ -33,12 +33,12 @@ const replaceSchema = z
   .strict();
 
 export const GET: RequestHandler = async ({ locals }) => {
-  if (!hasPermission(locals, "accounts", "view")) return forbidden();
+  if (!can(locals, "accounts.read")) return forbidden();
   return Response.json({ defaults: getAccountDefaults(db) });
 };
 
 export const PUT: RequestHandler = async ({ locals, request }) => {
-  if (!hasPermission(locals, "accounts", "change")) return forbidden();
+  if (!can(locals, "accounts.update")) return forbidden();
   const parsed = replaceSchema.safeParse(
     await request.json().catch(() => null),
   );

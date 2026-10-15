@@ -1,6 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { auditLog, users } from "./db/schema.js";
+import type { LeafPermission } from "$lib/permissions/catalog.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = BunSQLiteDatabase<any>;
@@ -25,6 +26,29 @@ export type RecordType =
   // A saved way of reading a document (006 FR-038).
   | "import_profile";
 export type AuditAction = "create" | "update" | "delete";
+
+/**
+ * Which permission gates reading each kind of audit trail. The trail is read
+ * from a page the user already had to be allowed to open.
+ *
+ * 'expense' and 'income' survive for entries written before the ledger
+ * upgrade; every ledger write since is a 'record'. All three are gated on
+ * `records`: there is one ability for every kind of record.
+ */
+export const AUDIT_PERMISSION: Record<RecordType, LeafPermission> = {
+  expense: "records.read",
+  income: "records.read",
+  record: "records.read",
+  account: "accounts.read",
+  settlement: "records.read",
+  contact: "contacts.read",
+  quotation: "quotations.read",
+  invoice: "invoices.read",
+  reconciliation: "reconciliation.read",
+  // Anyone who may see the import screen may read how a profile changed;
+  // changing one needs import.change (006 FR-045).
+  import_profile: "import.read",
+};
 export type FieldChange = { field: string; before: unknown; after: unknown };
 
 // Bookkeeping columns, not user-visible edits — never worth showing in a diff.

@@ -1,7 +1,7 @@
 import { json } from "@sveltejs/kit";
 import { db } from "$lib/server/db/client.js";
 import { forbidden, refused } from "$lib/server/api-response.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { confirmGroupItem } from "$lib/server/services/import-items.js";
 import type { RequestHandler } from "./$types.js";
 
@@ -15,7 +15,7 @@ import type { RequestHandler } from "./$types.js";
  */
 export const POST: RequestHandler = async ({ locals, params }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "import", "change")) return forbidden();
+  if (!can(locals, "import.confirm")) return forbidden();
 
   const confirmed = await confirmGroupItem(db, params.jobId, params.itemId, {
     actingUserId: locals.user.id,

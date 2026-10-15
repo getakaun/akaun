@@ -1,7 +1,10 @@
 import { error, redirect } from "@sveltejs/kit";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
-import { workspace } from "$lib/server/services/reconciliation.js";
+import { can } from "$lib/server/permissions.js";
+import {
+  transferTargetIds,
+  workspace,
+} from "$lib/server/services/reconciliation.js";
 import { suggestLinesForMovement } from "$lib/server/reconciliation/suggestions.js";
 import { getAccount } from "$lib/server/queries/accounts.js";
 
@@ -20,14 +23,13 @@ import { getAccount } from "$lib/server/queries/accounts.js";
  */
 
 function permissionsOf(locals: App.Locals) {
-  return (
-    locals.permissions?.reconciliation ?? {
-      view: false,
-      add: false,
-      change: false,
-      delete: false,
-    }
-  );
+  return {
+    view: can(locals, "reconciliation.read"),
+    add: can(locals, "reconciliation.create"),
+    change: can(locals, "reconciliation.update"),
+    match: can(locals, "reconciliation.match"),
+    delete: can(locals, "reconciliation.delete"),
+  };
 }
 
 /** The account whose statements these are, or a refusal (FR-049). */
@@ -45,8 +47,7 @@ function postingAccountOr404(accountId: number) {
 
 /** The statements for one account, and how far each has got (FR-050). */
 export function loadAccountStatements(locals: App.Locals, accountId: number) {
-  if (!hasPermission(locals, "reconciliation", "view"))
-    throw redirect(302, "/dashboard");
+  if (!can(locals, "reconciliation.read")) throw redirect(302, "/dashboard");
 
   const account = postingAccountOr404(accountId);
   const result = workspace(db, locals);
@@ -69,8 +70,7 @@ export function loadStatementMatch(
   from?: string | null,
   to?: string | null,
 ) {
-  if (!hasPermission(locals, "reconciliation", "view"))
-    throw redirect(302, "/dashboard");
+  if (!can(locals, "reconciliation.read")) throw redirect(302, "/dashboard");
 
   const account = postingAccountOr404(accountId);
   const result = workspace(db, locals, from, to);
@@ -118,6 +118,14 @@ export function loadStatementMatch(
     movements,
     allocations,
     accounts: result.accounts,
+    // The accounts the Transfer sheet may offer: the same rule the service
+    // applies when the transfer is saved.
+    transferTargetIds: transferTargetIds(
+      db,
+      locals,
+      accountId,
+      result.accounts.map((a) => a.id),
+    ),
     permissions: permissionsOf(locals),
   };
 }

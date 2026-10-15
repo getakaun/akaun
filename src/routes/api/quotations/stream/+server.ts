@@ -1,62 +1,30 @@
-import { quotationEvents } from '$lib/server/finance/events.js';
-import type { RequestHandler } from './$types.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import type { RequestHandler } from "./$types.js";
+import { can } from "$lib/server/permissions.js";
+import { forbidden } from "$lib/server/api-response.js";
+import { quotationEvents } from "$lib/server/finance/events.js";
+import { eventStream } from "$lib/server/sse-stream.js";
 
+/**
+ * Live updates for the Quotations list.
+ *
+ *   quotation-update { item } — the full list row
+ *   quotation-delete { id }
+ *
+ * No snapshot on connect: the list is paginated, so SSR gives the first state
+ * and this carries only the changes. A dropped connection reconnects and the
+ * next event corrects the row; a reload gets the truth (CLAUDE.md).
+ */
 export const GET: RequestHandler = ({ locals }) => {
-	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'quotations', 'view')) return new Response('Forbidden', { status: 403 });
+  if (!locals.user) return new Response("Unauthorized", { status: 401 });
+  if (!can(locals, "quotations.read")) return forbidden();
 
-	const encoder = new TextEncoder();
-	const encodeEvent = (data: object) => encoder.encode(`data: ${JSON.stringify(data)}\n\n`);
-	const encodeComment = (text: string) => encoder.encode(`: ${text}\n\n`);
-
-	let cleanup: (() => void) | null = null;
-
-	const stream = new ReadableStream({
-		start(controller) {
-			const updateHandler = ({ item }: { item: unknown }) => {
-				try {
-					controller.enqueue(encodeEvent({ type: 'quotation-update', item }));
-				} catch {
-					// stream closed
-				}
-			};
-
-			const deleteHandler = ({ id }: { id: number }) => {
-				try {
-					controller.enqueue(encodeEvent({ type: 'quotation-delete', id }));
-				} catch {
-					// stream closed
-				}
-			};
-
-			quotationEvents.on('quotation-update', updateHandler);
-			quotationEvents.on('quotation-delete', deleteHandler);
-
-			const heartbeat = setInterval(() => {
-				try {
-					controller.enqueue(encodeComment('heartbeat'));
-				} catch {
-					clearInterval(heartbeat);
-				}
-			}, 15000);
-
-			cleanup = () => {
-				clearInterval(heartbeat);
-				quotationEvents.off('quotation-update', updateHandler);
-				quotationEvents.off('quotation-delete', deleteHandler);
-			};
-		},
-		cancel() {
-			cleanup?.();
-		}
-	});
-
-	return new Response(stream, {
-		headers: {
-			'Content-Type': 'text/event-stream',
-			'Cache-Control': 'no-cache',
-			'X-Accel-Buffering': 'no'
-		}
-	});
+  return eventStream([
+    {
+      emitter: quotationEvents,
+      events: {
+        "quotation-update": "quotation-update",
+        "quotation-delete": "quotation-delete",
+      },
+    },
+  ]);
 };

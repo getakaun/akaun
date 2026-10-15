@@ -9,8 +9,9 @@ it, and then confirm it. Akaun saves no record until you confirm.
 
 :::info
 
-To confirm or skip a card, you need the **Change** permission on **Auto Import**. Without it,
-the buttons still show, but Akaun refuses the action.
+To confirm or skip a card, you need the **Confirm** permission on **Auto Import**. You do not need
+a permission on **Records**. Without **Confirm**, the buttons still show, but Akaun refuses the
+action. To correct the fields of a card, you need the **Change** permission on **Auto Import**.
 
 :::
 

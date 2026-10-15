@@ -29,7 +29,7 @@ The kind tells what a record is. The **Records** screen shows the kind of each r
 | **Transfer** | Money that moves between two of your own accounts. | Money goes from one money account into a different money account, for example from **Bank** to **Cash**. |
 | **Payment** | Money that pays an amount that is owed. | Money goes out of a money account to pay what the business owes. Or money from a customer comes into a money account to pay what the customer owes. |
 | **Opening balance** | The money in an account on the day that you start to use Akaun. | You give an account a starting balance on its account page. |
-| **Invoice** | The amount that a customer owes for an invoice. | You send an invoice. Akaun makes this record for you. |
+| **Invoice** | The amount that a customer owes for an invoice. | You mark an invoice as sent. Akaun makes this record for you. If you cancel the invoice, Akaun removes it. |
 | **Journal entry** | A record that does not fit the other kinds. Usually it is a correction. | The accounts on the record do not match an everyday kind, or the record has extra lines that are not an everyday split. |
 
 A money account is an account where money is kept, for example **Cash** or **Bank**. A

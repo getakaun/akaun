@@ -4,14 +4,15 @@ import {
   getContact,
   getContactUsageCounts,
 } from "$lib/server/queries/contacts.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 
 // Backs the manual multi-select merge flow: an arbitrary, user-picked id list
 // has no pre-computed cluster, so the comparison view fetches contacts + usage here.
 export const POST: RequestHandler = async ({ locals, request }) => {
   if (
-    !hasPermission(locals, "contacts", "change") ||
-    !hasPermission(locals, "contacts", "delete")
+    !can(locals, "contacts.merge") ||
+      !can(locals, "contacts.update") ||
+      !can(locals, "contacts.delete")
   ) {
     return new Response("Forbidden", { status: 403 });
   }

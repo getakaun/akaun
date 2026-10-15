@@ -139,6 +139,8 @@ export const QuotationStatus = {
   Accepted: 3,
   Declined: 4,
   Converted: 5,
+  // Replaced by a revision. Reached only by revising; never set by hand.
+  Superseded: 6,
 } as const;
 // reserved (DERIVED, never stored): Expired — expiry_date < today && status ∈ {Draft, Sent}
 export type QuotationStatusCode =
@@ -149,6 +151,7 @@ export const QuotationStatusLabels: Record<number, string> = {
   [QuotationStatus.Accepted]: "accepted",
   [QuotationStatus.Declined]: "declined",
   [QuotationStatus.Converted]: "converted",
+  [QuotationStatus.Superseded]: "superseded",
 };
 export const quotationStatusEnum = makeEnum(QuotationStatusLabels);
 

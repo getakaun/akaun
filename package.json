@@ -15,7 +15,7 @@
     "test:unit": "bun --bun vitest",
     "test:client": "vitest --run --project client",
     "test": "bun run test:unit -- --run --project server && bun run test:client",
-    "test:mcp": "bun test --preload ./scripts/mcp-test-preload.ts src/lib/server/mcp/mcp.spec.ts src/lib/server/queries/settlements.spec.ts src/lib/server/queries/accounts.spec.ts src/lib/server/services/ledger.spec.ts src/lib/server/services/settlements.spec.ts src/lib/server/import/providers/shared.spec.ts",
+    "test:mcp": "bun test --preload ./scripts/mcp-test-preload.ts src/lib/server/mcp/mcp.spec.ts src/lib/server/mcp/mcp-write.spec.ts src/lib/server/application/records.spec.ts src/lib/server/queries/settlements.spec.ts src/lib/server/queries/accounts.spec.ts src/lib/server/services/ledger.spec.ts src/lib/server/services/settlements.spec.ts src/lib/server/import/providers/shared.spec.ts",
     "test:chart": "bun run test:unit -- --run --project server src/lib/server/ledger/account-type.spec.ts src/lib/server/ledger/account-code.spec.ts src/lib/server/ledger/account-eligibility.spec.ts src/lib/server/services/accounts.spec.ts src/lib/server/services/account-defaults.spec.ts src/lib/server/services/account-migration.spec.ts src/lib/server/db/auto-upgrade.spec.ts",
     "db:generate": "drizzle-kit generate",
     "desktop:dev": "tauri dev",

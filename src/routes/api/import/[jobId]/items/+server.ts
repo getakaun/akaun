@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "$lib/server/db/client.js";
 import { importQueue } from "$lib/server/db/schema.js";
 import { forbidden, notFound } from "$lib/server/api-response.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { listGroupItems } from "$lib/server/services/import-items.js";
 import type { RequestHandler } from "./$types.js";
 
@@ -17,7 +17,7 @@ import type { RequestHandler } from "./$types.js";
  */
 export const GET: RequestHandler = ({ locals, params }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "import", "view")) return forbidden();
+  if (!can(locals, "import.read")) return forbidden();
 
   const job = db
     .select({ id: importQueue.id })

@@ -5,6 +5,8 @@ import {
   contacts,
   contactRoles,
   contactSearchText,
+  accounts,
+  importItems,
   importQueue,
   ledgerRecords,
   quotations,
@@ -275,14 +277,29 @@ export function isContactReferenced(db: Db, id: number): boolean {
     .get();
   if (invoiceRef) return true;
 
-  return false;
+  return isPartnerAccountOwner(db, id);
+}
+
+/**
+ * Does an account belong to this contact — a partner's capital or drawings
+ * (002 FR-008b)? `accounts.contact_id` is ON DELETE SET NULL, so deleting the
+ * contact would quietly leave the account owned by nobody, and the partner
+ * statement would drop it.
+ */
+function isPartnerAccountOwner(db: Db, id: number): boolean {
+  return !!db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(eq(accounts.contactId, id))
+    .get();
 }
 
 /** The sentence the disabled delete button shows, or null when deletion is free (FR-009a). */
 export function cannotDeleteContactReason(db: Db, id: number): string | null {
-  return isContactReferenced(db, id)
-    ? "Records name this contact, so it cannot be deleted. Archive it instead — everything already recorded stays exactly as it is."
-    : null;
+  if (!isContactReferenced(db, id)) return null;
+  return isPartnerAccountOwner(db, id)
+    ? "An account belongs to this contact as a partner, so it cannot be deleted. Archive it instead."
+    : "Records name this contact, so it cannot be deleted. Archive it instead — everything already recorded stays exactly as it is.";
 }
 
 export type ContactUsage = {
@@ -510,14 +527,19 @@ export function mergeContacts(
       .set({ contactId: survivorId })
       .where(inArray(ledgerRecords.contactId, losers))
       .run();
-    // The deprecated `expenses` / `incomes` tables are deliberately NOT
-    // repointed. Nothing reads them after the upgrade (D-17), and they are being
-    // kept for one release as the evidence of what the conversion started from —
-    // rewriting their contact ids would make them a worse record of that, not a
-    // better one.
     tx.update(importQueue)
       .set({ matchedContactId: survivorId })
       .where(inArray(importQueue.matchedContactId, losers))
+      .run();
+    tx.update(importItems)
+      .set({ matchedContactId: survivorId })
+      .where(inArray(importItems.matchedContactId, losers))
+      .run();
+    // A partner's capital and drawings accounts (002 FR-008b). Left alone, the
+    // delete below would set them to nobody's.
+    tx.update(accounts)
+      .set({ contactId: survivorId })
+      .where(inArray(accounts.contactId, losers))
       .run();
     tx.update(quotations)
       .set({ contactId: survivorId })

@@ -17,7 +17,17 @@ import {
   retirePartnerAccounts,
 } from "$lib/server/services/accounts.js";
 import { Role } from "$lib/enums.js";
+import { reindexInvoice } from "$lib/server/queries/invoices.js";
+import { reindexQuotation } from "$lib/server/queries/quotations.js";
+import { reindexRecord } from "$lib/server/queries/ledger.js";
+import {
+  contacts,
+  invoices,
+  ledgerRecords,
+  quotations,
+} from "$lib/server/db/schema.js";
 import type { LedgerDb } from "$lib/server/ledger/types.js";
+import { eq } from "drizzle-orm";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -64,13 +74,51 @@ export function createContact(
   return contact;
 }
 
+/**
+ * Rebuilds the search text of everything that names this contact: its
+ * records, quotations and invoices. Each of those holds the contact's name in
+ * its own search text, written when the document was, so without this a renamed
+ * customer is found only under the old name until someone runs a full rebuild.
+ */
+function reindexContactDocuments(db: Db, contactId: number) {
+  (db as LedgerDb).transaction((tx) => {
+    for (const { id } of tx
+      .select({ id: ledgerRecords.id })
+      .from(ledgerRecords)
+      .where(eq(ledgerRecords.contactId, contactId))
+      .all())
+      reindexRecord(tx, id);
+    for (const { id } of tx
+      .select({ id: quotations.id })
+      .from(quotations)
+      .where(eq(quotations.contactId, contactId))
+      .all())
+      reindexQuotation(tx, id);
+    for (const { id } of tx
+      .select({ id: invoices.id })
+      .from(invoices)
+      .where(eq(invoices.contactId, contactId))
+      .all())
+      reindexInvoice(tx, id);
+  });
+}
+
 export function patchContact(
   db: Db,
   id: number,
   actingUserId: number,
   patch: ContactPatch,
 ) {
+  const before = db
+    .select({ legalName: contacts.legalName })
+    .from(contacts)
+    .where(eq(contacts.id, id))
+    .get();
   const contact = _update(db, id, actingUserId, patch);
+  // The name is the only part of a contact that other documents' search text
+  // carries, so any other edit leaves them alone.
+  if (contact && before && contact.legalName !== before.legalName)
+    reindexContactDocuments(db, id);
   if (contact) contactEvents.emit("contact-update", { item: contact });
   return contact;
 }
@@ -122,6 +170,10 @@ export function mergeContacts(
   actingUserId: number,
 ) {
   const survivor = _merge(db, survivorId, loserIds, actingUserId);
+  // The losers' documents now name the survivor, but their search text still
+  // holds the name they were written with.
+  if (survivor && loserIds.some((id) => id !== survivorId))
+    reindexContactDocuments(db, survivorId);
   for (const id of loserIds) {
     if (id !== survivorId) contactEvents.emit("contact-delete", { id });
   }

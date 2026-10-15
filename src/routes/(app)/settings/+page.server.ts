@@ -19,14 +19,23 @@ import {
   isLayoutKey,
 } from "$lib/pdf/layout-catalog.js";
 import { DEFAULT_PDF_THEME_COLOR } from "$lib/pdf/theme-presets.js";
+import { DEFAULT_PDF_HEADER, isPdfHeaderStyle } from "$lib/pdf/header-style.js";
+import {
+  documentDefaults,
+  MAX_TERM_DAYS,
+  termDaysInput,
+} from "$lib/server/sales/defaults.js";
 import { isMoneyPotAccount } from "$lib/server/ledger/account-type.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
+
+const SETTINGS_FORBIDDEN =
+  "You do not have permission to change settings. Ask an administrator for Settings › Manage.";
 import {
   defaultAccountId,
   listAccounts,
 } from "$lib/server/queries/accounts.js";
 import {
-  saveCompanyLogo,
+  saveCompanyImage,
   deleteFile,
   sniffAllowedType,
   MAX_LOGO_BYTES,
@@ -49,7 +58,7 @@ import {
   connectionModelAllowed,
 } from "$lib/server/llm/chatgpt-sign-in.js";
 import type { ProviderType } from "$lib/server/import/providers/index.js";
-import { fail } from "@sveltejs/kit";
+import { fail, redirect, type ActionFailure } from "@sveltejs/kit";
 import { getAccountDefaults } from "$lib/server/services/account-defaults.js";
 import {
   applyProfileSwitches,
@@ -57,17 +66,80 @@ import {
   planProfileSwitches,
 } from "$lib/server/loaders/import-profiles.js";
 
+/** What the Company form asked for one company image (logo or letterhead). */
+type CompanyImageChange =
+  | { kind: "none" }
+  | { kind: "remove" }
+  | { kind: "replace"; buffer: Buffer; type: "jpeg" | "png" };
+
+/**
+ * Read and check one company image field without storing anything: a JPEG or
+ * PNG of at most 5MB, or the matching remove flag.
+ */
+async function readCompanyImage(
+  data: FormData,
+  fileField: string,
+  removeField: string,
+  label: string,
+): Promise<CompanyImageChange | { failure: ActionFailure<{ error: string }> }> {
+  const file = data.get(fileField);
+  if (file instanceof File && file.size > 0) {
+    if (file.size > MAX_LOGO_BYTES) {
+      return {
+        failure: fail(413, { error: `${label} image must be 5MB or smaller.` }),
+      };
+    }
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const type = sniffAllowedType(buffer);
+    if (type !== "jpeg" && type !== "png") {
+      return {
+        failure: fail(415, { error: `${label} must be a JPEG or PNG image.` }),
+      };
+    }
+    return { kind: "replace", buffer, type };
+  }
+  return data.get(removeField) === "true"
+    ? { kind: "remove" }
+    : { kind: "none" };
+}
+
+/** Store a checked company image change and drop the file it replaces. */
+async function applyCompanyImage(change: CompanyImageChange, key: string) {
+  if (change.kind === "none") return;
+  const oldPath = getSetting(db, key);
+  if (change.kind === "replace") {
+    const newPath = await saveCompanyImage(change.buffer, change.type);
+    try {
+      setSetting(db, key, newPath);
+    } catch (e) {
+      // The setting still names the old image, so the new file is nobody's.
+      deleteFile(newPath);
+      throw e;
+    }
+  } else if (oldPath) {
+    setSetting(db, key, "");
+  }
+  if (oldPath) deleteFile(oldPath);
+}
+
 /**
  * A category IS an account (FR-006a) — the everyday word on screen, the chart of
  * accounts underneath. There is no second list and no mapping between the two,
  * so what Settings offers and what an expense screen offers can never drift.
  */
 export const load: PageServerLoad = async ({ locals }) => {
+  // Settings had no permission at all. Seeing them needs settings.read;
+  // changing them needs settings.manage, checked again by every action below.
+  // To the profile, which every signed-in user can open: the dashboard and
+  // records send a user who cannot see them here, so going back to "/" would
+  // loop for someone with no access at all.
+  if (!can(locals, "settings.read")) redirect(302, "/profile");
+  const canManageSettings = can(locals, "settings.manage");
   // Categories are accounts, and accounts are created, renamed and archived on
   // the Accounts screen. Settings no longer lists them (FR-019, FR-020); this
   // one ability is still read, because the default-account setting below writes
   // an account (FR-011).
-  const canManageAccounts = hasPermission(locals, "accounts", "change");
+  const canManageAccounts = can(locals, "accounts.update");
 
   // Which account new records start with, and the accounts it may be (FR-011).
   // With one account there is nothing to ask, so the setting stays off screen.
@@ -98,7 +170,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   // retired with the tables it converted (research.md R-06), but what it
   // recorded is still worth showing: it is the account of a one-off change to
   // this installation's own books, and nothing rewrites it.
-  const canSeeBooks = hasPermission(locals, "reports", "view");
+  const canSeeBooks = can(locals, "reports.read");
   const upgradeRaw = canSeeBooks
     ? getSetting(db, SETTING_KEYS.ledgerUpgradeState)
     : null;
@@ -154,9 +226,19 @@ export const load: PageServerLoad = async ({ locals }) => {
   const companyRegistrationNo =
     getSetting(db, SETTING_KEYS.companyRegistrationNo) ?? "";
   const companyLogoPath = getSetting(db, SETTING_KEYS.companyLogoPath) ?? "";
-  const companyLogoUrl = companyLogoPath
-    ? `/api/files/${encodeURIComponent(companyLogoPath)}`
-    : null;
+  // The URL names the image, not the file. A replaced image keeps the same
+  // URL, so `v` changes with the stored file to make the page show the new one.
+  const companyImageUrl = (image: string, path: string) =>
+    path
+      ? `/api/company/${image}?v=${encodeURIComponent(path.split("/").pop()!)}`
+      : null;
+  const companyLogoUrl = companyImageUrl("logo", companyLogoPath);
+  const companyLetterheadPath =
+    getSetting(db, SETTING_KEYS.companyLetterheadPath) ?? "";
+  const companyLetterheadUrl = companyImageUrl(
+    "letterhead",
+    companyLetterheadPath,
+  );
 
   const providers = getAllProviders(db).map(({ oauthCredentials, ...p }) => {
     // A `chatgpt` provider's tokens never leave the server either: the
@@ -181,8 +263,22 @@ export const load: PageServerLoad = async ({ locals }) => {
     getSetting(db, SETTING_KEYS.pdfQuotationLayoutKey) ?? DEFAULT_LAYOUT_KEY;
   const pdfThemeColor =
     getSetting(db, SETTING_KEYS.pdfThemeColor) ?? DEFAULT_PDF_THEME_COLOR;
+  const storedPdfHeader = getSetting(db, SETTING_KEYS.pdfHeader);
+  const pdfHeader = isPdfHeaderStyle(storedPdfHeader)
+    ? storedPdfHeader
+    : DEFAULT_PDF_HEADER;
+
+  // The terms new documents start with, as the inputs show them: what
+  // `documentDefaults` reads, so a never-saved setting shows the 30 it means,
+  // and "none" shows blank.
+  const terms = documentDefaults(db);
+  const invoiceDueDays =
+    terms.invoiceDueDays === null ? "" : String(terms.invoiceDueDays);
+  const quotationValidDays =
+    terms.quotationValidDays === null ? "" : String(terms.quotationValidDays);
 
   return {
+    canManageSettings,
     canManageAccounts,
     moneyAccounts,
     ledgerDefaultAccountId,
@@ -203,17 +299,23 @@ export const load: PageServerLoad = async ({ locals }) => {
     companyAddress,
     companyRegistrationNo,
     companyLogoUrl,
+    companyLetterheadUrl,
     providers,
     importProfiles,
     layoutCatalog: LAYOUT_CATALOG,
     pdfInvoiceLayoutKey,
     pdfQuotationLayoutKey,
     pdfThemeColor,
+    pdfHeader,
+    invoiceDueDays,
+    quotationValidDays,
   };
 };
 
 export const actions: Actions = {
   saveGeneral: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     const data = await request.formData();
     const code = String(data.get("currencyCode") ?? "")
       .trim()
@@ -223,7 +325,7 @@ export const actions: Actions = {
     // by the browser when there is more than one to choose between.
     const chosenAccount = String(data.get("defaultAccountId") ?? "").trim();
     if (chosenAccount) {
-      if (!hasPermission(locals, "accounts", "change")) {
+      if (!can(locals, "accounts.update")) {
         return fail(403, { error: "Forbidden" });
       }
       const parsed = z.coerce
@@ -259,36 +361,34 @@ export const actions: Actions = {
     return { success: true, action: "saveGeneral" };
   },
 
-  saveCompany: async ({ request }) => {
+  saveCompany: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     const data = await request.formData();
     const companyName = String(data.get("companyName") ?? "").trim();
     const companyAddress = String(data.get("companyAddress") ?? "").trim();
     const companyRegistrationNo = String(
       data.get("companyRegistrationNo") ?? "",
     ).trim();
-    const removeLogo = data.get("removeLogo") === "true";
-    const logoFile = data.get("companyLogo");
+    // Both images are checked before either is stored, so a rejected
+    // letterhead does not leave a half-applied save behind.
+    const logo = await readCompanyImage(
+      data,
+      "companyLogo",
+      "removeLogo",
+      "Logo",
+    );
+    if ("failure" in logo) return logo.failure;
+    const letterhead = await readCompanyImage(
+      data,
+      "companyLetterhead",
+      "removeLetterhead",
+      "Letterhead",
+    );
+    if ("failure" in letterhead) return letterhead.failure;
 
-    if (logoFile instanceof File && logoFile.size > 0) {
-      if (logoFile.size > MAX_LOGO_BYTES) {
-        return fail(413, { error: "Logo image must be 5MB or smaller." });
-      }
-      const buffer = Buffer.from(await logoFile.arrayBuffer());
-      const type = sniffAllowedType(buffer);
-      if (type !== "jpeg" && type !== "png") {
-        return fail(415, { error: "Logo must be a JPEG or PNG image." });
-      }
-      const oldPath = getSetting(db, SETTING_KEYS.companyLogoPath);
-      const rel = saveCompanyLogo(buffer, logoFile.name);
-      setSetting(db, SETTING_KEYS.companyLogoPath, rel);
-      if (oldPath) deleteFile(oldPath);
-    } else if (removeLogo) {
-      const oldPath = getSetting(db, SETTING_KEYS.companyLogoPath);
-      if (oldPath) {
-        setSetting(db, SETTING_KEYS.companyLogoPath, "");
-        deleteFile(oldPath);
-      }
-    }
+    await applyCompanyImage(logo, SETTING_KEYS.companyLogoPath);
+    await applyCompanyImage(letterhead, SETTING_KEYS.companyLetterheadPath);
 
     setSetting(db, SETTING_KEYS.companyName, companyName);
     setSetting(db, SETTING_KEYS.companyAddress, companyAddress);
@@ -297,11 +397,21 @@ export const actions: Actions = {
     return { success: true, action: "saveCompany" };
   },
 
-  savePdfTemplate: async ({ request }) => {
+  savePdfTemplate: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     const data = await request.formData();
     const invoiceLayoutKey = String(data.get("invoiceLayoutKey") ?? "");
     const quotationLayoutKey = String(data.get("quotationLayoutKey") ?? "");
     const themeColor = String(data.get("themeColor") ?? "").trim();
+    const pdfHeader = String(data.get("pdfHeader") ?? "");
+    // Blank is a choice ("none"); a missing field is not, so it fails too.
+    const invoiceDueDays = termDaysInput(
+      String(data.get("invoiceDueDays") ?? "x"),
+    );
+    const quotationValidDays = termDaysInput(
+      String(data.get("quotationValidDays") ?? "x"),
+    );
 
     if (!isLayoutKey(invoiceLayoutKey) || !isLayoutKey(quotationLayoutKey)) {
       return fail(400, { error: "Choose a valid layout." });
@@ -309,15 +419,28 @@ export const actions: Actions = {
     if (!/^#[0-9a-fA-F]{6}$/.test(themeColor)) {
       return fail(400, { error: "Choose a valid accent color." });
     }
+    if (!isPdfHeaderStyle(pdfHeader)) {
+      return fail(400, { error: "Choose a valid header." });
+    }
+    if (invoiceDueDays === null || quotationValidDays === null) {
+      return fail(400, {
+        error: `Enter the days as a whole number from 0 to ${MAX_TERM_DAYS}, or leave it blank for none.`,
+      });
+    }
 
     setSetting(db, SETTING_KEYS.pdfInvoiceLayoutKey, invoiceLayoutKey);
     setSetting(db, SETTING_KEYS.pdfQuotationLayoutKey, quotationLayoutKey);
     setSetting(db, SETTING_KEYS.pdfThemeColor, themeColor);
+    setSetting(db, SETTING_KEYS.pdfHeader, pdfHeader);
+    setSetting(db, SETTING_KEYS.invoiceDueDays, invoiceDueDays);
+    setSetting(db, SETTING_KEYS.quotationValidDays, quotationValidDays);
 
     return { success: true, action: "savePdfTemplate" };
   },
 
-  saveSequenceTemplate: async ({ request }) => {
+  saveSequenceTemplate: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     if (hasAnyDocuments(db)) {
       return fail(400, {
         error:
@@ -333,6 +456,8 @@ export const actions: Actions = {
   },
 
   updateProvider: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     const data = await request.formData();
     const id = String(data.get("id") ?? "").trim();
     if (!id) return fail(400, { error: "Provider ID is required" });
@@ -380,7 +505,9 @@ export const actions: Actions = {
     return { success: true, action: "updateProvider" };
   },
 
-  deleteProvider: async ({ request }) => {
+  deleteProvider: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     const data = await request.formData();
     const id = String(data.get("id") ?? "").trim();
     if (!id) return fail(400, { error: "Provider ID is required" });
@@ -392,6 +519,8 @@ export const actions: Actions = {
   },
 
   saveIntelligence: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
     const data = await request.formData();
     const raw = String(data.get("providers") ?? "[]");
 

@@ -1,5 +1,8 @@
 <script lang="ts">
-	import InvoiceCreate from '$lib/components/invoices/InvoiceCreate.svelte';
+	import SalesDocCreate from '$lib/components/sales/SalesDocCreate.svelte';
+	import type { PageData } from './$types.js';
+
+	let { data }: { data: PageData } = $props();
 </script>
 
-<InvoiceCreate />
+<SalesDocCreate kind="invoice" defaultDays={data.defaultDays} />

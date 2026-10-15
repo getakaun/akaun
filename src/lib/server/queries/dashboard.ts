@@ -1,18 +1,13 @@
-import { and, desc, eq, isNotNull, lt, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import {
   accounts,
-  accountDefaults,
   contacts,
-  invoices,
   ledgerMovements,
   ledgerRecords,
-  settlements,
 } from "../db/schema.js";
 import {
   AccountSubType,
   AccountType,
-  DefaultAccountPurpose,
-  InvoiceStatus,
   LedgerRecordKind,
   type AccountTypeCode,
   type LedgerRecordKindCode,
@@ -121,78 +116,6 @@ export function recentIncomes(db: LedgerDb, limit: number) {
     sub: r.description,
     amount: r.amount,
   }));
-}
-
-/**
- * Whether an invoice still has money outstanding against it.
- *
- * NOT `status != Paid`. Nothing writes `InvoiceStatus.Paid` any more — an
- * invoice's status carries only the document lifecycle (draft, sent, cancelled)
- * and whether it is paid is worked out from the settlements against the side it
- * put on the shared owed account (D-10). Reading the status here counted a fully
- * settled invoice as outstanding forever, and a cancelled one as outstanding
- * too, which is the two-screens-disagreeing failure FR-031 exists to prevent.
- *
- * Cancelled invoices are excluded outright: a called-off invoice is owed by
- * nobody, whatever its Receivable side once said.
- */
-const OUTSTANDING_INVOICE = sql`
-  ${invoices.status} != ${InvoiceStatus.Cancelled}
-  AND ${invoices.ledgerRecordId} IS NOT NULL
-  AND EXISTS (
-    SELECT 1 FROM ${ledgerMovements}
-    WHERE ${ledgerMovements.recordId} = ${invoices.ledgerRecordId}
-      AND ${ledgerMovements.accountId} = (
-        SELECT ${accountDefaults.accountId} FROM ${accountDefaults}
-        WHERE ${accountDefaults.purpose} = ${DefaultAccountPurpose.Receivable}
-      )
-      AND abs(${ledgerMovements.amountMinor}) > coalesce((
-        SELECT sum(${settlements.amountMinor}) FROM ${settlements}
-        WHERE ${settlements.owedMovementId} = ${ledgerMovements.id}
-           OR ${settlements.paymentMovementId} = ${ledgerMovements.id}
-      ), 0)
-  )`;
-
-/**
- * An invoice sent before the upgrade has no ledger record behind it, so there is
- * nothing to settle against. Its old stored status is the only thing that ever
- * described it, and it is the one place that column is still worth reading.
- */
-const OUTSTANDING_PRE_UPGRADE = sql`
-  ${invoices.ledgerRecordId} IS NULL
-  AND ${invoices.status} = ${InvoiceStatus.Sent}`;
-
-/** COUNT and SUM(total) of every invoice still owing (all time). */
-export function outstandingInvoicesSummary(db: LedgerDb): {
-  count: number;
-  total: number;
-} {
-  const row = db
-    .select({
-      count: sql<number>`count(*)`,
-      total: sql<number>`coalesce(sum(${invoices.total}), 0)`,
-    })
-    .from(invoices)
-    .where(sql`(${OUTSTANDING_INVOICE}) OR (${OUTSTANDING_PRE_UPGRADE})`)
-    .get();
-  return { count: row?.count ?? 0, total: row?.total ?? 0 };
-}
-
-/** COUNT of invoices past their due date that are still owing. */
-export function overdueInvoicesCount(db: LedgerDb): number {
-  const today = new Date().toISOString().slice(0, 10);
-  const row = db
-    .select({ count: sql<number>`count(*)` })
-    .from(invoices)
-    .where(
-      and(
-        isNotNull(invoices.dueDate),
-        lt(invoices.dueDate, today),
-        sql`(${OUTSTANDING_INVOICE}) OR (${OUTSTANDING_PRE_UPGRADE})`,
-      ),
-    )
-    .get();
-  return row?.count ?? 0;
 }
 
 // ---------------------------------------------------------------------------

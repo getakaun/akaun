@@ -14,15 +14,16 @@ import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import * as schema from "../db/schema.js";
 import {
   accounts,
-  accountDefaults,
   invoices,
   invoiceLines,
   invoiceSearchText,
   contacts,
   ledgerMovements,
+  quotations,
 } from "../db/schema.js";
 import { nextNumber } from "../running-number.js";
-import { DefaultAccountPurpose, InvoiceStatus } from "$lib/enums.js";
+import { AccountSubType, InvoiceStatus, QuotationStatus } from "$lib/enums.js";
+import { localToday } from "$lib/local-date.js";
 import {
   upsertSearchText,
   searchTextExists,
@@ -33,6 +34,13 @@ import { toMinor } from "../ledger/money.js";
 import { outstandingOf } from "../ledger/settlement-rules.js";
 import { settledMinorFor, settlementsForRecord } from "./settlements.js";
 import type { LedgerDb, Minor, SettlementSide } from "../ledger/types.js";
+import {
+  computeTotals,
+  contactNameFor,
+  lineRows,
+  type SalesLineInput,
+  type SalesTotals,
+} from "./sales-doc-shared.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = BunSQLiteDatabase<typeof schema> | BunSQLiteDatabase<any>;
@@ -41,12 +49,7 @@ type Db = BunSQLiteDatabase<typeof schema> | BunSQLiteDatabase<any>;
 // Input types
 // ---------------------------------------------------------------------------
 
-export type InvoiceLineInput = {
-  description: string;
-  quantity: number;
-  unitPrice: number;
-  sortOrder?: number; // defaults to array index if omitted
-};
+export type InvoiceLineInput = SalesLineInput;
 
 export type InvoiceCreate = {
   contactId?: number | null;
@@ -60,6 +63,8 @@ export type InvoiceCreate = {
   lines: InvoiceLineInput[]; // required, non-empty
   // For conversion from quotation (optional, set by service layer):
   sourceQuotationId?: number | null;
+  // For a reissue: the voided invoice this one replaces (set by service layer).
+  replacesInvoiceId?: number | null;
 };
 
 export type InvoicePatch = Partial<Omit<InvoiceCreate, "lines">> & {
@@ -81,22 +86,18 @@ export type InvoiceFilters = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function computeTotals(lines: InvoiceLineInput[]): {
-  subtotal: number;
-  taxAmount: 0;
-  total: number;
-} {
-  const subtotal = lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
-  return { subtotal, taxAmount: 0, total: subtotal };
-}
-
+/**
+ * Past its due date and still unpaid. Only a sent invoice can be: a draft owes
+ * nothing yet and a cancelled one never will. "Today" is the local day, the
+ * same calendar the due date was typed in.
+ */
 export function deriveOverdue(
   inv: { dueDate: string | null; status: number },
   paid: boolean,
+  today: string = localToday(),
 ): boolean {
-  if (!inv.dueDate) return false;
-  const today = new Date().toISOString().slice(0, 10);
-  return inv.dueDate < today && !paid && inv.status !== InvoiceStatus.Cancelled;
+  if (!inv.dueDate || inv.status !== InvoiceStatus.Sent) return false;
+  return inv.dueDate < today && !paid;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +110,11 @@ export type InvoicePaymentState = {
   paidMinor: Minor;
   outstandingMinor: Minor;
   paid: boolean;
+  /**
+   * The Money-owed-to-us movement the issue posted — what a customer's payment
+   * settles. Null until the invoice is sent, and for one sent before the upgrade.
+   */
+  owedMovementId: number | null;
 };
 
 /**
@@ -135,6 +141,7 @@ export function invoicePaymentState(
       paidMinor: Math.abs(owedSide.amountMinor) - outstandingMinor,
       outstandingMinor,
       paid: outstandingMinor === 0,
+      owedMovementId: owedSide.movementId,
     };
   }
 
@@ -144,6 +151,7 @@ export function invoicePaymentState(
       paidMinor: totalMinor,
       outstandingMinor: 0,
       paid: true,
+      owedMovementId: null,
     };
   }
   // Sent before the upgrade: owed, but with nothing recorded against it.
@@ -153,10 +161,17 @@ export function invoicePaymentState(
       paidMinor: 0,
       outstandingMinor: totalMinor,
       paid: false,
+      owedMovementId: null,
     };
   }
   // Still a draft, or cancelled — nobody owes anything yet.
-  return { totalMinor, paidMinor: 0, outstandingMinor: 0, paid: false };
+  return {
+    totalMinor,
+    paidMinor: 0,
+    outstandingMinor: 0,
+    paid: false,
+    owedMovementId: null,
+  };
 }
 
 type InvoiceRow = {
@@ -170,6 +185,11 @@ type InvoiceRow = {
 /**
  * The payment state of a whole page of invoices, in two statements however many
  * invoices there are.
+ *
+ * The owed side is found by what its account *is* (subtype Receivable), not by
+ * which account is the Receivable default today. Changing that default later
+ * must not make every invoice issued before the change read as unpaid, with
+ * nothing to settle against.
  */
 function paymentStatesFor(
   db: Db,
@@ -187,14 +207,11 @@ function paymentStatesFor(
           amountMinor: ledgerMovements.amountMinor,
         })
         .from(ledgerMovements)
-        .innerJoin(
-          accountDefaults,
-          eq(accountDefaults.accountId, ledgerMovements.accountId),
-        )
+        .innerJoin(accounts, eq(accounts.id, ledgerMovements.accountId))
         .where(
           and(
             inArray(ledgerMovements.recordId, recordIds),
-            eq(accountDefaults.purpose, DefaultAccountPurpose.Receivable),
+            eq(accounts.subType, AccountSubType.Receivable),
           ),
         )
         .all()
@@ -234,16 +251,6 @@ function paymentStatesFor(
 // ---------------------------------------------------------------------------
 // Search text
 // ---------------------------------------------------------------------------
-
-function contactNameFor(db: Db, contactId: number | null | undefined): string {
-  if (!contactId) return "";
-  const row = db
-    .select({ legalName: contacts.legalName })
-    .from(contacts)
-    .where(eq(contacts.id, contactId))
-    .get();
-  return row?.legalName ?? "";
-}
 
 /** Recomputes and upserts invoice_search_text for one invoice. Also used by the search-rebuild worker. */
 export function reindexInvoice(db: Db, invoiceId: number) {
@@ -286,7 +293,7 @@ const invoiceWithContact = {
   contactAddress: contacts.address,
   contactRegistrationNo: contacts.registrationNo,
   contactPhone: contacts.phone,
-  mainAmount: sql<number>`${invoices.subtotal} * ${invoices.exchangeRate}`,
+  mainAmount: sql<number>`${invoices.total} * ${invoices.exchangeRate}`,
 };
 
 // ---------------------------------------------------------------------------
@@ -314,9 +321,9 @@ export function listInvoices(db: Db, filters: InvoiceFilters = {}) {
   if (overdueOnly) {
     // Past due is a column, but "still unpaid" is derived from settlements, so
     // the query narrows to what it can and the final filter happens below.
-    const today = new Date().toISOString().slice(0, 10);
-    conditions.push(sql`${invoices.dueDate} < ${today}`);
-    conditions.push(sql`${invoices.status} != ${InvoiceStatus.Cancelled}`);
+    // Same rule as `deriveOverdue`: sent invoices only, local "today".
+    conditions.push(sql`${invoices.dueDate} < ${localToday()}`);
+    conditions.push(eq(invoices.status, InvoiceStatus.Sent));
   }
   if (search) {
     const term = `%${search}%`;
@@ -385,7 +392,34 @@ export function getInvoice(db: Db, id: number) {
     lines,
     settlements,
     isOverdue: deriveOverdue(row, state.paid),
+    ...reissueLinks(db, row),
   };
+}
+
+/**
+ * The invoices either side of this one in a void-and-reissue: the voided one it
+ * replaces, and the one that replaced it. Each is what the detail page links to.
+ */
+function reissueLinks(
+  db: Db,
+  row: { id: number; replacesInvoiceId: number | null },
+) {
+  const pick = { id: invoices.id, invoiceNumber: invoices.invoiceNumber };
+  const replaces =
+    row.replacesInvoiceId === null
+      ? null
+      : (db
+          .select(pick)
+          .from(invoices)
+          .where(eq(invoices.id, row.replacesInvoiceId))
+          .get() ?? null);
+  const replacedBy =
+    db
+      .select(pick)
+      .from(invoices)
+      .where(eq(invoices.replacesInvoiceId, row.id))
+      .get() ?? null;
+  return { replaces, replacedBy };
 }
 
 // ---------------------------------------------------------------------------
@@ -417,6 +451,7 @@ export function createInvoice(db: Db, userId: number, data: InvoiceCreate) {
         notes: data.notes ?? null,
         terms: data.terms ?? null,
         sourceQuotationId: data.sourceQuotationId ?? null,
+        replacesInvoiceId: data.replacesInvoiceId ?? null,
         createdBy: userId,
         updatedBy: userId,
       })
@@ -424,16 +459,7 @@ export function createInvoice(db: Db, userId: number, data: InvoiceCreate) {
       .get()!;
 
     tx.insert(invoiceLines)
-      .values(
-        data.lines.map((line, i) => ({
-          invoiceId: newId,
-          description: line.description,
-          quantity: line.quantity,
-          unitPrice: line.unitPrice,
-          lineTotal: line.quantity * line.unitPrice,
-          sortOrder: line.sortOrder ?? i,
-        })),
-      )
+      .values(lineRows(data.lines).map((row) => ({ ...row, invoiceId: newId })))
       .run();
 
     reindexInvoice(tx, newId);
@@ -465,22 +491,12 @@ export function updateInvoice(
       .get();
     if (!existing) return null;
 
-    let totalsUpdate: { subtotal: number; taxAmount: 0; total: number } | null =
-      null;
+    let totalsUpdate: SalesTotals | null = null;
     if (patch.lines) {
       totalsUpdate = computeTotals(patch.lines);
       tx.delete(invoiceLines).where(eq(invoiceLines.invoiceId, id)).run();
       tx.insert(invoiceLines)
-        .values(
-          patch.lines.map((line, i) => ({
-            invoiceId: id,
-            description: line.description,
-            quantity: line.quantity,
-            unitPrice: line.unitPrice,
-            lineTotal: line.quantity * line.unitPrice,
-            sortOrder: line.sortOrder ?? i,
-          })),
-        )
+        .values(lineRows(patch.lines).map((row) => ({ ...row, invoiceId: id })))
         .run();
     }
 
@@ -516,11 +532,22 @@ export function updateInvoice(
 // Delete
 // ---------------------------------------------------------------------------
 
+/**
+ * Deletes a draft invoice. When it is the invoice a quotation was converted
+ * into, that quotation goes back to Accepted and loses the link, in the same
+ * transaction — otherwise it would stay Converted, pointing at nothing, with
+ * no way to convert it again. `revertedQuotationId` names it, so the service
+ * can tell the quotations list.
+ */
 export function deleteInvoice(
   db: Db,
   id: number,
   userId: number,
-): { ok: boolean; reason?: "issued" | "not_found" } {
+): {
+  ok: boolean;
+  reason?: "issued" | "cancelled" | "not_found";
+  revertedQuotationId?: number;
+} {
   return db.transaction((tx) => {
     const existing = tx
       .select()
@@ -528,10 +555,18 @@ export function deleteInvoice(
       .where(eq(invoices.id, id))
       .get();
     if (!existing) return { ok: false, reason: "not_found" };
+    // A cancelled invoice keeps its number: the customer may hold a copy, and a
+    // gap in the sequence would have nothing to explain it.
+    if (existing.status === InvoiceStatus.Cancelled)
+      return { ok: false, reason: "cancelled" };
     // Once it has been sent, its amount sits in Money owed to us. Deleting the
     // document would leave that behind with nothing to explain it, so a sent
-    // invoice is cancelled rather than deleted.
-    if (existing.ledgerRecordId !== null)
+    // invoice is cancelled rather than deleted. A sent invoice from before the
+    // upgrade has no posting, but the customer still has it.
+    if (
+      existing.ledgerRecordId !== null ||
+      existing.status !== InvoiceStatus.Draft
+    )
       return { ok: false, reason: "issued" };
     tx.delete(invoices).where(eq(invoices.id, id)).run();
     recordAudit(tx, {
@@ -541,7 +576,41 @@ export function deleteInvoice(
       action: "delete",
       changes: diffRecords(existing, null),
     });
-    return { ok: true };
+
+    // Only the quotation that still points here: an invoice whose quote was
+    // since converted again (or edited by hand) leaves that quote alone.
+    const source =
+      existing.sourceQuotationId === null
+        ? undefined
+        : tx
+            .select()
+            .from(quotations)
+            .where(eq(quotations.id, existing.sourceQuotationId))
+            .get();
+    if (!source || source.convertedInvoiceId !== id) return { ok: true };
+
+    tx.update(quotations)
+      .set({
+        status: QuotationStatus.Accepted,
+        convertedInvoiceId: null,
+        updatedBy: userId,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(quotations.id, source.id))
+      .run();
+    const reverted = tx
+      .select()
+      .from(quotations)
+      .where(eq(quotations.id, source.id))
+      .get();
+    recordAudit(tx, {
+      recordType: "quotation",
+      recordId: source.id,
+      userId,
+      action: "update",
+      changes: diffRecords(source, reverted),
+    });
+    return { ok: true, revertedQuotationId: source.id };
   });
 }
 
@@ -586,4 +655,113 @@ export function markInvoiceIssued(
     });
     return getInvoice(tx, id)!;
   });
+}
+
+/**
+ * Moves the quotation an invoice was converted from off that invoice, when it
+ * is voided: onto `toInvoiceId`, the invoice reissued in its place, so the quote
+ * stays Converted and points at the live one; or, with nothing reissued, back
+ * to Accepted with no link, as deleting a draft invoice does — so the deal can
+ * be invoiced again. Only a quotation that still points at `invoiceId` is
+ * touched. Returns the quotation it moved, if any.
+ */
+export function relinkSourceQuotation(
+  db: Db,
+  invoiceId: number,
+  toInvoiceId: number | null,
+  userId: number,
+): number | null {
+  const invoice = db
+    .select({ sourceQuotationId: invoices.sourceQuotationId })
+    .from(invoices)
+    .where(eq(invoices.id, invoiceId))
+    .get();
+  if (!invoice || invoice.sourceQuotationId === null) return null;
+  const source = db
+    .select()
+    .from(quotations)
+    .where(eq(quotations.id, invoice.sourceQuotationId))
+    .get();
+  if (!source || source.convertedInvoiceId !== invoiceId) return null;
+
+  const set =
+    toInvoiceId === null
+      ? { status: QuotationStatus.Accepted, convertedInvoiceId: null }
+      : { convertedInvoiceId: toInvoiceId };
+  db.update(quotations)
+    .set({ ...set, updatedBy: userId, updatedAt: new Date().toISOString() })
+    .where(eq(quotations.id, source.id))
+    .run();
+  const updated = db
+    .select()
+    .from(quotations)
+    .where(eq(quotations.id, source.id))
+    .get();
+  recordAudit(db, {
+    recordType: "quotation",
+    recordId: source.id,
+    userId,
+    action: "update",
+    changes: diffRecords(source, updated),
+  });
+  return source.id;
+}
+
+/**
+ * Records that the invoice was cancelled: status Cancelled, and no longer
+ * linked to an issue posting. The posting itself is removed by
+ * `services/invoices.ts`, which owns the rule; this is only the write.
+ *
+ * Unlinking here, before that record goes, is deliberate. The foreign key would
+ * clear `ledger_record_id` on its own (`onDelete: "set null"`), but then this
+ * diff would see the link already gone, and the audit entry of an invoice
+ * cancelled before voiding removed postings would say nothing changed.
+ */
+export function markInvoiceCancelled(db: Db, id: number, userId: number) {
+  return db.transaction((tx) => {
+    const existing = tx
+      .select()
+      .from(invoices)
+      .where(eq(invoices.id, id))
+      .get()!;
+    tx.update(invoices)
+      .set({
+        status: InvoiceStatus.Cancelled,
+        ledgerRecordId: null,
+        updatedBy: userId,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(invoices.id, id))
+      .run();
+    const updated = tx.select().from(invoices).where(eq(invoices.id, id)).get();
+    recordAudit(tx, {
+      recordType: "invoice",
+      recordId: id,
+      userId,
+      action: "update",
+      changes: diffRecords(existing, updated),
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Which invoices a ledger record belongs to
+// ---------------------------------------------------------------------------
+
+/**
+ * The invoices whose issue posting is one of `recordIds`. A settlement against
+ * that posting changes how much of the invoice is paid without touching the
+ * invoice row, so this is how the ledger side finds whom to tell.
+ */
+export function invoiceIdsForLedgerRecords(
+  db: Db,
+  recordIds: number[],
+): number[] {
+  if (recordIds.length === 0) return [];
+  return db
+    .select({ id: invoices.id })
+    .from(invoices)
+    .where(inArray(invoices.ledgerRecordId, recordIds))
+    .all()
+    .map((r) => r.id);
 }

@@ -156,6 +156,26 @@ function everydayKindFor(
   return null;
 }
 
+/**
+ * Whether a record naming these accounts is a real adjustment — the question
+ * the gate in `sidesFromAccounts` asks, for a caller that is changing a
+ * record's lines without re-answering both of its accounts (a patch that only
+ * restates `extraSides`). Unknown accounts answer `true`: refuse rather than
+ * guess.
+ */
+export function needsAdjustments(
+  accountIds: number[],
+  ctx: SidesContext,
+): boolean {
+  const named: SidesAccount[] = [];
+  for (const id of new Set(accountIds)) {
+    const account = ctx.accountById(id);
+    if (!account) return true;
+    named.push(account);
+  }
+  return everydayKindFor(named, ctx) === null;
+}
+
 export function sidesFromAccounts(
   input: SidesInput,
   ctx: SidesContext,

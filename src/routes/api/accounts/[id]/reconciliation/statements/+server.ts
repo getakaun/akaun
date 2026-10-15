@@ -3,11 +3,12 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { db } from "$lib/server/db/client.js";
 import {
+  deleteStatementFile,
   MAX_UPLOAD_BYTES,
   saveReconciliationStatement,
   sniffAllowedType,
 } from "$lib/server/file-storage.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import {
   createStatement,
   ReconciliationError,
@@ -37,7 +38,7 @@ const accountIdSchema = z.coerce.number().int().positive();
 
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return new Response("Unauthorized", { status: 401 });
-  if (!hasPermission(locals, "reconciliation", "add"))
+  if (!can(locals, "reconciliation.create"))
     return new Response("Forbidden", { status: 403 });
 
   const accountId = accountIdSchema.safeParse(params.id);
@@ -62,23 +63,30 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       { error: "Only PDF, JPEG, and PNG statements are supported" },
       { status: 400 },
     );
+  const path = await saveReconciliationStatement(
+    buffer,
+    randomUUID(),
+    file.name,
+  );
+  let statement;
   try {
-    const path = saveReconciliationStatement(buffer, randomUUID(), file.name);
-    const statement = createStatement(db, locals, {
+    statement = createStatement(db, locals, {
       originalFilename: file.name,
       storedFilePath: path,
       accountId: accountId.data,
     });
-    void processStatementImport(db, {
-      statementId: statement.id,
-      relativePath: path,
-      originalFilename: file.name,
-      userId: locals.user.id,
-    });
-    return Response.json(statement, { status: 202 });
   } catch (e) {
+    // No statement row points at the file, so nothing ever would.
+    deleteStatementFile(path);
     if (e instanceof ReconciliationError)
       return Response.json({ error: e.message }, { status: e.status });
     throw e;
   }
+  void processStatementImport(db, {
+    statementId: statement.id,
+    relativePath: path,
+    originalFilename: file.name,
+    userId: locals.user.id,
+  });
+  return Response.json(statement, { status: 202 });
 };

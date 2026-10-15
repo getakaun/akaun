@@ -1,8 +1,17 @@
 import PDFDocument from "pdfkit";
-import { fromMinor } from "$lib/server/ledger/money.js";
 import type { LayoutRenderData, ThemeData } from "$lib/pdf/render-types.js";
 import { registerPdfFonts } from "../fonts.js";
-import { M, CW, C, cleanText, fmt, fmtDate } from "../layout.js";
+import {
+  M,
+  CW,
+  C,
+  cleanText,
+  drawLetterhead,
+  drawStatusStamp,
+  fmt,
+  fmtDate,
+  fmtMoney,
+} from "../layout.js";
 
 // Column layout for the tighter table below.
 const QTY_W = 40;
@@ -23,6 +32,8 @@ export function renderCompact(
   const doc = new (PDFDocument as any)({
     size: "A4",
     margin: 0,
+    // Held until the end so the status stamp can go on every page.
+    bufferPages: true,
     info: { Title: title },
   });
   const fonts = registerPdfFonts(doc);
@@ -36,13 +47,21 @@ export function renderCompact(
   const docNumber = docu.invoiceNumber ?? docu.quotationNumber ?? "";
 
   // ── HEADER (single row) ────────────────────────────────────────────────
-  doc
-    .font(fonts.bold)
-    .fontSize(15)
-    .fillColor(C.dark)
-    .text(cleanText(settings.companyName) || "Company", M, y, {
-      width: CW * 0.6,
-    });
+  // The letterhead takes the company name's place, top left.
+  // About the height the 15pt name stands; the row still ends below whichever
+  // of it and the title beside it is lower.
+  const letterheadBottom = settings.letterheadPath
+    ? y + drawLetterhead(doc, settings.letterheadPath, M, y, CW * 0.6, 20)
+    : 0;
+  if (!settings.letterheadPath) {
+    doc
+      .font(fonts.bold)
+      .fontSize(15)
+      .fillColor(C.dark)
+      .text(cleanText(settings.companyName) || "Company", M, y, {
+        width: CW * 0.6,
+      });
+  }
   doc
     .font(fonts.bold)
     .fontSize(13)
@@ -51,7 +70,7 @@ export function renderCompact(
       width: CW,
       align: "right",
     });
-  y = doc.y + 3;
+  y = Math.max(letterheadBottom, doc.y) + 3;
 
   const subtitleParts = [
     settings.companyAddress && cleanText(settings.companyAddress),
@@ -118,12 +137,12 @@ export function renderCompact(
     align: "center",
     characterSpacing: 0.4,
   });
-  doc.text("PRICE", PRICE_X, y, {
+  doc.text(`PRICE (${docu.currency})`, PRICE_X, y, {
     width: PRICE_W,
     align: "right",
     characterSpacing: 0.4,
   });
-  doc.text("TOTAL", TOTAL_X, y, {
+  doc.text(`TOTAL (${docu.currency})`, TOTAL_X, y, {
     width: TOTAL_W,
     align: "right",
     characterSpacing: 0.4,
@@ -137,8 +156,12 @@ export function renderCompact(
       doc.heightOfString(cleanText(line.description), { width: DESC_W - 4 }) +
         4,
       doc.heightOfString(String(line.quantity), { width: QTY_W }) + 4,
-      doc.heightOfString(fmt(line.unitPrice), { width: PRICE_W }) + 4,
-      doc.heightOfString(fmt(line.lineTotal), { width: TOTAL_W - 4 }) + 4,
+      doc.heightOfString(fmt(line.unitPrice, docu.currency), {
+        width: PRICE_W,
+      }) + 4,
+      doc.heightOfString(fmt(line.lineTotal, docu.currency), {
+        width: TOTAL_W - 4,
+      }) + 4,
     );
     if (i % 2 === 1) doc.rect(M, y - 2, CW, rowH).fill("#f7f7f7");
     doc.font(fonts.regular).fontSize(9).fillColor(C.body);
@@ -147,11 +170,11 @@ export function renderCompact(
       width: QTY_W,
       align: "center",
     });
-    doc.text(fmt(line.unitPrice), PRICE_X, y, {
+    doc.text(fmt(line.unitPrice, docu.currency), PRICE_X, y, {
       width: PRICE_W,
       align: "right",
     });
-    doc.text(fmt(line.lineTotal), TOTAL_X, y, {
+    doc.text(fmt(line.lineTotal, docu.currency), TOTAL_X, y, {
       width: TOTAL_W - 4,
       align: "right",
     });
@@ -167,14 +190,10 @@ export function renderCompact(
     .fontSize(8)
     .fillColor(C.muted)
     .text("Subtotal", totalsX, y, { width: totalsW - TOTAL_W, align: "right" });
-  doc.text(fmt(docu.subtotal), TOTAL_X, y, { width: TOTAL_W, align: "right" });
-  y += 12;
-  doc
-    .font(fonts.regular)
-    .fontSize(8)
-    .fillColor(C.muted)
-    .text("Tax", totalsX, y, { width: totalsW - TOTAL_W, align: "right" });
-  doc.text(fmt(docu.taxAmount), TOTAL_X, y, { width: TOTAL_W, align: "right" });
+  doc.text(fmt(docu.subtotal, docu.currency), TOTAL_X, y, {
+    width: TOTAL_W,
+    align: "right",
+  });
   y += 14;
   doc
     .font(fonts.bold)
@@ -184,20 +203,37 @@ export function renderCompact(
       width: totalsW - TOTAL_W,
       align: "right",
     });
-  doc.text(fmt(docu.total), TOTAL_X, y, { width: TOTAL_W, align: "right" });
+  doc.text(fmt(docu.total, docu.currency), TOTAL_X, y, {
+    width: TOTAL_W,
+    align: "right",
+  });
   y = doc.y + 12;
 
-  if (docu.paidMinor && docu.paidMinor > 0) {
+  // Nothing is paid on, or due from, a cancelled invoice.
+  if (
+    data.statusStamp !== "VOID" &&
+    docu.amountPaid !== undefined &&
+    docu.amountPaid > 0
+  ) {
     doc
       .font(fonts.bold)
       .fontSize(8)
       .fillColor(C.green)
-      .text(
-        `Paid: ${docu.currency} ${fmt(fromMinor(docu.paidMinor))}`,
-        totalsX,
-        y,
-        { width: totalsW, align: "right" },
-      );
+      .text(`Paid: ${fmtMoney(docu.amountPaid, docu.currency)}`, totalsX, y, {
+        width: totalsW,
+        align: "right",
+      });
+    y = doc.y + 2;
+    if (docu.amountDue !== undefined && docu.amountDue > 0) {
+      doc
+        .font(fonts.bold)
+        .fontSize(8)
+        .fillColor(C.dark)
+        .text(`Due: ${fmtMoney(docu.amountDue, docu.currency)}`, totalsX, y, {
+          width: totalsW,
+          align: "right",
+        });
+    }
     y = doc.y + 10;
   }
 
@@ -226,6 +262,14 @@ export function renderCompact(
       .fontSize(8)
       .fillColor(C.subtle)
       .text(cleanText(docu.terms), M, doc.y + 2, { width: CW });
+  }
+
+  if (data.statusStamp) {
+    const pages = doc.bufferedPageRange();
+    for (let page = pages.start; page < pages.start + pages.count; page++) {
+      doc.switchToPage(page);
+      drawStatusStamp(doc, fonts.bold, data.statusStamp);
+    }
   }
 
   return new Promise((resolve, reject) => {

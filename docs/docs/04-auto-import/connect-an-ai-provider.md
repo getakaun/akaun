@@ -7,6 +7,13 @@ sidebar_position: 1
 **Auto Import** uses an AI provider to read your documents. Add one provider before you upload
 the first file. This page also tells what the processing options on the same tab do.
 
+:::info
+
+To add or change a provider, you need the **Manage** permission on **Settings**. Without it, the
+**Intelligence** tab is read only. Akaun never shows the key of a provider.
+
+:::
+
 ## What Akaun sends to the provider
 
 :::caution

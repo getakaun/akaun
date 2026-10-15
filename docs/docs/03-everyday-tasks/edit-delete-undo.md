@@ -99,6 +99,10 @@ You cannot undo a delete. Check the selected records before you confirm.
 Akaun does not delete a locked record. If the selection has locked records, the dialog tells you
 how many. Akaun deletes the other records.
 
+Akaun also does not delete an **Invoice** record. Akaun deletes the other records and shows the
+reason. To remove an **Invoice** record, cancel its invoice. See
+[Cancel an invoice](../05-sales/invoices.md#cancel-an-invoice).
+
 To select all records in the list, click the check box at the top of the list.
 
 ## Remove a payment from a record
@@ -118,6 +122,10 @@ Akaun removes the allocation when you click the button. It does not ask you to c
 
 The bill is **Outstanding** or **Part paid** again. If nothing else locks the bill, you can change
 it again.
+
+A payment with no contact, which pays several people at once, must always be spent in full. When
+you take back one of its allocations, Akaun takes back all of them, and all of its bills are
+outstanding again.
 
 To use the money of the payment for a different bill, record a new payment. See
 [Bills you pay later](./bills-you-pay-later.md).

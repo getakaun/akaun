@@ -1,62 +1,30 @@
-import { invoiceEvents } from '$lib/server/finance/events.js';
-import type { RequestHandler } from './$types.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import type { RequestHandler } from "./$types.js";
+import { can } from "$lib/server/permissions.js";
+import { forbidden } from "$lib/server/api-response.js";
+import { invoiceEvents } from "$lib/server/finance/events.js";
+import { eventStream } from "$lib/server/sse-stream.js";
 
+/**
+ * Live updates for the Invoices list.
+ *
+ *   invoice-update { item } — the full list row
+ *   invoice-delete { id }
+ *
+ * No snapshot on connect: the list is paginated, so SSR gives the first state
+ * and this carries only the changes. A dropped connection reconnects and the
+ * next event corrects the row; a reload gets the truth (CLAUDE.md).
+ */
 export const GET: RequestHandler = ({ locals }) => {
-	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'invoices', 'view')) return new Response('Forbidden', { status: 403 });
+  if (!locals.user) return new Response("Unauthorized", { status: 401 });
+  if (!can(locals, "invoices.read")) return forbidden();
 
-	const encoder = new TextEncoder();
-	const encodeEvent = (data: object) => encoder.encode(`data: ${JSON.stringify(data)}\n\n`);
-	const encodeComment = (text: string) => encoder.encode(`: ${text}\n\n`);
-
-	let cleanup: (() => void) | null = null;
-
-	const stream = new ReadableStream({
-		start(controller) {
-			const updateHandler = ({ item }: { item: unknown }) => {
-				try {
-					controller.enqueue(encodeEvent({ type: 'invoice-update', item }));
-				} catch {
-					// stream closed
-				}
-			};
-
-			const deleteHandler = ({ id }: { id: number }) => {
-				try {
-					controller.enqueue(encodeEvent({ type: 'invoice-delete', id }));
-				} catch {
-					// stream closed
-				}
-			};
-
-			invoiceEvents.on('invoice-update', updateHandler);
-			invoiceEvents.on('invoice-delete', deleteHandler);
-
-			const heartbeat = setInterval(() => {
-				try {
-					controller.enqueue(encodeComment('heartbeat'));
-				} catch {
-					clearInterval(heartbeat);
-				}
-			}, 15000);
-
-			cleanup = () => {
-				clearInterval(heartbeat);
-				invoiceEvents.off('invoice-update', updateHandler);
-				invoiceEvents.off('invoice-delete', deleteHandler);
-			};
-		},
-		cancel() {
-			cleanup?.();
-		}
-	});
-
-	return new Response(stream, {
-		headers: {
-			'Content-Type': 'text/event-stream',
-			'Cache-Control': 'no-cache',
-			'X-Accel-Buffering': 'no'
-		}
-	});
+  return eventStream([
+    {
+      emitter: invoiceEvents,
+      events: {
+        "invoice-update": "invoice-update",
+        "invoice-delete": "invoice-delete",
+      },
+    },
+  ]);
 };

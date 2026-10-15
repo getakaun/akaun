@@ -1,3 +1,4 @@
+import { can } from "$lib/server/permissions.js";
 import { eventStream } from "$lib/server/sse-stream.js";
 import {
   chatgptSignInEvents,
@@ -7,6 +8,8 @@ import type { RequestHandler } from "./$types.js";
 export const GET: RequestHandler = ({ locals, url }) => {
   const user = locals.user;
   if (!user) return new Response("Unauthorized", { status: 401 });
+  if (!can(locals, "settings.manage"))
+    return new Response("Forbidden", { status: 403 });
   const state = url.searchParams.get("state") ?? "";
   if (!signInSnapshot(user.id, state))
     return new Response("Sign-in expired. Start again.", { status: 404 });

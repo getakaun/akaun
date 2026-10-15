@@ -87,6 +87,8 @@ export type ImportJobSource = {
   itemId?: string;
   /** Who uploaded the file. The record and any new contact are theirs. */
   uploadedBy: number;
+  /** Who is confirming it, for the audit trail. Set by `confirmImportRow`. */
+  confirmedBy?: number;
   /**
    * Where the file is now. For an item this is only a hint: the confirm reads
    * the group's current path inside its transaction, because an earlier item
@@ -198,7 +200,14 @@ export function confirmImportRow(
   let confirmed: ImportConfirmed;
   try {
     confirmed = db.transaction(() => {
-      const written = writeConfirmation(db, job, fields, root, emits, file);
+      const written = writeConfirmation(
+        db,
+        { ...job, confirmedBy: options.actingUserId },
+        fields,
+        root,
+        emits,
+        file,
+      );
       if (!written.ok) throw new Refused(written.reason);
       return written.value;
     });
@@ -303,7 +312,13 @@ function writeConfirmation(
     ? { kind: "income", receivedIntoAccountId: accountId, ...common }
     : { kind: "expense", paidFromAccountId, ...common };
 
-  const created = createRecord(db, job.uploadedBy, sides, emits);
+  const created = createRecord(
+    db,
+    job.uploadedBy,
+    sides,
+    emits,
+    job.confirmedBy,
+  );
   if (!created.ok) return created;
 
   finishConfirmation(db, job, fields, root, file, created.value.id, docCode);
@@ -453,6 +468,7 @@ function writeTransferConfirmation(
       extractedText: job.itemId ? null : job.extractedText,
     },
     emits,
+    job.confirmedBy,
   );
   if (!created.ok) return created;
 

@@ -290,7 +290,7 @@
 			>
 				{#if mobileSearchOpen}<X size={16} />{:else}<Search size={16} />{/if}
 			</button>
-			{#if data.perms.change && data.perms.delete}
+			{#if data.perms.merge}
 				<Button variant="outline" size="sm" onclick={loadDuplicates}>
 					<Merge size={14} /> <span class="btn-text">Find duplicates</span>
 				</Button>
@@ -374,7 +374,7 @@
 				<table class="exp-table">
 					<thead>
 						<tr>
-							{#if data.perms.change && data.perms.delete}
+							{#if data.perms.merge}
 								<th class="td-check">
 									<Checkbox
 										checked={allSelected}
@@ -402,7 +402,7 @@
 									openContact(c);
 								}}
 							>
-								{#if data.perms.change && data.perms.delete}
+								{#if data.perms.merge}
 									<td class="td-check" onclick={(ev) => { ev.stopPropagation(); toggleOne(c.id); }}>
 										<Checkbox checked={selected.has(c.id)} aria-label="Select {c.legalName}" />
 									</td>
@@ -472,7 +472,7 @@
 	</div>
 
 	<!-- Bulk action bar -->
-	{#if data.perms.change && data.perms.delete}
+	{#if data.perms.merge}
 		<BulkActionBar show={selected.size > 0} count={selected.size} onclear={clearSel}>
 			{#snippet actions()}
 				<button

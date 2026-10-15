@@ -1,6 +1,6 @@
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { badRequest, forbidden } from "$lib/server/api-response.js";
 import { balanceSheetCsv } from "$lib/server/ledger/reports/csv.js";
 import { balanceSheetReport } from "$lib/server/queries/reports.js";
@@ -17,7 +17,7 @@ import {
  * up, and `differenceMinor` says by how much.
  */
 export const GET: RequestHandler = async ({ locals, url }) => {
-  if (!hasPermission(locals, "reports", "view")) return forbidden();
+  if (!can(locals, "reports.read")) return forbidden();
 
   const parsed = asAtQuery.safeParse(queryValues(url, ["asAt"]));
   if (!parsed.success) return badRequest(parsed.error);

@@ -5,11 +5,14 @@
 
 	let {
 		apiBase,
-		attachments = $bindable()
+		attachments = $bindable(),
+		canDelete = true
 	}: {
 		/** Base URL of the owning record, e.g. `/api/records/123`. */
 		apiBase: string;
 		attachments: Attachment[];
+		/** Removing a file needs the delete ability for records, not only change. */
+		canDelete?: boolean;
 	} = $props();
 
 	let drag = $state(false);
@@ -73,8 +76,8 @@
 		<div class="attach-list">
 			{#each attachments as att (att.id)}
 				<div class="attach-item related-link">
-					<a
-						href="/api/files/{att.filename}"
+					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- an API endpoint under apiBase that serves the file, not an app page. -->
+					<a href="{apiBase}/attachments/{att.id}"
 						target="_blank"
 						rel="noopener"
 						class="attach-link-area"
@@ -86,7 +89,13 @@
 							<div class="attach-sub">{att.addedDate}</div>
 						</div>
 					</a>
-					<button type="button" class="attach-del" onclick={() => remove(att.id)}>
+					<button
+						type="button"
+						class="attach-del"
+						disabled={!canDelete}
+						title={canDelete ? undefined : 'You do not have permission to delete records'}
+						onclick={() => remove(att.id)}
+					>
 						<X size={14} />
 					</button>
 				</div>

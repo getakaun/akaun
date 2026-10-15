@@ -60,15 +60,15 @@ See [Bills you pay later](../03-everyday-tasks/bills-you-pay-later.md) and
 
 ## How do I record a payment from a customer?
 
-At this time, the screens cannot record a payment against an invoice or another amount that a
-customer owes. Do not save a new income for this money, because the invoice already counts the
-sale.
+Open the invoice and click **Record payment**. Akaun opens a receipt with the invoice already
+ticked. Do not save a new income for this money, because the invoice already counts the sale.
 
 See [Getting paid](../05-sales/getting-paid.md).
 
 ## Does Akaun send invoices by email?
 
-No. **Send** on an invoice records that the customer owes the amount. It does not send an email.
+No. **Mark as sent** on an invoice records that the customer owes the amount. It does not send
+an email.
 Click **Print** to get a PDF, and give the PDF to the customer yourself.
 
 See [Invoices](../05-sales/invoices.md).

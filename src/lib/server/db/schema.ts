@@ -17,6 +17,7 @@ export const users = sqliteTable("users", {
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull().default("owner"),
   name: text("name"),
+  /** @deprecated Revoked by migration 0033; see `personal_access_tokens`. */
   bearerToken: text("bearer_token").unique(),
   createdAt: text("created_at")
     .notNull()
@@ -97,6 +98,7 @@ export const groups = sqliteTable("groups", {
     .default(false),
 });
 
+/** @deprecated Read by nothing since migration 0033; dropped next release. */
 export const groupPermissions = sqliteTable(
   "group_permissions",
   {
@@ -116,6 +118,89 @@ export const groupPermissions = sqliteTable(
   (t) => [primaryKey({ columns: [t.groupId, t.resource] })],
 );
 
+/**
+ * What a group's members may do: permission strings from
+ * `$lib/permissions/catalog.ts` (`invoices.issue`, or a root such as
+ * `invoices` for all its non-explicit leaves). Replaces `group_permissions`'s
+ * fixed view/add/change/delete grid, which is kept, unread, for one release
+ * so migration 0033's conversion stays inspectable.
+ */
+export const groupGrants = sqliteTable(
+  "group_grants",
+  {
+    groupId: integer("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    permission: text("permission").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.groupId, t.permission] })],
+);
+
+/**
+ * What a group's members may hand on to a personal access token or an OAuth
+ * app — the administrator's ceiling on delegation. Always a subset of the
+ * group's own grants (`trimDelegations`); a credential's effective access is
+ * role ∩ this ceiling ∩ the credential's own permissions, worked out on every
+ * request.
+ */
+export const groupDelegations = sqliteTable(
+  "group_delegations",
+  {
+    groupId: integer("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    permission: text("permission").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.groupId, t.permission] })],
+);
+
+/** Extra permissions for one user, on top of their groups'. Only ever adds. */
+export const userGrants = sqliteTable(
+  "user_grants",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    permission: text("permission").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.permission] })],
+);
+
+/**
+ * Personal access tokens, fine-grained: each carries its own permissions,
+ * never more than its owner's role ∩ delegation ceiling at the moment it is
+ * used. Only a hash of the secret is stored. Replaces `users.bearer_token`
+ * (one raw token per user, full access), which migration 0033 revokes.
+ */
+export const personalAccessTokens = sqliteTable(
+  "personal_access_tokens",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    lastFour: text("last_four").notNull(),
+    /** JSON array of permission strings. */
+    permissions: text("permissions").notNull(),
+    expiresAt: integer("expires_at"),
+    lastUsedAt: integer("last_used_at"),
+    createdAt: integer("created_at").notNull(),
+    /** Who made it: the owner, or an administrator for a service user. */
+    createdBy: integer("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    revokedAt: integer("revoked_at"),
+  },
+  (t) => [
+    index("personal_access_tokens_user_idx").on(t.userId),
+    uniqueIndex("personal_access_tokens_live_name_idx")
+      .on(t.userId, t.name)
+      .where(sql`${t.revokedAt} IS NULL`),
+  ],
+);
+
 export const userGroups = sqliteTable(
   "user_groups",
   {
@@ -129,6 +214,7 @@ export const userGroups = sqliteTable(
   (t) => [primaryKey({ columns: [t.userId, t.groupId] })],
 );
 
+/** @deprecated Read by nothing since migration 0033; dropped next release. */
 export const userPermissions = sqliteTable(
   "user_permissions",
   {
@@ -617,6 +703,9 @@ export const invoices = sqliteTable("invoices", {
   terms: text("terms"),
   // Plain integer — no FK to avoid circular reference with quotations.
   sourceQuotationId: integer("source_quotation_id"),
+  // The voided invoice this one was reissued to replace. A sent invoice is never
+  // edited for money; it is voided and a linked copy is issued in its place.
+  replacesInvoiceId: integer("replaces_invoice_id"),
   // `result_income_id` was here. Its job passed to `ledger_record_id`, and its
   // foreign key pointed into `incomes` — one of the tables this release drops,
   // which is why the migration has to rebuild this table rather than only drop
@@ -648,7 +737,8 @@ export const quotations = sqliteTable("quotations", {
   contactId: integer("contact_id").references(() => contacts.id, {
     onDelete: "set null",
   }),
-  // QuotationStatus code (1=Draft, 2=Sent, 3=Accepted, 4=Declined, 5=Converted). See enums.ts.
+  // QuotationStatus code (1=Draft, 2=Sent, 3=Accepted, 4=Declined, 5=Converted,
+  // 6=Superseded). See enums.ts.
   status: integer("status").notNull().default(1),
   reference: text("reference"),
   issueDate: text("issue_date").notNull(),
@@ -662,6 +752,11 @@ export const quotations = sqliteTable("quotations", {
   terms: text("terms"),
   // Plain integer — no FK to avoid circular reference with invoices.
   convertedInvoiceId: integer("converted_invoice_id"),
+  // 0 for an original; n for the nth revision (number suffixed `-R<n>`). A quote
+  // that has gone to the customer is never edited; it is revised into a new
+  // draft and the old one is marked Superseded, pointing at its replacement.
+  revision: integer("revision").notNull().default(0),
+  supersededById: integer("superseded_by_id"),
   createdBy: integer("created_by").references(() => users.id),
   updatedBy: integer("updated_by").references(() => users.id),
   createdAt: text("created_at")

@@ -3,7 +3,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { randomUUID, createHash } from 'crypto';
 import { db } from '$lib/server/db/client.js';
 import { importQueue } from '$lib/server/db/schema.js';
-import { saveToTemp, MAX_UPLOAD_BYTES } from '$lib/server/file-storage.js';
+import { saveToTemp, MAX_UPLOAD_BYTES, releaseIfUnreferenced } from '$lib/server/file-storage.js';
 import { importUploadNameRefusal, sniffImportUpload } from '$lib/server/import/upload-type.js';
 import { importEvents } from '$lib/server/import/events.js';
 import { jobForEvent } from '$lib/server/import/job-event.js';
@@ -13,13 +13,13 @@ import { profileSnapshotOf, serializeProfileSnapshot } from '$lib/server/import/
 import { deletedProfileName, getImportProfile } from '$lib/server/services/import-profiles.js';
 import { ImportState } from '$lib/enums.js';
 import type { RequestHandler } from './$types.js';
-import { hasPermission } from '$lib/server/permissions.js';
+import { can } from '$lib/server/permissions.js';
 
 const ACTIVE_STATES: number[] = [ImportState.Queued, ImportState.Extracting, ImportState.Processing];
 
 export const GET: RequestHandler = async ({ locals, url }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'import', 'view')) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'import.read')) return new Response('Forbidden', { status: 403 });
 
 	const activeOnly = url.searchParams.get('active') === '1';
 
@@ -46,7 +46,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 
 export const POST: RequestHandler = async ({ locals, request }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
-	if (!hasPermission(locals, 'import', 'add')) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'import.create')) return new Response('Forbidden', { status: 403 });
 
 	const formData = await request.formData();
 	const file = formData.get('file');
@@ -109,26 +109,32 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const sniffed = sniffImportUpload(buffer, file.name);
 	if (!sniffed.ok) return json({ error: sniffed.error }, { status: 400 });
 
-	const tempFilePath = saveToTemp(buffer, file.name);
+	const tempFilePath = await saveToTemp(buffer, file.name);
 	const fileHash = createHash('sha256').update(buffer).digest('hex');
 
 	const jobId = randomUUID();
-	db.insert(importQueue)
-		.values({
-			id: jobId,
-			createdBy: locals.user.id,
-			state: ImportState.Queued,
-			tempFilePath,
-			originalFilename: file.name,
-			fileHash,
-			preExtractedText,
-			readAs: reading.readAs,
-			readHow: reading.readHow,
-			profileId: reading.profileId,
-			profileSnapshot,
-			importMode: reading.importMode
-		})
-		.run();
+	try {
+		db.insert(importQueue)
+			.values({
+				id: jobId,
+				createdBy: locals.user.id,
+				state: ImportState.Queued,
+				tempFilePath,
+				originalFilename: file.name,
+				fileHash,
+				preExtractedText,
+				readAs: reading.readAs,
+				readHow: reading.readHow,
+				profileId: reading.profileId,
+				profileSnapshot,
+				importMode: reading.importMode
+			})
+			.run();
+	} catch (e) {
+		// No job points at the upload, so nothing would ever discard it.
+		releaseIfUnreferenced(db, tempFilePath);
+		throw e;
+	}
 
 	const newJob = db.select().from(importQueue).where(eq(importQueue.id, jobId)).get();
 	if (newJob) importEvents.emit('job-update', { userId: locals.user.id, job: jobForEvent(newJob) });

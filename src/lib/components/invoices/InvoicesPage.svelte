@@ -4,7 +4,6 @@
 	import {
 		Search,
 		Plus,
-		Calendar,
 		SlidersHorizontal,
 		X,
 		FileText
@@ -12,15 +11,15 @@
 	import StatusBadge from '$lib/components/ui/StatusBadge.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
-	import FilterDropdown from '$lib/components/ui/FilterDropdown.svelte';
+	import DateRangeFilter from '$lib/components/ui/DateRangeFilter.svelte';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import DatePicker from '$lib/components/ui/date-picker/DatePicker.svelte';
 	import { formatMoney, formatMoneyRM, formatMinor, formatDateShort } from '$lib/format.js';
 	import { mainCurrency, mainCurrencySymbol } from '$lib/currency-state.svelte.js';
 	import { formatCurrencyAmount } from '$lib/currency.js';
 	import { InvoiceStatus } from '$lib/enums.js';
+	import { invoiceStatusKey } from '$lib/sales/status.js';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import type { loadInvoicesPage } from '$lib/server/loaders/invoices.js';
@@ -73,9 +72,13 @@
 			searchMatchedIds = null;
 			return;
 		}
+		// A newer term (or clearing it) supersedes this request: a slow reply for
+		// "ab" must not land after the one for "abc".
+		let stale = false;
 		fetch(`/api/invoices?search=${encodeURIComponent(term)}&limit=500`)
 			.then((r) => (r.ok ? r.json() : null))
 			.then((rows: Invoice[] | null) => {
+				if (stale) return;
 				if (!rows) {
 					searchMatchedIds = new Set();
 					return;
@@ -84,8 +87,12 @@
 				searchMatchedIds = new Set(rows.map((r) => r.id));
 			})
 			.catch(() => {
+				if (stale) return;
 				searchMatchedIds = new Set();
 			});
+		return () => {
+			stale = true;
+		};
 	});
 
 	// SSE — real-time updates from server
@@ -135,6 +142,8 @@
 		const now = new Date();
 		const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 		const thisMonth = invoices.filter((inv) => inv.issueDate.startsWith(monthKey));
+		// A cancelled invoice is owed by nobody, so it is not part of what was invoiced.
+		const recorded = invoices.filter((inv) => !isCancelled(inv));
 		return {
 			// What is still owed on them, not what they were written for — a part-paid
 			// invoice should not keep counting its whole amount as money to come in.
@@ -146,7 +155,8 @@
 			overdueCount: overdue.length,
 			monthTotal: thisMonth.reduce((s, inv) => s + inv.mainAmount, 0),
 			monthCount: thisMonth.length,
-			allTotal: invoices.reduce((s, inv) => s + inv.mainAmount, 0)
+			allTotal: recorded.reduce((s, inv) => s + inv.mainAmount, 0),
+			allCount: recorded.length
 		};
 	});
 
@@ -196,22 +206,6 @@
 		overdueOnly = false;
 	}
 
-	// What the badge says. The document's own status only ever says draft, sent or
-	// cancelled; whether it is paid comes from what has been paid against it (D-10).
-	function getStatusLabel(inv: Invoice): string {
-		if (isCancelled(inv)) return 'cancelled';
-		if (isDraft(inv)) return 'draft';
-		if (inv.paid) return 'paid';
-		if (inv.isOverdue) return 'overdue';
-		if (inv.paidMinor > 0) return 'part-paid';
-		return 'sent';
-	}
-
-
-	/** Only a draft can be sent, and only once — sending it twice would owe it twice. */
-
-	/** A sent invoice is cancelled, never deleted — its amount is already in the books. */
-
 	// Deep-link: open an invoice detail sheet
 	function invoiceHref(id: number): string {
 		return resolve('/(app)/invoices/[id]', { id: String(id) });
@@ -236,7 +230,7 @@
 		<div class="topbar-left">
 			<h1 class="page-title">Invoices</h1>
 			<p class="page-sub">
-				{counts.all} records · <span class="num">{formatMoneyRM(stats.allTotal)}</span> total
+				{stats.allCount} records · <span class="num">{formatMoneyRM(stats.allTotal)}</span> total
 			</p>
 		</div>
 		<div class="topbar-right">
@@ -314,7 +308,7 @@
 			label="All recorded"
 			cur={mainCurrencySymbol()}
 			value={formatMoney(stats.allTotal)}
-			sub="{counts.all} invoices"
+			sub="{stats.allCount} invoices"
 		/>
 	</div>
 
@@ -365,36 +359,7 @@
 							<X size={13} /> Clear
 						</button>
 					{/if}
-					<FilterDropdown label="Date" active={!!(dateFrom || dateTo)}>
-						{#snippet icon()}<Calendar size={14} />{/snippet}
-						<div style="padding:12px 14px;">
-							<div
-								style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;"
-							>
-								<div
-									style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted-foreground);"
-								>
-									Date range
-								</div>
-								{#if dateFrom || dateTo}
-									<button
-										onclick={() => {
-											dateFrom = '';
-											dateTo = '';
-										}}
-										style="border:none; background:none; color:var(--primary); cursor:pointer; font-size:11px; font-weight:600; padding:0;"
-										>Clear</button
-									>
-								{/if}
-							</div>
-							<div style="display:flex; flex-direction:column; gap:8px;">
-								<span style="font-size:11.5px; color:var(--muted-foreground);">From</span>
-								<DatePicker bind:value={dateFrom} placeholder="From date" />
-								<span style="font-size:11.5px; color:var(--muted-foreground);">To</span>
-								<DatePicker bind:value={dateTo} placeholder="To date" />
-							</div>
-						</div>
-					</FilterDropdown>
+					<DateRangeFilter variant="dropdown" bind:from={dateFrom} bind:to={dateTo} />
 				</div>
 			</div>
 
@@ -494,7 +459,7 @@
 									</a>
 								</td>
 								<td class="td-status" data-label="Status">
-									<StatusBadge status={getStatusLabel(inv)} />
+									<StatusBadge status={invoiceStatusKey(inv)} />
 								</td>
 								<td class="td-date" data-label="Date">
 									{formatDateShort(inv.issueDate)}<span class="td-year"
@@ -572,29 +537,7 @@
 				<div style="font-size:15px; font-weight:600;">Filters</div>
 				<Sheet.Close class="sheet-close"><X size={16} /></Sheet.Close>
 			</div>
-			<div style="margin-bottom:16px;">
-				<div
-					style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted-foreground); margin-bottom:10px; display:flex; align-items:center; justify-content:space-between;"
-				>
-					<span>Date range</span>
-					{#if dateFrom || dateTo}
-						<button
-							onclick={() => {
-								dateFrom = '';
-								dateTo = '';
-							}}
-							style="border:none; background:none; color:var(--primary); cursor:pointer; font-size:11px; font-weight:600;"
-							>Clear</button
-						>
-					{/if}
-				</div>
-				<div style="display:flex; flex-direction:column; gap:8px;">
-					<span style="font-size:11.5px; color:var(--muted-foreground);">From</span>
-					<DatePicker bind:value={dateFrom} placeholder="From date" />
-					<span style="font-size:11.5px; color:var(--muted-foreground);">To</span>
-					<DatePicker bind:value={dateTo} placeholder="To date" />
-				</div>
-			</div>
+			<DateRangeFilter variant="sheet" bind:from={dateFrom} bind:to={dateTo} />
 			<Button class="w-full" onclick={() => (mobileFilterOpen = false)}>Show results</Button>
 		</Sheet.Content>
 </Sheet.Root>
@@ -612,96 +555,8 @@
 		outline-offset: 2px;
 		border-radius: 4px;
 	}
-	.qt-lines {
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		overflow: hidden;
-	}
-
-	.qt-line {
-		display: grid;
-		grid-template-columns: 1fr auto auto;
-		gap: 12px;
-		padding: 10px 14px;
-		border-bottom: 1px solid var(--border);
-		align-items: start;
-	}
-
-	.qt-line:last-child {
-		border-bottom: none;
-	}
-
-	.qt-line-desc {
-		font-size: 13.5px;
-		color: var(--foreground);
-	}
-
-	.qt-line-meta {
-		font-size: 12px;
-		color: var(--muted-foreground);
-		white-space: nowrap;
-		text-align: right;
-	}
-
-	.qt-line-total {
-		font-size: 13px;
-		font-weight: 500;
-		color: var(--foreground);
-		white-space: nowrap;
-		text-align: right;
-		min-width: 80px;
-	}
-
-	.qt-lines-total {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		padding: 10px 14px;
-		background: var(--accent);
-		border-top: 1px solid var(--border);
-	}
-
-	.qt-lines-total-label {
-		font-size: 12.5px;
-		font-weight: 600;
-		color: var(--muted-foreground);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-	}
-
-	.qt-lines-total-val {
-		font-size: 14px;
-		font-weight: 600;
-		color: var(--foreground);
-	}
-
 	.result-total {
 		color: var(--muted-foreground);
-	}
-
-	.rel-card-icon {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 34px;
-		height: 34px;
-		border-radius: 7px;
-		background: var(--accent);
-		color: var(--muted-foreground);
-		flex-shrink: 0;
-	}
-
-	.rel-card-body {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-
-	.rel-card-title {
-		font-size: 13.5px;
-		font-weight: 500;
-		color: var(--foreground);
 	}
 
 	@media (max-width: 767px) {

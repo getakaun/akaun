@@ -43,11 +43,21 @@ Use the returned `client_id` and the client's exact callback URL. This registrat
 
 ## Scopes and credential boundaries
 
-Supported scopes are `records:read`, `accounts:read`, `contacts:read`, `reports:read` and `import:read`. Omitted scope requests default to those five read scopes; users choose a subset during consent. Unknown/write scopes are rejected. Permissions unavailable to the signed-in user cannot be approved.
+Scopes come in three tiers per area: `:read`, `:write` (add and change) and `:delete` (permanent removal). The strings live in `$lib/permissions/oauth-scopes.ts`. Each scope expands on the server to permission-catalog leaves (`SCOPE_PERMISSIONS`); for example `invoices:write` expands to create, update, issue and void. An app's effective access is checked on every request:
 
-Tool discovery and calls require both token scopes and current Akaun View permissions. Contact balances require both Contacts and Records reads; account statements require Records read. Description policy and review prompts require an authorized Records or Import read. The context resource reports permissions after scope restrictions. There are no write scopes or MCP write tools.
+```
+expanded scopes ∩ the user's role ∩ their groups' delegation ceiling
+```
 
-OAuth credentials are accepted only by `/mcp`, not `/api/*`. Legacy API tokens retain their existing REST/MCP semantics. Browser cookies never authenticate MCP requests.
+Narrowing a group or its ceiling therefore applies at once to every app. See [PERMISSIONS.md](PERMISSIONS.md).
+
+- **`reports`** is read-only. There are no scopes for dashboard, settings or users.
+- **Omitted scope requests** default to reads only. Protected-resource metadata advertises reads only in `scopes_supported`. Change and delete scopes come through step-up: a 403 `insufficient_scope` challenge naming the missing scopes. The challenge is sent only when the user could grant them.
+- **Consent page.** It offers only scopes the user may delegate, and says when an administrator's ceiling blocks one. Reads are pre-ticked; change and delete never are.
+
+Tool discovery and calls go through one table (`mcp/tool-requirements.ts`) that lists each tool's scopes and catalog permissions. Description policy and review prompts need `records.read` or `import.read`. The context resource reports read, write and delete access per area after every restriction.
+
+OAuth credentials are accepted only by `/mcp`, not `/api/*`. Personal access tokens (`akp_…`) work on both `/api/*` and `/mcp`, bounded by their own permissions; the old raw API tokens were revoked. Browser cookies never authenticate MCP requests.
 
 ## Discovery and lifecycle
 

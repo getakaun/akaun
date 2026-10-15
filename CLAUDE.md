@@ -187,37 +187,71 @@ and not be one.
 
 ### Permissions (RBAC)
 
-Gate every action on a resource with `hasPermission(locals, resource, action)`
-(`src/lib/server/permissions.ts`). Never use a role check, and never rely on a hidden button
-in the client.
+Gate every action with `can(locals, "invoices.issue")` (or `canAll`) from
+`src/lib/server/permissions.ts`. Never use a role check, never read a superuser flag (a spec
+fails on `locals.isSuperuser`), and never rely on a hidden button in the client. The model is
+in `dev-notes/PERMISSIONS.md`.
 
-- `ResourceName` is a closed union (`dashboard`, `records`, `import`, `contacts`,
-  `quotations`, `invoices`, `reconciliation`, `accounts`, `reports`, `adjustments`).
-  `ActionName` is `view | add | change | delete`. To add a resource, add it to
-  `ResourceName` and `ALL_RESOURCES` in `permissions.ts` — `ALL_RESOURCES` duplicates the
-  union rather than deriving from it, so both must change together.
-- `records` is one ability over every kind of record. It replaced `expenses` + `income`, which
-  were two names for one store: a transfer, a payment or an opening balance was checked
-  against whichever screen it happened to be recorded from, and a record entered by hand was
-  covered by neither.
-- Two resources have extra rules. `reports` is **view-only**: never grant `add`, `change` or
-  `delete` on it anywhere, because to see a figure is not the same as to change it. **No
-  seeded group grants `adjustments`** (formerly `journal`): it allows a record between any two
-  accounts and a third side, so a user who has it can make the books say anything and still
-  have them add up. Grant it on purpose or not at all.
-- `adjustments` is checked **after** the derivation, never before: whether a record needs it is
-  a fact about the accounts it names, not about what the client sent. Enforced on the server
-  (`sides-from-accounts.ts`), never by hiding a control.
-- `hooks.server.ts` calls `getEffectivePermissions(db, userId)` one time for each request and
-  puts the result in `locals.permissions` and `locals.isSuperuser`. Route code never queries
-  permissions. It only calls `hasPermission`.
-- The effective permissions are the group permissions (`groupPermissions`) plus the per-user
-  overrides (`userPermissions`). An override can only add a permission, never remove one. A
-  group with `isSuperuser: true` passes all checks, because `hasPermission` returns early on
-  `locals.isSuperuser`.
-- Each API route that reads or changes a resource must call `hasPermission(locals, resource,
-  action)` and return `403` if it fails. `src/routes/api/records/+server.ts` is the reference:
-  `view` for GET, and `add`, `change` or `delete` for the other verbs.
+- **The catalog** is `src/lib/permissions/catalog.ts`: one tree of `root.verb` leaves, shared with
+  the pages. A root (`invoices`) grants its leaves except `explicit` ones. **No verb implies
+  another** — `update` does not imply `read` (the seeded Data Entry group adds records it cannot
+  read). Unknown strings are dropped on read and refused on write.
+- **Every request carries one set**: `locals.permissions`. For a browser session it is the role
+  (groups' grants ∪ the user's own grants; a superuser has every leaf). Through a personal access
+  token or an OAuth app it is **role ∩ the groups' delegation ceiling ∩ the credential's own
+  permissions**, worked out on every request — so narrowing a group or its ceiling takes effect on
+  every token and app at once. The superuser shortcut sits inside "role", so a superuser's token
+  is still bounded by the token.
+- **Adding a leaf** — decide each of these on purpose; the comment atop `catalog.ts` lists them:
+  `explicit` (else every group holding the root gets it at once), `sensitive` (kept out of default
+  ceilings), `delegable: false`, an `oauth-scopes.ts` expansion, `tier` (which level of the
+  screens' None/View/Edit/Full editor includes it, if the default is wrong) and `verb`/`phrase` (its
+  wording in the summary sentence), and a data migration granting it to whoever should keep
+  today's behaviour.
+- **`reports` is read-only by construction** — it has no other leaf. **`records.adjust`** (formerly
+  the `adjustments` resource) is `explicit` and sensitive: no seeded group has it; it allows a
+  record between any two accounts and a third side, so a user who has it can make the books say
+  anything and still have them add up. It is checked **after** the derivation
+  (`sides-from-accounts.ts`), because whether a record needs it is a fact about the accounts it
+  names. **`users.manage`** is superuser-only and never delegable. **`settings.manage`** gates every
+  Settings write, the AI providers and the search rebuild.
+- **Special abilities have their own leaf** — `invoices.issue`/`void`, `quotations.revise`/`convert`,
+  `contacts.merge`, `import.confirm`/`profiles`, `reconciliation.match`. Their old co-requirements
+  are kept (sending an invoice also needs `records.create`, and so on). Import confirm deliberately
+  needs only `import.confirm` (006 FR-045).
+- **Stored as leaves** in `group_grants`, `user_grants` (additive, never delegable) and
+  `group_delegations` (the ceiling, always ⊆ that group's grants — `trimDelegations`). The old
+  `group_permissions`/`user_permissions` grid is unread since migration 0033.
+- **Personal access tokens** (`tokens/pat.ts`, `tokens/manage.ts`) replace the raw per-user API
+  token: hashed, `akp_` + checksum, fine-grained, an optional expiry date (no maximum), valid on
+  `/api/*` and `/mcp`. Only the owner makes one, through the Profile page's **form actions**
+  (`/profile/tokens/new`) — never through an endpoint a token can call. `users.manage` can list and
+  revoke a user's tokens but not create one.
+- **Every API route checks a permission** — `src/routes/api/permission-coverage.spec.ts` fails
+  otherwise. `src/routes/api/records/+server.ts` is the reference.
+
+### Authorized Operations (`src/lib/server/application/`)
+
+A write that both a REST route and an MCP tool can make is **one function** in
+`application/<domain>.ts`, taking `(ctx: AppContext, input)` and returning an `AppResult`. It asks
+for every permission itself (`requirePermissions`) and enforces every rule a route used to hold —
+the adjustments gate, sealed sent documents, a payment and its settlements in one transaction. The
+route parses and calls `toResponse`; the MCP tool calls `registerWrite`. A rule written in the
+route alone is a hole the MCP tool walks through. That is how the explicit-journal and
+invoice-issue gaps existed.
+
+- **Nothing under `application/` imports `db/client.ts` or opens storage by default.** The database,
+  `locals`, `store` and `storageRoot` arrive in the context. A file helper is always called with
+  `ctx.storageRoot`, never its `STORAGE_PATH` default. `scripts/mcp-test-preload.ts` makes
+  `db/client.ts` throw and points `$env` at a temp folder, so a spec that breaks this rule fails
+  instead of touching `data/`.
+- **Every update/delete takes an optional `expectedVersion`** (`application/version.ts`: a hash
+  of the row and its children, never `updatedAt`). MCP tools require it; REST may omit it.
+- **Each MCP tool has one entry in `mcp/tool-requirements.ts`** (OAuth scopes + RBAC). Discovery,
+  the call-time check and the `insufficient_scope` challenge all read that table, and a spec fails
+  when a registered tool is missing from it.
+- **Deliberate exception:** import confirm needs only `import.confirm`, not `records.create`
+  (006 FR-045). Do not "fix" it.
 
 ### Settings Page Patterns
 
@@ -251,7 +285,8 @@ form into a page would only add a round trip. A create page reuses the same `Det
 the detail page it hands off to (`hero`/`main`/`rail` snippets, the built-in unsaved-changes guard),
 with `record={null}` (or the entity's equivalent) — see `records/RecordCreate.svelte` and
 `ledger/RecordForm.svelte`'s create/edit split for the reference shape, mirrored by `PaymentForm`,
-`invoices/InvoiceForm.svelte` and `quotations/QuotationForm.svelte`. Each create page's loader gates
+and `sales/SalesDocForm.svelte` (one form for invoices and quotations, `kind` prop; a sent invoice
+renders its amount fields read-only). Each create page's loader gates
 on `add`, not `view`, and redirects rather than rendering a form that would 403 on submit.
 
 Every detail page is built on `DetailPage.svelte` (`$lib/components/ui`), which supplies the frame:

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { badRequest, forbidden, notFound } from "$lib/server/api-response.js";
 import { accountHistoryCsv } from "$lib/server/ledger/reports/csv.js";
 import { historyGapNotes } from "$lib/server/ledger/reports/notes.js";
@@ -41,7 +41,7 @@ const statementQuery = accountHistoryQuery.extend({
 });
 
 export const GET: RequestHandler = async ({ locals, url }) => {
-  if (!hasPermission(locals, "records", "view")) return forbidden();
+  if (!can(locals, "records.read")) return forbidden();
 
   const parsed = statementQuery.safeParse(
     queryValues(url, ["accountId", "dateFrom", "dateTo", "limit"]),

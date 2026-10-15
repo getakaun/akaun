@@ -2,6 +2,9 @@ import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { eq } from "drizzle-orm";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   Client,
@@ -13,13 +16,12 @@ import {
   accounts,
   auditLog,
   contacts,
-  groups,
-  groupPermissions,
+  groupGrants,
+  personalAccessTokens,
   importQueue,
   ledgerRecords,
   recordAttachments,
   settlements,
-  userGroups,
   users,
 } from "../db/schema.js";
 import { seedAccounts } from "../db/seed-accounts.js";
@@ -30,13 +32,22 @@ import { reindexContact } from "../queries/contacts.js";
 import { listRecords } from "../queries/ledger.js";
 import { EntityType, ImportState, Role } from "$lib/enums.js";
 import type { LedgerDb, RecordCreate, RecordView } from "../ledger/types.js";
-import { bearerLocals } from "../bearer-auth.js";
+import { patLocals } from "../tokens/pat.js";
+import { revokeAllTokens } from "../tokens/manage.js";
+import { grantGroup, issueTestToken } from "../permissions/test-locals.js";
+import { TOOL_REQUIREMENTS } from "./tool-requirements.js";
 import { handleMcpRequest } from "./http.js";
-import { createReadServer } from "./server.js";
+import { LocalBlobStore } from "../storage/blob-store.js";
+import { hit, reset } from "../rate-limit.js";
+import {
+  ATTACHMENT_READ_LIMIT,
+  MAX_ATTACHMENT_BYTES,
+} from "./tools/records.js";
+import { createServer } from "./server.js";
 import {
   MAX_RESPONSE_BYTES,
   registerRead,
-  type ReadContext,
+  type McpContext,
 } from "./common.js";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -46,11 +57,16 @@ import { McpServer } from "@modelcontextprotocol/server";
 // during protocol/tool calls, including accidental search or extraction writes.
 let sqlite: Database;
 let db: LedgerDb;
+// Files are read from a store over a folder under os.tmpdir(), never from the
+// configured storage path, which would be the real data/storage.
+let storageRoot: string;
+let store: LocalBlobStore;
 const clients: Client[] = [];
 const origin = "https://akaun.test";
-const fullToken = "test-full-read-token";
-const directoryToken = "test-directory-only-token";
-const importToken = "test-import-only-token";
+// Personal access tokens, issued in the fixture below with each user's reads.
+let fullToken: string;
+let directoryToken: string;
+let importToken: string;
 let contactId: number;
 let expense: RecordView;
 let payment: RecordView;
@@ -73,6 +89,8 @@ function record(input: RecordCreate) {
 }
 
 beforeEach(() => {
+  storageRoot = mkdtempSync(join(tmpdir(), "akaun-mcp-spec-"));
+  store = new LocalBlobStore(storageRoot);
   sqlite = new Database(":memory:");
   db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: "drizzle" });
@@ -83,46 +101,38 @@ beforeEach(() => {
         email: "read@test",
         username: "read",
         passwordHash: "unused",
-        bearerToken: fullToken,
       },
       {
         id: 2,
         email: "directory@test",
         username: "directory",
         passwordHash: "unused",
-        bearerToken: directoryToken,
       },
       {
         id: 3,
         email: "import@test",
         username: "import",
         passwordHash: "unused",
-        bearerToken: importToken,
       },
     ])
     .run();
-  db.insert(groups)
-    .values([
-      { id: 1, name: "readers" },
-      { id: 2, name: "directory" },
-      { id: 3, name: "import" },
-    ])
-    .run();
-  db.insert(userGroups)
-    .values([
-      { userId: 1, groupId: 1 },
-      { userId: 2, groupId: 2 },
-      { userId: 3, groupId: 3 },
-    ])
-    .run();
-  db.insert(groupPermissions)
-    .values([
-      ...["records", "accounts", "contacts", "reports", "import"].map(
-        (resource) => ({ groupId: 1, resource, canView: true }),
-      ),
-      { groupId: 2, resource: "contacts", canView: true },
-      { groupId: 3, resource: "import", canView: true },
-    ])
+  const fullReads = [
+    "records.read",
+    "accounts.read",
+    "contacts.read",
+    "reports.read",
+    "import.read",
+  ];
+  grantGroup(db, { name: "readers", userIds: [1], grants: fullReads });
+  grantGroup(db, { name: "directory", userIds: [2], grants: ["contacts.read"] });
+  grantGroup(db, { name: "import", userIds: [3], grants: ["import.read"] });
+  fullToken = issueTestToken(db, 1, fullReads);
+  directoryToken = issueTestToken(db, 2, ["contacts.read"]);
+  importToken = issueTestToken(db, 3, ["import.read"]);
+  // Marked as used just now, so reads under query_only never need to write
+  // last_used_at (it is written at most once a minute).
+  db.update(personalAccessTokens)
+    .set({ lastUsedAt: Date.now() + 60 * 60_000 })
     .run();
   seedAccounts(db);
   setSetting(db, SETTING_KEYS.currencyCode, "MYR");
@@ -232,10 +242,11 @@ beforeEach(() => {
 afterEach(async () => {
   await Promise.all(clients.splice(0).map((client) => client.close()));
   sqlite.close();
+  rmSync(storageRoot, { recursive: true, force: true });
 });
 
 function actor(token = fullToken) {
-  const locals = bearerLocals(db, `Bearer ${token}`);
+  const locals = patLocals(db, `Bearer ${token}`);
   if (!locals) throw new Error("Fixture actor missing");
   return locals;
 }
@@ -260,16 +271,13 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         fetch: async (url, init) => {
           const request = new Request(url, init);
           const observedRequest = exchanges ? request.clone() : undefined;
-          const locals = bearerLocals(db, request.headers.get("Authorization"));
+          const locals = patLocals(db, request.headers.get("Authorization"));
           const response = await handleMcpRequest(
             request,
             {
               db,
-              locals: locals ?? {
-                user: null,
-                permissions: null,
-                isSuperuser: false,
-              },
+              store,
+              locals: locals ?? { user: null, permissions: null },
             },
             origin,
           );
@@ -340,7 +348,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
     if (era !== "legacy") {
       it("rejects modern header mismatches, unsupported revisions and subscription streams", async () => {
         const send = async (req: Request) =>
-          handleMcpRequest(req, { db, locals: actor() }, origin);
+          handleMcpRequest(req, { db, store, locals: actor() }, origin);
         const mismatchedMethod = await send(
           request("POST", { "Mcp-Method": "resources/list" }),
         );
@@ -494,8 +502,13 @@ for (const era of ["legacy", "modern", "auto"] as const) {
             checkSchema(child);
         }
       };
-      expect(tools).toHaveLength(10);
-      for (const tool of tools) checkSchema(tool.outputSchema);
+      expect(tools).toHaveLength(12);
+      // get_attachment returns file content blocks, not structured data, so it
+      // is the one tool with no output schema.
+      for (const tool of tools)
+        if (tool.name === "get_attachment")
+          expect(tool.outputSchema).toBeUndefined();
+        else checkSchema(tool.outputSchema);
       // Exercise client-side validation of real nested rows, scalar fields and nulls.
       expect(await call(client, "list_records")).not.toMatchObject({
         isError: true,
@@ -507,12 +520,15 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       });
     });
 
-    it("connects with the official HTTP client and exposes only the ten read tools", async () => {
+    // A personal access token with reads only sees reads only.
+    it("connects with the official HTTP client and exposes only the twelve read tools", async () => {
       const client = await connect();
       expect(client.getServerVersion()?.name).toBe("akaun");
       const { tools } = await client.listTools();
       expect(tools.map((tool) => tool.name).sort()).toEqual([
         "get_account_statement",
+        "get_attachment",
+        "get_audit_history",
         "get_contact_balance",
         "get_financial_report",
         "get_import_job",
@@ -547,21 +563,25 @@ for (const era of ["legacy", "modern", "auto"] as const) {
     });
 
     it("rejects missing/bad tokens and revocation, independently of the user's role label", () => {
-      expect(bearerLocals(db, null)).toBeNull();
-      expect(bearerLocals(db, "Bearer wrong")).toBeNull();
-      expect(bearerLocals(db, "Basic x")).toBeNull();
-      expect(bearerLocals(db, `bearer ${directoryToken}`)?.isSuperuser).toBe(
+      expect(patLocals(db, null)).toBeNull();
+      expect(patLocals(db, "Bearer wrong")).toBeNull();
+      expect(patLocals(db, "Basic x")).toBeNull();
+      expect(patLocals(db, `bearer ${directoryToken}`)?.role?.isSuperuser).toBe(
         false,
       );
       sqlite.exec("PRAGMA query_only = OFF");
-      db.update(users).set({ bearerToken: null }).where(eq(users.id, 1)).run();
-      expect(bearerLocals(db, `Bearer ${fullToken}`)).toBeNull();
+      revokeAllTokens(db, 1);
+      expect(patLocals(db, `Bearer ${fullToken}`)).toBeNull();
     });
 
     it("returns 401 instead of a browser redirect and refuses cross-origin requests", async () => {
       const missing = await handleMcpRequest(
         request(),
-        { db, locals: { user: null, permissions: null, isSuperuser: false } },
+        {
+          db,
+          store,
+          locals: { user: null, permissions: null },
+        },
         origin,
       );
       expect(missing.status).toBe(401);
@@ -577,7 +597,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
           (
             await handleMcpRequest(
               request("POST", { Origin: badOrigin }),
-              { db, locals: actor() },
+              { db, store, locals: actor() },
               origin,
             )
           ).status,
@@ -585,7 +605,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       }
       const sameOrigin = await handleMcpRequest(
         request("POST", { Origin: origin }),
-        { db, locals: actor() },
+        { db, store, locals: actor() },
         origin,
       );
       expect(sameOrigin.status).toBe(200);
@@ -597,7 +617,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       for (const method of ["GET", "DELETE", "PUT", "PATCH", "OPTIONS"]) {
         const response = await handleMcpRequest(
           request(method),
-          { db, locals: actor() },
+          { db, store, locals: actor() },
           origin,
         );
         expect(response.status).toBe(405);
@@ -607,7 +627,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         (
           await handleMcpRequest(
             request("POST", { "mcp-protocol-version": "1900-01-01" }),
-            { db, locals: actor() },
+            { db, store, locals: actor() },
             origin,
           )
         ).status,
@@ -616,7 +636,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         (
           await handleMcpRequest(
             request("POST", { "Content-Type": "text/plain" }),
-            { db, locals: actor() },
+            { db, store, locals: actor() },
             origin,
           )
         ).status,
@@ -625,7 +645,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         (
           await handleMcpRequest(
             request("POST", {}, "x".repeat(128 * 1024 + 1)),
-            { db, locals: actor() },
+            { db, store, locals: actor() },
             origin,
           )
         ).status,
@@ -634,7 +654,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         (
           await handleMcpRequest(
             request("POST", {}, "{broken"),
-            { db, locals: actor() },
+            { db, store, locals: actor() },
             origin,
           )
         ).status,
@@ -654,11 +674,13 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       ]);
       expect(directoryTools.tools.map((tool) => tool.name)).toEqual([
         "list_contacts",
+        "get_audit_history",
       ]);
-      expect(fullTools.tools).toHaveLength(10);
+      expect(fullTools.tools).toHaveLength(12);
       expect(importTools.tools.map((tool) => tool.name)).toEqual([
         "list_import_jobs",
         "get_import_job",
+        "get_audit_history",
       ]);
       await expect(
         call(directory, "get_contact_balance", { contactId }),
@@ -678,14 +700,14 @@ for (const era of ["legacy", "modern", "auto"] as const) {
 
     it("checks permissions at call time as well as discovery", async () => {
       const locals = actor();
-      const server = createReadServer({ db, locals });
+      const server = createServer({ db, store, locals });
       const client = new Client({ name: "direct-test", version: "1" });
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
       clients.push(client);
       await server.connect(serverTransport);
       await client.connect(clientTransport);
-      locals.permissions!.records.view = false;
+      (locals.permissions as Set<string>).delete("records.read");
       const result = await call(client, "get_record", { recordId: expense.id });
       expect(result).toMatchObject({ isError: true });
       expect(JSON.stringify(result)).toContain("FORBIDDEN");
@@ -694,11 +716,10 @@ for (const era of ["legacy", "modern", "auto"] as const) {
 
     it("honors a changed permission on the next HTTP request", async () => {
       const client = await connect();
-      expect((await client.listTools()).tools).toHaveLength(10);
+      expect((await client.listTools()).tools).toHaveLength(12);
       sqlite.exec("PRAGMA query_only = OFF");
-      db.update(groupPermissions)
-        .set({ canView: false })
-        .where(eq(groupPermissions.resource, "records"))
+      db.delete(groupGrants)
+        .where(eq(groupGrants.permission, "records.read"))
         .run();
       sqlite.exec("PRAGMA query_only = ON");
       await expect(call(client, "list_records")).rejects.toMatchObject({
@@ -715,7 +736,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       const client = await connect();
       await client.listTools();
       sqlite.exec("PRAGMA query_only = OFF");
-      db.update(users).set({ bearerToken: null }).where(eq(users.id, 1)).run();
+      revokeAllTokens(db, 1);
       sqlite.exec("PRAGMA query_only = ON");
       await expect(call(client, "list_records")).rejects.toThrow();
       await expect(client.listTools()).rejects.toThrow();
@@ -723,15 +744,21 @@ for (const era of ["legacy", "modern", "auto"] as const) {
 
     it("bounds output and sanitizes unexpected failures", async () => {
       const server = new McpServer({ name: "budget-test", version: "1" });
-      const context: ReadContext = { db, locals: actor() };
-      registerRead(server, context, "large", ["records"], "budget", {}, () => ({
+      const context: McpContext = { db, store, locals: actor() };
+      // Tools that exist only for this test, given a requirement for it.
+      for (const name of ["large", "duplicated", "broken"])
+        TOOL_REQUIREMENTS[name] = {
+          scopes: ["records:read"],
+          permissions: ["records.read"],
+          writes: false,
+        };
+      registerRead(server, context, "large", "budget", {}, () => ({
         text: "x".repeat(512 * 1024),
       }));
       registerRead(
         server,
         context,
         "duplicated",
-        ["records"],
         "complete result budget",
         {},
         () => ({ text: "x".repeat(Math.floor(MAX_RESPONSE_BYTES * 0.6)) }),
@@ -740,7 +767,6 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         server,
         context,
         "broken",
-        ["records"],
         "failure",
         { id: z.number() },
         () => {
@@ -763,7 +789,168 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       expect(result).toContain("INTERNAL_ERROR");
       expect(result).not.toContain("secret");
       expect(result).not.toContain("/private/database");
+      for (const name of ["large", "duplicated", "broken"])
+        delete TOOL_REQUIREMENTS[name];
       await server.close();
+    });
+  });
+
+  describe(`get_attachment (${era})`, () => {
+    const PNG = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7,
+    ]);
+    const PDF = Buffer.from("%PDF-1.7 receipt");
+
+    /** Stores a file under the test store and attaches it to `recordId`. */
+    async function attachFile(recordId: number, key: string, bytes: Buffer) {
+      await store.put(key, bytes);
+      sqlite.exec("PRAGMA query_only = OFF");
+      const row = db
+        .insert(recordAttachments)
+        .values({ recordId, filename: key, displayName: key.split("/").pop()! })
+        .returning({ id: recordAttachments.id })
+        .get();
+      sqlite.exec("PRAGMA query_only = ON");
+      return row.id;
+    }
+
+    beforeEach(() => reset("mcp-attachment:1"));
+
+    it("returns an image as image content and a PDF as an embedded document", async () => {
+      const initialAudit = db.select().from(auditLog).all().length;
+      const image = await attachFile(
+        expense.id,
+        "records/2026/08/a_photo.png",
+        PNG,
+      );
+      const pdf = await attachFile(
+        expense.id,
+        "records/2026/08/b_receipt.pdf",
+        PDF,
+      );
+      const client = await connect();
+
+      const imageResult = await call(client, "get_attachment", {
+        recordId: expense.id,
+        attachmentId: image,
+      });
+      expect(imageResult.isError).toBeFalsy();
+      expect(imageResult.content).toMatchObject([
+        { type: "text" },
+        { type: "image", mimeType: "image/png", data: PNG.toString("base64") },
+      ]);
+      const about = JSON.parse(
+        (imageResult.content as { text: string }[])[0].text,
+      );
+      expect(about).toMatchObject({
+        attachmentId: image,
+        recordId: expense.id,
+        displayName: "a_photo.png",
+        sizeBytes: PNG.length,
+      });
+      expect(about.warning).toContain("untrusted");
+
+      const pdfResult = await call(client, "get_attachment", {
+        recordId: expense.id,
+        attachmentId: pdf,
+      });
+      expect(pdfResult.content).toMatchObject([
+        { type: "text" },
+        {
+          type: "resource",
+          resource: {
+            uri: `akaun://records/${expense.id}/attachments/${pdf}`,
+            mimeType: "application/pdf",
+            blob: PDF.toString("base64"),
+          },
+        },
+      ]);
+
+      for (const result of [imageResult, pdfResult]) {
+        expect(JSON.stringify(result)).not.toContain("records/2026");
+        expect(JSON.stringify(result)).not.toContain(storageRoot);
+      }
+      expect(db.select().from(auditLog).all()).toHaveLength(initialAudit);
+    });
+
+    it("returns a CSV file as text", async () => {
+      const csv = await attachFile(
+        expense.id,
+        "records/2026/08/c_export.csv",
+        Buffer.from("Date,Amount\n2026-08-01,12.50\n"),
+      );
+      const client = await connect();
+      const result = await call(client, "get_attachment", {
+        recordId: expense.id,
+        attachmentId: csv,
+      });
+      const [, body] = result.content as { type: string; text: string }[];
+      expect(body.type).toBe("text");
+      expect(body.text).toContain("12.50");
+    });
+
+    it("refuses a file over the size cap, another record's file and a file outside storage", async () => {
+      const big = Buffer.alloc(MAX_ATTACHMENT_BYTES + 1);
+      PNG.copy(big);
+      const large = await attachFile(
+        expense.id,
+        "records/2026/08/d_big.png",
+        big,
+      );
+      const other = await attachFile(
+        payment.id,
+        "records/2026/08/e_other.pdf",
+        PDF,
+      );
+      const outside = db
+        .select({ id: recordAttachments.id })
+        .from(recordAttachments)
+        .where(eq(recordAttachments.filename, "/internal/private/receipt.pdf"))
+        .get()!.id;
+      const client = await connect();
+
+      const tooLarge = await call(client, "get_attachment", {
+        recordId: expense.id,
+        attachmentId: large,
+      });
+      expect(JSON.stringify(tooLarge)).toContain("OUTPUT_TOO_LARGE");
+      const wrongRecord = await call(client, "get_attachment", {
+        recordId: expense.id,
+        attachmentId: other,
+      });
+      expect(JSON.stringify(wrongRecord)).toContain("NOT_FOUND");
+      const escaped = await call(client, "get_attachment", {
+        recordId: expense.id,
+        attachmentId: outside,
+      });
+      expect(JSON.stringify(escaped)).toContain("NOT_FOUND");
+      expect(JSON.stringify(escaped)).not.toContain("/internal/private");
+    });
+
+    it("limits how many files one user reads in a window", async () => {
+      const pdf = await attachFile(
+        expense.id,
+        "records/2026/08/f_receipt.pdf",
+        PDF,
+      );
+      for (let i = 0; i < ATTACHMENT_READ_LIMIT.max; i++)
+        hit(
+          "mcp-attachment:1",
+          ATTACHMENT_READ_LIMIT.max,
+          ATTACHMENT_READ_LIMIT.windowMs,
+        );
+      const client = await connect();
+      const result = await call(client, "get_attachment", {
+        recordId: expense.id,
+        attachmentId: pdf,
+      });
+      expect(JSON.stringify(result)).toContain("RATE_LIMITED");
+    });
+
+    it("is not offered to a user who cannot read records", async () => {
+      const importer = await connect(importToken);
+      const names = (await importer.listTools()).tools.map((tool) => tool.name);
+      expect(names).not.toContain("get_attachment");
     });
   });
 

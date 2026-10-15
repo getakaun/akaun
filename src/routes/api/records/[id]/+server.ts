@@ -1,64 +1,22 @@
-import { z } from "zod";
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
-import {
-  badRequest,
-  forbidden,
-  notFound,
-  refused,
-} from "$lib/server/api-response.js";
+import { can } from "$lib/server/permissions.js";
+import { badRequest, forbidden, notFound } from "$lib/server/api-response.js";
 import { getRecord } from "$lib/server/queries/ledger.js";
-import { patchRecord, removeRecord } from "$lib/server/services/ledger.js";
+import { permissionForKind } from "$lib/server/ledger/record-permissions.js";
 import {
-  isReadOnlyKind,
-  resourceForKind,
-} from "$lib/server/ledger/record-permissions.js";
-import { isValidDate } from "$lib/server/date.js";
-import { getAccount } from "$lib/server/queries/accounts.js";
-import { sidesFromAccounts } from "$lib/server/ledger/sides-from-accounts.js";
-import { DefaultAccountPurpose } from "$lib/enums.js";
-import { requireAccountDefault } from "$lib/server/services/account-defaults.js";
-import { toMinor } from "$lib/server/ledger/money.js";
-
-const accountId = z.number().int().positive();
+  deleteRecord,
+  patchSchema,
+  updateRecord,
+} from "$lib/server/application/records.js";
+import { toResponse } from "$lib/server/application/http.js";
 
 /**
- * Only the everyday fields. A settled or reconciled record refuses the amount,
- * the date and any account with a `409` naming what to undo first — the service
- * enforces that, so this schema stays about shape rather than state (FR-017a).
+ * Only the everyday fields (`application/records.ts`'s `patchSchema`). A
+ * settled or reconciled record refuses the amount, the date and any account
+ * with a `409` naming what to undo first — the service enforces that, so the
+ * schema stays about shape rather than state (FR-017a).
  */
-const patchSchema = z
-  .object({
-    date: z
-      .string()
-      .refine(isValidDate, { message: "The date must be in YYYY-MM-DD form." })
-      .optional(),
-    description: z.string().trim().max(500).optional(),
-    amount: z.number().finite().optional(),
-    currency: z.string().trim().length(3).toUpperCase().optional(),
-    exchangeRate: z.number().positive().optional(),
-    reference: z.string().trim().max(200).optional(),
-    remark: z.string().trim().max(2000).optional(),
-    contactId: accountId.nullable().optional(),
-    categoryAccountId: accountId.optional(),
-    paidFromAccountId: accountId.nullable().optional(),
-    receivedIntoAccountId: accountId.optional(),
-    fromAccountId: accountId.optional(),
-    toAccountId: accountId.optional(),
-    extraSides: z
-      .array(
-        z.object({
-          accountId,
-          amountMinor: z.number().int(),
-          label: z.string().trim().max(200).nullable().optional(),
-        }),
-      )
-      .optional(),
-    categoryAmountMinor: z.number().int().positive().optional(),
-    categoryLabel: z.string().trim().max(200).nullable().optional(),
-  })
-  .strict();
 
 function idOf(params: { id: string }): number | null {
   const id = Number(params.id);
@@ -71,7 +29,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 
   const record = getRecord(db, id);
   if (!record) return notFound("That record no longer exists.");
-  if (!hasPermission(locals, resourceForKind(record.kind), "view")) {
+  if (!can(locals, permissionForKind(record.kind, "read"))) {
     return forbidden();
   }
   return Response.json(record);
@@ -81,91 +39,21 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
   const id = idOf(params as { id: string });
   if (id === null) return notFound("That record no longer exists.");
 
-  const existing = getRecord(db, id);
-  if (!existing) return notFound("That record no longer exists.");
-  if (!hasPermission(locals, resourceForKind(existing.kind), "change")) {
-    return forbidden();
-  }
-  if (isReadOnlyKind(existing.kind)) {
-    return refused(
-      "This record was created by issuing an invoice. Change it on the invoice instead.",
-    );
-  }
-
   const parsed = patchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return badRequest(parsed.error);
 
-  const patch = parsed.data;
-
-  // Both accounts named means the kind is being re-derived, so the same gate
-  // the create path applies is applied here — after the derivation, because
-  // whether a record needs the ability is a fact about the accounts it names
-  // (FR-031c). The derivation is pure, so the service asking it again below
-  // gets the same answer.
-  if (patch.fromAccountId !== undefined && patch.toAccountId !== undefined) {
-    const receivable = requireAccountDefault(db, DefaultAccountPurpose.Receivable);
-    if (!receivable.ok) return refused(receivable.reason);
-    const payable = requireAccountDefault(db, DefaultAccountPurpose.Payable);
-    if (!payable.ok) return refused(payable.reason);
-    const opening = requireAccountDefault(db, DefaultAccountPurpose.OpeningBalances);
-    if (!opening.ok) return refused(opening.reason);
-    const derived = sidesFromAccounts(
-      {
-        fromAccountId: patch.fromAccountId,
-        toAccountId: patch.toAccountId,
-        amountMinor: toMinor(
-          patch.amount ?? existing.amount,
-          patch.exchangeRate ?? existing.exchangeRate,
-        ),
-        contactId:
-          patch.contactId !== undefined ? patch.contactId : existing.contactId,
-        extraSides: patch.extraSides,
-        categoryAmountMinor: patch.categoryAmountMinor,
-        categoryLabel: patch.categoryLabel,
-      },
-      {
-        accountById: (accountId) => {
-          const account = getAccount(db, accountId);
-          return account
-            ? {
-                id: account.id,
-                type: account.type,
-                role: account.role,
-                subType: account.subType,
-                archived: account.archivedAt !== null,
-              }
-            : null;
-        },
-        canAdjust: hasPermission(locals, "adjustments", "change"),
-        receivableAccountId: receivable.value,
-        payableAccountId: payable.value,
-        openingBalancesAccountId: opening.value,
-      },
-    );
-    if (!derived.ok) return refused(derived.reason);
-  }
-
-  const result = patchRecord(db, id, locals.user!.id, patch);
-  if (!result.ok) return refused(result.reason);
-  return Response.json(result.value);
+  // Who may, the read-only invoice posting, and the adjustments gate when the
+  // patch re-derives the kind or restates the extra lines — all asked by the
+  // one operation the MCP tools call too.
+  return toResponse(
+    updateRecord({ db, locals }, id, parsed.data),
+    200,
+    (written) => written.record,
+  );
 };
 
 export const DELETE: RequestHandler = async ({ locals, params }) => {
   const id = idOf(params as { id: string });
   if (id === null) return notFound("That record no longer exists.");
-
-  const existing = getRecord(db, id);
-  if (!existing) return notFound("That record no longer exists.");
-  if (!hasPermission(locals, resourceForKind(existing.kind), "delete")) {
-    return forbidden();
-  }
-  if (isReadOnlyKind(existing.kind)) {
-    return refused(
-      "This record was created by issuing an invoice. Cancel the invoice instead.",
-    );
-  }
-
-  const result = removeRecord(db, id, locals.user!.id);
-  if (!result.ok) return refused(result.reason);
-  return new Response(null, { status: 204 });
+  return toResponse(deleteRecord({ db, locals }, id), 204);
 };

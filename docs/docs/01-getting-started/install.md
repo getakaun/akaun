@@ -36,12 +36,14 @@ You can install Akaun in two ways. Docker is the easier way, and we recommend it
          - ./data:/app/data
        environment:
          - ORIGIN=http://localhost:6969
+         - TZ=Etc/UTC
          - PUID=1000
          - PGID=1000
-         - BODY_SIZE_LIMIT=15M
+         - BODY_SIZE_LIMIT=21M
    ```
 
-4. Change the value of `ORIGIN` to the address that the users will type.
+4. Change `ORIGIN` to the address that users will type and `TZ` to your business timezone,
+   for example `Asia/Kuala_Lumpur`.
 5. On Linux, type `id -u` and `id -g` to find your user ID and group ID.
 6. Change the values of `PUID` and `PGID` to these two numbers.
 7. In the same folder, type this command:
@@ -115,11 +117,12 @@ Bun reads the `.env` file in the folder of the code. For Docker, put each settin
 | Variable | Default | What it does |
 |---|---|---|
 | `ORIGIN` | (none) | The full address that the users type, for example `https://books.example.com`. Akaun refuses sign-in and saves from a different address. |
+| `TZ` | `Etc/UTC` in Docker and `.env.example`; otherwise the host timezone | Business timezone for server-side document dates and overdue/expiry checks. Use an IANA name such as `Asia/Kuala_Lumpur` and restart after changing it. Browser date defaults use each device's timezone. |
 | `PORT` | `3000` (Docker: `6969`) | The network port that Akaun listens on. |
 | `HOST` | `0.0.0.0` | The network address that Akaun listens on. `0.0.0.0` accepts connections on all network addresses. |
 | `DATABASE_PATH` | `./data/akaun.db` (Docker: `/app/data/akaun.db`) | The location of the database file. A relative path starts at the folder where you start the server. |
 | `STORAGE_PATH` | `./data/storage` (Docker: `/app/data/storage`) | The folder for the files that users upload, for example receipts and attachments. |
-| `BODY_SIZE_LIMIT` | `15M` in `.env.example` and in Docker | The largest upload that the server accepts. Akaun accepts files up to 15 MB. Do not set a value smaller than `15M`. If you remove this setting, the limit is 512 KB and most uploads fail. |
+| `BODY_SIZE_LIMIT` | `21M` in `.env.example` and in Docker | The largest request that the server accepts. Akaun accepts files up to 15 MB. An AI assistant sends a file in a larger, encoded form, so a 15 MB file needs about 21 MB. Do not set a value smaller than `15M`; below `21M`, assistants cannot attach the largest files. If you remove this setting, the limit is 512 KB and most uploads fail. |
 | `LOG_LEVEL` | `info` in `.env.example` and in Docker | How much the server writes to its log: `trace`, `debug`, `info`, `warn` or `error`. A `trace` log can contain your financial data. Use it only for a short time. |
 | `SSL_ENABLED` | `false` | Set to `true` to serve Akaun over HTTPS without a reverse proxy. |
 | `SSL_KEY_PATH` | (none) | The path to the private key file. Necessary when `SSL_ENABLED` is `true`. |

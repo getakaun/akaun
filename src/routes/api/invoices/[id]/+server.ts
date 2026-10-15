@@ -1,14 +1,15 @@
 import type { RequestHandler } from "@sveltejs/kit";
 import { db } from "$lib/server/db/client.js";
 import { getInvoice } from "$lib/server/queries/invoices.js";
-import { patchInvoice, removeInvoice } from "$lib/server/services/invoices.js";
-import { resolveOrCreateContact } from "$lib/server/queries/contacts.js";
-import { InvoiceStatus, Role } from "$lib/enums.js";
-import { hasPermission } from "$lib/server/permissions.js";
-import { notFound, refused } from "$lib/server/api-response.js";
+import { can } from "$lib/server/permissions.js";
+import {
+  deleteInvoice,
+  updateInvoice,
+} from "$lib/server/application/sales.js";
+import { toResponse } from "$lib/server/application/http.js";
 
 export const GET: RequestHandler = async ({ locals, params }) => {
-  if (!hasPermission(locals, "invoices", "view"))
+  if (!can(locals, "invoices.read"))
     return new Response("Forbidden", { status: 403 });
   const id = parseInt(params.id!);
   const invoice = getInvoice(db, id);
@@ -17,81 +18,19 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 };
 
 export const PATCH: RequestHandler = async ({ locals, params, request }) => {
-  if (!hasPermission(locals, "invoices", "change"))
-    return new Response("Forbidden", { status: 403 });
-  const user = locals.user!;
   const id = parseInt(params.id!);
-
-  const invoice = getInvoice(db, id);
-  if (!invoice) return Response.json({ error: "Not found" }, { status: 404 });
-
-  if (invoice.status === InvoiceStatus.Cancelled) {
-    return refused(
-      "This invoice has been cancelled, so it can no longer be changed.",
-    );
-  }
-
-  const body = await request.json();
-  const patch: Record<string, unknown> = {};
-  const fields = [
-    "contactId",
-    "reference",
-    "issueDate",
-    "dueDate",
-    "currency",
-    "exchangeRate",
-    "notes",
-    "terms",
-    "status",
-    "lines",
-  ];
-  for (const f of fields) {
-    if (body[f] !== undefined) patch[f] = body[f];
-  }
-
-  if (!patch.contactId && body.newContactName) {
-    patch.contactId = resolveOrCreateContact(
-      db,
-      body.newContactName,
-      Role.Customer,
-      user.id,
-    );
-  }
-
-  // Once it has been sent, its amount is in the books and the customer has a
-  // copy, so what the money says is fixed. The wording around it can still be
-  // corrected (FR-018a).
-  if (invoice.ledgerRecordId !== null) {
-    const sealed = [
-      "contactId",
-      "issueDate",
-      "currency",
-      "exchangeRate",
-      "lines",
-    ];
-    if (sealed.some((f) => patch[f] !== undefined)) {
-      return refused(
-        "This invoice has been sent. Its amount, date and customer are fixed — cancel it and write a new one if they are wrong.",
-      );
-    }
-  }
-
-  const updated = patchInvoice(db, id, user.id, patch);
-  return Response.json(updated);
+  const body = await request.json().catch(() => null);
+  // No `status` in the body: sending and cancelling are their own actions,
+  // because each changes the books. What a sent invoice may still change is
+  // the operation's to say (`application/sales.ts`).
+  return toResponse(
+    updateInvoice({ db, locals }, id, body),
+    200,
+    (written) => written.invoice,
+  );
 };
 
 export const DELETE: RequestHandler = async ({ locals, params }) => {
-  if (!hasPermission(locals, "invoices", "delete"))
-    return new Response("Forbidden", { status: 403 });
   const id = parseInt(params.id!);
-
-  const result = removeInvoice(db, id, locals.user!.id);
-  if (!result.ok) {
-    if (result.reason === "not_found")
-      return notFound("That invoice no longer exists.");
-    return refused(
-      "This invoice has been sent, so it cannot be deleted. Cancel it instead.",
-    );
-  }
-  return new Response(null, { status: 204 });
+  return toResponse(deleteInvoice({ db, locals }, id), 204);
 };

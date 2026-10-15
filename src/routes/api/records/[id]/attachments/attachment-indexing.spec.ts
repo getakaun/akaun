@@ -9,12 +9,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  * record now has and feed the result into `setExtractedText`.
  *
  * The route imports the singleton `db`, which opens DATABASE_PATH at import
- * time — mocked here, like `file-ownership.spec.ts`, so it never loads the
+ * time — mocked here, like `attachment-file.spec.ts`, so it never loads the
  * real one.
  */
 
 vi.mock("$lib/server/db/client.js", () => ({ db: {} }));
-vi.mock("$lib/server/permissions.js", () => ({ hasPermission: () => true }));
+vi.mock("$lib/server/permissions.js", () => ({
+  can: () => true,
+  canAll: () => true,
+}));
 
 const record = { id: 42, kind: 1, date: "2026-01-01" };
 const attachment = { id: 7, recordId: 42, filename: "records/2026/08/receipt.pdf", displayName: "receipt.pdf" };

@@ -3,7 +3,7 @@
 	import { beforeNavigate, goto, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { untrack, onMount, onDestroy } from 'svelte';
-	import { ChevronRight, FileText, GripVertical, Plus, X, Lock, Pencil, Trash2, Zap, RefreshCw, Upload, Image as ImageIcon, ShieldCheck, AlertTriangle } from '@lucide/svelte';
+	import { ChevronRight, FileText, GripVertical, Plus, X, Lock, Pencil, Trash2, Zap, RefreshCw, Upload, ShieldCheck, AlertTriangle } from '@lucide/svelte';
 	import { resolve } from '$app/paths';
 	import { formatDate, formatMinor } from '$lib/format.js';
 	import { Slider } from '$lib/components/ui/slider/index.js';
@@ -25,6 +25,8 @@
 	import { renderTemplate, validateTemplate, TOKEN_REGEX, type SequenceDocType } from '$lib/sequence-template.js';
 	import type { PageData, ActionData } from './$types.js';
 	import AccountDefaults from '$lib/components/settings/AccountDefaults.svelte';
+	import CompanyImageField from '$lib/components/settings/CompanyImageField.svelte';
+	import type { PdfHeaderStyle } from '$lib/pdf/header-style.js';
 	import { parseProfileFile, stashImportedFile } from '$lib/import-profile-portable.js';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -63,36 +65,10 @@
 	let companyAddress = $state(data.companyAddress);
 	// svelte-ignore state_referenced_locally
 	let companyRegistrationNo = $state(data.companyRegistrationNo);
-	// svelte-ignore state_referenced_locally
-	let logoPreviewUrl = $state<string | null>(data.companyLogoUrl);
+	// What each company image has staged; `CompanyImageField` holds the file
+	// and its preview, and drops them when this goes back to 'none'.
 	let logoChange = $state<'none' | 'replace' | 'remove'>('none');
-	let logoFileInput = $state<HTMLInputElement | null>(null);
-	// Plain (non-reactive) — tracks the current unsaved blob: URL for cleanup.
-	// Deliberately not $state: reading it inside the saveCompany $effect below would make
-	// logoPreviewUrl a dependency of that effect, and the effect's own write to
-	// logoPreviewUrl would then re-trigger itself, double-firing toast.success().
-	let pendingBlobUrl: string | null = null;
-
-	function revokePendingBlobUrl() {
-		if (pendingBlobUrl) URL.revokeObjectURL(pendingBlobUrl);
-		pendingBlobUrl = null;
-	}
-
-	function handleLogoFileChange(e: Event) {
-		const file = (e.target as HTMLInputElement).files?.[0];
-		if (!file) return;
-		revokePendingBlobUrl();
-		pendingBlobUrl = URL.createObjectURL(file);
-		logoPreviewUrl = pendingBlobUrl;
-		logoChange = 'replace';
-	}
-
-	function handleLogoRemove() {
-		revokePendingBlobUrl();
-		logoPreviewUrl = null;
-		logoChange = 'remove';
-		if (logoFileInput) logoFileInput.value = '';
-	}
+	let letterheadChange = $state<'none' | 'replace' | 'remove'>('none');
 
 	// Currency settings state
 	// svelte-ignore state_referenced_locally
@@ -534,6 +510,14 @@
 	// only the accent color is user-editable.
 	// svelte-ignore state_referenced_locally
 	let pdfThemeColor = $state(data.pdfThemeColor);
+	// svelte-ignore state_referenced_locally
+	let pdfHeader = $state<PdfHeaderStyle>(data.pdfHeader);
+	// Days to the due date / expiry date a new document starts with, as typed:
+	// strings, so blank ("none") stays blank. The server checks the range.
+	// svelte-ignore state_referenced_locally
+	let invoiceDueDays = $state(data.invoiceDueDays);
+	// svelte-ignore state_referenced_locally
+	let quotationValidDays = $state(data.quotationValidDays);
 	const standardLayoutDescription =
 		LAYOUT_CATALOG.find((l) => l.key === DEFAULT_LAYOUT_KEY)?.description ?? '';
 
@@ -1149,10 +1133,15 @@
 				companyName = data.companyName;
 				companyAddress = data.companyAddress;
 				companyRegistrationNo = data.companyRegistrationNo;
-				revokePendingBlobUrl();
-				logoPreviewUrl = data.companyLogoUrl;
 				logoChange = 'none';
-				if (logoFileInput) logoFileInput.value = '';
+				letterheadChange = 'none';
+			}
+			if (action === 'savePdfTemplate') {
+				pdfThemeColor = data.pdfThemeColor;
+				pdfHeader = data.pdfHeader;
+				// The server stores "007" as "7"; take its spelling back.
+				invoiceDueDays = data.invoiceDueDays;
+				quotationValidDays = data.quotationValidDays;
 			}
 			if (action === 'saveSequenceTemplate') {
 				seqTemplate = data.sequenceTemplate;
@@ -1189,13 +1178,17 @@
 		companyAddress !== data.companyAddress ||
 		companyRegistrationNo !== data.companyRegistrationNo ||
 		logoChange !== 'none' ||
+		letterheadChange !== 'none' ||
 		providersDirty ||
 		profilesDirty ||
 		aiParallelTasks !== data.autoImportParallelTasks ||
 		aiCategoryHints !== data.autoImportCategoryHints ||
 		aiRateLimitSec !== Math.round(data.autoImportRateLimitMs / 1000) ||
 		aiCustomInstructions !== data.autoImportCustomInstructions ||
-		pdfThemeColor !== data.pdfThemeColor
+		pdfThemeColor !== data.pdfThemeColor ||
+		pdfHeader !== data.pdfHeader ||
+		invoiceDueDays !== data.invoiceDueDays ||
+		quotationValidDays !== data.quotationValidDays
 	);
 
 	function resetAllUnsaved() {
@@ -1206,10 +1199,8 @@
 		companyName = data.companyName;
 		companyAddress = data.companyAddress;
 		companyRegistrationNo = data.companyRegistrationNo;
-		revokePendingBlobUrl();
-		logoPreviewUrl = data.companyLogoUrl;
 		logoChange = 'none';
-		if (logoFileInput) logoFileInput.value = '';
+		letterheadChange = 'none';
 		providers = [...data.providers];
 		importProfiles = [...data.importProfiles.profiles];
 		aiParallelTasks = data.autoImportParallelTasks;
@@ -1217,6 +1208,9 @@
 		aiRateLimitSec = Math.round(data.autoImportRateLimitMs / 1000);
 		aiCustomInstructions = data.autoImportCustomInstructions;
 		pdfThemeColor = data.pdfThemeColor;
+		pdfHeader = data.pdfHeader;
+		invoiceDueDays = data.invoiceDueDays;
+		quotationValidDays = data.quotationValidDays;
 		closeSheet();
 	}
 
@@ -1302,6 +1296,15 @@
 
 		<!-- Content -->
 		<div class="set-content">
+			{#if !data.canManageSettings}
+				<p class="set-readonly-note">
+					You can see settings but not change them. An administrator can give you the Settings › Manage
+					permission on Users &amp; Groups.
+				</p>
+			{/if}
+			<!-- Every control is read-only without settings.manage; the server refuses the saves anyway.
+			     The Books tab is the exception: its integrity check reads, and asks only reports.read. -->
+			<fieldset class="set-fieldset" disabled={!data.canManageSettings && activeTab !== 'books'}>
 			{#if activeTab === 'general'}
 				<div class="set-section">
 					<div class="set-section-head">
@@ -1479,34 +1482,27 @@
 								<div>
 									<div class="set-row-label">Logo</div>
 								</div>
-								<div class="logo-field">
-									<div class="logo-thumb" class:logo-thumb-empty={!logoPreviewUrl}>
-										{#if logoPreviewUrl}
-											<img src={logoPreviewUrl} alt="Company logo" />
-										{:else}
-											<ImageIcon size={22} />
-										{/if}
-									</div>
-									<div class="logo-actions">
-										<Button type="button" variant="outline" size="sm" onclick={() => logoFileInput?.click()}>
-											<Upload size={13} /> {logoPreviewUrl ? 'Replace' : 'Upload'}
-										</Button>
-										{#if logoPreviewUrl}
-											<Button type="button" variant="outline" size="sm" onclick={handleLogoRemove}>
-												<Trash2 size={13} /> Remove
-											</Button>
-										{/if}
-									</div>
-									<input
-										type="file"
-										name="companyLogo"
-										accept="image/jpeg,image/png"
-										bind:this={logoFileInput}
-										onchange={handleLogoFileChange}
-										style="display:none"
-									/>
-									<input type="hidden" name="removeLogo" value={logoChange === 'remove' ? 'true' : 'false'} />
+								<CompanyImageField
+									fileName="companyLogo"
+									removeName="removeLogo"
+									savedUrl={data.companyLogoUrl}
+									alt="Company logo"
+									bind:change={logoChange}
+								/>
+							</div>
+							<div class="set-row">
+								<div>
+									<div class="set-row-label">Letterhead</div>
+									<div class="set-row-value" style="font-size:12px; margin-top:2px;">A JPEG or PNG banner. Printed at the top of quotations and invoices in place of the company name when Templates › Header is set to Letterhead.</div>
 								</div>
+								<CompanyImageField
+									fileName="companyLetterhead"
+									removeName="removeLetterhead"
+									savedUrl={data.companyLetterheadUrl}
+									alt="Company letterhead"
+									wide
+									bind:change={letterheadChange}
+								/>
 							</div>
 							<div class="set-row set-row-col">
 								<div class="set-row-label">Company Name</div>
@@ -1626,8 +1622,8 @@
 								<AlertTriangle size={14} />
 								<span>
 									The update could not prove it left everything as it found it, so nothing old
-									was thrown away. A copy of your data from before it ran is kept in
-									<code>data/backups</code>.
+									was thrown away. A copy of your data from before it ran is kept in the
+									<code>pre-chart-</code> folder next to the database.
 								</span>
 							</p>
 							<ul class="books-list">
@@ -1986,12 +1982,13 @@
 				<div class="set-section">
 					<div class="set-section-head">
 						<h2 class="set-section-title">Templates</h2>
-						<p class="set-section-sub">Set an accent color for printed quotations and invoices</p>
+						<p class="set-section-sub">Set the accent color and header for printed quotations and invoices, and the terms new ones start with</p>
 					</div>
 					<form method="POST" action="?/savePdfTemplate" use:enhance={() => ({ update }) => update({ reset: false })}>
 						{#if form?.error}
 							<div style="background:var(--red-soft); color:var(--red); border-radius:8px; padding:10px 14px; font-size:13px; margin-bottom:16px;">{form.error}</div>
 						{/if}
+						<p class="set-subsection-label">Printed documents</p>
 						<div class="set-rows">
 							<div class="set-row set-row-col">
 								<div class="set-row-label">Layout</div>
@@ -2008,6 +2005,73 @@
 									presets={PDF_THEME_PRESETS}
 								/>
 								<input type="hidden" name="themeColor" value={pdfThemeColor} />
+							</div>
+							<div class="set-row">
+								<div>
+									<div class="set-row-label">Header</div>
+									<div class="set-row-value" style="font-size:12px; margin-top:2px;">
+										{#if data.companyLetterheadUrl}
+											What prints at the top of the page. The layout decides where it goes.
+										{:else}
+											Upload a letterhead on the Company tab to print it instead of the company name.
+										{/if}
+									</div>
+								</div>
+								<div class="seg sm" role="group" aria-label="Header">
+									<button
+										type="button"
+										class="seg-btn"
+										class:active={pdfHeader === 'name'}
+										aria-pressed={pdfHeader === 'name'}
+										onclick={() => (pdfHeader = 'name')}
+									>
+										Company name
+									</button>
+									<button
+										type="button"
+										class="seg-btn"
+										class:active={pdfHeader === 'letterhead'}
+										aria-pressed={pdfHeader === 'letterhead'}
+										disabled={!data.companyLetterheadUrl && pdfHeader !== 'letterhead'}
+										onclick={() => (pdfHeader = 'letterhead')}
+									>
+										Letterhead
+									</button>
+								</div>
+								<input type="hidden" name="pdfHeader" value={pdfHeader} />
+							</div>
+						</div>
+						<p class="set-subsection-label">Default terms</p>
+						<div class="set-rows">
+							<div class="set-row">
+								<div>
+									<div class="set-row-label">Invoice due in (days)</div>
+									<div class="set-row-value" style="font-size:12px; margin-top:2px;">A new invoice is due this many days after its issue date. 0 is due on receipt; leave blank for no due date.</div>
+								</div>
+								<Input
+									name="invoiceDueDays"
+									type="text"
+									inputmode="numeric"
+									placeholder="None"
+									bind:value={invoiceDueDays}
+									class="set-input-right"
+									style="width:120px;"
+								/>
+							</div>
+							<div class="set-row">
+								<div>
+									<div class="set-row-label">Quotation valid for (days)</div>
+									<div class="set-row-value" style="font-size:12px; margin-top:2px;">A new quotation expires this many days after its issue date. Leave blank for no expiry date.</div>
+								</div>
+								<Input
+									name="quotationValidDays"
+									type="text"
+									inputmode="numeric"
+									placeholder="None"
+									bind:value={quotationValidDays}
+									class="set-input-right"
+									style="width:120px;"
+								/>
 							</div>
 						</div>
 						<input type="hidden" name="invoiceLayoutKey" value={DEFAULT_LAYOUT_KEY} />
@@ -2058,6 +2122,7 @@
 					</div>
 				</div>
 			{/if}
+			</fieldset>
 		</div>
 	</div>
 </div>
@@ -2325,40 +2390,9 @@
 />
 
 <style>
-	.logo-field {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-	}
-
-	.logo-thumb {
-		width: 88px;
-		height: 88px;
-		flex-shrink: 0;
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		background: var(--card);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		overflow: hidden;
-	}
-
-	.logo-thumb img {
-		width: 100%;
-		height: 100%;
-		object-fit: contain;
-	}
-
-	.logo-thumb-empty {
-		border-style: dashed;
-		color: var(--muted-foreground);
-	}
-
-	.logo-actions {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
+	.seg-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 
@@ -2770,4 +2804,19 @@
 	}
 	.layout-static-name { font-size: 13px; font-weight: 600; color: var(--foreground); }
 	.layout-static-desc { font-size: 12px; color: var(--muted-foreground); }
+	.set-fieldset {
+		border: none;
+		margin: 0;
+		padding: 0;
+		min-width: 0;
+	}
+	.set-readonly-note {
+		font-size: 13px;
+		color: var(--muted-foreground);
+		background: var(--muted);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		padding: 10px 12px;
+		margin: 0 0 16px;
+	}
 </style>

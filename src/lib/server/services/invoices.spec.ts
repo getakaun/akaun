@@ -14,18 +14,26 @@ vi.mock("$lib/server/queries/invoices.js", () => ({
   deleteInvoice: vi.fn(),
   getInvoice: mocks.getInvoice,
   markInvoiceIssued: mocks.markInvoiceIssued,
+  markInvoiceCancelled: vi.fn(),
 }));
 vi.mock("$lib/server/services/ledger.js", () => ({
   createRecord: mocks.createRecord,
+  removeRecord: vi.fn(),
 }));
 vi.mock("$lib/server/services/account-defaults.js", () => ({
   requireAccountDefault: mocks.requireAccountDefault,
 }));
 vi.mock("$lib/server/queries/ledger.js", () => ({
   reindexRecord: mocks.reindexRecord,
+  lockStateFor: vi.fn(),
 }));
 
 import { issueInvoice } from "./invoices.js";
+
+/** Issuing runs in one transaction; this stand-in just runs it. */
+const fakeDb = {
+  transaction: (fn: (tx: unknown) => unknown) => fn(fakeDb),
+} as never;
 
 describe("issuing an invoice with saved defaults", () => {
   beforeEach(() => {
@@ -47,11 +55,13 @@ describe("issuing an invoice with saved defaults", () => {
   });
 
   it("uses the saved sales revenue account when no override is supplied", () => {
-    expect(issueInvoice({} as never, 1, 7).ok).toBe(true);
+    expect(issueInvoice(fakeDb, 1, 7).ok).toBe(true);
     expect(mocks.createRecord).toHaveBeenCalledWith(
       expect.anything(),
       7,
       expect.objectContaining({ incomeAccountId: 44 }),
+      // Its emits are held until the transaction commits.
+      expect.any(Array),
     );
     // Reindexed again after `markInvoiceIssued` links the invoice back to the
     // record, so the record's search text can pick up the invoice's content.
@@ -63,7 +73,7 @@ describe("issuing an invoice with saved defaults", () => {
       ok: false,
       reason: "Choose a valid default.",
     });
-    expect(issueInvoice({} as never, 1, 7)).toEqual({
+    expect(issueInvoice(fakeDb, 1, 7)).toEqual({
       ok: false,
       reason: "Choose a valid default.",
     });

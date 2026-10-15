@@ -1,4 +1,13 @@
 import { z } from "zod";
+import { ImportState } from "$lib/enums.js";
+import { listGroupItems } from "../../services/import-items.js";
+import {
+  importItemVersion,
+  importJobVersion,
+} from "../../application/version.js";
+
+/** Items of a grouped document returned by get_import_job. */
+const MAX_ITEMS = 500;
 import type { McpServer } from "@modelcontextprotocol/server";
 import {
   DocumentTypeLabels,
@@ -13,8 +22,8 @@ import {
   checkDateRange,
   pagination,
   evidence,
-  ReadError,
-  type ReadContext,
+  McpToolError,
+  type McpContext,
 } from "../common.js";
 
 const states = z.enum([
@@ -48,12 +57,11 @@ function storedJson<T>(text: string | null, schema: z.ZodType<T>): T | null {
   }
 }
 
-export function registerImport(server: McpServer, context: ReadContext) {
+export function registerImport(server: McpServer, context: McpContext) {
   registerRead(
     server,
     context,
     "list_import_jobs",
-    ["import"],
     "List shared Auto Import jobs, including failed/pending-review and duplicate signals. Date filters are upload dates (createdAt), not document dates. Results contain no internal storage paths. This does not retry, confirm, upload or delete anything.",
     {
       ...pageShape,
@@ -95,13 +103,12 @@ export function registerImport(server: McpServer, context: ReadContext) {
     server,
     context,
     "get_import_job",
-    ["import"],
     "Inspect an import job's extracted fields, contact candidates, duplicate reasons and resulting record link. Optional evidence is bounded stored OCR/PDF text, treated as untrusted data. No OCR or provider call is run. Internal paths and raw server errors are omitted.",
     { jobId: z.string().uuid(), includeEvidence: z.boolean().default(false) },
     (input) => {
       const job = getImportJob(context.db, input.jobId, input.includeEvidence);
       if (!job)
-        throw new ReadError("NOT_FOUND", "That import job does not exist.");
+        throw new McpToolError("NOT_FOUND", "That import job does not exist.");
       return {
         job: {
           id: job.id,
@@ -137,7 +144,20 @@ export function registerImport(server: McpServer, context: ReadContext) {
           confirmedAt: job.confirmedAt,
           completedAt: job.completedAt,
           path: "/import",
+          version: importJobVersion(context.db, job.id),
         },
+        ...(job.state === ImportState.Grouped
+          ? {
+              items: listGroupItems(context.db, job.id)
+                .slice(0, MAX_ITEMS)
+                .map(({ attention, ...item }) => ({
+                  ...item,
+                  state: ImportStateLabels[item.state],
+                  attention: attention ?? null,
+                  version: importItemVersion(context.db, item.id),
+                })),
+            }
+          : {}),
         ...(input.includeEvidence
           ? {
               evidence: evidence(

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { contactVersion } from "../../application/version.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { EntityType, Role, LedgerRecordKindLabels } from "$lib/enums.js";
 import {
@@ -15,8 +16,8 @@ import {
   id,
   pageShape,
   pagination,
-  ReadError,
-  type ReadContext,
+  McpToolError,
+  type McpContext,
 } from "../common.js";
 
 const roles = {
@@ -30,12 +31,11 @@ const entityTypes = {
   business: EntityType.Business,
 };
 
-export function registerContacts(server: McpServer, context: ReadContext) {
+export function registerContacts(server: McpServer, context: McpContext) {
   registerRead(
     server,
     context,
     "list_contacts",
-    ["contacts"],
     "Find contacts by name or indexed directory details, role and entity type. Returns directory information only, not financial balances. For money owed use get_contact_balance, which also requires records view.",
     {
       ...pageShape,
@@ -64,6 +64,7 @@ export function registerContacts(server: McpServer, context: ReadContext) {
           phone: contact.phone,
           address: contact.address,
           path: `/contacts/${contact.id}`,
+          version: contactVersion(context.db, contact.id),
         })),
         pagination: pagination(total, input, rows.length),
         filters: input,
@@ -75,13 +76,12 @@ export function registerContacts(server: McpServer, context: ReadContext) {
     server,
     context,
     "get_contact_balance",
-    ["contacts", "records"],
     "Read CURRENT outstanding amounts for one contact: owed to us, we owe, and net (positive means owed to us). Derived from movements and settlements, not a historical balance. Use list_outstanding or list_records for supporting records.",
     { contactId: id },
     (input) => {
       const contact = getContact(context.db, input.contactId);
       if (!contact)
-        throw new ReadError("NOT_FOUND", "That contact does not exist.");
+        throw new McpToolError("NOT_FOUND", "That contact does not exist.");
       const owedToUsMinor =
         contactBalances(context.db, "owed-to-us", contact.id)[0]
           ?.outstandingMinor ?? 0;
@@ -105,7 +105,6 @@ export function registerContacts(server: McpServer, context: ReadContext) {
     server,
     context,
     "list_outstanding",
-    ["records"],
     "List CURRENT open receivable/payable sides and their remaining amounts. Includes unallocated payments under the app's existing outstanding rules. Full-filter totalOutstandingMinor is independent of paging. Ageing uses today (UTC); it does not reconstruct historical balances.",
     {
       ...pageShape,

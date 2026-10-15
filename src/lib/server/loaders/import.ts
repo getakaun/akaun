@@ -20,7 +20,7 @@ import {
   snapshotSections,
 } from "$lib/server/import/profile-snapshot.js";
 import type { LedgerDb } from "$lib/server/ledger/types.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { getAccount, listAccounts } from "$lib/server/queries/accounts.js";
 import { requireAccountDefault } from "$lib/server/services/account-defaults.js";
 import { listGroupItems } from "$lib/server/services/import-items.js";
@@ -83,7 +83,7 @@ export function readAsChoices(
 
 /** The queue: every job, newest first, with each group's item counts. */
 export function loadImportPage(locals: App.Locals, database: LedgerDb = db) {
-  if (!hasPermission(locals, "import", "view"))
+  if (!can(locals, "import.read"))
     throw redirect(302, "/dashboard");
 
   // Shared ledger — show every job. Sent in the shape of a live update, without
@@ -102,7 +102,8 @@ export function loadImportPage(locals: App.Locals, database: LedgerDb = db) {
     jobs,
     readAsChoices: readAsChoices(database),
     perms: {
-      change: hasPermission(locals, "import", "change"),
+      change: can(locals, "import.update"),
+      confirm: can(locals, "import.confirm"),
       readAgain: canReadAgain(locals),
     },
     ...reviewOptions(database),
@@ -126,7 +127,7 @@ export function loadImportDetail(
   id: string,
   database: LedgerDb = db,
 ) {
-  if (!hasPermission(locals, "import", "view"))
+  if (!can(locals, "import.read"))
     throw redirect(302, "/dashboard");
 
   const row = database
@@ -166,8 +167,9 @@ export function loadImportDetail(
     // The choices "Read again" offers: the same ones an upload offers.
     readAsChoices: readAsChoices(database),
     perms: {
-      change: hasPermission(locals, "import", "change"),
-      delete: hasPermission(locals, "import", "delete"),
+      change: can(locals, "import.update"),
+      confirm: can(locals, "import.confirm"),
+      delete: can(locals, "import.delete"),
       readAgain: canReadAgain(locals),
     },
     ...reviewOptions(database),
@@ -176,15 +178,12 @@ export function loadImportDetail(
 
 /**
  * Whether this user may use "Read again": the two abilities its route asks
- * for (`import.add` to read a document, `import.change` to replace what the
+ * for (`import.create` to read a document, `import.update` to replace what the
  * last reading proposed). The screens show the action only then; the route
  * checks again, so this only saves a refused request.
  */
 function canReadAgain(locals: App.Locals): boolean {
-  return (
-    hasPermission(locals, "import", "add") &&
-    hasPermission(locals, "import", "change")
-  );
+  return can(locals, "import.create") && can(locals, "import.update");
 }
 
 /**

@@ -1,7 +1,7 @@
 import { fail, redirect, type Actions } from "@sveltejs/kit";
 import { z } from "zod";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import {
   defaultAccountId,
   listAccounts,
@@ -13,6 +13,11 @@ import {
   listRecords,
 } from "$lib/server/queries/ledger.js";
 import { settlementsForRecord } from "$lib/server/queries/settlements.js";
+import {
+  getInvoice,
+  invoiceIdsForLedgerRecords,
+} from "$lib/server/queries/invoices.js";
+import { LedgerRecordKind } from "$lib/enums.js";
 import { removeRecord } from "$lib/server/services/ledger.js";
 import {
   getUserPreference,
@@ -50,7 +55,7 @@ const LIST_PATH = "/records";
 const PAGE_LIMIT = 1000;
 
 export function loadRecordsPage(locals: App.Locals) {
-  if (!hasPermission(locals, "records", "view"))
+  if (!can(locals, "records.read"))
     throw redirect(302, "/dashboard");
 
   // No `kind` filter: one list of everything that happened, newest first
@@ -73,7 +78,7 @@ export function loadRecordsPage(locals: App.Locals) {
  * `locked`, `lockedReason`, `reconciled` — so nothing here recomputes them.
  */
 export function loadRecordDetail(locals: App.Locals, id: number) {
-  if (!hasPermission(locals, "records", "view"))
+  if (!can(locals, "records.read"))
     throw redirect(302, "/dashboard");
 
   const record = getRecord(db, id);
@@ -85,6 +90,12 @@ export function loadRecordDetail(locals: App.Locals, id: number) {
     record,
     attachments: listAttachments(db, id),
     settlements: settlementsForRecord(db, id),
+    // The invoice an issue posting belongs to, for the link back to it. Kept
+    // beside the record rather than on `RecordView`, which is frozen.
+    invoiceId:
+      record.kind === LedgerRecordKind.InvoiceIssue
+        ? (invoiceIdsForLedgerRecords(db, [id])[0] ?? null)
+        : null,
     ...recordFormOptions(locals),
   };
 }
@@ -97,9 +108,17 @@ export function loadRecordDetail(locals: App.Locals, id: number) {
  * that would 403 on submit.
  */
 export function loadRecordNew(locals: App.Locals) {
-  if (!hasPermission(locals, "records", "add")) throw redirect(302, LIST_PATH);
+  if (!can(locals, "records.create")) throw redirect(302, LIST_PATH);
 
   return recordFormOptions(locals);
+}
+
+/** A query-string id, or null for anything that is not a positive integer. */
+function positiveIdParam(url: URL, name: string): number | null {
+  const raw = url.searchParams.get(name);
+  if (raw === null) return null;
+  const id = Number(raw);
+  return Number.isInteger(id) && id > 0 ? id : null;
 }
 
 /**
@@ -108,26 +127,52 @@ export function loadRecordNew(locals: App.Locals) {
  * Opens scoped to one contact, the way the drawer it replaces always did —
  * carried as a query param rather than a route segment, since it is prefilled
  * context for a create form and not a link to another feature's record.
+ *
+ * `?invoice=<id>` is the invoice page's "Record payment": a receipt from that
+ * invoice's customer, with its owed side already ticked, and back to the
+ * invoice once saved. Only for a user who may see invoices — anyone else gets
+ * the ordinary blank form, as if the param were not there. The way back is
+ * built here from the invoice's own id, never echoed from the address bar.
  */
 export function loadPaymentNew(locals: App.Locals, url: URL) {
-  if (!hasPermission(locals, "records", "add")) throw redirect(302, LIST_PATH);
+  if (!can(locals, "records.create")) throw redirect(302, LIST_PATH);
 
-  const rawContactId = url.searchParams.get("contactId");
-  const contactId =
-    rawContactId !== null &&
-    Number.isInteger(Number(rawContactId)) &&
-    Number(rawContactId) > 0
-      ? Number(rawContactId)
-      : null;
-  const direction: "we-pay" | "we-receive" =
+  let contactId = positiveIdParam(url, "contactId");
+  let direction: "we-pay" | "we-receive" =
     url.searchParams.get("direction") === "we-receive"
       ? "we-receive"
       : "we-pay";
   // Lands the form open to every contact's outstanding items at once, ticked
   // by default — the "pay all outstanding" entry point on the Records screen.
-  const batch = url.searchParams.get("batch") === "1";
+  let batch = url.searchParams.get("batch") === "1";
+  /** The owed movement to tick once the contact's items have loaded. */
+  let preselectMovementId: number | null = null;
+  let returnTo: { href: string; label: string } | null = null;
 
-  return { contactId, direction, batch, ...recordFormOptions(locals) };
+  const invoiceId = positiveIdParam(url, "invoice");
+  const invoice =
+    invoiceId !== null && can(locals, "invoices.read")
+      ? getInvoice(db, invoiceId)
+      : null;
+  if (invoice) {
+    contactId = invoice.contactId;
+    direction = "we-receive";
+    batch = false;
+    preselectMovementId = invoice.owedMovementId;
+    returnTo = {
+      href: `/invoices/${invoice.id}`,
+      label: invoice.invoiceNumber,
+    };
+  }
+
+  return {
+    contactId,
+    direction,
+    batch,
+    preselectMovementId,
+    returnTo,
+    ...recordFormOptions(locals),
+  };
 }
 
 /**
@@ -171,13 +216,13 @@ function recordFormOptions(locals: App.Locals) {
         USER_PREF_KEYS.lastForeignCurrencyIncome,
       ) ?? null,
     perms: {
-      add: hasPermission(locals, "records", "add"),
-      change: hasPermission(locals, "records", "change"),
-      delete: hasPermission(locals, "records", "delete"),
+      add: can(locals, "records.create"),
+      change: can(locals, "records.update"),
+      delete: can(locals, "records.delete"),
       // Free choice of account and a third side. The server enforces this at
       // the point of derivation; the screen only stops offering what would be
       // refused (FR-031c).
-      adjustments: hasPermission(locals, "adjustments", "add"),
+      adjustments: can(locals, "records.adjust"),
     },
   };
 }
@@ -200,14 +245,16 @@ export const recordsActions: Actions = {
    * One at a time through the service, so each carries its own audit entry and
    * its own event, and so a record a settlement or a bank line still points at
    * refuses on its own rather than taking the whole selection down with it
-   * (FR-017a). The first refusal is handed back to be shown; the rest still go.
+   * (FR-017a). An invoice's issue posting refuses the same way — it goes when
+   * the invoice is cancelled. The first refusal is handed back to be shown; the
+   * rest still go.
    */
   delete: async ({ locals, request }) => {
     const data = await request.formData();
     const parsed = idsSchema.safeParse(String(data.get("ids") ?? ""));
     if (!parsed.success) return fail(400, { error: "Nothing was selected." });
 
-    if (!hasPermission(locals, "records", "delete")) {
+    if (!can(locals, "records.delete")) {
       return fail(403, { error: "Forbidden" });
     }
 

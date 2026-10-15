@@ -3,35 +3,27 @@ import type { RequestHandler } from './$types.js';
 import { hash } from 'argon2';
 import { eq } from 'drizzle-orm';
 import { db } from '$lib/server/db/client.js';
-import { users, userGroups, groups, userPermissions } from '$lib/server/db/schema.js';
+import { users, userGroups } from '$lib/server/db/schema.js';
+import { can } from '$lib/server/permissions.js';
+import { memberships, readUserGrants } from '$lib/server/admin/access.js';
+import { listTokens } from '$lib/server/tokens/manage.js';
 
 export const GET: RequestHandler = async ({ locals }) => {
-	if (!locals.isSuperuser) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'users.manage')) return new Response('Forbidden', { status: 403 });
 
 	const allUsers = db.select().from(users).all();
 
 	const result = allUsers.map((u) => {
-		const memberships = db
-			.select({ groupId: userGroups.groupId, groupName: groups.name, isSuperuser: groups.isSuperuser })
-			.from(userGroups)
-			.innerJoin(groups, eq(userGroups.groupId, groups.id))
-			.where(eq(userGroups.userId, u.id))
-			.all();
-		const isSuperuser = memberships.some((m) => m.isSuperuser);
-		const permRows = db.select().from(userPermissions).where(eq(userPermissions.userId, u.id)).all();
-		const permOverrides: Record<string, { view: boolean; add: boolean; change: boolean; delete: boolean }> = {};
-		for (const row of permRows) {
-			permOverrides[row.resource] = { view: !!row.canView, add: !!row.canAdd, change: !!row.canChange, delete: !!row.canDelete };
-		}
+		const groupsOf = memberships(db, u.id);
 		return {
 			id: u.id,
 			name: u.name,
 			email: u.email,
 			username: u.username,
-			hasBearerToken: !!u.bearerToken,
-			groups: memberships.map((m) => ({ id: m.groupId, name: m.groupName })),
-			isSuperuser,
-			permOverrides,
+			tokenCount: listTokens(db, u.id).length,
+			groups: groupsOf.map((m) => ({ id: m.id, name: m.name })),
+			isSuperuser: groupsOf.some((m) => m.isSuperuser),
+			extraGrants: readUserGrants(db, u.id),
 			createdAt: u.createdAt
 		};
 	});
@@ -40,7 +32,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 };
 
 export const POST: RequestHandler = async ({ locals, request }) => {
-	if (!locals.isSuperuser) return new Response('Forbidden', { status: 403 });
+	if (!can(locals, 'users.manage')) return new Response('Forbidden', { status: 403 });
 
 	const body = await request.json();
 	const { name, email, username, password, groupIds = [] } = body;

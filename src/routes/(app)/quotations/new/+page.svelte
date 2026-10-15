@@ -1,5 +1,8 @@
 <script lang="ts">
-	import QuotationCreate from '$lib/components/quotations/QuotationCreate.svelte';
+	import SalesDocCreate from '$lib/components/sales/SalesDocCreate.svelte';
+	import type { PageData } from './$types.js';
+
+	let { data }: { data: PageData } = $props();
 </script>
 
-<QuotationCreate />
+<SalesDocCreate kind="quotation" defaultDays={data.defaultDays} />

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { badRequest, forbidden, refused } from "$lib/server/api-response.js";
 import { listAccounts } from "$lib/server/queries/accounts.js";
 import { createAccount } from "$lib/server/services/accounts.js";
@@ -65,7 +65,7 @@ const createSchema = z
   });
 
 export const GET: RequestHandler = async ({ locals, url }) => {
-  if (!hasPermission(locals, "accounts", "view")) return forbidden();
+  if (!can(locals, "accounts.read")) return forbidden();
 
   const typeRaw = url.searchParams.get("type");
   const type = typeRaw ? Number(typeRaw) : undefined;
@@ -80,7 +80,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 };
 
 export const POST: RequestHandler = async ({ locals, request }) => {
-  if (!hasPermission(locals, "accounts", "add")) return forbidden();
+  if (!can(locals, "accounts.create")) return forbidden();
 
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return badRequest(parsed.error);

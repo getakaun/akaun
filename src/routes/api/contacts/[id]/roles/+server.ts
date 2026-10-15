@@ -3,7 +3,7 @@ import type { RequestHandler } from "@sveltejs/kit";
 import { db } from "$lib/server/db/client.js";
 import { getContact, getContactRoles } from "$lib/server/queries/contacts.js";
 import { replaceContactRoles } from "$lib/server/services/contacts.js";
-import { hasPermission } from "$lib/server/permissions.js";
+import { can } from "$lib/server/permissions.js";
 import { badRequest, forbidden, notFound } from "$lib/server/api-response.js";
 import { Role } from "$lib/enums.js";
 
@@ -31,7 +31,7 @@ const rolesSchema = z.object({
 });
 
 export const GET: RequestHandler = async ({ locals, params }) => {
-  if (!hasPermission(locals, "contacts", "view"))
+  if (!can(locals, "contacts.read"))
     return new Response("Not Found", { status: 404 });
   const id = parseInt(params.id!);
   if (!getContact(db, id)) return notFound("That contact no longer exists.");
@@ -39,7 +39,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 };
 
 export const PUT: RequestHandler = async ({ locals, params, request }) => {
-  if (!hasPermission(locals, "contacts", "change")) return forbidden();
+  if (!can(locals, "contacts.update")) return forbidden();
 
   const parsed = rolesSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return badRequest(parsed.error);

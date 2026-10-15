@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import {
-  DefaultAccountPurpose,
   InvoiceStatusLabels,
   QuotationStatusLabels,
   invoiceStatusEnum,
@@ -9,8 +8,6 @@ import {
 } from "$lib/enums.js";
 import { getInvoice, listInvoices } from "../../queries/invoices.js";
 import { getQuotation, listQuotations } from "../../queries/quotations.js";
-import { getRecord } from "../../queries/ledger.js";
-import { requireAccountDefault } from "../../services/account-defaults.js";
 import {
   convertQuotation,
   createInvoice,
@@ -45,24 +42,6 @@ import {
 type Invoice = NonNullable<ReturnType<typeof getInvoice>>;
 type Quotation = NonNullable<ReturnType<typeof getQuotation>>;
 
-/**
- * The movement a customer's payment settles: the posting's side on Money owed
- * to us. What `record_payment` takes as `owedMovementId`.
- */
-function owedMovementId(context: McpContext, ledgerRecordId: number | null) {
-  if (ledgerRecordId === null) return null;
-  const receivable = requireAccountDefault(
-    context.db,
-    DefaultAccountPurpose.Receivable,
-  );
-  if (!receivable.ok) return null;
-  return (
-    getRecord(context.db, ledgerRecordId)?.movements.find(
-      (movement) => movement.accountId === receivable.value,
-    )?.id ?? null
-  );
-}
-
 function invoiceSummary(row: ReturnType<typeof listInvoices>[number]) {
   return {
     id: row.id,
@@ -95,7 +74,7 @@ function invoiceDetail(context: McpContext, invoice: Invoice) {
       unitPrice: line.unitPrice,
       lineTotal: line.lineTotal,
     })),
-    owedMovementId: owedMovementId(context, invoice.ledgerRecordId),
+    owedMovementId: invoice.owedMovementId,
     settlements: invoice.settlements,
     sourceQuotationId: invoice.sourceQuotationId,
     replaces: invoice.replaces,
@@ -373,13 +352,12 @@ export function registerSales(server: McpServer, context: McpContext) {
     server,
     context,
     "set_quotation_status",
-    "Record that a quotation was sent, accepted or declined, or move it back to draft. Converted and superseded are reached only through their own tools.",
+    "Record that a quotation was sent, accepted or declined. Converted and superseded are reached only through their own tools.",
     {
       quotationId: id,
       expectedVersion,
       status: z.enum(
         Object.keys(QUOTATION_STATUS_BY_NAME) as [
-          "draft",
           "sent",
           "accepted",
           "declined",

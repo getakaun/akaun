@@ -6,14 +6,14 @@ import { toResponse } from "$lib/server/application/http.js";
 import { badRequest } from "$lib/server/api-response.js";
 
 /**
- * Moving a quotation along by hand: sent, accepted, declined, or back again.
+ * Moving a quotation along by hand: sent, accepted or declined.
  * Converted is not on the list — it is reached only by converting — and
  * `setQuotationStatus` refuses any move out of it, so a converted quotation
  * cannot be pulled away from the invoice it became.
  */
 
 const statusSchema = z.object({
-  status: z.enum(["draft", "sent", "accepted", "declined"]),
+  status: z.enum(["sent", "accepted", "declined"]),
 });
 
 export const POST: RequestHandler = async ({ locals, params, request }) => {

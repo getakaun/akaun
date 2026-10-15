@@ -7,8 +7,10 @@
  * read as overdue (or a quote valid today read as expired) before lunch.
  *
  * Used by both the server (overdue, expired) and the forms (the default issue
- * date), so it sits outside `$lib/server`. The rest of the app still takes
- * "today" in UTC.
+ * date), so it sits outside `$lib/server`. On the server, local means the
+ * business timezone configured with TZ; in the browser it means the device
+ * timezone. Set TZ to the business timezone when self-hosting. The rest of the
+ * app still takes "today" in UTC.
  */
 
 function pad(n: number): string {

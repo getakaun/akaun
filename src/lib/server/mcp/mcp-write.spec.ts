@@ -20,6 +20,7 @@ import {
 import * as schema from "../db/schema.js";
 import {
   accounts,
+  accountDefaults,
   auditLog,
   bankStatementLines,
   bankStatements,
@@ -35,6 +36,7 @@ import {
 import { seedAccounts } from "../db/seed-accounts.js";
 import { setSetting, SETTING_KEYS } from "../settings.js";
 import {
+  DefaultAccountPurpose,
   EntityType,
   ImportState,
   Role,
@@ -774,6 +776,21 @@ for (const era of ["legacy", "modern"] as const) {
         expect(issued.invoice.status).toBe("sent");
         expect(issued.invoice.owedMovementId).toBeGreaterThan(0);
 
+        // Existing invoices retain their original receivable when the default changes.
+        const savedDefault = db.select().from(accountDefaults)
+          .where(eq(accountDefaults.purpose, DefaultAccountPurpose.Receivable)).get()!;
+        const original = db.select().from(accounts)
+          .where(eq(accounts.id, savedDefault.accountId)).get()!;
+        const replacement = db.insert(accounts).values({
+          ...original, id: undefined, code: 1199, name: "Replacement receivable",
+        }).returning({ id: accounts.id }).get()!;
+        db.update(accountDefaults).set({ accountId: replacement.id })
+          .where(eq(accountDefaults.purpose, DefaultAccountPurpose.Receivable)).run();
+        const reread = data(await call(client, "get_invoice", { invoiceId: draft.invoice.id }));
+        expect(reread.invoice.owedMovementId).toBe(issued.invoice.owedMovementId);
+        db.update(accountDefaults).set({ accountId: original.id })
+          .where(eq(accountDefaults.purpose, DefaultAccountPurpose.Receivable)).run();
+
         const sealed = errorOf(
           await call(client, "update_invoice", {
             invoiceId: draft.invoice.id,
@@ -856,6 +873,16 @@ for (const era of ["legacy", "modern"] as const) {
         const names = await tools(await connect());
         expect(names).toContain("create_invoice");
         expect(names).not.toContain("issue_invoice");
+      });
+
+      it("advertises only reachable manual quotation statuses", async () => {
+        const client = await connect();
+        const tool = (await client.listTools()).tools.find(
+          (tool) => tool.name === "set_quotation_status",
+        )!;
+        const status = tool.inputSchema.properties?.status as { enum: string[] };
+        expect(status.enum).toEqual(["sent", "accepted", "declined"]);
+        expect(tool.description).not.toContain("back to draft");
       });
 
       it("seals a sent quotation, revises it and converts the revision", async () => {

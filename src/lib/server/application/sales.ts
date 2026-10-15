@@ -392,7 +392,6 @@ export function updateQuotation(
 }
 
 export const QUOTATION_STATUS_BY_NAME = {
-  draft: QuotationStatus.Draft,
   sent: QuotationStatus.Sent,
   accepted: QuotationStatus.Accepted,
   declined: QuotationStatus.Declined,

@@ -71,6 +71,7 @@ services:
       - ./data:/app/data
     environment:
       - ORIGIN=http://localhost:6969
+      - TZ=${TZ:-Etc/UTC} # Set to your business timezone, e.g. Asia/Kuala_Lumpur
       - PUID=1000 # Set to $(id -u) to match your host user
       - PGID=1000 # Set to $(id -g) to match your host group
       - BODY_SIZE_LIMIT=15M

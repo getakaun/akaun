@@ -53,3 +53,12 @@ exposure or callback forwarding is required. Pending sign-ins expire on a server
 restart; completed connections must be saved within 30 minutes. Existing ChatGPT
 providers from earlier releases must reconnect and choose an available model.
 See the repository README for integration and credential storage details.
+
+## Business timezone
+
+Set `TZ` to an IANA timezone such as `Asia/Kuala_Lumpur` for server-side document
+dates and overdue/expiry checks. The Compose templates pass `${TZ:-Etc/UTC}`;
+set it in your shell or the Compose `.env` file, or replace the value in the
+service's environment. The image includes `tzdata` and defaults to `Etc/UTC`.
+For source installs, set `TZ` in Akaun's `.env`. Restart after changing it.
+Browser date defaults use the device timezone, so configure devices accordingly.

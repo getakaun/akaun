@@ -36,12 +36,14 @@ You can install Akaun in two ways. Docker is the easier way, and we recommend it
          - ./data:/app/data
        environment:
          - ORIGIN=http://localhost:6969
+         - TZ=Etc/UTC
          - PUID=1000
          - PGID=1000
          - BODY_SIZE_LIMIT=21M
    ```
 
-4. Change the value of `ORIGIN` to the address that the users will type.
+4. Change `ORIGIN` to the address that users will type and `TZ` to your business timezone,
+   for example `Asia/Kuala_Lumpur`.
 5. On Linux, type `id -u` and `id -g` to find your user ID and group ID.
 6. Change the values of `PUID` and `PGID` to these two numbers.
 7. In the same folder, type this command:
@@ -115,6 +117,7 @@ Bun reads the `.env` file in the folder of the code. For Docker, put each settin
 | Variable | Default | What it does |
 |---|---|---|
 | `ORIGIN` | (none) | The full address that the users type, for example `https://books.example.com`. Akaun refuses sign-in and saves from a different address. |
+| `TZ` | `Etc/UTC` in Docker and `.env.example`; otherwise the host timezone | Business timezone for server-side document dates and overdue/expiry checks. Use an IANA name such as `Asia/Kuala_Lumpur` and restart after changing it. Browser date defaults use each device's timezone. |
 | `PORT` | `3000` (Docker: `6969`) | The network port that Akaun listens on. |
 | `HOST` | `0.0.0.0` | The network address that Akaun listens on. `0.0.0.0` accepts connections on all network addresses. |
 | `DATABASE_PATH` | `./data/akaun.db` (Docker: `/app/data/akaun.db`) | The location of the database file. A relative path starts at the folder where you start the server. |

@@ -13,6 +13,7 @@ services:
       - ../data:/app/data
     environment:
       - ORIGIN=http://localhost:6969
+      - TZ=${TZ:-Etc/UTC} # Set to your business timezone, e.g. Asia/Kuala_Lumpur
       # For remote OAuth clients, set ORIGIN to your public HTTPS URL and enable OAuth.
       # - OAUTH_ENABLED=true
       # - PUBLIC_BASE_URL=https://books.example.com

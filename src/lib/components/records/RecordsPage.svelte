@@ -38,7 +38,7 @@
   import { formatCurrencyAmount } from "$lib/currency.js";
   import { createResourceStream, mergeById } from "$lib/sse.js";
   import { SvelteSet, SvelteURLSearchParams } from "svelte/reactivity";
-  import { AccountType, LedgerRecordKind } from "$lib/enums.js";
+  import { AccountType, LedgerRecordKindDisplayLabels } from "$lib/enums.js";
   import { isCategorySide } from "$lib/components/ledger/account-sub-types.js";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
@@ -248,15 +248,7 @@
    * did — this is the first list they appear on, so each one needs a name a
    * person recognises.
    */
-  const KIND_LABELS: Record<number, string> = {
-    [LedgerRecordKind.Expense]: "Expense",
-    [LedgerRecordKind.Income]: "Income",
-    [LedgerRecordKind.Transfer]: "Transfer",
-    [LedgerRecordKind.Payment]: "Payment",
-    [LedgerRecordKind.OpeningBalance]: "Opening balance",
-    [LedgerRecordKind.InvoiceIssue]: "Invoice",
-    [LedgerRecordKind.Journal]: "Journal entry",
-  };
+  const KIND_LABELS = LedgerRecordKindDisplayLabels;
 
   function kindLabel(kind: number): string {
     return KIND_LABELS[kind] ?? "Record";

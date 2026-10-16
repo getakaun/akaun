@@ -21,6 +21,7 @@ import {
   type OAuthScope,
 } from "./config.js";
 import { allowedScopes } from "./scopes.js";
+import { diffRecords, recordAudit } from "../audit.js";
 
 const DAY = 86400_000;
 export const opaque = () => randomBytes(32).toString("base64url");
@@ -35,6 +36,16 @@ export class OAuthFailure extends Error {
     super(code);
   }
 }
+/** What the audit log keeps of a connected app's grant. */
+function grantAuditFields(row: typeof oauthGrants.$inferSelect) {
+  return {
+    clientId: row.clientId,
+    ownerId: row.userId,
+    scopes: row.scopes.split(" "),
+    expiresOn: new Date(row.expiresAt).toISOString().slice(0, 10),
+  };
+}
+
 export function oauthJson(
   body: unknown,
   status = 200,
@@ -188,22 +199,48 @@ export function createOAuth(db: LedgerDb, config: OAuthConfig) {
       .where(and(lt(oauthClients.createdAt, now - DAY), unusedClient(now)))
       .run();
   }
-  function revokeGrant(id: string, userId?: number) {
-    db.update(oauthGrants)
+  /**
+   * A revoke is audited as the grant's delete, credited to `actorId` — or,
+   * when the protocol revoked it (a replayed refresh token, an app revoking
+   * its own token), to the grant's owner, with the channel saying 'system'.
+   * Expiry is not a revoke and is never logged.
+   */
+  function auditRevoked(
+    rows: (typeof oauthGrants.$inferSelect)[],
+    actorId: number | undefined,
+  ) {
+    for (const row of rows)
+      recordAudit(db, {
+        recordType: "oauth_grant",
+        recordId: row.id,
+        userId: actorId ?? row.userId,
+        action: "delete",
+        changes: diffRecords(grantAuditFields(row), null),
+      });
+  }
+  function revokeGrant(id: string, userId?: number, actorId = userId) {
+    const rows = db
+      .update(oauthGrants)
       .set({ revokedAt: Date.now() })
       .where(
         and(
           eq(oauthGrants.id, id),
+          isNull(oauthGrants.revokedAt),
           userId === undefined ? undefined : eq(oauthGrants.userId, userId),
         ),
       )
-      .run();
+      .returning()
+      .all();
+    auditRevoked(rows, actorId);
   }
-  function revokeUser(userId: number) {
-    db.update(oauthGrants)
+  function revokeUser(userId: number, actorId = userId) {
+    const rows = db
+      .update(oauthGrants)
       .set({ revokedAt: Date.now() })
-      .where(eq(oauthGrants.userId, userId))
-      .run();
+      .where(and(eq(oauthGrants.userId, userId), isNull(oauthGrants.revokedAt)))
+      .returning()
+      .all();
+    auditRevoked(rows, actorId);
   }
   function listGrants(userId: number) {
     return db
@@ -641,18 +678,29 @@ export function createOAuth(db: LedgerDb, config: OAuthConfig) {
       return redirect.href;
     }
     const grantId = opaque();
-    db.insert(oauthGrants)
-      .values({
-        id: grantId,
-        userId: locals.user.id,
-        clientId: p.client.id,
-        issuer: config.issuer,
-        resource: config.resource,
-        scopes: [...new Set(selected)].join(" "),
-        createdAt: Date.now(),
-        expiresAt: Date.now() + 30 * DAY,
-      })
-      .run();
+    db.transaction((tx) => {
+      const row = tx
+        .insert(oauthGrants)
+        .values({
+          id: grantId,
+          userId: locals.user!.id,
+          clientId: p.client.id,
+          issuer: config.issuer,
+          resource: config.resource,
+          scopes: [...new Set(selected)].join(" "),
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 30 * DAY,
+        })
+        .returning()
+        .get();
+      recordAudit(tx, {
+        recordType: "oauth_grant",
+        recordId: grantId,
+        userId: locals.user!.id,
+        action: "create",
+        changes: diffRecords(null, grantAuditFields(row)),
+      });
+    });
     const response = new OAuth2Server.Response();
     try {
       await protocol(config.resource).authorize(

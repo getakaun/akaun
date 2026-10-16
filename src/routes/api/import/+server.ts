@@ -14,6 +14,7 @@ import { deletedProfileName, getImportProfile } from '$lib/server/services/impor
 import { ImportState } from '$lib/enums.js';
 import type { RequestHandler } from './$types.js';
 import { can } from '$lib/server/permissions.js';
+import { auditImportJob } from '$lib/server/import/audit.js';
 
 const ACTIVE_STATES: number[] = [ImportState.Queued, ImportState.Extracting, ImportState.Processing];
 
@@ -113,11 +114,13 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const fileHash = createHash('sha256').update(buffer).digest('hex');
 
 	const jobId = randomUUID();
+	const userId = locals.user.id;
 	try {
-		db.insert(importQueue)
+		db.transaction((tx) => {
+			tx.insert(importQueue)
 			.values({
 				id: jobId,
-				createdBy: locals.user.id,
+				createdBy: userId,
 				state: ImportState.Queued,
 				tempFilePath,
 				originalFilename: file.name,
@@ -130,6 +133,19 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 				importMode: reading.importMode
 			})
 			.run();
+			auditImportJob(tx, {
+				jobId,
+				userId,
+				action: 'create',
+				changes: [
+					{ field: 'originalFilename', before: null, after: file.name },
+					{ field: 'readAs', before: null, after: reading.readAs },
+					...(chosenProfile
+						? [{ field: 'profile', before: null, after: chosenProfile.name }]
+						: [])
+				]
+			});
+		});
 	} catch (e) {
 		// No job points at the upload, so nothing would ever discard it.
 		releaseIfUnreferenced(db, tempFilePath);

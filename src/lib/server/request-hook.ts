@@ -11,8 +11,23 @@ import { isSameOriginRequest } from "./browser-origin.js";
 import { mcpChallenge, type OAuthConfig } from "./oauth/config.js";
 import { BROWSER_COOKIE, type AkaunOAuth } from "./oauth/service.js";
 import { handleOAuthProtocol, isOAuthPublicPath } from "./oauth/http.js";
+import { runInAuditScope, scopeFromLocals } from "./audit-context.js";
 
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * Resolves the request inside an audit scope, so every audit entry it writes
+ * records the channel (session, token or app) the request authenticated with.
+ */
+function resolveAudited(
+  event: Parameters<Handle>[0]["event"],
+  resolve: Parameters<Handle>[0]["resolve"],
+): Promise<Response> {
+  const operation = `${event.request.method} ${event.url.pathname}`;
+  return runInAuditScope(scopeFromLocals(event.locals, operation), () =>
+    Promise.resolve(resolve(event)),
+  );
+}
 
 function withSecurityHeaders(response: Response): Response {
   response.headers.set("X-Content-Type-Options", "nosniff");
@@ -87,7 +102,7 @@ export function createRequestHandle(
         );
       }
       Object.assign(event.locals, actor);
-      return withSecurityHeaders(await resolve(event));
+      return withSecurityHeaders(await resolveAudited(event, resolve));
     }
 
     if (pathname.startsWith("/api/")) {
@@ -134,7 +149,7 @@ export function createRequestHandle(
         event.locals.user = sessionUser;
         Object.assign(event.locals, resolveAccess(db, sessionUser.id));
       }
-      return withSecurityHeaders(await resolve(event));
+      return withSecurityHeaders(await resolveAudited(event, resolve));
     }
 
     // SvelteKit trustedOrigins is '*' for bearer/form API interoperability.
@@ -169,7 +184,7 @@ export function createRequestHandle(
 
     Object.assign(event.locals, resolveAccess(db, sessionUser.id));
 
-    const response = await resolve(event);
+    const response = await resolveAudited(event, resolve);
     if (pathname === "/oauth/authorize" || pathname === "/login") {
       response.headers.set("Cache-Control", "no-store");
       response.headers.set("Referrer-Policy", "same-origin");

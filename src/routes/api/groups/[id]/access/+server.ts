@@ -22,5 +22,7 @@ export const PUT: RequestHandler = async ({ locals, params, request }) => {
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object")
     return json({ error: "Send { grants, delegations }." }, { status: 400 });
-  return toResponse(saveGroupAccess(db, parseInt(params.id), body));
+  return toResponse(
+    saveGroupAccess(db, parseInt(params.id), body, locals.user!.id),
+  );
 };

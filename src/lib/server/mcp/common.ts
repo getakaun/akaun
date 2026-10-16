@@ -10,6 +10,7 @@ import { TOOL_REQUIREMENTS, toolAllowed } from "./tool-requirements.js";
 import { isValidDate } from "../date.js";
 import { mainCurrencyCode } from "../currency/form.js";
 import { createLogger } from "../logger.js";
+import { runInAuditScope, scopeFromLocals } from "../audit-context.js";
 
 const log = createLogger("mcp");
 export const MAX_RESPONSE_BYTES = 512 * 1024;
@@ -388,7 +389,12 @@ export function registerWrite<S extends z.ZodRawShape>(
           );
         const input = schema.parse(args);
         ids = options.ids?.(input);
-        const result = await run(input);
+        // Each tool call is its own audit scope, built from the same locals
+        // the call was authorised with, so its entries group as one request.
+        const result = await runInAuditScope(
+          scopeFromLocals(context.locals, `mcp:${name}`),
+          () => run(input),
+        );
         if (!result.ok) {
           log.warn(logLine(result.code, ids), "MCP write refused");
           return errorResult(result.code, result.reason, {

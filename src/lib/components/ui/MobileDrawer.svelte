@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Settings, Sun, Moon, LogOut, User, Users } from '@lucide/svelte';
+	import { resolve } from '$app/paths';
+	import { Settings, Sun, Moon, LogOut, User, Users, History } from '@lucide/svelte';
 	import { page } from '$app/stores';
 	import { mode, setMode } from 'mode-watcher';
 	import { MAX_MOBILE_NAV_ITEMS, NAV_ICONS_BY_ID, type SerializableNavItem } from '$lib/nav-config.js';
@@ -10,12 +11,14 @@
 		user,
 		canManageUsers = false,
 		canSeeSettings = false,
+		canReadAudit = false,
 		navItems = []
 	}: {
 		open?: boolean;
 		user: { username: string; name?: string | null; email?: string } | null;
 		canManageUsers?: boolean;
 		canSeeSettings?: boolean;
+		canReadAudit?: boolean;
 		navItems?: (SerializableNavItem & { showOnMobile: boolean })[];
 	} = $props();
 
@@ -139,18 +142,25 @@
 				</button>
 			</div>
 
-			<!-- Administration — users.manage only -->
-			{#if canManageUsers}
+			<!-- Administration — users.manage or audit.read, each link its own -->
+			{#if canManageUsers || canReadAudit}
 				<div class="drawer-group">
 					<div class="drawer-group-label">Administration</div>
-					<a
-						href="/users-groups"
-						class="drawer-item"
-						class:active={isActive('/users-groups')}
-						onclick={close}
-					>
-						<Users size={17} /><span>Users &amp; Groups</span>
-					</a>
+					{#if canManageUsers}
+						<a
+							href="/users-groups"
+							class="drawer-item"
+							class:active={isActive('/users-groups')}
+							onclick={close}
+						>
+							<Users size={17} /><span>Users &amp; Groups</span>
+						</a>
+					{/if}
+					{#if canReadAudit}
+						<a href={resolve('/(app)/audit')} class="drawer-item" class:active={isActive('/audit')} onclick={close}>
+							<History size={17} /><span>Audit log</span>
+						</a>
+					{/if}
 				</div>
 			{/if}
 

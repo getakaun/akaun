@@ -239,6 +239,13 @@
       "when": 1792038728212,
       "tag": "0033_permission_grants_data",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1792116046405,
+      "tag": "0034_audit_log_channel",
+      "breakpoints": true
     }
   ]
 }

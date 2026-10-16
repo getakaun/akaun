@@ -4,7 +4,12 @@ import { eq } from 'drizzle-orm';
 import { db } from '$lib/server/db/client.js';
 import { users, userGroups, groups } from '$lib/server/db/schema.js';
 import { can } from '$lib/server/permissions.js';
-import { keepsASuperuser, LAST_SUPERUSER_MESSAGE } from '$lib/server/admin/access.js';
+import {
+	auditUser,
+	keepsASuperuser,
+	LAST_SUPERUSER_MESSAGE,
+	userAuditSnapshot
+} from '$lib/server/admin/access.js';
 
 export const GET: RequestHandler = async ({ locals, params }) => {
 	if (!can(locals, 'users.manage')) return new Response('Forbidden', { status: 403 });
@@ -33,12 +38,16 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 		return json({ error: LAST_SUPERUSER_MESSAGE }, { status: 400 });
 
 	// Replace all memberships atomically
-	db.delete(userGroups).where(eq(userGroups.userId, userId)).run();
-	if (groupIds.length > 0) {
-		db.insert(userGroups)
-			.values(groupIds.map((gid) => ({ userId, groupId: gid })))
-			.run();
-	}
+	db.transaction((tx) => {
+		const before = userAuditSnapshot(tx, userId);
+		tx.delete(userGroups).where(eq(userGroups.userId, userId)).run();
+		if (groupIds.length > 0) {
+			tx.insert(userGroups)
+				.values(groupIds.map((gid) => ({ userId, groupId: gid })))
+				.run();
+		}
+		auditUser(tx, locals.user!.id, userId, before, userAuditSnapshot(tx, userId));
+	});
 
 	return json({ success: true });
 };

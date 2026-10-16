@@ -1,7 +1,16 @@
-// src/lib/server/enums.ts
+// src/lib/enums.ts — client-safe; it imports nothing.
 // Single source of truth for ALL closed-set enum codes in the app.
 // Stored in the DB as INTEGER. Codes are APPEND-ONLY — never reuse or renumber
 // a retired code, or historical rows silently change meaning.
+//
+// Every enum has two maps here:
+// - `*Labels` — wire values (lowercase snake_case) for URLs, API bodies and
+//   zod. Never shown to a reader.
+// - `*DisplayLabels` — the name a reader sees, in a list, a badge or the audit
+//   log. A screen takes a name from here, never from a private copy, so a code
+//   reads the same everywhere. (`EntityTypeLabels` and `RoleLabels` were
+//   always Title Case and serve as both.)
+// `enums.spec.ts` fails if a code has no display name.
 //
 // Open-ended string keys that grow as the app gains features
 // (e.g. group_permissions.resource, user-defined category) stay TEXT — they are
@@ -88,11 +97,30 @@ export const ImportStateLabels: Record<number, string> = {
   [ImportState.Grouped]: "grouped",
 };
 
+export const ImportStateDisplayLabels: Record<number, string> = {
+  [ImportState.Queued]: "Queued",
+  [ImportState.Extracting]: "Reading",
+  [ImportState.Processing]: "Processing",
+  [ImportState.PendingReview]: "Waiting for review",
+  [ImportState.Confirmed]: "Confirmed",
+  [ImportState.Imported]: "Imported",
+  [ImportState.Skipped]: "Skipped",
+  [ImportState.Failed]: "Failed",
+  [ImportState.Grouped]: "Grouped",
+};
+
 export const DocumentTypeLabels: Record<number, string> = {
   [DocumentType.Expense]: "expense",
   [DocumentType.Income]: "income",
   [DocumentType.TransferOut]: "transfer_out",
   [DocumentType.TransferIn]: "transfer_in",
+};
+
+export const DocumentTypeDisplayLabels: Record<number, string> = {
+  [DocumentType.Expense]: "Expense",
+  [DocumentType.Income]: "Income",
+  [DocumentType.TransferOut]: "Transfer out",
+  [DocumentType.TransferIn]: "Transfer in",
 };
 
 /** Whether a DocumentType code is a transfer, either way (006 FR-058). */
@@ -104,6 +132,12 @@ export const ResetScopeLabels: Record<number, string> = {
   [ResetScope.Settings]: "settings",
   [ResetScope.Data]: "data",
   [ResetScope.Everything]: "everything",
+};
+
+export const ResetScopeDisplayLabels: Record<number, string> = {
+  [ResetScope.Settings]: "Settings",
+  [ResetScope.Data]: "Data",
+  [ResetScope.Everything]: "Everything",
 };
 
 function invert(labels: Record<number, string>): Record<string, number> {
@@ -153,6 +187,14 @@ export const QuotationStatusLabels: Record<number, string> = {
   [QuotationStatus.Converted]: "converted",
   [QuotationStatus.Superseded]: "superseded",
 };
+export const QuotationStatusDisplayLabels: Record<number, string> = {
+  [QuotationStatus.Draft]: "Draft",
+  [QuotationStatus.Sent]: "Sent",
+  [QuotationStatus.Accepted]: "Accepted",
+  [QuotationStatus.Declined]: "Declined",
+  [QuotationStatus.Converted]: "Converted",
+  [QuotationStatus.Superseded]: "Superseded",
+};
 export const quotationStatusEnum = makeEnum(QuotationStatusLabels);
 
 // --- invoices ---
@@ -171,6 +213,12 @@ export const InvoiceStatusLabels: Record<number, string> = {
   [InvoiceStatus.Sent]: "sent",
   [InvoiceStatus.Paid]: "paid",
   [InvoiceStatus.Cancelled]: "cancelled",
+};
+export const InvoiceStatusDisplayLabels: Record<number, string> = {
+  [InvoiceStatus.Draft]: "Draft",
+  [InvoiceStatus.Sent]: "Sent",
+  [InvoiceStatus.Paid]: "Paid",
+  [InvoiceStatus.Cancelled]: "Cancelled",
 };
 export const invoiceStatusEnum = makeEnum(InvoiceStatusLabels);
 
@@ -215,11 +263,23 @@ export const StatementDirectionLabels: Record<number, string> = {
   [StatementDirection.Out]: "out",
 };
 
+export const StatementDirectionDisplayLabels: Record<number, string> = {
+  [StatementDirection.In]: "Money in",
+  [StatementDirection.Out]: "Money out",
+};
+
 export const StatementExtractionStateLabels: Record<number, string> = {
   [StatementExtractionState.Idle]: "idle",
   [StatementExtractionState.Extracting]: "extracting",
   [StatementExtractionState.Ready]: "ready",
   [StatementExtractionState.Failed]: "failed",
+};
+
+export const StatementExtractionStateDisplayLabels: Record<number, string> = {
+  [StatementExtractionState.Idle]: "Idle",
+  [StatementExtractionState.Extracting]: "Reading",
+  [StatementExtractionState.Ready]: "Ready",
+  [StatementExtractionState.Failed]: "Failed",
 };
 
 export const reconItemTypeEnum = makeEnum(ReconItemTypeLabels);
@@ -370,6 +430,23 @@ export type DefaultAccountPurposeCode =
 export type LedgerRecordKindCode =
   (typeof LedgerRecordKind)[keyof typeof LedgerRecordKind];
 
+// Roles have no wire map: they are never sent by name. These are the words the
+// screens use for each kind of account.
+export const AccountRoleDisplayLabels: Record<number, string> = {
+  [AccountRole.Bank]: "Bank",
+  [AccountRole.Wallet]: "Wallet",
+  [AccountRole.Cash]: "Cash",
+  [AccountRole.Card]: "Card",
+  [AccountRole.Equipment]: "Equipment",
+  [AccountRole.Receivable]: "Money owed to us",
+  [AccountRole.Payable]: "Money we owe",
+  [AccountRole.OpeningBalances]: "Opening balances",
+  [AccountRole.PartnerCapital]: "Partner capital",
+  [AccountRole.PartnerDrawings]: "Partner drawings",
+  [AccountRole.ExpenseCategory]: "Expense category",
+  [AccountRole.IncomeCategory]: "Income category",
+};
+
 export const AccountTypeLabels: Record<number, string> = {
   [AccountType.Asset]: "asset",
   [AccountType.Liability]: "liability",
@@ -480,6 +557,16 @@ export const DefaultAccountPurposeLabels: Record<number, string> = {
   [DefaultAccountPurpose.UncategorisedIncome]: "uncategorised_income",
 };
 
+export const DefaultAccountPurposeDisplayLabels: Record<number, string> = {
+  [DefaultAccountPurpose.Receivable]: "Accounts receivable",
+  [DefaultAccountPurpose.Payable]: "Accounts payable",
+  [DefaultAccountPurpose.OpeningBalances]: "Opening balances",
+  [DefaultAccountPurpose.SalesRevenue]: "Sales revenue",
+  [DefaultAccountPurpose.UncategorisedExpense]: "Uncategorised expense",
+  [DefaultAccountPurpose.EverydayTransaction]: "Default transaction account",
+  [DefaultAccountPurpose.UncategorisedIncome]: "Uncategorised income",
+};
+
 export const DefaultAccountPurposeTypes: Record<
   DefaultAccountPurposeCode,
   AccountTypeCode
@@ -501,6 +588,21 @@ export const LedgerRecordKindLabels: Record<number, string> = {
   [LedgerRecordKind.OpeningBalance]: "opening_balance",
   [LedgerRecordKind.InvoiceIssue]: "invoice_issue",
   [LedgerRecordKind.Journal]: "journal",
+};
+
+/**
+ * Everyday words, not the enum's names (Principle VII). Payment, transfer,
+ * opening balance and hand-made entries have no screen of their own, so each
+ * needs a name a person recognises.
+ */
+export const LedgerRecordKindDisplayLabels: Record<number, string> = {
+  [LedgerRecordKind.Expense]: "Expense",
+  [LedgerRecordKind.Income]: "Income",
+  [LedgerRecordKind.Transfer]: "Transfer",
+  [LedgerRecordKind.Payment]: "Payment",
+  [LedgerRecordKind.OpeningBalance]: "Opening balance",
+  [LedgerRecordKind.InvoiceIssue]: "Invoice",
+  [LedgerRecordKind.Journal]: "Journal entry",
 };
 
 export const accountTypeEnum = makeEnum(AccountTypeLabels);

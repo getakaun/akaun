@@ -6,6 +6,7 @@ import { db } from '$lib/server/db/client.js';
 import { users } from '$lib/server/db/schema.js';
 import { getUserNavOrder, setUserNavOrder } from '$lib/server/navPreferences.js';
 import { oauth } from '$lib/server/oauth/runtime.js';
+import { auditUser, userAuditSnapshot } from '$lib/server/admin/access.js';
 import { MAX_MOBILE_NAV_ITEMS } from '$lib/nav-config.js';
 import { can } from '$lib/server/permissions.js';
 import {
@@ -52,7 +53,11 @@ export const actions: Actions = {
 			return fail(400, { action: 'profile', error: 'Enter a valid email address.' });
 
 		try {
-			db.update(users).set({ name, email, username }).where(eq(users.id, userId)).run();
+			db.transaction((tx) => {
+				const before = userAuditSnapshot(tx, userId);
+				tx.update(users).set({ name, email, username }).where(eq(users.id, userId)).run();
+				auditUser(tx, userId, userId, before, userAuditSnapshot(tx, userId));
+			});
 		} catch {
 			return fail(400, { action: 'profile', error: 'Email or username is already taken.' });
 		}
@@ -88,7 +93,14 @@ export const actions: Actions = {
 			return fail(400, { action: 'security', error: 'Current password is incorrect.' });
 
 		const passwordHash = await hash(newPassword);
-		db.update(users).set({ passwordHash }).where(eq(users.id, userId)).run();
+		db.transaction((tx) => {
+			tx.update(users).set({ passwordHash }).where(eq(users.id, userId)).run();
+			// The log keeps only that the password changed, never the value.
+			const snapshot = userAuditSnapshot(tx, userId);
+			auditUser(tx, userId, userId, snapshot, snapshot, [
+				{ field: 'password', before: null, after: 'changed' }
+			]);
+		});
 		// A new password ends every way in the old one could have set up.
 		oauth?.revokeUser(userId);
 		revokeAllTokens(db, userId);

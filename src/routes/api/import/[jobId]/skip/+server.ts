@@ -10,6 +10,7 @@ import { skipGroupItems } from '$lib/server/services/import-items.js';
 import { ImportState } from '$lib/enums.js';
 import type { RequestHandler } from './$types.js';
 import { can } from '$lib/server/permissions.js';
+import { auditJobSkipped } from '$lib/server/import/audit.js';
 
 export const POST: RequestHandler = async ({ locals, params }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
@@ -29,10 +30,13 @@ export const POST: RequestHandler = async ({ locals, params }) => {
 		return json({ error: 'Job is not in pending_review state' }, { status: 400 });
 	}
 
-	db.update(importQueue)
-		.set({ state: ImportState.Skipped })
-		.where(eq(importQueue.id, params.jobId))
-		.run();
+	db.transaction((tx) => {
+		tx.update(importQueue)
+			.set({ state: ImportState.Skipped })
+			.where(eq(importQueue.id, params.jobId))
+			.run();
+		auditJobSkipped(tx, params.jobId, locals.user!.id);
+	});
 	// After the state change, so this job no longer counts as using the file.
 	// Another job or a record that shares the file keeps it.
 	releaseIfUnreferenced(db, row.tempFilePath);

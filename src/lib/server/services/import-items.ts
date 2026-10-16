@@ -39,6 +39,8 @@ import {
   type CategoryChoice,
 } from "../import/category-accounts.js";
 import { importEvents } from "../import/events.js";
+import { auditImportJob, itemChangesOf, itemField } from "../import/audit.js";
+import type { FieldChange } from "../audit.js";
 import {
   emitItemUpdates,
   emitJobUpdate,
@@ -434,8 +436,21 @@ export function skipGroupItems(
             .returning({ id: importItems.id })
             .all()
             .map((row) => row.id);
+    const skippedNow = new Set(changed);
+    auditImportJob(db, {
+      jobId,
+      userId: options.actingUserId,
+      action: "update",
+      changes: items
+        .filter((item) => skippedNow.has(item.id))
+        .map((item) => ({
+          field: itemField(item),
+          before: "waiting",
+          after: "skipped",
+        })),
+    });
     return {
-      skipped: new Set(changed),
+      skipped: skippedNow,
       finished: finishGroupIfDone(db, jobId),
     };
   });
@@ -497,6 +512,7 @@ function updateEach(
     reason: ITEM_GONE,
   }));
   const changed: string[] = [];
+  const audited: FieldChange[] = [];
   db.transaction(() => {
     for (const item of items) {
       if (item.state !== ImportState.PendingReview) {
@@ -521,11 +537,18 @@ function updateEach(
         .get();
       if (written) {
         changed.push(item.id);
+        audited.push(...itemChangesOf(item, fitted.value));
         outcomes.push({ id: item.id, ok: true });
       } else {
         outcomes.push({ id: item.id, ok: false, reason: NOT_WAITING });
       }
     }
+    auditImportJob(db, {
+      jobId,
+      userId: options.actingUserId,
+      action: "update",
+      changes: audited,
+    });
   });
   emitItemUpdates(db, jobId, changed, options.actingUserId);
   emitJobUpdate(db, jobId, options.actingUserId);
@@ -658,10 +681,24 @@ export function setGroupSourceAccount(
     return { ok: false, reason: NOT_A_GROUP };
   }
   if (accountId === null) {
-    db.update(importQueue)
-      .set({ groupAccountId: null })
-      .where(eq(importQueue.id, jobId))
-      .run();
+    db.transaction(() => {
+      db.update(importQueue)
+        .set({ groupAccountId: null })
+        .where(eq(importQueue.id, jobId))
+        .run();
+      auditImportJob(db, {
+        jobId,
+        userId: options.actingUserId,
+        action: "update",
+        changes: [
+          {
+            field: "groupAccountId",
+            before: group.groupAccountId ?? null,
+            after: null,
+          },
+        ],
+      });
+    });
     emitJobUpdate(db, jobId, options.actingUserId);
     return { ok: true, value: [] };
   }
@@ -698,6 +735,21 @@ export function setGroupSourceAccount(
       changed.push(item.id);
       return { id: item.id, ok: true };
     });
+    auditImportJob(db, {
+      jobId,
+      userId: options.actingUserId,
+      action: "update",
+      changes: [
+        {
+          field: "groupAccountId",
+          before: group.groupAccountId ?? null,
+          after: account.id,
+        },
+        ...waiting
+          .filter((item) => changed.includes(item.id))
+          .flatMap((item) => itemChangesOf(item, { accountId: account.id })),
+      ],
+    });
   });
   emitItemUpdates(db, jobId, changed, options.actingUserId);
   emitJobUpdate(db, jobId, options.actingUserId);
@@ -733,17 +785,27 @@ export function updateGroupItem(
   const changes = itemChanges(db, item, overrides);
   if (!changes.ok) return changes;
 
-  const written = db
-    .update(importItems)
-    .set({ ...changes.value, updatedAt: now() })
-    .where(
-      and(
-        eq(importItems.id, itemId),
-        eq(importItems.state, ImportState.PendingReview),
-      ),
-    )
-    .returning()
-    .get();
+  const written = db.transaction(() => {
+    const row = db
+      .update(importItems)
+      .set({ ...changes.value, updatedAt: now() })
+      .where(
+        and(
+          eq(importItems.id, itemId),
+          eq(importItems.state, ImportState.PendingReview),
+        ),
+      )
+      .returning()
+      .get();
+    if (row)
+      auditImportJob(db, {
+        jobId,
+        userId: options.actingUserId,
+        action: "update",
+        changes: itemChangesOf(item, changes.value),
+      });
+    return row;
+  });
   if (!written) return { ok: false, reason: NOT_WAITING };
 
   emitItemUpdates(db, jobId, [itemId], options.actingUserId);
@@ -1064,6 +1126,15 @@ export function discardGroup(
       // are deleted by name so nothing depends on that being switched on.
       db.delete(importItems).where(eq(importItems.jobId, jobId)).run();
       db.delete(importQueue).where(eq(importQueue.id, jobId)).run();
+      auditImportJob(db, {
+        jobId,
+        userId: options.actingUserId,
+        action: "delete",
+        changes: [
+          { field: "originalFilename", before: group.originalFilename, after: null },
+        ],
+        label: group.originalFilename,
+      });
       return { deleted: true, removed: [] as string[] };
     }
     const removed = db
@@ -1074,11 +1145,21 @@ export function discardGroup(
           eq(importItems.state, ImportState.PendingReview),
         ),
       )
-      .returning({ id: importItems.id })
-      .all()
-      .map((row) => row.id);
+      .returning({ id: importItems.id, position: importItems.position })
+      .all();
     finishGroupIfDone(db, jobId);
-    return { deleted: false, removed };
+    // The records already made stay; only the waiting items went.
+    auditImportJob(db, {
+      jobId,
+      userId: options.actingUserId,
+      action: "update",
+      changes: removed.map((item) => ({
+        field: itemField(item),
+        before: "waiting",
+        after: "discarded",
+      })),
+    });
+    return { deleted: false, removed: removed.map((item) => item.id) };
   });
 
   // After the write, so the group no longer counts as using the file. A record

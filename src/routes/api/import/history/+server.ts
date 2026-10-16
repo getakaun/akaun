@@ -6,6 +6,7 @@ import { importEvents } from '$lib/server/import/events.js';
 import { ImportState } from '$lib/enums.js';
 import type { RequestHandler } from './$types.js';
 import { can } from '$lib/server/permissions.js';
+import { auditJobDiscarded } from '$lib/server/import/audit.js';
 
 const HISTORY_STATES = [ImportState.Confirmed, ImportState.Imported, ImportState.Skipped];
 
@@ -23,12 +24,16 @@ export const DELETE: RequestHandler = async ({ locals }) => {
 	// A finished group is in the history too (Imported or Skipped); one that
 	// still has an item waiting is Grouped and stays. Its items go with it.
 	const jobIds = rows.map((row) => row.id);
-	for (let start = 0; start < jobIds.length; start += 500) {
-		db.delete(importItems)
-			.where(inArray(importItems.jobId, jobIds.slice(start, start + 500)))
-			.run();
-	}
-	db.delete(importQueue).where(inArray(importQueue.state, HISTORY_STATES)).run();
+	db.transaction((tx) => {
+		for (let start = 0; start < jobIds.length; start += 500) {
+			tx.delete(importItems)
+				.where(inArray(importItems.jobId, jobIds.slice(start, start + 500)))
+				.run();
+		}
+		tx.delete(importQueue).where(inArray(importQueue.state, HISTORY_STATES)).run();
+		// One entry per job, so each document's history can still be found.
+		for (const row of rows) auditJobDiscarded(tx, row, locals.user!.id);
+	});
 	// An imported receipt's temp path is not updated when its file moves. If the
 	// move failed, the record's attachment still points at that temp path, and a
 	// plain delete here would remove the record's receipt. A group's path is the

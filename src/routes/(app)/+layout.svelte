@@ -36,6 +36,7 @@
 		unpaidCount={data.unpaidCount}
 		canManageUsers={data.canManageUsers}
 		canSeeSettings={data.canSeeSettings}
+		canReadAudit={data.canReadAudit}
 		navItems={data.navItems}
 	/>
 	<main class="main">
@@ -58,6 +59,7 @@
 	user={data.user}
 	canManageUsers={data.canManageUsers}
 		canSeeSettings={data.canSeeSettings}
+		canReadAudit={data.canReadAudit}
 	navItems={data.navItems}
 />
 

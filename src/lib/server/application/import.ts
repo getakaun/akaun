@@ -4,6 +4,7 @@ import { ImportState } from "$lib/enums.js";
 import { importItems, importQueue } from "../db/schema.js";
 import { releaseIfUnreferenced } from "../file-storage.js";
 import { importEvents } from "../import/events.js";
+import { auditJobDiscarded, auditJobSkipped } from "../import/audit.js";
 import { jobForEvent } from "../import/job-event.js";
 import { reviewOverridesSchema } from "../import/settle-review.js";
 import { confirmReviewed } from "../services/import.js";
@@ -167,11 +168,13 @@ export function skipImport(
   if (row.state !== ImportState.PendingReview)
     return fail("REFUSED", "This document is not waiting for review.");
 
-  ctx.db
-    .update(importQueue)
-    .set({ state: ImportState.Skipped })
-    .where(eq(importQueue.id, jobId))
-    .run();
+  ctx.db.transaction((tx) => {
+    tx.update(importQueue)
+      .set({ state: ImportState.Skipped })
+      .where(eq(importQueue.id, jobId))
+      .run();
+    auditJobSkipped(tx, jobId, userId);
+  });
   // After the state change, so this job no longer counts as using the file.
   releaseIfUnreferenced(ctx.db, row.tempFilePath, storage.value);
   const updated = job(ctx, jobId);
@@ -247,7 +250,10 @@ export function discardImportJob(
       "Only queued, failed or waiting documents can be discarded.",
     );
   importEvents.emit("job-deleted", { userId: row.createdBy, jobId });
-  ctx.db.delete(importQueue).where(eq(importQueue.id, jobId)).run();
+  ctx.db.transaction((tx) => {
+    tx.delete(importQueue).where(eq(importQueue.id, jobId)).run();
+    auditJobDiscarded(tx, row, actor(ctx));
+  });
   releaseIfUnreferenced(ctx.db, row.tempFilePath, storage.value);
   return ok({ jobId });
 }

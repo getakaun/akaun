@@ -84,7 +84,7 @@ function auditFor(recordType: string, recordId: number) {
     .select()
     .from(auditLog)
     .where(
-      and(eq(auditLog.recordType, recordType), eq(auditLog.recordId, recordId)),
+      and(eq(auditLog.recordType, recordType), eq(auditLog.recordId, String(recordId))),
     )
     .all();
 }

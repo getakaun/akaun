@@ -306,7 +306,7 @@ describe("adding a profile", () => {
     expect(body).toMatchObject({ name: "Fee notice", enabled: true });
     expect(profileRows().map((row) => row.id)).toEqual([body.id]);
     expect(profileAudit()).toMatchObject([
-      { recordId: body.id, action: "create", userId: 1 },
+      { recordId: String(body.id), action: "create", userId: 1 },
     ]);
   });
 

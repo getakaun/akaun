@@ -29,7 +29,7 @@
   import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
   import BackLink from "$lib/components/ui/BackLink.svelte";
   import {
-    LedgerRecordKindLabels,
+    LedgerRecordKindDisplayLabels,
     StatementDirection,
     StatementExtractionState,
   } from "$lib/enums.js";
@@ -244,9 +244,7 @@
   );
 
   function kindLabel(kind: number | undefined) {
-    const value = (kind && LedgerRecordKindLabels[kind]) || "record";
-    const words = value.replace(/_/g, " ");
-    return words[0].toUpperCase() + words.slice(1);
+    return (kind && LedgerRecordKindDisplayLabels[kind]) || "Record";
   }
   function matchStatus(
     movement: MovementRow,

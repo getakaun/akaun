@@ -27,6 +27,7 @@ import { readAgainRefusal } from "../import/read-again.js";
 import { readingForUpload } from "../import/upload-reading.js";
 import type { LedgerDb } from "../ledger/types.js";
 import { deletedProfileName, getImportProfile } from "./import-profiles.js";
+import { auditImportJob } from "../import/audit.js";
 
 type ImportJobInsert = typeof importQueue.$inferInsert;
 
@@ -202,6 +203,19 @@ export function readDocumentAgain(
         })
         .where(eq(importQueue.id, jobId))
         .run();
+      auditImportJob(tx, {
+        jobId,
+        userId: options.actingUserId,
+        action: "update",
+        changes: [
+          { field: "readAs", before: job.readAs, after: reading.readAs },
+          {
+            field: "readAgain",
+            before: removed.length ? `${removed.length} items` : null,
+            after: "queued",
+          },
+        ],
+      });
       return { ok: true, removed };
     },
   );

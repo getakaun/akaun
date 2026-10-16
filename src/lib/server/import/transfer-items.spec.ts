@@ -774,7 +774,7 @@ describe("confirming transfer items", () => {
         .where(
           and(
             eq(auditLog.recordType, "record"),
-            eq(auditLog.recordId, record.id),
+            eq(auditLog.recordId, String(record.id)),
           ),
         )
         .all();

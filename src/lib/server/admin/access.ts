@@ -13,9 +13,11 @@ import {
   groups,
   userGrants,
   userGroups,
+  users,
 } from "../db/schema.js";
 import type { LedgerDb } from "../ledger/types.js";
 import { fail, ok, type AppResult } from "../application/result.js";
+import { diffRecords, recordAudit, type FieldChange } from "../audit.js";
 
 /**
  * Reading and saving what a group or a user is granted, for Users & Groups.
@@ -92,6 +94,8 @@ export function saveGroupAccess(
   db: LedgerDb,
   groupId: number,
   body: { grants: unknown; delegations: unknown },
+  /** Who made the change, for the audit log. */
+  actorId: number,
 ): AppResult<GroupAccess> {
   const group = db.select().from(groups).where(eq(groups.id, groupId)).get();
   if (!group) return fail("NOT_FOUND", "That group no longer exists.");
@@ -107,6 +111,7 @@ export function saveGroupAccess(
   const ceiling = trimDelegations(grants.value, delegations.value);
 
   db.transaction((tx) => {
+    const before = groupAuditSnapshot(tx, groupId);
     tx.delete(groupGrants).where(eq(groupGrants.groupId, groupId)).run();
     tx.delete(groupDelegations)
       .where(eq(groupDelegations.groupId, groupId))
@@ -119,6 +124,7 @@ export function saveGroupAccess(
       tx.insert(groupDelegations)
         .values(ceiling.map((permission) => ({ groupId, permission })))
         .run();
+    auditGroup(tx, actorId, groupId, before, groupAuditSnapshot(tx, groupId));
   });
   return ok({ grants: grants.value, delegations: ceiling });
 }
@@ -140,15 +146,19 @@ export function saveUserGrants(
   db: LedgerDb,
   userId: number,
   permissions: unknown,
+  /** Who made the change, for the audit log. */
+  actorId: number,
 ): AppResult<LeafPermission[]> {
   const grants = validLeaves(permissions, "Grants");
   if (!grants.ok) return grants;
   db.transaction((tx) => {
+    const before = userAuditSnapshot(tx, userId);
     tx.delete(userGrants).where(eq(userGrants.userId, userId)).run();
     if (grants.value.length)
       tx.insert(userGrants)
         .values(grants.value.map((permission) => ({ userId, permission })))
         .run();
+    auditUser(tx, actorId, userId, before, userAuditSnapshot(tx, userId));
   });
   return ok(grants.value);
 }
@@ -236,4 +246,103 @@ export function groupView(db: LedgerDb, groupRow: typeof groups.$inferSelect) {
     ...readGroupAccess(db, groupRow.id),
     memberCount,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Audit. Users & Groups writes straight from its routes, so each route takes a
+// snapshot before and after its write — inside the same transaction — and
+// hands both here. A snapshot holds what an administrator would want to see
+// changed, and never a password hash.
+// ---------------------------------------------------------------------------
+
+export type UserAuditSnapshot = {
+  name: string | null;
+  email: string;
+  username: string;
+  groups: string[];
+  grants: LeafPermission[];
+};
+
+export function userAuditSnapshot(
+  db: LedgerDb,
+  userId: number,
+): UserAuditSnapshot | null {
+  const user = db
+    .select({ name: users.name, email: users.email, username: users.username })
+    .from(users)
+    .where(eq(users.id, userId))
+    .get();
+  if (!user) return null;
+  return {
+    ...user,
+    groups: memberships(db, userId)
+      .map((m) => m.name)
+      .sort(),
+    grants: readUserGrants(db, userId),
+  };
+}
+
+export type GroupAuditSnapshot = {
+  name: string;
+  description: string;
+  isSuperuser: boolean;
+} & GroupAccess;
+
+export function groupAuditSnapshot(
+  db: LedgerDb,
+  groupId: number,
+): GroupAuditSnapshot | null {
+  const group = db
+    .select({
+      name: groups.name,
+      description: groups.description,
+      isSuperuser: groups.isSuperuser,
+    })
+    .from(groups)
+    .where(eq(groups.id, groupId))
+    .get();
+  return group ? { ...group, ...readGroupAccess(db, groupId) } : null;
+}
+
+function actionOf(before: unknown, after: unknown) {
+  return before === null ? "create" : after === null ? "delete" : "update";
+}
+
+/**
+ * `extra` carries a change no snapshot can show, such as a new password —
+ * recorded as a field whose value the log redacts.
+ */
+export function auditUser(
+  db: LedgerDb,
+  actorId: number,
+  userId: number,
+  before: UserAuditSnapshot | null,
+  after: UserAuditSnapshot | null,
+  extra: FieldChange[] = [],
+): void {
+  recordAudit(db, {
+    recordType: "user",
+    recordId: userId,
+    userId: actorId,
+    action: actionOf(before, after),
+    changes: [...diffRecords(before, after), ...extra],
+    label: (after ?? before)?.name || (after ?? before)?.username,
+  });
+}
+
+export function auditGroup(
+  db: LedgerDb,
+  actorId: number,
+  groupId: number,
+  before: GroupAuditSnapshot | null,
+  after: GroupAuditSnapshot | null,
+): void {
+  recordAudit(db, {
+    recordType: "group",
+    recordId: groupId,
+    userId: actorId,
+    action: actionOf(before, after),
+    changes: diffRecords(before, after),
+    label: (after ?? before)?.name,
+  });
 }

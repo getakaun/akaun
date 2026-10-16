@@ -463,7 +463,8 @@ export function autoMatchMovements(
       );
     }
     recordAudit(db, {
-      recordType: "reconciliation",
+      // Filed under the ledger record the allocation belongs to (see below).
+      recordType: "record",
       recordId: movement.recordId,
       userId,
       action: "update",
@@ -560,7 +561,9 @@ export function replaceMovementAllocations(
     userId,
   );
   recordAudit(db, {
-    recordType: "reconciliation",
+    // Filed under the ledger record the allocation belongs to, so it shows in
+    // that record's Activity — statement ids live under 'reconciliation'.
+    recordType: "record",
     recordId: movement.recordId,
     userId,
     action: "update",
@@ -708,7 +711,9 @@ export function createTransferForLine(
   for (const emit of deferredEmits) emit();
 
   recordAudit(db, {
-    recordType: "reconciliation",
+    // Filed under the ledger record the allocation belongs to, so it shows in
+    // that record's Activity — statement ids live under 'reconciliation'.
+    recordType: "record",
     recordId: written.record.id,
     userId,
     action: "update",

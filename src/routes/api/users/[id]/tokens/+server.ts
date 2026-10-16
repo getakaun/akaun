@@ -36,5 +36,5 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
     return new Response("Forbidden", { status: 403 });
   const userId = target(params);
   if (userId === null) return new Response("Not Found", { status: 404 });
-  return json({ revoked: revokeAllTokens(db, userId) });
+  return json({ revoked: revokeAllTokens(db, userId, locals.user!.id) });
 };

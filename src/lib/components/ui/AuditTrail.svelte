@@ -1,17 +1,25 @@
 <script lang="ts">
 	import { History } from '@lucide/svelte';
+	import {
+		changesSummary,
+		channelLabel,
+		formatAuditTime,
+		type AuditChange,
+		type AuditVia
+	} from '$lib/components/audit/audit-format.js';
 
-	type FieldChange = { field: string; before: unknown; after: unknown };
 	type AuditEntry = {
 		id: number;
 		action: 'create' | 'update' | 'delete';
-		changes: FieldChange[] | null;
+		changes: AuditChange[] | null;
 		createdAt: string;
 		userId: number | null;
 		userName: string | null;
+		via: AuditVia;
+		credentialLabel: string | null;
 	};
 
-	let { recordType, recordId }: { recordType: string; recordId: number } = $props();
+	let { recordType, recordId }: { recordType: string; recordId: number | string } = $props();
 
 	let entries = $state<AuditEntry[]>([]);
 	let loading = $state(true);
@@ -19,7 +27,7 @@
 	export async function refresh() {
 		loading = true;
 		try {
-			const res = await fetch(`/api/audit/${recordType}/${recordId}`);
+			const res = await fetch(`/api/audit/${recordType}/${encodeURIComponent(String(recordId))}`);
 			if (res.ok) entries = await res.json();
 		} finally {
 			loading = false;
@@ -32,27 +40,15 @@
 		refresh();
 	});
 
-	function formatTimestamp(sqliteDatetime: string): string {
-		// sqlite datetime('now') is "YYYY-MM-DD HH:MM:SS" UTC.
-		const d = new Date(sqliteDatetime.replace(' ', 'T') + 'Z');
-		if (isNaN(d.getTime())) return sqliteDatetime;
-		const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-		const hh = String(d.getHours()).padStart(2, '0');
-		const mm = String(d.getMinutes()).padStart(2, '0');
-		return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}, ${hh}:${mm}`;
-	}
-
-	function formatValue(v: unknown): string {
-		if (v === null || v === undefined || v === '') return '—';
-		if (Array.isArray(v)) return v.length ? v.join(', ') : '—';
-		return String(v);
+	function who(entry: AuditEntry): string {
+		if (entry.via === 'system' && !entry.userName) return 'The system';
+		return entry.userName ?? 'A deleted user';
 	}
 
 	function summary(entry: AuditEntry): string {
 		if (entry.action === 'create') return 'created this record';
 		if (entry.action === 'delete') return 'deleted this record';
-		if (!entry.changes || entry.changes.length === 0) return 'updated this record';
-		return entry.changes.map((c) => `${c.field} ${formatValue(c.before)} → ${formatValue(c.after)}`).join(', ');
+		return changesSummary(recordType, entry.action, entry.changes, 4);
 	}
 </script>
 
@@ -64,11 +60,20 @@
 				<div class="audit-entry-icon"><History size={13} /></div>
 				<div class="audit-entry-main">
 					<div class="audit-entry-line">
-						<span class="audit-entry-user">{entry.userName ?? 'Someone'}</span> {summary(entry)}
+						<span class="audit-entry-user">{who(entry)}</span>
+						{#if channelLabel(entry)}<span class="audit-entry-via">{channelLabel(entry)}</span>{/if}
+						{summary(entry)}
 					</div>
-					<div class="audit-entry-time">{formatTimestamp(entry.createdAt)}</div>
+					<div class="audit-entry-time">{formatAuditTime(entry.createdAt)}</div>
 				</div>
 			</div>
 		{/each}
 	</div>
 {/if}
+
+<style>
+	.audit-entry-via {
+		color: var(--primary);
+		font-weight: 500;
+	}
+</style>

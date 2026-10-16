@@ -27,6 +27,12 @@ import {
 } from "$lib/server/sales/defaults.js";
 import { isMoneyPotAccount } from "$lib/server/ledger/account-type.js";
 import { can } from "$lib/server/permissions.js";
+import {
+  auditProviders,
+  auditSettings,
+  providerSnapshot,
+  readSettings,
+} from "$lib/server/settings-audit.js";
 
 const SETTINGS_FORBIDDEN =
   "You do not have permission to change settings. Ask an administrator for Settings › Manage.";
@@ -312,10 +318,38 @@ export const load: PageServerLoad = async ({ locals }) => {
   };
 };
 
+// The keys each form may write, read before and after a save for the audit log.
+const GENERAL_KEYS = [
+  SETTING_KEYS.ledgerDefaultAccountId,
+  SETTING_KEYS.currencyCode,
+];
+const COMPANY_KEYS = [
+  SETTING_KEYS.companyName,
+  SETTING_KEYS.companyAddress,
+  SETTING_KEYS.companyRegistrationNo,
+  SETTING_KEYS.companyLogoPath,
+  SETTING_KEYS.companyLetterheadPath,
+];
+const PDF_KEYS = [
+  SETTING_KEYS.pdfInvoiceLayoutKey,
+  SETTING_KEYS.pdfQuotationLayoutKey,
+  SETTING_KEYS.pdfThemeColor,
+  SETTING_KEYS.pdfHeader,
+  SETTING_KEYS.invoiceDueDays,
+  SETTING_KEYS.quotationValidDays,
+];
+const INTELLIGENCE_KEYS = [
+  SETTING_KEYS.autoImportParallelTasks,
+  SETTING_KEYS.autoImportCategoryHints,
+  SETTING_KEYS.autoImportRateLimitMs,
+  SETTING_KEYS.autoImportCustomInstructions,
+];
+
 export const actions: Actions = {
   saveGeneral: async ({ locals, request }) => {
     if (!can(locals, "settings.manage"))
       return fail(403, { error: SETTINGS_FORBIDDEN });
+    const before = readSettings(db, GENERAL_KEYS);
     const data = await request.formData();
     const code = String(data.get("currencyCode") ?? "")
       .trim()
@@ -348,6 +382,13 @@ export const actions: Actions = {
       const currentCode = getSetting(db, SETTING_KEYS.currencyCode) ?? "USD";
       if (hasAnyDocuments(db)) {
         if (code !== currentCode) {
+          // The default account may already be saved above.
+          auditSettings(
+            db,
+            locals.user!.id,
+            before,
+            readSettings(db, GENERAL_KEYS),
+          );
           return fail(400, {
             error:
               "Currency is locked once any document exists — changing it would corrupt historical amounts.",
@@ -358,6 +399,12 @@ export const actions: Actions = {
       }
     }
 
+    auditSettings(
+      db,
+      locals.user!.id,
+      before,
+      readSettings(db, GENERAL_KEYS),
+    );
     return { success: true, action: "saveGeneral" };
   },
 
@@ -387,6 +434,7 @@ export const actions: Actions = {
     );
     if ("failure" in letterhead) return letterhead.failure;
 
+    const before = readSettings(db, COMPANY_KEYS);
     await applyCompanyImage(logo, SETTING_KEYS.companyLogoPath);
     await applyCompanyImage(letterhead, SETTING_KEYS.companyLetterheadPath);
 
@@ -394,6 +442,12 @@ export const actions: Actions = {
     setSetting(db, SETTING_KEYS.companyAddress, companyAddress);
     setSetting(db, SETTING_KEYS.companyRegistrationNo, companyRegistrationNo);
 
+    auditSettings(
+      db,
+      locals.user!.id,
+      before,
+      readSettings(db, COMPANY_KEYS),
+    );
     return { success: true, action: "saveCompany" };
   },
 
@@ -428,6 +482,7 @@ export const actions: Actions = {
       });
     }
 
+    const before = readSettings(db, PDF_KEYS);
     setSetting(db, SETTING_KEYS.pdfInvoiceLayoutKey, invoiceLayoutKey);
     setSetting(db, SETTING_KEYS.pdfQuotationLayoutKey, quotationLayoutKey);
     setSetting(db, SETTING_KEYS.pdfThemeColor, themeColor);
@@ -435,6 +490,7 @@ export const actions: Actions = {
     setSetting(db, SETTING_KEYS.invoiceDueDays, invoiceDueDays);
     setSetting(db, SETTING_KEYS.quotationValidDays, quotationValidDays);
 
+    auditSettings(db, locals.user!.id, before, readSettings(db, PDF_KEYS));
     return { success: true, action: "savePdfTemplate" };
   },
 
@@ -451,7 +507,14 @@ export const actions: Actions = {
     const template = String(data.get("template") ?? "").trim();
     const err = validateTemplate(template);
     if (err) return fail(400, { error: err });
+    const before = readSettings(db, [SETTING_KEYS.sequenceTemplate]);
     setSetting(db, SETTING_KEYS.sequenceTemplate, template);
+    auditSettings(
+      db,
+      locals.user!.id,
+      before,
+      readSettings(db, [SETTING_KEYS.sequenceTemplate]),
+    );
     return { success: true, action: "saveSequenceTemplate" };
   },
 
@@ -500,7 +563,9 @@ export const actions: Actions = {
     if (baseUrlRaw !== null)
       updates.baseUrl = String(baseUrlRaw).trim() || null;
 
+    const before = providerSnapshot(db);
     updateProvider(db, id, updates as Parameters<typeof updateProvider>[2]);
+    auditProviders(db, locals.user!.id, before, providerSnapshot(db));
 
     return { success: true, action: "updateProvider" };
   },
@@ -513,7 +578,9 @@ export const actions: Actions = {
     if (!id) return fail(400, { error: "Provider ID is required" });
 
     // Codex sessions are disconnected locally; upstream sessions are managed in ChatGPT.
+    const before = providerSnapshot(db);
     deleteProvider(db, id);
+    auditProviders(db, locals.user!.id, before, providerSnapshot(db));
 
     return { success: true, action: "deleteProvider" };
   },
@@ -605,13 +672,21 @@ export const actions: Actions = {
       usedConnections.add(e.connectionId);
     }
 
+    const providersBefore = providerSnapshot(db);
+    const settingsBefore = readSettings(db, INTELLIGENCE_KEYS);
     const tempIdToRealId = new Map<string, string>();
     for (const e of entries) {
       if (!("isNew" in e)) continue;
+      // A refusal here can follow providers already created on this save,
+      // so what was created is logged before refusing.
+      const refuse = (error: string) => {
+        auditProviders(db, userId, providersBefore, providerSnapshot(db));
+        return fail(400, { error });
+      };
       if (!VALID_TYPES.includes(e.type as ProviderType))
-        return fail(400, { error: "Invalid provider type" });
-      if (!e.name) return fail(400, { error: "Name is required" });
-      if (!e.model) return fail(400, { error: "Model is required" });
+        return refuse("Invalid provider type");
+      if (!e.name) return refuse("Name is required");
+      if (!e.model) return refuse("Model is required");
 
       const signIn =
         e.type === "chatgpt" ? takeConnection(userId, e.connectionId) : null;
@@ -661,6 +736,13 @@ export const actions: Actions = {
       customInstructions,
     );
 
+    auditProviders(db, userId, providersBefore, providerSnapshot(db));
+    auditSettings(
+      db,
+      userId,
+      settingsBefore,
+      readSettings(db, INTELLIGENCE_KEYS),
+    );
     applyProfileSwitches(locals.user!.id, profileSwitches.switches);
 
     return { success: true, action: "saveIntelligence" };

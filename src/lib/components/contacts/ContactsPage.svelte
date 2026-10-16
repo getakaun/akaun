@@ -252,8 +252,8 @@
 			<p class="page-sub">
 				{contacts.length} total
 				{#if data.perms.records && (data.totals.weOweMinor > 0 || data.totals.owedToUsMinor > 0)}
-					· you owe <span class="num">{formatMinor(data.totals.weOweMinor)}</span>
-					· owed to you <span class="num">{formatMinor(data.totals.owedToUsMinor)}</span>
+					· Payables <span class="num">{formatMinor(data.totals.weOweMinor)}</span>
+					· Receivables <span class="num">{formatMinor(data.totals.owedToUsMinor)}</span>
 				{/if}
 			</p>
 		</div>
@@ -443,7 +443,7 @@
 												{formatMinor(Math.abs(data.balances[c.id] ?? 0))}
 											</span>
 											<span class="ct-owed-label">
-												{(data.balances[c.id] ?? 0) > 0 ? 'owed to you' : 'you owe'}
+												{(data.balances[c.id] ?? 0) > 0 ? 'Receivable' : 'Payable'}
 											</span>
 										{/if}
 									</td>
@@ -576,9 +576,9 @@
 						</div>
 						{#if fRoles.includes(Role.Partner)}
 							<p class="field-hint">
-								A partner gets two accounts of their own — money put in and money taken out — so
-								they show up by name in the partner statement. Removing the role keeps whatever
-								they already hold and just tucks the accounts out of the way.
+								A partner gets a capital account and a drawings account (equity). The partner
+								statement shows these accounts by name. Removing the role archives these accounts.
+								Their balances do not change.
 							</p>
 						{/if}
 					</div>

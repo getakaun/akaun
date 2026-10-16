@@ -41,12 +41,15 @@
 			</div>
 			<div class="rep-result-sub">
 				{#if report.ties}
-					Opening cash of {formatMinor(report.openingCashMinor)} plus this change is closing cash
-					of {formatMinor(report.closingCashMinor)}, which is how you know the figures add up.
+					Opening cash and cash equivalents of {formatMinor(report.openingCashMinor)} plus the net
+					change gives closing cash and cash equivalents of {formatMinor(report.closingCashMinor)}.
+					The statement reconciles.
 				{:else}
-					This does not explain the change from {formatMinor(report.openingCashMinor)} to {formatMinor(
-						report.closingCashMinor
-					)} — the difference is {formatMinor(report.differenceMinor)}.
+					The statement does not reconcile. The net change does not explain the change from {formatMinor(
+						report.openingCashMinor
+					)} to {formatMinor(report.closingCashMinor)}. The difference is {formatMinor(
+						report.differenceMinor
+					)}.
 				{/if}
 			</div>
 		</div>
@@ -64,7 +67,7 @@
 					</div>
 				</div>
 				{#if activity.section.lines.length === 0}
-					<p class="rep-empty">Nothing this period.</p>
+					<p class="rep-empty">No cash flows in this period.</p>
 				{:else}
 					<table class="rep-table">
 						<tbody>
@@ -89,17 +92,16 @@
 		<div class="rep-block">
 			<div class="rep-block-head">
 				<div>
-					<div class="rep-block-title">Needs review</div>
+					<div class="rep-block-title">Unclassified</div>
 					<div class="rep-block-sub">
-						Movement through accounts not yet classified — as cash, bank, wallet, card, another
-						asset type, or a current or long-term liability
+						Movements in asset or liability accounts that have no sub-type
 					</div>
 				</div>
 			</div>
 			<table class="rep-table">
 				<tbody>
 					<tr class="rep-total">
-						<td>Not yet classified</td>
+						<td>Unclassified accounts</td>
 						<td class="rep-amount">{formatMinor(report.needsReviewMinor)}</td>
 					</tr>
 				</tbody>

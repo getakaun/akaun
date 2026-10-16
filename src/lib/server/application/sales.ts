@@ -252,7 +252,7 @@ export function issueInvoice(
     )
       return fail(
         "REFUSED",
-        "Choose an open income (Revenue) account for this sale.",
+        "Select an active revenue account for this sale.",
       );
   }
   const stale = checkVersion(invoiceVersion(ctx.db, id), expectedVersion);

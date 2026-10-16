@@ -116,8 +116,8 @@
 					<button
 						type="button"
 						class="settle-undo"
-						title="Take this back"
-						aria-label="Take back {formatMinor(link.amountMinor)} against {titleOf(link)}"
+						title="Reverse allocation"
+						aria-label="Reverse allocation of {formatMinor(link.amountMinor)} to {titleOf(link)}"
 						onclick={() => onundo?.(link)}
 					>
 						<Undo2 size={14} />

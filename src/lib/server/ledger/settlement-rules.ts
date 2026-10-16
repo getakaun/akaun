@@ -109,7 +109,7 @@ export function checkAllocations(
         reason:
           available === 0
             ? "That item is already fully paid."
-            : `That is more than is still owed on that item — ${money(available)} is still outstanding.`,
+            : `The amount is more than the outstanding balance of that item. Outstanding: ${money(available)}.`,
       };
     }
 
@@ -119,7 +119,7 @@ export function checkAllocations(
   if (allocatedMinor > Math.abs(paymentAmountMinor)) {
     return {
       ok: false,
-      reason: `This payment is only ${money(paymentAmountMinor)}, but it is being spread across ${money(allocatedMinor)}.`,
+      reason: `The allocations total ${money(allocatedMinor)}, which is more than the payment amount of ${money(paymentAmountMinor)}.`,
     };
   }
 

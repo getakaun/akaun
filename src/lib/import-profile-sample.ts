@@ -126,7 +126,7 @@ export const COLUMN_ROLES: { value: ColumnRole; label: string }[] = [
   { value: "description", label: "Description" },
   { value: "amount", label: "Amount" },
   { value: "reference", label: "Reference" },
-  { value: "direction", label: "Money in or out" },
+  { value: "direction", label: "Direction (inflow or outflow)" },
   { value: "balance", label: "Running balance" },
 ];
 

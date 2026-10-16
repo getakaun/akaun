@@ -23,8 +23,8 @@ export function historyGapNotes(
   if (!trackingStartedOn) return [];
   if (coversFrom !== null && coversFrom >= trackingStartedOn) return [];
   return [
-    `This covers time before ${trackingStartedOn}, when the app started keeping these books. ` +
-      `Invoices sent before that date were never recorded as money owed by a customer, so the ` +
-      `figures for the earlier period are not the whole picture.`,
+    `This report includes dates before ${trackingStartedOn}, the ledger start date. ` +
+      `Invoices issued before that date are not in accounts receivable, so the figures for ` +
+      `the earlier period are incomplete.`,
   ];
 }

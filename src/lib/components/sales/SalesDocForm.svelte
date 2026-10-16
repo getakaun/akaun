@@ -409,7 +409,7 @@
 </section>
 
 <section class="detail-card">
-	<div class="detail-card-head"><span class="detail-card-title">What the customer reads</span></div>
+	<div class="detail-card-head"><span class="detail-card-title">Notes and terms</span></div>
 	<div class="field">
 		<label class="field-label" for={id('notes')}>Notes</label>
 		<Textarea id={id('notes')} placeholder="Optional notes for the customer…" class="leading-relaxed" bind:value={notes} />

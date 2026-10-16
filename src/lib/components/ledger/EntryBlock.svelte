@@ -79,9 +79,9 @@
 		extraSideDirection?: 'in' | 'out' | null;
 		defaultAccountId?: number | null;
 		readOnly?: boolean;
-		/** Overrides `readOnly` for just the "money came out of" side. */
+		/** Overrides `readOnly` for just the credit (from) line. */
 		fromDisabled?: boolean;
-		/** Overrides `readOnly` for just the "and went into" side. */
+		/** Overrides `readOnly` for just the debit (to) line. */
 		toDisabled?: boolean;
 		/**
 		 * Overrides `readOnly` for the third and later sides — a category is not
@@ -187,11 +187,14 @@
 
 <section class="detail-card entry">
 	<div class="detail-card-head">
-		<span class="detail-card-title">The entry</span>
+		<span class="detail-card-title">Journal entry</span>
 		<span class="entry-state" class:off={difference !== 0}>
-			{difference === 0 ? 'Balanced' : `${(Math.abs(difference) / 100).toFixed(2)} apart`}
+			{difference === 0 ? 'Balanced' : `Out of balance by ${(Math.abs(difference) / 100).toFixed(2)}`}
 		</span>
 	</div>
+	<p class="field-hint" style="margin:0 0 12px;">
+		Debit: value goes into this account. Credit: value goes out of this account.
+	</p>
 
 	<div class="entry-lines">
 		<!-- The two sides every record has. Their figure is the record's own, so
@@ -205,13 +208,13 @@
 					{canAdjust}
 					bind:value={fromAccountId}
 					name="fromAccount"
-					label="Money came out of"
+					label="Credit account"
 					{defaultAccountId}
 					disabled={fromDisabled}
 					bare
 				/>
 			</div>
-			<span class="entry-dir">out of</span>
+			<span class="entry-dir">Cr</span>
 			{#if fromIsCategory}
 				<div class="entry-amount-field">
 					<Input
@@ -261,14 +264,14 @@
 						{canAdjust}
 						bind:value={toAccountId}
 						name="toAccount"
-						label="And went into"
+						label="Debit account"
 						{defaultAccountId}
 						disabled={toDisabled}
 						bare
 					/>
 				{/if}
 			</div>
-			<span class="entry-dir">into</span>
+			<span class="entry-dir">Dr</span>
 			{#if toIsCategory}
 				<div class="entry-amount-field">
 					<Input
@@ -338,18 +341,18 @@
 					<Select.Root type="single" value={side.direction} onValueChange={(next) => selectDirection(side, next)}>
 						<Select.Trigger
 							class="entry-dir-select w-full justify-between"
-							aria-label="Direction"
+							aria-label="Debit or credit"
 							disabled={extraSidesReadOnly}
 						>
-							{side.direction === 'in' ? 'into' : 'out of'}
+							{side.direction === 'in' ? 'Dr' : 'Cr'}
 						</Select.Trigger>
 						<Select.Content>
-							<Select.Item value="in" label="into" />
-							<Select.Item value="out" label="out of" />
+							<Select.Item value="in" label="Debit (Dr)" />
+							<Select.Item value="out" label="Credit (Cr)" />
 						</Select.Content>
 					</Select.Root>
 				{:else}
-					<span class="entry-dir">{side.direction === 'in' ? 'into' : 'out of'}</span>
+					<span class="entry-dir">{side.direction === 'in' ? 'Dr' : 'Cr'}</span>
 				{/if}
 				<div class="entry-amount-field">
 					<div class="entry-amount-wrap">

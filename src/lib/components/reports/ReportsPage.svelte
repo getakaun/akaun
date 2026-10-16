@@ -40,7 +40,7 @@
 	const DESCRIPTIONS: Record<ReportView, string> = {
 		'profit-loss': 'Revenue and expenses for the period',
 		'balance-sheet': 'Assets, liabilities and equity as at a date',
-		'cash-flow': 'Where cash came from and what it went on, for the period',
+		'cash-flow': 'Cash flows from operating, investing and financing activities for the period',
 		partners: "Each partner's contributions, share of profit and drawings"
 	};
 

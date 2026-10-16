@@ -27,15 +27,15 @@
     [DefaultAccountPurpose.Receivable]:
       "Used when an invoice is sent or a customer pays.",
     [DefaultAccountPurpose.Payable]:
-      "Used when somebody else pays a business expense.",
+      "Records the amounts that the business must pay to suppliers and other parties.",
     [DefaultAccountPurpose.OpeningBalances]:
-      "Balances the amounts present when these books begin.",
+      "Offsets the opening balances on the start date of the books.",
     [DefaultAccountPurpose.SalesRevenue]:
       "Used when an invoice does not choose another revenue account.",
     [DefaultAccountPurpose.UncategorisedExpense]:
       "Used when an imported expense has no matching expense account.",
     [DefaultAccountPurpose.EverydayTransaction]:
-      "The account new income and expenses default to.",
+      "The default payment or deposit account for new records.",
     [DefaultAccountPurpose.UncategorisedIncome]:
       "Used when an imported income document has no matching revenue account.",
   };

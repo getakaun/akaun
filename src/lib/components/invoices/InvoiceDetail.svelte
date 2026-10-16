@@ -250,7 +250,7 @@
 				disabled={cancelling || reissuing}
 			>
 				<Ban size={14} />
-				{cancelling ? 'Cancelling…' : cancelOnlyBooks ? 'Remove from the books' : 'Cancel invoice'}
+				{cancelling ? 'Cancelling…' : cancelOnlyBooks ? 'Reverse posting' : 'Cancel invoice'}
 			</button>
 		{/if}
 		{#if canIssue && !isEditing}
@@ -311,10 +311,10 @@
 		<!-- How much has come in, once the invoice has been sent (D-10) -->
 		{#if invoice.ledgerRecordId !== null}
 			<section class="detail-card">
-				<div class="detail-card-head"><span class="detail-card-title">Settled</span></div>
+				<div class="detail-card-head"><span class="detail-card-title">Payment status</span></div>
 				<div class="detail-list">
 					<div class="detail-row">
-						<div class="detail-key">Paid so far</div>
+						<div class="detail-key">Amount received</div>
 						<div class="detail-val num">{formatMinor(invoice.paidMinor)}</div>
 					</div>
 					<div class="detail-row">
@@ -371,7 +371,7 @@
 
 		{#if invoice.sourceQuotationId}
 			<section class="detail-card">
-				<div class="detail-card-head"><span class="detail-card-title">Came from</span></div>
+				<div class="detail-card-head"><span class="detail-card-title">Source</span></div>
 				<a
 					class="related-link ob-card"
 					href={resolve('/(app)/quotations/[id]', { id: String(invoice.sourceQuotationId) })}
@@ -412,7 +412,7 @@
 <ConfirmDialog
 	bind:open={issueConfirmOpen}
 	title="Mark invoice {invoice.invoiceNumber} as sent?"
-	description="This records the amount in the books as owed to you by the customer, from the issue date. After this its customer, date, currency and line items are fixed, and it can be cancelled but not deleted."
+	description="This posts the amount to accounts receivable and to revenue on the issue date. After this, you cannot change the customer, date, currency or line items. You can cancel the invoice, but you cannot delete it."
 	confirmLabel="Mark as sent"
 	onConfirm={issue}
 />
@@ -420,12 +420,12 @@
 <ConfirmDialog
 	bind:open={cancelConfirmOpen}
 	title={cancelOnlyBooks
-		? `Remove invoice ${invoice.invoiceNumber} from the books?`
+		? `Reverse the posting of invoice ${invoice.invoiceNumber}?`
 		: `Cancel invoice ${invoice.invoiceNumber}?`}
 	description={cancelOnlyBooks
-		? 'This invoice is already marked Cancelled, but its amount is still in the books. This takes it out of them — out of money owed to you and out of income, including the reports for the period it was issued in. The invoice keeps its number.'
-		: `The invoice keeps its number and is marked Cancelled. Its amount is taken out of the books — out of money owed to you and out of income, including the reports for the period it was issued in.${invoice.sourceQuotationId ? ' The quotation it was converted from goes back to Accepted, so it can be converted again.' : ''} This cannot be undone.`}
-	confirmLabel={cancelOnlyBooks ? 'Remove from the books' : 'Cancel invoice'}
+		? 'This invoice is already marked Cancelled, but its amount is still posted. This reverses the receivable and the revenue, also in the reports for the period of issue. The invoice keeps its number.'
+		: `The invoice keeps its number and is marked Cancelled. This reverses the receivable and the revenue, also in the reports for the period of issue.${invoice.sourceQuotationId ? ' The source quotation goes back to Accepted, so you can convert it again.' : ''} You cannot undo this.`}
+	confirmLabel={cancelOnlyBooks ? 'Reverse posting' : 'Cancel invoice'}
 	cancelLabel="Keep it"
 	danger
 	onConfirm={cancelInvoice}
@@ -434,7 +434,7 @@
 <ConfirmDialog
 	bind:open={reissueConfirmOpen}
 	title="Cancel and reissue invoice {invoice.invoiceNumber}?"
-	description="This invoice keeps its number and is marked Cancelled, and its amount is taken out of the books, including the reports for the period it was issued in. A draft copy opens with the next invoice number, dated today, for you to correct and send. This cannot be undone."
+	description="This invoice keeps its number and is marked Cancelled. This reverses the receivable and the revenue, also in the reports for the period of issue. A draft copy opens with the next invoice number and today's date, for you to correct and send. You cannot undo this."
 	confirmLabel="Cancel & reissue"
 	cancelLabel="Keep it"
 	danger

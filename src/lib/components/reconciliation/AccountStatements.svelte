@@ -310,9 +310,9 @@
       <p class="page-sub">
         {data.account.name} ·
         {#if bankRemaining > 0}
-          <span class="num">{formatMoney(bankRemaining)}</span> still to clear
+          <span class="num">{formatMoney(bankRemaining)}</span> unreconciled
         {:else}
-          nothing left to clear
+          Fully reconciled
         {/if}
       </p>
     </div>

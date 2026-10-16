@@ -330,7 +330,7 @@
 
 		{#if quotation.convertedInvoiceId}
 			<section class="detail-card">
-				<div class="detail-card-head"><span class="detail-card-title">Became</span></div>
+				<div class="detail-card-head"><span class="detail-card-title">Converted to</span></div>
 				<a
 					class="related-link ob-card"
 					href={resolve('/(app)/invoices/[id]', { id: String(quotation.convertedInvoiceId) })}

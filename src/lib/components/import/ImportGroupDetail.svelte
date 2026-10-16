@@ -801,10 +801,10 @@
 		kinds.transfer
 			? 'Statement account'
 			: kinds.expense && kinds.income
-				? 'Paid from or received into'
+				? 'Payment or deposit account'
 				: kinds.income
-					? 'Received into'
-					: 'Paid from'
+					? 'Deposit account'
+					: 'Payment account'
 	);
 	/**
 	 * The accounts an item of this group can be paid from or received into: the
@@ -813,10 +813,10 @@
 	 */
 	const accountGroups = $derived.by(() => {
 		const groups: { label: string; accounts: AccountView[] }[] = [];
-		if (kinds.expense) groups.push({ label: 'Paid from', accounts: data.expensePaymentAccounts });
+		if (kinds.expense) groups.push({ label: 'Payment account', accounts: data.expensePaymentAccounts });
 		if (kinds.income) {
 			const shown = new Set(groups.flatMap((g) => g.accounts.map((a) => a.id)));
-			groups.push({ label: 'Received into', accounts: data.accounts.filter((a) => !shown.has(a.id)) });
+			groups.push({ label: 'Deposit account', accounts: data.accounts.filter((a) => !shown.has(a.id)) });
 		}
 		if (kinds.transfer) {
 			const shown = new Set(groups.flatMap((g) => g.accounts.map((a) => a.id)));

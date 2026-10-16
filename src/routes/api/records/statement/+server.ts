@@ -81,7 +81,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
       ...(runningBalanceHolds
         ? []
         : [
-            "The running balance is only shown when this account's movements are listed in date order with nothing else filtering them. Clear the other filters to see it again.",
+            "The running balance shows only when this account's transactions are in date order and no other filter applies. Clear the other filters to see it again.",
           ]),
     ],
     ...(runningBalanceHolds

@@ -50,7 +50,7 @@
 			>
 				<div>
 					<div class="sheet-eyebrow">{account?.name ?? 'Account'}</div>
-					<div class="sheet-title-text">Starting balance</div>
+					<div class="sheet-title-text">Opening balance</div>
 				</div>
 				<Sheet.Close class="sheet-close"><X size={16} /></Sheet.Close>
 			</div>
@@ -73,12 +73,12 @@
 					{/if}
 
 					<p class="lead">
-						What was already in this account on the day you started keeping these books? Everything
-						recorded since then is added on top of it.
+						The balance of this account on the start date of the books. Records after that date add
+						to this balance.
 					</p>
 
 					<div class="field">
-						<label class="field-label" for="ob-date">On this date *</label>
+						<label class="field-label" for="ob-date">As at date *</label>
 						<Input id="ob-date" name="date" type="date" required value={startDate} class="w-full" />
 					</div>
 
@@ -96,20 +96,19 @@
 							class="w-full"
 						/>
 						<p class="hint">
-							Enter a negative amount if the account was overdrawn. Setting it to zero removes the
-							starting balance entirely.
+							Enter a negative amount if the account was overdrawn. Enter zero to remove the opening
+							balance.
 						</p>
 					</div>
 				</div>
 
 				<div class="sheet-foot">
 					<div class="sheet-foot-note">
-						There is only ever one starting balance per account — saving this replaces any earlier
-						one.
+						An account has only one opening balance. Saving this replaces the earlier one.
 					</div>
 					<div class="sheet-foot-actions">
 						<button type="button" class="sheet-btn" onclick={onclose}>Cancel</button>
-						<button type="submit" class="sheet-btn sheet-btn-primary">Save starting balance</button>
+						<button type="submit" class="sheet-btn sheet-btn-primary">Save opening balance</button>
 					</div>
 				</div>
 			</form>

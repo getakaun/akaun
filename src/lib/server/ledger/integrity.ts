@@ -27,7 +27,7 @@ function checkOne(record: RecordBalanceInput): UnbalancedRecord | null {
     return {
       recordId: record.recordId,
       differenceMinor: record.movementSumMinor,
-      problem: "Its sides do not cancel out.",
+      problem: "Its debits and credits do not balance.",
     };
   }
 
@@ -36,7 +36,8 @@ function checkOne(record: RecordBalanceInput): UnbalancedRecord | null {
     return {
       recordId: record.recordId,
       differenceMinor: 0,
-      problem: "It has only one side, so it does not say where the money went.",
+      problem:
+        "It has only one line. A journal entry needs a debit and a credit.",
     };
   }
 
@@ -45,7 +46,7 @@ function checkOne(record: RecordBalanceInput): UnbalancedRecord | null {
     return {
       recordId: record.recordId,
       differenceMinor: 0,
-      problem: "One of its sides is worth nothing.",
+      problem: "One of its lines has a zero amount.",
     };
   }
 
@@ -54,7 +55,7 @@ function checkOne(record: RecordBalanceInput): UnbalancedRecord | null {
     return {
       recordId: record.recordId,
       differenceMinor: 0,
-      problem: "It moves money that is owed, but does not say who to.",
+      problem: "It uses a receivable or payable account but has no contact.",
     };
   }
 
@@ -67,7 +68,7 @@ function checkOne(record: RecordBalanceInput): UnbalancedRecord | null {
       return {
         recordId: record.recordId,
         differenceMinor: difference,
-        problem: "The amount entered on it no longer matches its sides.",
+        problem: "The amount entered on it no longer matches its lines.",
       };
     }
   }

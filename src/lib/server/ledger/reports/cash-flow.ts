@@ -153,7 +153,7 @@ function lineFor(row: CashFlowRow): LineSpec | null {
         return {
           activity: "Operating",
           key: "payables",
-          label: "Trade payables and other liabilities",
+          label: "Change in payables and other current liabilities",
         };
     }
   }
@@ -162,7 +162,7 @@ function lineFor(row: CashFlowRow): LineSpec | null {
       return {
         activity: "Financing",
         key: "owners-equity",
-        label: "Owner's equity",
+        label: "Owner contributions and drawings",
       };
     case AccountType.Revenue:
       return { activity: "Operating", key: "revenue", label: "Revenue" };
@@ -281,17 +281,16 @@ export function cashFlow(input: CashFlowInput): CashFlowReport {
   const notes = historyGapNotes(input.dateFrom, input.trackingStartedOn);
   if (needsReviewMinor !== 0) {
     notes.unshift(
-      "Some accounts that can hold money, or debts owed, have not been classified " +
-        "yet — as cash, bank, wallet, card, another current asset, or a current or " +
-        "long-term liability. Their movement this period is kept separate below, " +
-        "not counted as operating, investing or financing, until they are classified.",
+      "Some asset or liability accounts have no sub-type. Their transactions show as " +
+        "Unclassified, not as operating, investing or financing activities. Set a " +
+        "sub-type for each of these accounts on its account page.",
     );
   }
   if (!ties) {
     notes.unshift(
-      "These figures do not add up: what came in and went out does not explain " +
-        "the change in cash and cash equivalents held. Something is wrong in the " +
-        "records — run the balance check before relying on this.",
+      "The cash flow statement does not reconcile: the net cash flow does not " +
+        "equal the change in cash and cash equivalents. Run the ledger integrity " +
+        "check before you use this report.",
     );
   }
 

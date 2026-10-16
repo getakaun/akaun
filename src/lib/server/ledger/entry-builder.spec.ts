@@ -337,7 +337,7 @@ describe("what the builder refuses", () => {
       paidFromAccountId: null,
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toMatch(/who/i);
+    if (!result.ok) expect(result.reason).toMatch(/contact/i);
   });
 
   it("refuses a journal entry touching a shared owed account with no contact", () => {
@@ -351,7 +351,7 @@ describe("what the builder refuses", () => {
       ],
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toMatch(/who/i);
+    if (!result.ok) expect(result.reason).toMatch(/contact/i);
   });
 
   it("allows a journal entry touching a shared owed account when it names one", () => {
@@ -412,7 +412,7 @@ describe("what the builder refuses", () => {
       direction: "we-pay",
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toMatch(/who/i);
+    if (!result.ok) expect(result.reason).toMatch(/contact/i);
   });
 });
 

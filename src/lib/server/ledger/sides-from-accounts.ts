@@ -91,9 +91,9 @@ export type SidesContext = {
 
 const SAME_ACCOUNT =
   "Money cannot move from an account to itself. Choose two different accounts.";
-const NEEDS_CONTACT = "Say who this is owed to or by.";
+const NEEDS_CONTACT = "Select the contact for this receivable or payable.";
 const NEEDS_ADJUSTMENTS =
-  "These two accounts need the Adjustments ability. Ask an administrator for it, or choose an everyday account on each side.";
+  "These two accounts need the Adjustments ability. Ask an administrator for it, or choose an everyday account on each line.";
 
 function isMoneyPot(account: SidesAccount): boolean {
   return isMoneyPotAccount(account);

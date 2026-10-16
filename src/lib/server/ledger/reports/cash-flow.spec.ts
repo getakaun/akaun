@@ -149,7 +149,7 @@ describe("cashFlow", () => {
   it("classifies an owner's equity movement as financing", () => {
     const records = [record(bank(50000), equity(-50000))];
     const report = reportFor(records);
-    expect(lineIn(report, "financing", "Owner's equity")).toBe(50000);
+    expect(lineIn(report, "financing", "Owner contributions and drawings")).toBe(50000);
     expect(report.operating.lines).toEqual([]);
     expect(report.investing.lines).toEqual([]);
   });
@@ -212,7 +212,7 @@ describe("cashFlow", () => {
     expect(report.investing.lines).toEqual([]);
     expect(report.financing.lines).toEqual([]);
     expect(report.needsReviewMinor).toBe(-500);
-    expect(report.notes.some((n) => n.includes("not been classified"))).toBe(
+    expect(report.notes.some((n) => n.includes("no sub-type"))).toBe(
       true,
     );
     // The identity still holds: the needs-review side and the operating side
@@ -252,13 +252,13 @@ describe("cashFlow", () => {
     });
     expect(report.ties).toBe(false);
     expect(report.differenceMinor).toBe(999);
-    expect(report.notes[0]).toContain("do not add up");
+    expect(report.notes[0]).toContain("does not reconcile");
   });
 
   it("classifies paying down a current liability (accounts payable) as operating", () => {
     const records = [record(bank(-250), accountsPayable(250))];
     const report = reportFor(records);
-    expect(lineIn(report, "operating", "Trade payables and other liabilities")).toBe(
+    expect(lineIn(report, "operating", "Change in payables and other current liabilities")).toBe(
       -250,
     );
     expect(report.financing.lines).toEqual([]);
@@ -279,7 +279,7 @@ describe("cashFlow", () => {
     expect(report.operating.lines).toEqual([]);
     expect(report.financing.lines).toEqual([]);
     expect(report.needsReviewMinor).toBe(800);
-    expect(report.notes.some((n) => n.includes("debts owed"))).toBe(true);
+    expect(report.notes.some((n) => n.includes("liability accounts"))).toBe(true);
     expect(report.ties).toBe(true);
   });
 

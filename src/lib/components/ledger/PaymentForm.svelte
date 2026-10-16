@@ -252,7 +252,7 @@
 	const amountMinor = $derived(Math.round(parseFloat(String(amountInput ?? '')) * 100) || 0);
 	const unallocatedMinor = $derived(amountMinor - allocatedMinor);
 
-	const contactLabel = $derived(direction === 'we-pay' ? 'Who was paid? *' : 'Who paid you? *');
+	const contactLabel = $derived(direction === 'we-pay' ? 'Payee *' : 'Payer *');
 	const moneyLabel = $derived(direction === 'we-pay' ? 'Payment account' : 'Receipt account');
 
 	function isPicked(item: OutstandingItem): boolean {
@@ -271,10 +271,10 @@
 
 	export function blockedBy(): string | null {
 		if (mode === 'single' && contactId === null) {
-			return direction === 'we-pay' ? 'Choose who this pays.' : 'Choose who paid this.';
+			return direction === 'we-pay' ? 'Select the payee.' : 'Select the payer.';
 		}
 		if (moneyAccountId === null) return 'Choose an account.';
-		if (mode === 'batch' && allocations.length === 0) return 'Tick at least one item to pay.';
+		if (mode === 'batch' && allocations.length === 0) return 'Select at least one open item to allocate.';
 		if (amountMinor <= 0) return 'Enter an amount.';
 		return null;
 	}
@@ -326,7 +326,7 @@
 	<div class="detail-card-head"><span class="detail-card-title">Payment</span></div>
 
 	<div class="field">
-		<span class="field-label">Who</span>
+		<span class="field-label">Contacts</span>
 		<div class="mode-toggle" role="radiogroup" aria-label="One contact or several">
 			<button
 				type="button"
@@ -342,7 +342,7 @@
 				class:active={mode === 'batch'}
 				onclick={() => (mode = 'batch')}
 			>
-				Several at once
+				Batch (several contacts)
 			</button>
 		</div>
 	</div>
@@ -357,9 +357,9 @@
 			>
 				<Select.Trigger id="pay-contact" class="w-full justify-between">
 					{#if contactId === null}
-						Choose a person
+						Select contact
 					{:else}
-						{contacts.find((contact) => contact.id === contactId)?.legalName ?? 'Choose a person'}
+						{contacts.find((contact) => contact.id === contactId)?.legalName ?? 'Select contact'}
 					{/if}
 				</Select.Trigger>
 				<Select.Content>
@@ -371,8 +371,8 @@
 		</div>
 	{:else}
 		<p class="covers-note" style="margin-bottom:0;">
-			One transfer, split across every outstanding item below — tick off what it does not cover
-			yet.
+			One payment allocated across the open items below. Clear the items that it does not
+			settle.
 		</p>
 	{/if}
 
@@ -394,7 +394,9 @@
 			class="w-full"
 		/>
 		{#if mode === 'batch'}
-			<p class="field-hint">The sum of what is ticked below — there is nobody to put a remainder on.</p>
+			<p class="field-hint">
+				Total of the selected allocations. A batch payment cannot have an unallocated amount.
+			</p>
 		{/if}
 	</div>
 
@@ -419,11 +421,11 @@
 
 	{#if mode === 'single'}
 		{#if contactId === null}
-			<p class="covers-note">Choose a contact to see what is outstanding.</p>
+			<p class="covers-note">Select a contact to see the open items.</p>
 		{:else if loading}
 			<p class="covers-note">Looking…</p>
 		{:else if items.length === 0}
-			<p class="covers-note">Nothing is outstanding with this person.</p>
+			<p class="covers-note">This contact has no open items.</p>
 		{:else}
 			<div class="covers-list">
 				{#each items as item (item.movementId)}
@@ -437,7 +439,7 @@
 										item.outstandingMinor
 									)} outstanding
 									{#if item.daysOverdue > 0}
-										· {item.daysOverdue} days late
+										· {item.daysOverdue} days overdue
 									{/if}
 								</span>
 							</span>
@@ -447,7 +449,7 @@
 								class="covers-amount"
 								type="number"
 								step="0.01"
-								aria-label="Amount put against {item.description || 'this record'}"
+								aria-label="Amount allocated to {item.description || 'this record'}"
 								bind:value={picked[item.movementId]}
 							/>
 						{/if}
@@ -458,7 +460,7 @@
 	{:else if loading}
 		<p class="covers-note">Looking…</p>
 	{:else if groupedItems.length === 0}
-		<p class="covers-note">Nothing is outstanding with anyone.</p>
+		<p class="covers-note">No open items.</p>
 	{:else}
 		{#each groupedItems as group (group.contactId)}
 			<div class="covers-group">
@@ -475,7 +477,7 @@
 											? ` · ${item.recordNumber}`
 											: ''} · {formatMinor(item.outstandingMinor)} outstanding
 										{#if item.daysOverdue > 0}
-											· {item.daysOverdue} days late
+											· {item.daysOverdue} days overdue
 										{/if}
 									</span>
 								</span>
@@ -485,7 +487,7 @@
 									class="covers-amount"
 									type="number"
 									step="0.01"
-									aria-label="Amount put against {item.description || 'this record'}"
+									aria-label="Amount allocated to {item.description || 'this record'}"
 									bind:value={picked[item.movementId]}
 								/>
 							{/if}
@@ -498,13 +500,13 @@
 
 	{#if mode === 'single'}
 		{#if allocatedMinor > 0 && unallocatedMinor > 0}
-			<p class="covers-note">{formatMinor(unallocatedMinor)} of this payment is not put against anything yet.</p>
+			<p class="covers-note">{formatMinor(unallocatedMinor)} unallocated.</p>
 		{:else if allocatedMinor > 0}
-			<p class="covers-note">This pays off {formatMinor(allocatedMinor)}.</p>
+			<p class="covers-note">Allocated: {formatMinor(allocatedMinor)}.</p>
 		{/if}
 	{:else if allocations.length > 0}
 		<p class="covers-note">
-			This pays off {formatMinor(allocatedMinor)} across {allocations.length}
+			Allocated: {formatMinor(allocatedMinor)} across {allocations.length}
 			{allocations.length === 1 ? 'item' : 'items'}.
 		</p>
 	{/if}

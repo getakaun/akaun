@@ -49,11 +49,11 @@ export const ALWAYS_EDITABLE_FIELDS = [
 const LOCKED = new Set<string>(LOCKED_FIELDS);
 
 const SETTLED_REASON =
-  "A payment has settled this record. Undo the settlement before changing its amount, date or the account it moved through.";
+  "This record is settled by a payment. Reverse the settlement before you change its amount, date or account.";
 const RECONCILED_REASON =
-  "This record is matched to a bank line. Unmatch it first before changing its amount, date or the account it moved through.";
+  "This record is reconciled to a bank statement line. Unmatch it from that line before you change its amount, date or account.";
 const BOTH_REASON =
-  "A payment has settled this record and it is matched to a bank line. Undo the settlement and unmatch the bank line before changing its amount, date or the account it moved through.";
+  "This record is settled by a payment and reconciled to a bank statement line. Reverse the settlement and unmatch the bank statement line before you change its amount, date or account.";
 
 function reasonFor(state: LockState): string | null {
   if (state.settled && state.reconciled) return BOTH_REASON;
@@ -86,19 +86,19 @@ export function canDeleteRecord(state: LockState): Allowed {
     return {
       ok: false,
       reason:
-        "A payment has settled this record and it is matched to a bank line. Undo the settlement and unmatch the bank line before deleting it.",
+        "This record is settled by a payment and reconciled to a bank statement line. Reverse the settlement and unmatch the bank statement line before you delete it.",
     };
   }
   if (state.settled) {
     return {
       ok: false,
       reason:
-        "A payment has settled this record. Undo the settlement before deleting it.",
+        "This record is settled by a payment. Reverse the settlement before you delete it.",
     };
   }
   return {
     ok: false,
     reason:
-      "This record is matched to a bank line. Unmatch it first before deleting it.",
+      "This record is reconciled to a bank statement line. Unmatch it from that line before you delete it.",
   };
 }

@@ -299,7 +299,7 @@ export function cannotDeleteContactReason(db: Db, id: number): string | null {
   if (!isContactReferenced(db, id)) return null;
   return isPartnerAccountOwner(db, id)
     ? "An account belongs to this contact as a partner, so it cannot be deleted. Archive it instead."
-    : "Records name this contact, so it cannot be deleted. Archive it instead — everything already recorded stays exactly as it is.";
+    : "Transactions or documents refer to this contact, so you cannot delete it. Archive it instead. The existing records do not change.";
 }
 
 export type ContactUsage = {

@@ -652,7 +652,7 @@ describe("reading a group again", () => {
 
     const sent = await (await routes.getJob()).json();
     const reason =
-      "1 item is already confirmed, so this document can no longer be read again. Reading it again would replace items that are already in the books.";
+      "1 item is already confirmed, so this document can no longer be read again. Reading it again would replace items that are already posted to the ledger.";
     expect(sent.canReadAgain).toBe(false);
     expect(sent.readAgainReason).toBe(reason);
 

@@ -23,8 +23,9 @@
 	 * two pages can never offer two different forms, and two copies of "which
 	 * accounts may this side name" is two answers waiting to disagree.
 	 *
-	 * Writes go through `/api/records`. Nothing here uses an accounting word
-	 * (Principle VII, SC-010).
+	 * Writes go through `/api/records`. Labels use the standard accounting term
+	 * (debit, credit, receivable, payable), with a short ASD-STE100 hint where a
+	 * hint helps.
 	 */
 	let {
 		record = null,
@@ -692,7 +693,7 @@
 {/if}
 
 <section class="detail-card">
-	<div class="detail-card-head"><span class="detail-card-title">What happened</span></div>
+	<div class="detail-card-head"><span class="detail-card-title">Transaction details</span></div>
 
 	<div class="field">
 		<label class="field-label" for="rec-description">Description *</label>
@@ -885,7 +886,7 @@
 		<div class="field">
 			<span class="field-label">Contact</span>
 			<p class="field-hint" style="margin-top:0;">
-				Several contacts — this payment covers more than one. See the list below.
+				Batch payment: allocated to several contacts. See the list below.
 			</p>
 		</div>
 	{:else if needsContact}
@@ -902,7 +903,7 @@
 				placeholder="Search or create a contact…"
 			/>
 			{#if contactId === null && !contactName}
-				<p class="field-hint">Name the customer or supplier this is owed to or by.</p>
+				<p class="field-hint">Select the customer (receivable) or supplier (payable).</p>
 			{/if}
 		</div>
 	{:else if contacts.length > 0}

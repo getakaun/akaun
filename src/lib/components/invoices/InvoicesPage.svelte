@@ -230,7 +230,7 @@
 		<div class="topbar-left">
 			<h1 class="page-title">Invoices</h1>
 			<p class="page-sub">
-				{stats.allCount} records · <span class="num">{formatMoneyRM(stats.allTotal)}</span> total
+				{stats.allCount} invoices · <span class="num">{formatMoneyRM(stats.allTotal)}</span> total
 			</p>
 		</div>
 		<div class="topbar-right">
@@ -285,10 +285,10 @@
 	<div class="stat-strip">
 		<StatCard
 			tone="amber"
-			label="Sent"
+			label="Outstanding"
 			cur={mainCurrencySymbol()}
 			value={formatMoney(stats.sentTotal)}
-			sub="{stats.sentCount} awaiting payment"
+			sub="{stats.sentCount} unpaid"
 		/>
 		<StatCard
 			tone="red"

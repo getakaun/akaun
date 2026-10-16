@@ -796,7 +796,7 @@ function tablePlace(rest: string): ProblemPlace {
     const values = /^direction\.(in|out)/.test(rest);
     return values
       ? {
-          label: "Table › Money in and out values",
+          label: "Table › Inflow and outflow values",
           targets: ["pf-l-direction", "pf-table"],
           inMore: "table",
         }
@@ -866,11 +866,11 @@ function sectionPlace(
     case "fixedCategoryAccountId":
       return place("Category", [`${at}-category`]);
     case "counterAccountId":
-      return place("Other account", [`${at}-counter`]);
+      return place("Contra account", [`${at}-counter`]);
     case "feeTypes":
       return place("Line types", [`${at}-fees`]);
     case "sameMoneyAs":
-      return place("More › Same money as", [`${at}-same`], "section");
+      return place("More › Overlaps with", [`${at}-same`], "section");
     case "extras":
       return place("More › Extra fields", [`${at}-extras`], "section");
     case "rows":

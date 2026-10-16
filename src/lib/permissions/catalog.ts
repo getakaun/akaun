@@ -90,7 +90,7 @@ export const PERMISSION_CATALOG = {
     label: "Records",
     noun: "records",
     description:
-      "Everything that happened with money: purchases, sales, transfers and payments.",
+      "All transactions: purchases, sales, transfers and payments.",
     children: {
       read: read("records, their files and statements"),
       create: create("records and payments"),
@@ -99,7 +99,7 @@ export const PERMISSION_CATALOG = {
       adjust: {
         label: "Adjustments",
         description:
-          "Record between any two accounts, or add a third side. Someone with this can make the books say anything and still have them add up, so it is granted by name only.",
+          "Post manual journal entries between any accounts, including entries with more than two lines. This can change any balance, so grant it only by name.",
         phrase: "make adjustments",
         explicit: true,
         sensitive: true,
@@ -172,7 +172,7 @@ export const PERMISSION_CATALOG = {
   invoices: {
     label: "Invoices",
     noun: "invoices",
-    description: "Bills sent to customers.",
+    description: "Sales invoices issued to customers.",
     children: {
       read: read("invoices"),
       create: create("draft invoices"),
@@ -180,13 +180,13 @@ export const PERMISSION_CATALOG = {
       delete: remove("draft invoices"),
       issue: {
         label: "Send",
-        description: "Mark an invoice as sent, which puts it in the books.",
+        description: "Mark an invoice as sent, which posts it to the ledger.",
         verb: "send",
       },
       void: {
         label: "Void",
         description:
-          "Void a sent invoice, which takes it out of the books, and reissue it.",
+          "Void a sent invoice, which removes its ledger posting, and reissue it.",
         verb: "void",
         tier: "full",
       },
@@ -195,7 +195,7 @@ export const PERMISSION_CATALOG = {
   reconciliation: {
     label: "Reconciliation",
     noun: "bank statements",
-    description: "Bank statements matched against the books.",
+    description: "Bank statements matched against ledger entries.",
     children: {
       read: read("bank statements and their matches"),
       create: create("bank statements, and transfers from their lines"),
@@ -249,7 +249,7 @@ export const PERMISSION_CATALOG = {
       read: {
         label: "View",
         description:
-          "See every change across the books and the administration, including who changed users, groups, tokens and settings.",
+          "See every change across the ledger and administration, including who changed users, groups, tokens and settings.",
         verb: "see",
         // It shows administrative changes that the holder may not otherwise
         // see, so it is chosen by name, kept out of default ceilings, and never

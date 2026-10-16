@@ -67,7 +67,7 @@ describe("a record whose two sides do not cancel out", () => {
       records: [{ ...sound(1, 5000), movementSumMinor: 100 }],
       wholeBooksSumMinor: 100,
     });
-    expect(report.unbalancedRecords[0].problem).toMatch(/cancel|add up|sides/i);
+    expect(report.unbalancedRecords[0].problem).toMatch(/cancel|add up|sides|balance/i);
   });
 });
 
@@ -78,7 +78,7 @@ describe("the other things a record can get wrong", () => {
       wholeBooksSumMinor: 0,
     });
     expect(report.ok).toBe(false);
-    expect(report.unbalancedRecords[0].problem).toMatch(/one side|two sides/i);
+    expect(report.unbalancedRecords[0].problem).toMatch(/one side|two sides|one line/i);
   });
 
   it("reports a side worth nothing", () => {

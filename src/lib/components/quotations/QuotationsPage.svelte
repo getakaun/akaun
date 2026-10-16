@@ -205,7 +205,7 @@
 		<div class="topbar-left">
 			<h1 class="page-title">Quotations</h1>
 			<p class="page-sub">
-				{counts.all} records · <span class="num">{formatMoneyRM(stats.allTotal)}</span> total
+				{counts.all} quotations · <span class="num">{formatMoneyRM(stats.allTotal)}</span> total
 			</p>
 		</div>
 		<div class="topbar-right">

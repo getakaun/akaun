@@ -5,7 +5,7 @@ sidebar_position: 1
 # Quotations
 
 A quotation offers a price to a customer before you do the work. A quotation does not change the
-books. Use it when a customer asks for a price in writing. When the customer agrees, make an
+ledger. Use it when a customer asks for a price in writing. When the customer agrees, make an
 invoice from the quotation.
 
 :::info
@@ -197,10 +197,10 @@ Akaun makes a draft invoice and opens its page. The invoice gets these values fr
 The issue date of the invoice is today. The due date comes from **Invoice due in (days)** in
 **Settings**. See [Default terms](#default-terms).
 
-The status of the quotation is then **Converted**. On the quotation page, the **Became** card in
-the rail opens the invoice. On the invoice page, the **Came from** card opens the quotation.
+The status of the quotation is then **Converted**. On the quotation page, the **Converted to** card in
+the rail opens the invoice. On the invoice page, the **Source** card opens the quotation.
 
-A draft invoice does not change the books. Check it, and then mark it as sent. See
+A draft invoice does not change the ledger. Check it, and then mark it as sent. See
 [Invoices](./invoices.md).
 
 ### Undo a conversion

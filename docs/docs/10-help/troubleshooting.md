@@ -163,19 +163,19 @@ conditions.
 |---|---|
 | A screen in the sidebar | You have no **View** permission on that area. |
 | **New record** | You have no **Add** permission on **Records**. |
-| **Delete** or **Take this back** | You have no **Delete** permission on **Records**. No group except **Administrators** gives it. |
+| **Delete** or **Reverse allocation** | You have no **Delete** permission on **Records**. No group except **Administrators** gives it. |
 | **Users & Groups** | Only a superuser sees it. |
 | **Settings** in the sidebar | You have no **View** permission on **Settings**. |
 | The fields and the **Save** buttons in **Settings** | You have no **Manage** permission on **Settings**. A note at the top of the page tells this. The groups that Akaun makes do not give it. |
 | **Reconcile** on an account page | You have no **View** permission on **Reconciliation**, or the account is inactive. |
-| The **Books** tab in **Settings** | You have no **View** permission on **Reports**. |
+| The **Ledger** tab in **Settings** | You have no **View** permission on **Reports**. |
 | **Quotations** and **Invoices** | You have no **View** permission on these areas. A group that you make has none until you choose a level for them in the group. |
 | **Convert** on a quotation | The status is not **Sent** or **Accepted**. Or you do not have **Convert** on **Quotations** and **Add** on **Invoices**. |
 | **Cancel invoice** | The invoice is a draft, or a payment is recorded against it. Or you do not have **Void** on **Invoices** and **Change** on **Records**. |
 | **Record payment** on an invoice | The invoice is a draft, is cancelled or is fully paid. Or you have no **Add** permission on **Records**. |
 | The **Partners' Equity** tab | No contact has the **Partner** role. |
-| **Pay all outstanding** | The business owes money to one contact only, or to none. Or you have no **Add** permission on **Records**. |
-| **Payment account** on a payment | The book has only one money account. Akaun uses that account. |
+| **Pay all payables** | The business owes money to one contact only, or to none. Or you have no **Add** permission on **Records**. |
+| **Payment account** on a payment | The book has only one cash or bank account. Akaun uses that account. |
 | **Contact** on a new record | You have no contacts yet. |
 | **Scan** on **Auto Import** | The screen is wide. **Scan** shows only on a narrow screen, such as a phone. |
 
@@ -213,20 +213,20 @@ tokens and apps. See
 
 ## The amount, the date or the account of a record is read only
 
-A note above the form gives the reason. For example: "A payment has settled this record. Undo the
-settlement before changing its amount, date or the account it moved through."
+A note above the form gives the reason. For example: "This record is settled by a payment.
+Reverse the settlement before you change its amount, date or account."
 
 ### Cause
 
 The record is locked. A payment settles it, a bank statement line matches it, or both.
-A locked record keeps its amount, date, currency and money account. You also cannot delete it.
+A locked record keeps its amount, date, currency and cash or bank account. You also cannot delete it.
 
 ### What to do
 
 Remove each thing that locks the record.
 
 1. If a payment settles the record, open the record.
-2. In **Payments applied**, click the undo arrow on the payment. Its tooltip is **Take this back**.
+2. In **Payments applied**, click the undo arrow on the payment. Its tooltip is **Reverse allocation**.
 3. If a bank statement line matches the record, open the account page and click **Reconcile**.
 4. Click the row of the statement.
 5. Click the record in the list.
@@ -234,7 +234,7 @@ Remove each thing that locks the record.
 7. Click **Save & Next** or **Save**.
 8. Change the record.
 
-**Take this back** needs the **Delete** permission on **Records**. **Save & Next** and **Save**
+**Reverse allocation** needs the **Delete** permission on **Records**. **Save & Next** and **Save**
 need the **Match** permission on **Reconciliation**. You can still change the
 description, contact, reference, remark and attachments of a locked record. On a locked expense or
 income, you can also change the categories.
@@ -280,10 +280,10 @@ opened the invoice page.
 ### What to do
 
 1. On the invoice page, in the **Payments** card, click the payment.
-2. Beside the allocation to the invoice, click **Take this back**.
+2. Beside the allocation to the invoice, click **Reverse allocation**.
 3. Open the invoice again, and click **Cancel invoice**.
 
-**Take this back** needs the **Delete** permission on **Records**.
+**Reverse allocation** needs the **Delete** permission on **Records**.
 
 See [Cancel an invoice](../05-sales/invoices.md#cancel-an-invoice).
 
@@ -291,8 +291,8 @@ See [Cancel an invoice](../05-sales/invoices.md#cancel-an-invoice).
 
 ### Cause
 
-Without the **Adjustments** permission, each line of the record form offers money
-accounts and categories only. **Accounts Payable**, a loan account and a **Credit card** account
+Without the **Adjustments** permission, each line of the record form offers cash or
+bank accounts and categories only. **Accounts Payable**, a loan account and a **Credit card** account
 are not in the list. The same cause can make a line of an imported bill show **Select account**.
 
 ### What to do
@@ -307,7 +307,7 @@ No group that Akaun makes gives **Adjustments**. See
 ## These two accounts need the Adjustments ability
 
 The full message is: "These two accounts need the Adjustments ability. Ask an administrator for
-it, or choose an everyday account on each side."
+it, or choose an everyday account on each line."
 
 ### Cause
 
@@ -317,15 +317,16 @@ income or a transfer. Akaun saves such a record as a **Journal entry**, and a jo
 
 ### What to do
 
-1. Check the account on the **out of** line and on the **into** line.
-2. Choose a money account on one line and a category on the other line.
+1. Check the account on the **Debit** line and on the **Credit** line.
+2. Choose a cash or bank account on one line and a category on the other line.
 3. If the record must use these accounts, ask a user with **Adjustments** to save it.
 
 See [How a record moves money](../02-concepts/how-an-entry-works.md).
 
-## The two sides do not cancel out — they are 5.00 apart.
+## Debits and credits do not balance
 
-This message shows on the save bar. The top of **The entry** shows a figure with **apart**.
+The full message is, for example: "Debits and credits do not balance. Difference: 5.00." This
+message shows on the save bar. The top of **Journal entry** shows a figure with **apart**.
 
 ### Cause
 
@@ -334,9 +335,9 @@ amount of the record.
 
 ### What to do
 
-1. Find the difference at the top of **The entry**.
+1. Find the difference at the top of **Journal entry**.
 2. Correct the amount on one category line.
-3. Make sure that the top of **The entry** shows **Balanced**.
+3. Make sure that the top of **Journal entry** shows **Balanced**.
 4. Click **Save record** on a new record, or **Save changes** on a saved record.
 
 :::tip
@@ -355,15 +356,15 @@ lines, these messages show on the save bar:
 
 | Message | What to do |
 |---|---|
-| "Pick an account for every side." | Choose an account on each line. |
-| "A side of a record cannot be worth nothing." | Type an amount that is not zero on each line, or remove the line. |
-| "Say who this money is owed to, or owed by, before saving it." | Choose a **Contact**. A record on **Accounts Payable** or **Accounts Receivable** must name a contact. |
+| "Select an account for each line." | Choose an account on each line. |
+| "A line amount cannot be zero." | Type an amount that is not zero on each line, or remove the line. |
+| "Select the contact for this receivable or payable." | Choose a **Contact**. A record on **Accounts Payable** or **Accounts Receivable** must name a contact. |
 
 After you click save, these messages can show above the form:
 
 | Message | What to do |
 |---|---|
-| "Say who this is owed to or by." | Choose a **Contact**. |
+| "Select the contact for this receivable or payable." | Choose a **Contact**. |
 | "Money cannot move from an account to itself. Choose two different accounts." | Choose a different account on one line. |
 
 See [Record an expense or income](../03-everyday-tasks/record-expense-or-income.md).
@@ -529,7 +530,7 @@ These are the usual reasons that a record does not show:
 
 1. Clear the search box and the date filter.
 2. Open the record.
-3. Check the money account of the record.
+3. Check the cash or bank account of the record.
 4. If the account is wrong, change it to the account of the statement.
 5. If the record does not exist, add it on the **Records** screen.
 
@@ -540,9 +541,10 @@ The list can also show records from other accounts that have a statement. These 
 match this statement. If a statement line does not show under **Compatible Statement Lines**,
 check its **Direction**. See [Bank reconciliation](../07-bank-reconciliation.md#match-the-lines).
 
-## The books do not balance — check Reports
+## The balance sheet does not balance
 
-This message shows on the **Financial position** card of the **Dashboard**.
+This message shows on the **Balance sheet** card of the **Dashboard**, with the difference. The
+**Action items** list also shows **Balance sheet does not balance**.
 
 ### Cause
 
@@ -552,15 +554,15 @@ be zero. The screens do not normally cause this.
 ### What to do
 
 1. Click **Settings**.
-2. Click the **Books** tab.
+2. Click the **Ledger** tab.
 3. Under **Ledger integrity check**, click **Check now**.
 4. Make a note of each record number and difference in the result.
 5. Report the problem. See [Report a problem](#report-a-problem).
 
-The **Books** tab shows only with the **View** permission on **Reports**. The check only reads the
+The **Ledger** tab shows only with the **View** permission on **Reports**. The check only reads the
 book. It changes nothing. Do not send reports to anybody until the check
-shows **All good. Every record balances, and so does everything added up together.** See
-[Dashboard](../08-reports/dashboard.md#if-the-books-do-not-balance).
+shows **The ledger is in balance. All records and the trial balance agree.** See
+[Dashboard](../08-reports/dashboard.md#if-the-balance-sheet-does-not-balance).
 
 ## Partners' Equity shows 0.00 for Contributions and Drawings
 

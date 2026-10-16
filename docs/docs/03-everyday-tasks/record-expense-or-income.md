@@ -23,15 +23,15 @@ The **New record** page has three sections:
 
 | Section | What you type in it |
 |---|---|
-| **What happened** | **Description**, **Amount** and **Date**. The **Amount** label also shows the symbol of your main currency. |
-| **The entry** | Two lines. The first line, marked **out of**, is the account that the money came out of. The second line, marked **into**, is the account that the money went into. |
+| **Transaction details** | **Description**, **Amount** and **Date**. The **Amount** label also shows the symbol of your main currency. |
+| **Journal entry** | Two lines. The **Credit** line is the account that the money came out of. The **Debit** line is the account that the money went into. |
 | **Details** | **Contact**, **Reference** and **Remark**. These fields are optional. |
 
 The **Attachments** section is on the right side of the page. On a narrow screen, it is below the form.
 
-When the page opens, Akaun puts an account on each line. The first line gets your default money
-account. The second line gets the first different account in its list. This account is often a
-money account, not a category. Always check both lines before you save.
+When the page opens, Akaun puts an account on each line. The **Credit** line gets your default
+payment account. The **Debit** line gets the first different account in its list. This account is
+often a cash or bank account, not a category. Always check both lines before you save.
 
 ## Record an expense
 
@@ -41,8 +41,8 @@ This example records 50.00 that you pay from **Bank** for software.
 2. In **Description**, type what you bought, for example "Accounting software, March".
 3. In **Amount**, type `50.00`.
 4. In **Date**, choose the date of the payment.
-5. On the **out of** line, choose **Bank**.
-6. On the **into** line, choose the expense category **Software**.
+5. On the **Credit** line, choose **Bank**.
+6. On the **Debit** line, choose the expense category **Software**.
 7. Optional: in **Contact**, choose the supplier.
 8. Optional: in **Reference**, type the number of the receipt or the bill.
 9. Optional: in **Remark**, type a note.
@@ -57,18 +57,18 @@ This example records 200.00 that a customer pays you in cash.
 2. In **Description**, type what you sold, for example "Order 1042".
 3. In **Amount**, type `200.00`.
 4. In **Date**, choose the date when you got the money.
-5. On the **out of** line, choose the income category **Product Sales**.
-6. On the **into** line, choose **Cash**.
+5. On the **Credit** line, choose the income category **Product Sales**.
+6. On the **Debit** line, choose **Cash**.
 7. Optional: in **Contact**, choose the customer.
 8. Click **Save record**.
 
-For an income, the money comes out of the income category. The income category is the place that
+For an income, the income category is the credit. The income category is the place that
 the money came from.
 
 ## Result
 
 Akaun saves the record and opens its page. The top of the page shows the kind, the date, the
-amount and the status. A record that moves money directly from a money account shows **Paid**.
+amount and the status. A record that moves money directly from a cash or bank account shows **Paid**.
 
 The record is also on the **Records** screen. The **Kind** column shows **Expense** or
 **Income**.
@@ -105,11 +105,11 @@ The **+ Foreign currency** button shows on an expense or an income.
 The first **Amount** field then shows the amount in your main currency. See
 [Foreign currency](../02-concepts/foreign-currency.md).
 
-## The default money account
+## The default payment account
 
-The default money account is the account that the first line gets on a new record. You choose it
-in **Settings**, on the **Books** tab, in **Default transaction account**. The **General** tab also
-shows **Money usually comes from**, but at this time a change there is not kept. See [Settings reference](../09-administration/settings-reference.md).
+The default payment account is the account that the **Credit** line gets on a new record. You
+choose it in **Settings**, on the **Ledger** tab, in **Default transaction account**. The
+**General** tab also shows **Default payment account**, but at this time a change there is not kept. See [Settings reference](../09-administration/settings-reference.md).
 
 ## Notes and limits
 
@@ -118,7 +118,7 @@ shows **Money usually comes from**, but at this time a change there is not kept.
 - If Akaun cannot save the record, a red message shows at the top of the page. It tells you what
   to change.
 - The two lines must use two different accounts.
-- Without the **Adjustments** permission, each line offers money accounts and categories only.
+- Without the **Adjustments** permission, each line offers cash or bank accounts and categories only.
   You cannot choose **Accounts Payable**, a loan account or a **Credit card** account on a new record. To pay
   a bill later, see [Bills you pay later](./bills-you-pay-later.md).
 - To put one amount on more than one category, see

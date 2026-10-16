@@ -18,11 +18,11 @@ permission, and where the token or the connection gives read access.
 
 | What the assistant can read | Permission that the user needs |
 |---|---|
-| The list of records, with filters for dates, kinds, accounts, categories, contacts, text, amounts, paid and cleared | **View** on **Records** |
+| The list of records, with filters for dates, kinds, accounts, categories, contacts, text, amounts, paid and reconciled | **View** on **Records** |
 | One record, with its lines. It can also read the settlements and the stored text of the documents. | **View** on **Records** |
 | A file attached to a record: a receipt or bill as an image or a PDF, or a spreadsheet as text | **View** on **Records** |
 | The statement of one account | **View** on **Records** |
-| The outstanding amounts: what customers owe you, and what you owe | **View** on **Records** |
+| The outstanding amounts: receivables (what customers owe the business) and payables (what the business owes) | **View** on **Records** |
 | The list of accounts, with their balances | **View** on **Accounts** |
 | The list of contacts | **View** on **Contacts** |
 | The balance of one contact | **View** on **Contacts** and **Records** |
@@ -91,7 +91,7 @@ These cannot be undone, or they change the evidence that the books are checked a
 A journal entry, or a record between any two accounts, needs **Adjustments** on **Records**. With
 the sign-in, the assistant also needs the separate **Adjust** choice when you connect. Change
 access to records does not include it. Give it only to an assistant that you trust with your
-books: an adjustment can change any balance and still add up. A bank line recorded as a transfer
+books: an adjustment can change any balance and keep the ledger in balance. A bank line recorded as a transfer
 to anything other than a bank or cash account is an adjustment too.
 
 Akaun applies all its normal rules to the assistant. For example:

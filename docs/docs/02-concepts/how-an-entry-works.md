@@ -7,27 +7,30 @@ sidebar_position: 3
 Each record moves an amount out of one account and into a different account. This page tells how
 the record form shows this, and why it keeps each balance correct.
 
-## Two lines: out of one account, into a different account
+## Two lines: a debit and a credit
 
-Each record has two lines. On the record form, the label of the first line is **out of**. The
-label of the second line is **into**. You choose one account for each line. The amount of the record
-goes out of the first account and into the second account.
+Each record has two lines. On the record form, the **Journal entry** section shows a **Debit**
+line and a **Credit** line. You choose one account for each line. The amount of the record goes
+out of the credit account and into the debit account.
+
+- **Debit**: value goes into this account.
+- **Credit**: value goes out of this account.
 
 For example, you buy printer paper for 50.00 with cash:
 
 | Line | Account | Amount |
 |---|---|---|
-| **out of** | **Cash** | 50.00 out |
-| **into** | An expense category, for example Office supplies | 50.00 in |
+| **Debit** | An expense category, for example Office supplies | 50.00 |
+| **Credit** | **Cash** | 50.00 |
 
 The balance of **Cash** goes down by 50.00. The total of the expense category goes up by 50.00.
 
 Income works in the same way, but in the other direction. A customer pays you 200.00 into the
-bank. The money came out of **Product Sales** and went into **Bank**. The income category is the
-place that the money came from.
+bank. The debit is **Bank**. The credit is **Product Sales**. The income category is the place
+that the money came from.
 
-A transfer also has two lines. You move 100.00 from **Bank** to **Cash**. The money came out of
-**Bank** and went into **Cash**.
+A transfer also has two lines. You move 100.00 from **Bank** to **Cash**. The debit is **Cash**.
+The credit is **Bank**.
 
 ## More than two lines
 
@@ -40,19 +43,19 @@ of each category. Without the **Adjustments** permission, you can add only this 
 Akaun keeps one record with all the lines. It is still an **Expense** or an **Income**. See
 [Split across categories](../03-everyday-tasks/split-across-categories.md).
 
-## The two sides must be equal
+## Debits must equal credits
 
-The money out of the accounts must be equal to the money into the accounts. With two lines, this
-is always true, because both lines use the amount of the record.
+The total of the debits must be equal to the total of the credits. With two lines, this is always
+true, because both lines use the amount of the record.
 
-With more lines, the form shows the difference while you type. At the top of the **The entry**
-section, a label shows **Balanced** when the two sides are equal. If they are not equal, it shows the
+With more lines, the form shows the difference while you type. At the top of the **Journal entry**
+section, a label shows **Balanced** when the debits and the credits are equal. If they are not equal, it shows the
 difference, for example **5.00 apart**. Then the save bar shows the reason, and Akaun does not
 save the record.
 
 ## Why this keeps each balance correct
 
-Each record adds the same amount to one side as it takes from the other side. Thus the money in
+Each record adds the same amount to the debit side as it takes from the credit side. Thus the money in
 the book is always complete. Money cannot appear from nowhere, and it cannot disappear.
 
 Akaun calculates the balance of each account from its records. You cannot type a balance. If you
@@ -65,10 +68,9 @@ Most records match an everyday kind: an expense, an income, a transfer, a paymen
 balance. Some records do not match one of these kinds. Examples:
 
 - A record between two accounts that do not fit together as an everyday kind. For example, you
-  receive a loan of 1,000.00 into the bank. The money came out of **Loans** and went into
-  **Bank**.
+  receive a loan of 1,000.00 into the bank. The debit is **Bank**. The credit is **Loans**.
 - A record with extra lines that are not an everyday split. For example, the lines include two
-  money accounts, or an expense category and an income category.
+  cash or bank accounts, or an expense category and an income category.
 
 Akaun saves such a record as a **Journal entry**. To save a journal entry, you must have the
 **Adjustments** permission.
@@ -83,10 +85,7 @@ all accounts on each line. See [Permissions explained](../09-administration/perm
 
 :::info For accountants
 
-Akaun is a double-entry system. The record form uses plain words in place of debit and credit:
-
-- The **into** line is the debit side.
-- The **out of** line is the credit side.
+Akaun is a double-entry system. The record form labels each line **Debit** or **Credit**.
 
 The lines of each record add up to zero. Akaun keeps each amount as a signed number: a debit is
 positive and a credit is negative.

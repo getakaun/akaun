@@ -5,7 +5,8 @@ sidebar_position: 2
 # Invoices
 
 An invoice asks a customer to pay. You write the invoice as a draft, and then you mark it as sent.
-When you mark it as sent, the customer owes the amount and Akaun adds a record to the books.
+When you mark it as sent, the customer owes the amount. Akaun posts the amount to **Accounts
+receivable**.
 
 :::info
 
@@ -33,13 +34,13 @@ The tabs above the list filter it:
 
 Each tab shows the number of invoices in it.
 
-The **Status** column shows **Draft**, **Sent**, **Part paid**, **Paid**, **Overdue** or
-**Cancelled**. Akaun calculates **Part paid**, **Paid** and **Overdue** from the payments and the
+The **Status** column shows **Draft**, **Sent**, **Partially paid**, **Paid**, **Overdue** or
+**Cancelled**. Akaun calculates **Partially paid**, **Paid** and **Overdue** from the payments and the
 due date. When you record a payment, the status on the list changes at once.
 
 Above the list, four cards show totals in the main currency:
 
-- **Sent**: the amount that is still owed on the invoices that wait for payment.
+- **Outstanding**: the unpaid amount on the sent invoices.
 - **Overdue**: the amount that is still outstanding on overdue invoices.
 - **Paid**: the amount paid on the paid invoices.
 - **All recorded**: the total of all invoices, including drafts. Cancelled invoices are not in
@@ -100,7 +101,7 @@ When you save, Akaun removes each empty line.
 If you click a button below **Due date** and then change the issue date, the due date moves with
 the issue date.
 
-Akaun saves the invoice as a draft and opens its page. A draft does not change the books. The
+Akaun saves the invoice as a draft and opens its page. A draft does not change the ledger. The
 customer owes nothing yet.
 
 You can also make an invoice from a quotation. See
@@ -124,7 +125,7 @@ records that the customer owes the amount. Give the PDF to the customer yourself
 
 :::caution
 
-After you click **Mark as sent**, the customer owes the amount and it appears in the books. You
+After you click **Mark as sent**, the customer owes the amount and Akaun posts it to the ledger. You
 cannot delete a sent invoice, and you cannot change its customer, issue date, currency or lines.
 Check them before you mark the invoice as sent.
 
@@ -133,9 +134,10 @@ Check them before you mark the invoice as sent.
 1. Open the draft invoice.
 2. Click **Mark as sent**.
 
-   A dialog opens, for example **Mark invoice IV20261009-001 as sent?**. It says: "This records
-   the amount in the books as owed to you by the customer, from the issue date. After this its
-   customer, date, currency and line items are fixed, and it can be cancelled but not deleted."
+   A dialog opens, for example **Mark invoice IV20261009-001 as sent?**. It tells you that the
+   amount becomes a receivable from the customer, from the issue date. After this you cannot change
+   the customer, date, currency or line items. You can cancel the invoice, but you cannot delete
+   it.
 
 3. Click **Mark as sent**.
 
@@ -149,11 +151,11 @@ Akaun saves an **Invoice** record on the **Records** screen. The record has thes
 - The date is the issue date of the invoice.
 - The description is "Invoice" and the invoice number. The reference is the invoice number.
 - The amount goes into **Accounts Receivable**, with the customer as the contact.
-- The other line is the revenue account that **Settings** › **Books** names for **Sales revenue**.
+- The other line is the revenue account that **Settings** › **Ledger** names for **Sales revenue**.
 
 The invoice page then shows the **Settled** card in its rail:
 
-- **Paid so far**: the total of the payments against the invoice.
+- **Amount received**: the total of the payments against the invoice.
 - **Outstanding**: the amount that the customer still owes.
 
 The balance of the customer on the **Contacts** screen increases by the amount. See
@@ -199,13 +201,13 @@ are never overdue.
 Cancel an invoice that you sent by mistake, or that the customer will not pay. **Cancel invoice**
 shows on a sent invoice when no payment is recorded against it.
 
-If a payment is recorded against the invoice, take the payment back first. See
-[Take a payment back](../02-concepts/owed-and-paid.md#take-a-payment-back).
+If a payment is recorded against the invoice, reverse the allocation first. See
+[Reverse an allocation](../02-concepts/owed-and-paid.md#reverse-an-allocation).
 
 :::caution
 
-You cannot undo a cancellation. Akaun removes the **Invoice** record from the books. The amount
-leaves the money that customers owe you and the income. This also changes the reports for the
+You cannot undo a cancellation. Akaun removes the **Invoice** record from the ledger. The amount
+leaves **Accounts receivable** and revenue. This also changes the reports for the
 period of the issue date.
 
 :::
@@ -248,14 +250,14 @@ The old invoice is **Cancelled**, and its PDF prints with **VOID**. On the old i
 If the invoice was made from a quotation, the quotation stays **Converted** and now points at the
 new invoice.
 
-If a payment is recorded against the invoice, you cannot cancel or reissue it. Take the payment
-back first.
+If a payment is recorded against the invoice, you cannot cancel or reissue it. Reverse the
+allocation first.
 
 ### An invoice cancelled in an earlier version
 
-In an earlier version of Akaun, a cancelled invoice kept its amount in the books. Such an invoice
-shows **Remove from the books** in place of **Cancel invoice**. Click it, and then click
-**Remove from the books** in the dialog. Akaun removes the **Invoice** record in the same way.
+In an earlier version of Akaun, a cancelled invoice kept its amount in the ledger. Such an invoice
+shows **Reverse posting** in place of **Cancel invoice**. Click it, and then click
+**Reverse posting** in the dialog. Akaun removes the **Invoice** record in the same way.
 
 ## Print an invoice
 
@@ -307,9 +309,9 @@ convert it again.
 
 The rail on the right of the invoice page can show these cards:
 
-- **Settled**: **Paid so far** and **Outstanding**. It shows after you mark the invoice as sent.
+- **Settled**: **Amount received** and **Outstanding**. It shows after you mark the invoice as sent.
 - **Payments**: each payment against the invoice. Click a payment to open its page.
-- **Came from**: the quotation that the invoice was made from. It shows only when the invoice came
+- **Source**: the quotation that the invoice was made from. It shows only when the invoice came
   from a quotation.
 - **History**: who made each change, and when.
 
@@ -345,6 +347,6 @@ See [Settings reference](../09-administration/settings-reference.md#templates).
 
 - [Getting paid](./getting-paid.md)
 - [Quotations](./quotations.md)
-- [Owed, part paid and paid](../02-concepts/owed-and-paid.md)
+- [Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md)
 - [Contacts and their balances](../02-concepts/contacts-and-balances.md)
 - [Locked records](../02-concepts/locked-records.md)

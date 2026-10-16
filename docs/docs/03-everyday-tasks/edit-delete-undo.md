@@ -27,7 +27,7 @@ Read the message and correct the form.
 Akaun saves the changes. The **History** section in the rail shows a new line. It tells who made
 the change, when, and which fields changed.
 
-Akaun finds the kind again from the accounts. For example, if you change the **into** line of an
+Akaun finds the kind again from the accounts. For example, if you change the **Debit** line of an
 expense from a category to **Cash**, the record becomes a **Transfer**.
 
 ## If you leave the page before you save
@@ -48,11 +48,12 @@ Save first.
 
 Some fields are read only in these cases:
 
-- If the record is locked, the amount, the date, the currency and the money account are read only.
+- If the record is locked, the amount, the date, the currency and the cash or bank account are read
+  only.
   A payment settles the record, or a bank statement line matches it. A note above the form gives
   the reason. See [Locked records](../02-concepts/locked-records.md).
 - If the record is a payment, you can change only the description, the reference and the remark.
-  To correct a payment, click **Take this back** on each allocation. Then delete the payment and
+  To correct a payment, click **Reverse allocation** on each allocation. Then delete the payment and
   record a new one.
 - If the record came from an invoice, change the invoice, not the record. The note above the form
   says "This record was created by issuing an invoice. Change it on the invoice instead." See
@@ -107,8 +108,8 @@ To select all records in the list, click the check box at the top of the list.
 
 ## Remove a payment from a record
 
-Use this when a payment is on the wrong bill. **Take this back** removes the allocation only. The
-payment record stays, and its money still moved out of the money account.
+Use this when a payment is on the wrong bill. **Reverse allocation** removes the allocation only.
+The payment record stays, and its money still moved out of the cash or bank account.
 
 :::caution
 
@@ -118,13 +119,13 @@ Akaun removes the allocation when you click the button. It does not ask you to c
 
 1. Open the bill or the payment.
 2. In the rail, find **Payments applied** (on a bill) or **Allocated to** (on a payment).
-3. On the row of the allocation, click the undo arrow. Its tooltip is **Take this back**.
+3. On the row of the allocation, click the undo arrow. Its tooltip is **Reverse allocation**.
 
-The bill is **Outstanding** or **Part paid** again. If nothing else locks the bill, you can change
+The bill is **Outstanding** or **Partially paid** again. If nothing else locks the bill, you can change
 it again.
 
 A payment with no contact, which pays several people at once, must always be spent in full. When
-you take back one of its allocations, Akaun takes back all of them, and all of its bills are
+you reverse one of its allocations, Akaun reverses all of them, and all of its bills are
 outstanding again.
 
 To use the money of the payment for a different bill, record a new payment. See
@@ -141,15 +142,15 @@ the attachments.
 ## Notes and limits
 
 - To change a record, you need the **Change** permission on **Records**.
-- To delete a record or to click **Take this back**, you need the **Delete** permission on
-  **Records**. Without it, **Delete** and **Take this back** do not show.
-- To delete a payment that pays a bill, first click **Take this back** on each allocation.
+- To delete a record or to click **Reverse allocation**, you need the **Delete** permission on
+  **Records**. Without it, **Delete** and **Reverse allocation** do not show.
+- To delete a payment that pays a bill, first click **Reverse allocation** on each allocation.
 - If a bank statement line matches the record, remove the match first. See
   [Bank reconciliation](../07-bank-reconciliation.md).
 
 ## Related
 
 - [Locked records](../02-concepts/locked-records.md)
-- [Owed, part paid and paid](../02-concepts/owed-and-paid.md)
+- [Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md)
 - [Find records](./find-records.md)
 - [Attach receipts and documents](./attach-receipts.md)

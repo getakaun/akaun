@@ -32,7 +32,7 @@ The table tells what each ability lets a user do.
 | **Records** | **View** | Open the **Records** list, the record pages and the account statements. |
 | | **Add** | Make a new record. Record a payment. |
 | | **Change** | Change a record. Attach a file to a record. |
-| | **Delete** | Delete a record or an attachment. Click **Take this back** on a settlement. |
+| | **Delete** | Delete a record or an attachment. Click **Reverse allocation** on a settlement. |
 | | **Adjustments** | Save a record that is not an everyday record. See [Adjustments](#adjustments). |
 | **Auto Import** | **View** | Open **Auto Import** and see the import profiles. |
 | | **Upload** | Upload files. |
@@ -51,12 +51,12 @@ The table tells what each ability lets a user do.
 | | **Delete** | Delete a quotation. |
 | | **Revise** | Replace a sent quotation with a new revision. |
 | | **Convert** | Make an invoice from an accepted quotation. |
-| **Invoices** | **View** | Open **Invoices** and the invoice pages. Print an invoice. |
+| **Invoices** | **View** | Open **Invoices** and the invoice pages. Invoices are sales invoices issued to customers. Print an invoice. |
 | | **Add** | Make a draft invoice. |
 | | **Change** | Change an invoice. |
 | | **Delete** | Delete a draft invoice. |
-| | **Send** | Mark an invoice as sent. This puts the invoice in the books. |
-| | **Void** | Cancel a sent invoice. This takes the invoice out of the books. |
+| | **Send** | Mark an invoice as sent. This posts the invoice to the ledger. |
+| | **Void** | Cancel a sent invoice. This reverses the posting of the invoice. |
 | **Reconciliation** | **View** | Open the reconciliation screen of an account. |
 | | **Add** | Upload a statement. Make a transfer from a statement line. |
 | | **Change** | Edit a statement line. |
@@ -64,9 +64,9 @@ The table tells what each ability lets a user do.
 | | **Delete** | Remove a statement or a statement line. |
 | **Accounts** | **View** | Open **Accounts** and the account pages. |
 | | **Add** | Add an account or a category. |
-| | **Change** | Change an account, deactivate it, or enter its starting balance. Choose the default accounts. |
+| | **Change** | Change an account, deactivate it, or enter its opening balance. Choose the default accounts. |
 | | **Delete** | Delete an account that has no records. |
-| **Reports** | **View** | Open **Reports**. See the **Books** tab in **Settings**. |
+| **Reports** | **View** | Open **Reports**. See the **Ledger** tab in **Settings**. |
 | **Dashboard** | **View** | Open the **Dashboard**. |
 | **Settings** | **View** | Open **Settings** and see the settings. |
 | | **Manage** | Change the settings. See [Settings](#settings). |
@@ -146,24 +146,25 @@ the **View** ability.
 two accounts. Akaun decides from the accounts if a record needs this ability. These records are
 everyday records, and they do not need **Adjustments**:
 
-- An expense: money out of a money account into an expense category.
-- A bill to pay later: money out of **Accounts Payable** into an expense category.
-- An income: money out of an income category into a money account.
-- A transfer: money from one money account to a different money account.
-- A payment: money from a money account to **Accounts Payable**, or from **Accounts Receivable**
-  into a money account.
+- An expense: debit an expense category, credit a cash or bank account.
+- A bill to pay later: debit an expense category, credit **Accounts Payable**.
+- An income: debit a cash or bank account, credit an income category.
+- A transfer: debit one cash or bank account, credit a different cash or bank account.
+- A payment: debit **Accounts Payable** and credit a cash or bank account. Or debit a cash or bank
+  account and credit **Accounts Receivable**.
 - An opening balance.
-- A split: one account that holds or owes money, and two or more categories of the same kind.
+- A split: one cash, bank, receivable or payable account, and two or more categories of the same
+  kind.
 
 All other records need **Adjustments**. Examples are a correction between two categories, a record
-with two money accounts and a category, and a record with partner capital. On the record form,
+with two cash or bank accounts and a category, and a record with partner capital. On the record form,
 **Adjustments** also gives the user a choice of all accounts.
 
 :::caution
 
 No group that Akaun makes gives **Adjustments**. No level includes **Adjustments**, also not
-**Full** on **Records**. A user with this ability can make the books show any
-figures, and the books still add up. Give it only to a person that you trust with the books. Give
+**Full** on **Records**. A user with this ability can make the ledger show any
+figures, and the ledger is still in balance. Give it only to a person that you trust with the books. Give
 it on purpose, to one user, as an extra permission.
 
 :::
@@ -172,7 +173,7 @@ See [How a record moves money](../02-concepts/how-an-entry-works.md).
 
 ## Quotations and invoices
 
-**Send** and **Void** on **Invoices** change the books: they add or remove an **Invoice** record.
+**Send** and **Void** on **Invoices** change the ledger: they add or remove an **Invoice** record.
 Thus each one also needs a permission on **Records**. See
 [Tasks that need more than one ability](#tasks-that-need-more-than-one-ability).
 
@@ -194,7 +195,7 @@ page tells the user to ask an administrator for **Settings › Manage**.
 
 Two parts also have a check of a different area:
 
-- The **Books** tab shows only for a user with **View** on **Reports**.
+- The **Ledger** tab shows only for a user with **View** on **Reports**.
 - To choose a default account, a user needs **Change** on **Accounts**.
 
 The groups that Akaun makes have **View** on **Settings** only. Thus at the start, only a superuser

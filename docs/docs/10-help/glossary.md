@@ -28,8 +28,9 @@ See [Accounts and categories](../02-concepts/accounts-and-categories.md).
 
 ### Account statement
 
-The account statement is the **Records** list filtered to one account. It shows the balance
-before the first record, a running balance on each row and the balance after the last row. It
+The account statement is the **Records** list filtered to one account. It shows the
+**Opening balance** before the first row, a running balance on each row and the **Closing
+balance** after the last row. On the account page, the **Account ledger** card opens it. It
 shows the running balance only when the list is in date order. A date range is permitted, but
 no other filter.
 
@@ -41,8 +42,7 @@ Each account has one of five types: **Asset**, **Liability**, **Equity**, **Reve
 **Expense**. The type tells the reports where the account goes. The **Accounts** screen has an
 **All** tab and one tab for each type.
 
-- **Asset**: a thing the business has, for example cash, a bank balance or money that a customer
-  owes.
+- **Asset**: a thing that the business owns, for example cash, a bank balance or receivables.
 - **Liability**: money that the business owes to a different person or business.
 - **Equity**: the value that the owners or partners have in the business.
 - **Revenue**: money that the business earns. A Revenue account is an income category.
@@ -52,7 +52,8 @@ See [Accounts and categories](../02-concepts/accounts-and-categories.md).
 
 ### Accounts payable
 
-**Accounts Payable** is the account for money that the business owes. Akaun uses it for a bill
+**Accounts Payable** is the account for the payables: the money that the business owes. Akaun
+uses it for a bill
 that is not paid yet, or for an expense that a different person paid for the business. Each amount
 on it belongs to one contact.
 
@@ -60,8 +61,8 @@ See [Bills you pay later](../03-everyday-tasks/bills-you-pay-later.md).
 
 ### Accounts receivable
 
-**Accounts Receivable** is the account for money that customers owe to the business. Akaun uses
-it when you send an invoice. Each amount on it belongs to one contact. This account is an
+**Accounts Receivable** is the account for the receivables: the money that customers owe to the
+business. Akaun uses it when you send an invoice. Each amount on it belongs to one contact. This account is an
 **Asset**.
 
 See [Getting paid](../05-sales/getting-paid.md).
@@ -96,7 +97,7 @@ See [Connect an AI provider](../04-auto-import/connect-an-ai-provider.md).
 **Allocated to** is a section on the page of a payment. It shows each record that the payment
 pays, and the amount for each record.
 
-See [Owed, part paid and paid](../02-concepts/owed-and-paid.md).
+See [Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md).
 
 ### Allocation
 
@@ -104,7 +105,7 @@ An allocation is the part of a payment that goes against one record. On the paym
 **Allocation** section shows each outstanding record and the amount that the payment puts
 against it.
 
-See [Owed, part paid and paid](../02-concepts/owed-and-paid.md).
+See [Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md).
 
 ### API token
 
@@ -141,7 +142,7 @@ See [Import profiles](../04-auto-import/import-profiles.md).
 ### Balance
 
 The balance of an account is the total of all money into it and out of it. The balance of a
-contact is the amount that they owe you, or that you owe them. Akaun calculates each balance
+contact is the amount that they owe you (a receivable), or that you owe them (a payable). Akaun calculates each balance
 from the records. You cannot type a balance.
 
 See [Contacts and their balances](../02-concepts/contacts-and-balances.md).
@@ -163,13 +164,26 @@ See [Bank reconciliation](../07-bank-reconciliation.md).
 ### Book
 
 The book is the full set of accounts, records and contacts for one business. One Akaun
-installation keeps one book. The **Books** tab in **Settings** has the **Ledger integrity check**,
-which makes sure that each record balances.
+installation keeps one book. The **Ledger** tab in **Settings** has the **Ledger integrity check**,
+which makes sure that each record is in balance.
 
 See [Prepare your book](../01-getting-started/set-up-your-book.md).
 
 
 ## C
+
+### Cash and cash equivalents
+
+Cash and cash equivalents is the money that the business can use now. In Akaun, these are the
+**Asset** accounts with the sub-type **Cash**, **Bank**, **Wallet** or **Prepaid/debit card**. The
+guide also calls such an account a cash or bank account. Equipment, inventory and prepayments
+are assets, but they are not cash. On a record, the cash or bank account is the line that money
+came out of or went into.
+
+Earlier versions of this guide used the term "money account".
+
+See [Accounts and categories](../02-concepts/accounts-and-categories.md) and
+[Cash Flow Statement](../08-reports/cash-flow.md).
 
 ### Cash Flow Statement
 
@@ -188,12 +202,7 @@ See [Accounts and categories](../02-concepts/accounts-and-categories.md).
 
 ### Cleared
 
-A record is cleared when bank statement lines match its full amount. The **Records** list shows
-**Not cleared** beside each record that is not cleared yet. It shows no label for a cleared record.
-Click **Not yet cleared** to list only the records that are not cleared. Cleared and paid are two
-different things. A record can be paid and not cleared.
-
-See [Bank reconciliation](../07-bank-reconciliation.md).
+The old name of **Reconciled**. See [Reconciled](#reconciled).
 
 ### Connected app
 
@@ -231,17 +240,27 @@ See [Documents with many records](../04-auto-import/documents-with-many-records.
 
 ### Dashboard
 
-The **Dashboard** is a summary screen. It shows the net profit, the financial position, the cash
-flow and the recent activity.
+The **Dashboard** is a summary screen. It shows how the business performs in a period that you
+choose. It shows the revenue, the net profit, the cash balance and the receivables, each with its
+change against a comparison period. It also shows the trends of the last 12 months, the balance
+sheet, the payables, the sales pipeline, the action items and the recent transactions.
 
 See [Dashboard](../08-reports/dashboard.md).
+
+### Debit and credit
+
+Each record has a **Debit** line and a **Credit** line. A debit is the account that value goes
+into. A credit is the account that value goes out of. The debits of a record are always equal to
+its credits.
+
+See [How a record moves money](../02-concepts/how-an-entry-works.md).
 
 ### Default transaction account
 
 The **Default transaction account** is the account that new income and expenses use first. You
-choose it in **Settings**, on the **Books** tab, under **Default accounts**. On the **Accounts**
-screen, this account shows **Used by default**. The **General** tab also has a **Money usually
-comes from** row, but at this time a change there is not kept.
+choose it in **Settings**, on the **Ledger** tab, under **Default accounts**. On the **Accounts**
+screen, this account shows **Default account**. The **General** tab also has a **Default payment
+account** row, but at this time a change there is not kept.
 
 See [Settings reference](../09-administration/settings-reference.md).
 
@@ -337,6 +356,13 @@ See [Accounts and categories](../02-concepts/accounts-and-categories.md).
 
 See [Record an expense or income](../03-everyday-tasks/record-expense-or-income.md).
 
+### Inflow and outflow
+
+An inflow is money that comes into an account. An outflow is money that goes out of it. In an
+import profile, the direction column tells which rows are inflows and which rows are outflows.
+
+See [Import profiles](../04-auto-import/import-profiles.md).
+
 ### Invoice
 
 An invoice is a document that asks a customer to pay. When you click **Mark as sent**, the
@@ -351,7 +377,7 @@ An invoice shows one of these statuses:
 
 - **Draft**: you can change or delete the invoice. The customer owes nothing yet.
 - **Sent**: the customer owes the amount.
-- **Part paid**: payments cover some of the amount, but not all of it.
+- **Partially paid**: payments cover some of the amount, but not all of it.
 - **Paid**: payments cover the full amount. Akaun calculates this from the payments.
 - **Cancelled**: the invoice does not count. It keeps its number, and its amount is not in the
   books.
@@ -382,17 +408,17 @@ See [How a record moves money](../02-concepts/how-an-entry-works.md).
 
 ### Line
 
-A line is one side of a record. Each record has two lines: the **out of** line and the **into**
+A line is one part of a record. Each record has two lines: the **Debit** line and the **Credit**
 line. On an expense or an income, click **+ Add a line** to add more lines, for example to split
-a bill across categories. A user with **Adjustments** can add lines to any record. The lines of a
-record always add up to zero.
+a bill across categories. A user with **Adjustments** can add lines to any record. The debits of a
+record are always equal to its credits.
 
 See [Split across categories](../03-everyday-tasks/split-across-categories.md).
 
 ### Locked
 
 A record is locked when a payment settles part or all of it, or a bank line matches it. The
-payment that settles it is locked too. Its amount, date, currency and money accounts cannot
+payment that settles it is locked too. Its amount, date, currency and cash or bank accounts cannot
 change, and you cannot delete it. The **Records** list shows a lock icon beside it. You can still
 change the description, contact, reference, remark and attachments. On an expense or an income,
 you can also change the category lines.
@@ -420,18 +446,15 @@ See [Bank reconciliation](../07-bank-reconciliation.md).
 
 ### Money account
 
-A money account is an **Asset** account that holds money, for example **Cash**, a bank account or
-an e-wallet. Equipment, inventory and prepayments are assets, but they are not money accounts. On a record, the money account
-is the side that money came out of or went into.
-
-See [Accounts and categories](../02-concepts/accounts-and-categories.md).
+The old name of a cash or bank account. See
+[Cash and cash equivalents](#cash-and-cash-equivalents).
 
 
 ## N
 
 ### Not cleared
 
-See [Cleared](#cleared).
+The old name of **Unreconciled**. See [Unreconciled](#unreconciled).
 
 
 ## O
@@ -439,8 +462,8 @@ See [Cleared](#cleared).
 ### Opening balance
 
 **Opening balance** is a record of the money in an account on the day that you start to use
-Akaun. On the account page, the label is **Starting balance**. The other side of the record goes
-to the account that **Settings** › **Books** names for **Opening balances**. By default, this is
+Akaun. On the account page, the card is **Opening balance**. The other side of the record goes
+to the account that **Settings** › **Ledger** names for **Opening balances**. By default, this is
 **Owner's Equity**.
 
 See [Prepare your book](../01-getting-started/set-up-your-book.md).
@@ -451,7 +474,7 @@ See [Prepare your book](../01-getting-started/set-up-your-book.md).
 is on **Accounts Payable** or **Accounts Receivable**. The record names the contact who owes the
 money, or who is owed it.
 
-See [Owed, part paid and paid](../02-concepts/owed-and-paid.md).
+See [Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md).
 
 ### Outstanding payables
 
@@ -468,13 +491,14 @@ See [Bills you pay later](../03-everyday-tasks/bills-you-pay-later.md).
 **Paid** shows that the full amount of a record is paid. A record that moves money directly from
 an account is paid when you save it. An outstanding record becomes paid when payments cover it.
 
-See [Owed, part paid and paid](../02-concepts/owed-and-paid.md).
+See [Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md).
 
-### Part paid
+### Partially paid
 
-**Part paid** shows that payments cover some of the amount of a record, but not all of it.
+**Partially paid** shows that payments cover some of the amount of a record, but not all of it.
+Earlier versions showed **Part paid**.
 
-See [Owed, part paid and paid](../02-concepts/owed-and-paid.md).
+See [Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md).
 
 ### Partners' Equity
 
@@ -484,20 +508,26 @@ contributions and drawings show 0.00.
 
 See [Partners' Equity](../08-reports/partners-equity.md).
 
+### Payables
+
+Payables are the money that the business owes to suppliers and other contacts. They are on
+**Accounts Payable**. See [Accounts payable](#accounts-payable).
+
 ### Payment
 
 **Payment** is a record that pays an amount that the business owes. One payment can pay one
 record or many records. On the **Records** screen, open the **Outstanding payables** panel. Click
-**Record a payment** to pay one contact, or **Pay all outstanding** to pay all of them.
+**Record a payment** to pay one contact, or **Pay all payables** to pay all of them. On the
+payment form, **Payee** is the contact that you pay. **Payer** is the contact that pays you.
 
 See [Bills you pay later](../03-everyday-tasks/bills-you-pay-later.md).
 
 ### Payments applied
 
 **Payments applied** is a section on the page of an expense or an income. It shows each
-payment that paid part or all of the record. **Take this back** removes one payment from it.
+payment that paid part or all of the record. **Reverse allocation** removes one payment from it.
 
-See [Owed, part paid and paid](../02-concepts/owed-and-paid.md).
+See [Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md).
 
 ### Permission
 
@@ -564,6 +594,22 @@ profile.
 
 See [Import receipts](../04-auto-import/import-receipts.md).
 
+### Receivables
+
+Receivables are the money that customers and other contacts owe to the business. They are on
+**Accounts Receivable**. The money that the business owes is the payables. See
+[Accounts receivable](#accounts-receivable) and [Accounts payable](#accounts-payable).
+
+### Reconciled
+
+A record is reconciled when bank statement lines match its full amount. The **Records** list
+shows **Unreconciled** beside each record that is not reconciled yet. It shows no label for a
+reconciled record. Click **Unreconciled** above the list to show only the records that are not
+reconciled. Reconciled and paid are two different things. A record can be paid and
+unreconciled.
+
+See [Bank reconciliation](../07-bank-reconciliation.md).
+
 ### Record
 
 A record is one event with money, for example an expense, an income or a transfer. It tells where
@@ -578,6 +624,14 @@ The kind tells what a record is. The kinds are **Expense**, **Income**, **Transf
 Akaun finds it from the accounts on the record.
 
 See [Records](../02-concepts/records.md).
+
+### Reverse allocation
+
+**Reverse allocation** is the tooltip of the undo icon that removes a settlement. The record is
+then **Outstanding** or **Partially paid** again. If the record is locked only because of this
+settlement, it becomes unlocked.
+
+See [Edit, delete or undo a record](../03-everyday-tasks/edit-delete-undo.md).
 
 ### Running balance
 
@@ -594,7 +648,7 @@ See [Find records](../03-everyday-tasks/find-records.md) and
 
 ### Section
 
-A section is one part of an import profile, for example the money in and the money out of a
+A section is one part of an import profile, for example the inflows and the outflows of a
 wallet report. Each section tells Akaun what kind of record its lines become.
 
 See [Import profiles](../04-auto-import/import-profiles.md).
@@ -602,9 +656,9 @@ See [Import profiles](../04-auto-import/import-profiles.md).
 ### Settle
 
 To settle a record is to pay what is owed on it. A payment settles one or more records. To
-remove a settlement, click its undo icon (**Take this back**).
+remove a settlement, click its undo icon (**Reverse allocation**).
 
-See [Owed, part paid and paid](../02-concepts/owed-and-paid.md).
+See [Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md).
 
 ### Source account
 
@@ -630,10 +684,9 @@ See [Bank reconciliation](../07-bank-reconciliation.md).
 ### Sub-type
 
 The sub-type puts an account into a line of a report, for example **Bank**, **Credit card** or
-**Operating expense**. Each account type except **Equity** has sub-types. An **Asset** or
-**Liability** account with no sub-type shows **Needs review** on its page. A **Revenue** or
-**Expense** account with no sub-type shows **Not yet classified** in its **Sub-type** field. The
-reports count it as operating.
+**Operating expense**. Each account type except **Equity** has sub-types. An account with no
+sub-type shows **Unclassified**. An **Asset** or **Liability** account must have a sub-type. A
+**Revenue** or **Expense** account can have no sub-type. The reports then count it as operating.
 
 See [Accounts and categories](../02-concepts/accounts-and-categories.md).
 
@@ -650,10 +703,7 @@ See [Users and groups](../09-administration/users-and-groups.md).
 
 ### Take this back
 
-**Take this back** is the tooltip of the undo icon that removes a settlement. The record is then outstanding or
-part paid again. If the record is locked only because of this settlement, it becomes unlocked.
-
-See [Edit, delete or undo a record](../03-everyday-tasks/edit-delete-undo.md).
+The old name of **Reverse allocation**. See [Reverse allocation](#reverse-allocation).
 
 ### Transfer
 
@@ -662,6 +712,22 @@ bank to cash. A transfer is not an expense or an income.
 
 See [Move money between accounts](../03-everyday-tasks/move-money-between-accounts.md).
 
+## U
+
+### Unclassified
+
+**Unclassified** shows that an account has no sub-type. The reports cannot put an unclassified
+**Asset** or **Liability** account into a group. The **Balance Sheet** shows it in an
+**Unclassified** group. The **Cash Flow Statement** shows its amount on the line **Unclassified
+movements**. Give the account a sub-type on its account page.
+
+See [Accounts and categories](../02-concepts/accounts-and-categories.md).
+
+### Unreconciled
+
+**Unreconciled** shows that bank statement lines do not yet match the full amount of a record.
+See [Reconciled](#reconciled).
+
 ## Words we do not use
 
 Use the word in the right column. The left column shows words that other software uses, and
@@ -669,18 +735,22 @@ words that do not match a feature of Akaun.
 
 | Do not write | Write |
 |---|---|
-| transaction, entry | record |
+| entry (for a normal record) | record |
 | journal (for a normal record) | record |
-| vendor, party, payee, client | contact (or the role: customer, supplier) |
+| vendor, party, client | contact (or the role: customer, supplier). On the payment form, **Payee** or **Payer**. |
 | ledger account, GL account | account |
 | chart of accounts screen | **Accounts** screen |
 | categories screen, Categories tab | (no such screen; see [Category](#category)) |
-| debit, credit | (see [How a record moves money](../02-concepts/how-an-entry-works.md)) |
-| post, posting | save a record |
+| into, out of (for a line) | **Debit**, **Credit** (see [Debit and credit](#debit-and-credit)) |
+| post (a new record) | save a record |
 | leg, split line | line |
 | unpaid, owed (as a status) | **Outstanding** |
-| partially paid, partly paid | **Part paid** |
-| reconciled (for one record) | **Cleared** |
+| part paid, partly paid | **Partially paid** |
+| cleared, not cleared (for one record) | **Reconciled**, **Unreconciled** |
+| owed to you, you owe | receivable, payable |
+| money account | cash or bank account |
+| starting balance | opening balance |
+| needs review, not yet classified | **Unclassified** |
 | base currency, home currency | main currency |
 | claim, reimbursement claim | (not a feature) |
 | set up | prepare, configure |

@@ -191,18 +191,18 @@ Do this check after each upgrade and after each restore.
 
 :::info
 
-You need the **View** permission on **Reports** to see the **Books** tab. A superuser can see it.
+You need the **View** permission on **Reports** to see the **Ledger** tab. A superuser can see it.
 
 :::
 
 1. In the sidebar, click **Settings**.
-2. Click the **Books** tab.
+2. Click the **Ledger** tab.
 3. Under **Ledger integrity check**, click **Check now**.
 4. If the tab shows **Migration results**, read each part of it.
 5. Open the **Reports** screen and compare the main figures with the figures before the upgrade.
 
-If all records balance, Akaun shows **All good. Every record balances, and so does everything
-added up together.** See [Settings reference](./settings-reference.md#books).
+If all records balance, Akaun shows **The ledger is in balance. All records and the trial balance agree.** See
+[Settings reference](./settings-reference.md#ledger).
 
 If **Migration results** says that nothing old was thrown away, the copy of your data from before
 the upgrade is in the `pre-chart-` folder next to the database.

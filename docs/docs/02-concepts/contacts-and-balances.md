@@ -31,28 +31,29 @@ On all other records, the contact is optional.
 Akaun does not keep a separate account for each contact. It calculates the balance of a contact
 from the records that name the contact:
 
-- The money that the contact owes you comes from records on **Accounts Receivable** that are not
-  paid yet.
-- The money that you owe the contact comes from records on **Accounts Payable** that are not paid
-  yet.
+- The receivable is the money that the contact owes you. It comes from records on **Accounts
+  Receivable** that are not paid yet.
+- The payable is the money that you owe the contact. It comes from records on **Accounts Payable**
+  that are not paid yet.
 
 Payments reduce the balance. You cannot type a balance. Thus the balance of a contact always
 agrees with the records.
 
 For example, a customer gets an invoice of 500.00 and pays 200.00. The balance of the customer is
-300.00 owed to you.
+a receivable of 300.00.
 
-If a contact owes you money and you also owe the contact money, Akaun shows the difference as one
+If a contact has a receivable and a payable at the same time, Akaun shows the difference as one
 balance.
 
 ## Where you see the balance
 
-- The **Contacts** screen has a **Balance** column. Each balance shows **owed to you** or
-  **you owe**. A dash (—) shows that nothing is outstanding.
+- The **Contacts** screen has a **Balance** column. Each balance has the tag **Receivable** (the
+  contact owes you) or **Payable** (you owe the contact). A dash (—) shows that nothing is
+  outstanding.
 - If something is outstanding, the **Contacts** screen shows two totals under its title:
-  **you owe** and **owed to you**.
-- The page of a contact shows the balance at the top. The text beside it is **still owed to you**,
-  **you still owe them** or **nothing outstanding either way**.
+  **Payables** and **Receivables**.
+- The page of a contact shows the balance at the top. The text beside it is **Receivable**,
+  **Payable** or **nothing outstanding either way**.
 - On the page of a contact, **See everything with this contact** opens the **Records** screen with
   only the records of this contact.
 
@@ -63,5 +64,5 @@ You see balances only if you have the permission to see records.
 - [Contacts](../06-contacts.md)
 - [Bills you pay later](../03-everyday-tasks/bills-you-pay-later.md)
 - [Getting paid](../05-sales/getting-paid.md)
-- [Owed, part paid and paid](./owed-and-paid.md)
+- [Outstanding, partially paid and paid](./owed-and-paid.md)
 - [Find records](../03-everyday-tasks/find-records.md)

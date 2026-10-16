@@ -43,8 +43,8 @@ The **Source account** decides if the record is an expense or an income.
 
 | Record | **Source account** | **Target account** |
 |---|---|---|
-| Expense | A money account, a credit card, or **Accounts Payable**. The list shows them under **Payment**. | An expense category, or a thing that you buy and keep. |
-| Income | An income category. The list shows them under **Income**. | A money account, or **Accounts Receivable**. |
+| Expense | A cash or bank account, a credit card, or **Accounts Payable**. The list shows them under **Payment**. | An expense category, or a thing that you buy and keep. |
+| Income | An income category. The list shows them under **Income**. | A cash or bank account, or **Accounts Receivable**. |
 
 If you choose an income category as the **Source account**, the card becomes an income. The
 **Target account** list then shows only the accounts that fit.
@@ -57,15 +57,15 @@ each card as a record that is not paid yet:
 - An expense starts with **Accounts Payable** as the **Source account**.
 - An income starts with **Accounts Receivable** as the **Target account**.
 
-An expense on **Accounts Payable** shows a note at the bottom of the card. The note is "Marked as
-paid personally — owed to the contact above until reimbursed." Akaun does not record a personal payment. It records a bill from
-the contact that is not paid yet.
+An expense on **Accounts Payable** shows a note at the bottom of the card: "Recorded in accounts
+payable to the contact above until it is paid." Akaun records a bill from the contact that is not
+paid yet. It is a payable.
 
-If you confirm without a change, the record is **Outstanding**. The contact on the card is owed the
-amount, or owes it. To pay a bill later, see
+If you confirm without a change, the record is **Outstanding**. It is a payable to the contact on
+the card, or a receivable from that contact. To pay a bill later, see
 [Bills you pay later](../03-everyday-tasks/bills-you-pay-later.md).
 
-If the money already moved, choose the money account. For example, choose **Bank** as the
+If the money already moved, choose the cash or bank account. For example, choose **Bank** as the
 **Source account** of an expense. The record is then **Paid** when you confirm it.
 
 An import profile can name the account of a document, for example a marketplace wallet. A card
@@ -168,6 +168,6 @@ The original document is attached to the record. See [Records](../02-concepts/re
 
 ## Related
 
-- [Owed, part paid and paid](../02-concepts/owed-and-paid.md)
+- [Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md)
 - [Contacts](../06-contacts.md)
 - [Accounts and categories](../02-concepts/accounts-and-categories.md)

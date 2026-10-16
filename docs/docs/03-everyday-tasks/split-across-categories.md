@@ -14,14 +14,14 @@ you.
 
 Without the **Adjustments** permission, you can save these splits:
 
-- An expense: one money account, and two or more expense categories.
-- An income: one income category or more, and one money account.
+- An expense: one cash or bank account, and two or more expense categories.
+- An income: one income category or more, and one cash or bank account.
 
 Akaun keeps such a record as an **Expense** or an **Income**.
 
 You need the **Adjustments** permission for all other splits. Examples:
 
-- The lines include two money accounts.
+- The lines include two cash or bank accounts.
 - The lines include an expense category and an income category.
 
 Akaun saves such a record as a **Journal entry**. See
@@ -44,14 +44,14 @@ This example records a bill of 80.00 from **Bank**: 50.00 for **Packaging** and 
 2. In **Description**, type a description of the bill.
 3. In **Amount**, type the full amount, `80.00`.
 4. In **Date**, choose the date of the bill.
-5. On the **out of** line, choose **Bank**.
-6. On the **into** line, choose **Packaging**.
-7. In **The entry**, click **+ Add a line**.
-8. On the **into** line for **Packaging**, change the amount from `80.00` to `50.00`.
+5. On the **Credit** line, choose **Bank**.
+6. On the **Debit** line, choose **Packaging**.
+7. In **Journal entry**, click **+ Add a line**.
+8. On the **Debit** line for **Packaging**, change the amount from `80.00` to `50.00`.
 9. On the new line, click **Choose an account**.
 10. Choose **Shipping**.
 11. In the amount box of the new line, type `30.00`.
-12. Make sure that the top of **The entry** shows **Balanced**.
+12. Make sure that the top of **Journal entry** shows **Balanced**.
 13. Click **Save record**.
 
 :::tip
@@ -64,14 +64,14 @@ that amount on the line.
 
 ## How the form shows the difference
 
-The top of **The entry** shows the state of the lines:
+The top of **Journal entry** shows the state of the lines:
 
-- **Balanced** shows that the lines add up to the amount of the record.
+- **Balanced** shows that the debits are equal to the credits.
 - A figure with **apart**, for example **5.00 apart**, shows the difference.
 
-The bottom of **The entry** also shows the difference as a number. While the lines are not equal,
-the save bar tells you why the record cannot be saved. For example: "The two sides do not cancel
-out — they are 5.00 apart."
+The bottom of **Journal entry** also shows the difference as a number. While the debits and the
+credits are not equal, the save bar tells you why the record cannot be saved. For example:
+"Debits and credits do not balance. Difference: 5.00."
 
 ## Give a line its own label
 

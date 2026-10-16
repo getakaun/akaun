@@ -13,8 +13,9 @@ Each record moves money from one account into a different account. Usually one s
 where money is, for example **Bank**. The other side tells what the money was for, for example
 **Software**.
 
-- A **money account** is an Asset account that holds money, or money that customers owe.
-  Examples are **Cash**, **Bank** and **Accounts Receivable**.
+- A **cash or bank account** is an Asset account that holds money, for example **Cash** or
+  **Bank**. **Accounts Receivable** is in this group too. It holds the receivables: the money that
+  customers owe.
 - A **category** tells what the business spent money on, or how it earned money. Examples are
   **Advertising**, **Shipping** and **Product Sales**.
 
@@ -30,8 +31,8 @@ each type.
 
 | Type | What it is | Examples |
 |---|---|---|
-| **Asset** | A thing that the business has. | Cash, a bank balance, money that a customer owes, stock, equipment. |
-| **Liability** | Money that the business owes to a different person or business. | A supplier bill that is not paid yet, a loan. |
+| **Asset** | A thing that the business owns. | Cash, a bank balance, receivables, stock, equipment. |
+| **Liability** | Money that the business owes to a different person or business. | Payables (a supplier bill that is not paid yet), a loan. |
 | **Equity** | The value that the owners or partners have in the business. | Owner's Equity, Retained Earnings. |
 | **Revenue** | Money that the business earns. A Revenue account is an income category. | Product Sales, Other Revenue. |
 | **Expense** | Money that the business spends. An Expense account is an expense category. | Advertising, Software, Utilities. |
@@ -49,7 +50,7 @@ purchase in the same way as an expense.
 The record form shows these asset accounts together with the categories. These are the Asset
 accounts with these sub-types: **Fixed asset**, **Intangible asset**, **Inventory**,
 **Prepayments and deposits**, **Tax receivable**, **Other current asset** and
-**Other non-current asset**. All other Asset accounts are money accounts.
+**Other non-current asset**. All other Asset accounts are cash or bank accounts.
 
 ## Sub-types
 
@@ -72,7 +73,7 @@ The sub-type is important for the reports:
   **Prepaid/debit card** count as cash.
 
 An Asset or Liability account must have a sub-type. If an account has no sub-type, it shows
-**Needs review**. Give it a sub-type on its account page. A Revenue or Expense account can have no
+**Unclassified**. Give it a sub-type on its account page. A Revenue or Expense account can have no
 sub-type. The reports then count it as operating.
 
 ## Account code
@@ -101,9 +102,9 @@ A new book starts with these accounts. You can rename them, and you can add more
 | 1100 | Bank | Asset | Bank |
 | 1200 | Accounts Receivable | Asset | Accounts receivable |
 | 1300 | Inventory | Asset | Inventory |
-| 1400 | Marketplace Clearing | Asset | (none: **Needs review**) |
+| 1400 | Marketplace Clearing | Asset | (none: **Unclassified**) |
 | 2000 | Accounts Payable | Liability | Accounts payable |
-| 2100 | Loans | Liability | (none: **Needs review**) |
+| 2100 | Loans | Liability | (none: **Unclassified**) |
 | 3000 | Owner's Equity | Equity | — |
 | 3100 | Retained Earnings | Equity | — |
 | 4000 | Product Sales | Revenue | Operating revenue |
@@ -119,14 +120,14 @@ A new book starts with these accounts. You can rename them, and you can add more
 Akaun uses some of these accounts for special jobs:
 
 - **Bank** is the account that new expenses and income use first. To change it, use
-  **Default transaction account** in **Settings**, on the **Books** tab. On the **Accounts**
-  screen, this account shows **Used by default**. The **General** tab also has a **Money usually
-  comes from** row, but at this time a change there is not kept.
-- **Accounts Receivable** holds the money that customers owe to the business.
-- **Accounts Payable** holds the money that the business owes.
+  **Default transaction account** in **Settings**, on the **Ledger** tab. On the **Accounts**
+  screen, this account shows **Default account**. The **General** tab also has a **Default
+  payment account** row, but at this time a change there is not kept.
+- **Accounts Receivable** holds the receivables: the money that customers owe to the business.
+- **Accounts Payable** holds the payables: the money that the business owes.
 - By default, **Owner's Equity** is the other side of each opening balance.
 
-**Marketplace Clearing** and **Loans** show **Needs review**. A loan can be short-term or
+**Marketplace Clearing** and **Loans** show **Unclassified**. A loan can be short-term or
 long-term, so give **Loans** the correct sub-type.
 
 ## Inactive accounts

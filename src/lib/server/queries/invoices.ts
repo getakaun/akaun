@@ -357,6 +357,67 @@ export function listInvoices(db: Db, filters: InvoiceFilters = {}) {
   return overdueOnly ? withState.filter((row) => row.isOverdue) : withState;
 }
 
+export type InvoiceSummary = {
+  unpaidCount: number;
+  unpaidMinor: Minor;
+  overdueCount: number;
+  overdueMinor: Minor;
+  issuedInPeriodCount: number;
+  /** Invoice totals in main-currency cents, issued (sent) within the range. */
+  issuedInPeriodMinor: Minor;
+};
+
+/**
+ * Headline invoice figures for the dashboard's pipeline (007 FR-010), by the
+ * same payment-state and overdue rules the Invoices list applies to each row —
+ * no second definition of "unpaid" or "overdue".
+ */
+export function invoiceSummary(
+  db: Db,
+  range: { from: string; to: string },
+  today: string = localToday(),
+): InvoiceSummary {
+  const rows = db
+    .select({
+      id: invoices.id,
+      status: invoices.status,
+      total: invoices.total,
+      exchangeRate: invoices.exchangeRate,
+      ledgerRecordId: invoices.ledgerRecordId,
+      issueDate: invoices.issueDate,
+      dueDate: invoices.dueDate,
+    })
+    .from(invoices)
+    .where(inArray(invoices.status, [InvoiceStatus.Sent, InvoiceStatus.Paid]))
+    .all();
+  const states = paymentStatesFor(db, rows);
+
+  const summary: InvoiceSummary = {
+    unpaidCount: 0,
+    unpaidMinor: 0,
+    overdueCount: 0,
+    overdueMinor: 0,
+    issuedInPeriodCount: 0,
+    issuedInPeriodMinor: 0,
+  };
+  for (const row of rows) {
+    const state = states.get(row.id)!;
+    if (row.issueDate >= range.from && row.issueDate <= range.to) {
+      summary.issuedInPeriodCount += 1;
+      summary.issuedInPeriodMinor += state.totalMinor;
+    }
+    if (state.outstandingMinor > 0) {
+      summary.unpaidCount += 1;
+      summary.unpaidMinor += state.outstandingMinor;
+    }
+    if (deriveOverdue(row, state.paid, today)) {
+      summary.overdueCount += 1;
+      summary.overdueMinor += state.outstandingMinor;
+    }
+  }
+  return summary;
+}
+
 // ---------------------------------------------------------------------------
 // Get single
 // ---------------------------------------------------------------------------

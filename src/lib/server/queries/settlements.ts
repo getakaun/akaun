@@ -338,6 +338,15 @@ export function contactBalances(
     contactId,
     openOnly: true,
   });
+  return balancesByContact(items);
+}
+
+/**
+ * Outstanding items totalled per contact, largest first — the one rule behind
+ * `contactBalances`, split out so a screen that already holds the items (the
+ * dashboard's ageing) gets the same answer without a second read.
+ */
+export function balancesByContact(items: OutstandingItem[]): ContactBalance[] {
   const byContact = new Map<number, ContactBalance>();
   for (const item of items) {
     if (item.contactId === null) continue;

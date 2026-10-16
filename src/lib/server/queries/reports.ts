@@ -59,10 +59,36 @@ import { getSetting, SETTING_KEYS } from "../settings.js";
  */
 
 /**
- * Every account's total over a window, archived accounts included.
+ * The chart every totals read is laid over, archived accounts included.
  *
  * Archived is about what is offered for *new* records (FR-009); a report of a
  * period an account was live in still has to show what went through it.
+ */
+function chartOfAccounts(db: LedgerDb): Omit<AccountTotal, "amountMinor">[] {
+  return db
+    .select({
+      accountId: accounts.id,
+      code: accounts.code,
+      accountName: accounts.name,
+      type: accounts.type,
+      role: accounts.role,
+      subType: accounts.subType,
+      contactId: accounts.contactId,
+    })
+    .from(accounts)
+    .orderBy(asc(accounts.type), asc(accounts.code))
+    .all()
+    .map((row) => ({
+      ...row,
+      code: row.code ?? row.accountId,
+      type: row.type as AccountTypeCode,
+      role: row.role as AccountRoleCode,
+      subType: row.subType as AccountSubTypeCode | null,
+    }));
+}
+
+/**
+ * Every account's total over a window.
  *
  * `dateFrom` of null means "from the first record there is", which is what a
  * balance sheet as at a date needs.
@@ -75,19 +101,6 @@ function accountTotals(
   const window: SQL[] = [lte(ledgerRecords.date, dateTo)];
   if (dateFrom !== null) window.push(gte(ledgerRecords.date, dateFrom));
 
-  const chart = db
-    .select({
-      accountId: accounts.id,
-      code: accounts.code,
-      accountName: accounts.name,
-      type: accounts.type,
-      role: accounts.role,
-      subType: accounts.subType,
-      contactId: accounts.contactId,
-    })
-    .from(accounts)
-    .orderBy(asc(accounts.type), asc(accounts.code))
-    .all();
   const totals = db
     .select({
       accountId: accounts.id,
@@ -102,12 +115,8 @@ function accountTotals(
   const amountByAccount = new Map(
     totals.map((row) => [row.accountId, row.amountMinor]),
   );
-  return chart.map((row) => ({
+  return chartOfAccounts(db).map((row) => ({
     ...row,
-    code: row.code ?? row.accountId,
-    type: row.type as AccountTypeCode,
-    role: row.role as AccountRoleCode,
-    subType: row.subType as AccountSubTypeCode | null,
     amountMinor: amountByAccount.get(row.accountId) ?? 0,
   }));
 }
@@ -124,6 +133,61 @@ export function accountTotalsBetween(
 /** Every account's total from the first record up to and including a date. */
 export function accountTotalsUpTo(db: LedgerDb, asAt: string): AccountTotal[] {
   return accountTotals(db, null, asAt);
+}
+
+/**
+ * Every account's total over each of several ranges, in one read.
+ *
+ * The same rows as `accountTotalsBetween` called once per range — a 12-month
+ * trend is twelve Profit & Loss reports, and twelve reads of the same table
+ * would cost twelve times as much for no different answer. The read is grouped
+ * by account and **day**, not by month, and each range is then picked out with
+ * the same inclusive string comparison SQLite applies to the stored date, so a
+ * range that does not start on the first of a month (the last month of a
+ * trend ends today) is bucketed exactly as the report would bucket it.
+ */
+export function accountTotalsByRanges(
+  db: LedgerDb,
+  ranges: { dateFrom: string; dateTo: string }[],
+): AccountTotal[][] {
+  if (ranges.length === 0) return [];
+  const windowFrom = ranges.reduce(
+    (min, r) => (r.dateFrom < min ? r.dateFrom : min),
+    ranges[0].dateFrom,
+  );
+  const windowTo = ranges.reduce(
+    (max, r) => (r.dateTo > max ? r.dateTo : max),
+    ranges[0].dateTo,
+  );
+  const rows = db
+    .select({
+      accountId: ledgerMovements.accountId,
+      date: ledgerRecords.date,
+      amountMinor: sql<number>`coalesce(sum(${ledgerMovements.amountMinor}), 0)`,
+    })
+    .from(ledgerMovements)
+    .innerJoin(ledgerRecords, eq(ledgerRecords.id, ledgerMovements.recordId))
+    .where(
+      and(gte(ledgerRecords.date, windowFrom), lte(ledgerRecords.date, windowTo)),
+    )
+    .groupBy(ledgerMovements.accountId, ledgerRecords.date)
+    .all();
+
+  const chart = chartOfAccounts(db);
+  return ranges.map(({ dateFrom, dateTo }) => {
+    const amountByAccount = new Map<number, Minor>();
+    for (const row of rows) {
+      if (row.date < dateFrom || row.date > dateTo) continue;
+      amountByAccount.set(
+        row.accountId,
+        (amountByAccount.get(row.accountId) ?? 0) + row.amountMinor,
+      );
+    }
+    return chart.map((row) => ({
+      ...row,
+      amountMinor: amountByAccount.get(row.accountId) ?? 0,
+    }));
+  });
 }
 
 /** Exactly the contacts holding the Partner role — the statement's list (FR-008b). */
@@ -236,6 +300,52 @@ function cashAndEquivalentMinor(db: LedgerDb, window: SQL): Minor {
     .where(and(IS_CASH_AND_EQUIVALENT, window))
     .get();
   return row?.totalMinor ?? 0;
+}
+
+/**
+ * Cash and cash equivalents held at the end of a day — the Cash Flow
+ * Statement's own closing figure for any period ending on `asAt`.
+ */
+export function cashOnHandAsAt(db: LedgerDb, asAt: string): Minor {
+  return cashAndEquivalentMinor(db, lte(ledgerRecords.date, asAt));
+}
+
+/**
+ * `cashOnHandAsAt` for each of several days, in two reads: everything before
+ * the earliest day, then the movement on each day after it, run forward.
+ * Same predicate, same rows, so each entry equals the statement's closing
+ * cash for a period ending that day.
+ */
+export function cashBalancesAsAt(db: LedgerDb, asAts: string[]): Minor[] {
+  if (asAts.length === 0) return [];
+  const sorted = [...asAts].sort();
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const before = cashAndEquivalentMinor(db, lt(ledgerRecords.date, first));
+  const byDay = db
+    .select({
+      date: ledgerRecords.date,
+      amountMinor: sql<number>`coalesce(sum(${ledgerMovements.amountMinor}), 0)`,
+    })
+    .from(ledgerMovements)
+    .innerJoin(ledgerRecords, eq(ledgerRecords.id, ledgerMovements.recordId))
+    .innerJoin(accounts, eq(accounts.id, ledgerMovements.accountId))
+    .where(
+      and(
+        IS_CASH_AND_EQUIVALENT,
+        gte(ledgerRecords.date, first),
+        lte(ledgerRecords.date, last),
+      ),
+    )
+    .groupBy(ledgerRecords.date)
+    .all();
+  return asAts.map(
+    (asAt) =>
+      before +
+      byDay
+        .filter((row) => row.date <= asAt)
+        .reduce((sum, row) => sum + row.amountMinor, 0),
+  );
 }
 
 /**

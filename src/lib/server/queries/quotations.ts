@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lte, sql, getTableColumns, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lte, sql, getTableColumns, type SQL } from 'drizzle-orm';
 import type { BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 import * as schema from '../db/schema.js';
 import { quotations, quotationLines, quotationSearchText, contacts } from '../db/schema.js';
@@ -10,7 +10,8 @@ import { upsertSearchText, searchTextExists, joinSearchText } from '../search-te
 import { createInvoice } from './invoices.js';
 import { recordAudit, diffRecords } from '../audit.js';
 import { documentDefaults } from '../sales/defaults.js';
-import type { Refusable } from '../ledger/types.js';
+import type { Minor, Refusable } from '../ledger/types.js';
+import { toMinor } from '../ledger/money.js';
 import {
 	computeTotals,
 	contactNameFor,
@@ -68,6 +69,63 @@ export function deriveExpired(
 		q.expiryDate < today &&
 		(q.status === QuotationStatus.Draft || q.status === QuotationStatus.Sent)
 	);
+}
+
+export type OpenQuotationSummary = {
+	/** Draft or Sent, not expired: still being decided. */
+	openCount: number;
+	openMinor: Minor;
+	/** Open, and expiring within the next seven days (today included). */
+	expiringSoonCount: number;
+	/** Accepted but not yet converted to an invoice: won work not yet billed. */
+	acceptedCount: number;
+	acceptedMinor: Minor;
+};
+
+/**
+ * The quotation side of the dashboard's pipeline (007 FR-010), by the same
+ * expiry rule the Quotations list applies. Amounts are main-currency cents
+ * through `toMinor`, never the float `mainAmount`.
+ */
+export function openQuotationSummary(db: Db, today: string = localToday()): OpenQuotationSummary {
+	const rows = db
+		.select({
+			status: quotations.status,
+			total: quotations.total,
+			exchangeRate: quotations.exchangeRate,
+			expiryDate: quotations.expiryDate
+		})
+		.from(quotations)
+		.where(
+			inArray(quotations.status, [
+				QuotationStatus.Draft,
+				QuotationStatus.Sent,
+				QuotationStatus.Accepted
+			])
+		)
+		.all();
+
+	const soon = addDaysISO(today, 7);
+	const summary: OpenQuotationSummary = {
+		openCount: 0,
+		openMinor: 0,
+		expiringSoonCount: 0,
+		acceptedCount: 0,
+		acceptedMinor: 0
+	};
+	for (const row of rows) {
+		const minor = toMinor(row.total, row.exchangeRate);
+		if (row.status === QuotationStatus.Accepted) {
+			summary.acceptedCount += 1;
+			summary.acceptedMinor += minor;
+			continue;
+		}
+		if (deriveExpired(row, today)) continue;
+		summary.openCount += 1;
+		summary.openMinor += minor;
+		if (row.expiryDate && row.expiryDate <= soon) summary.expiringSoonCount += 1;
+	}
+	return summary;
 }
 
 // ---------------------------------------------------------------------------

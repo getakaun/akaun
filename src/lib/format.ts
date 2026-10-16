@@ -12,6 +12,7 @@ export {
 import {
   formatMoneyAmount as formatMainAmount,
   formatMoney as formatMainMoney,
+  mainCurrencySymbol,
 } from "./currency-state.svelte.js";
 
 /**
@@ -26,6 +27,28 @@ export function formatMinor(minor: number): string {
 /** The same without the currency symbol, for a column that carries it in its header. */
 export function formatMinorAmount(minor: number): string {
   return formatMainAmount(minor / 100);
+}
+
+const compactNumber = new Intl.NumberFormat("en", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+/**
+ * A short figure for a chart axis or a sparkline label — "$ 12.4K". Display
+ * only, and only where the exact figure is one click away.
+ */
+export function formatCompactMinor(minor: number): string {
+  const sign = minor < 0 ? "−" : "";
+  return `${sign}${mainCurrencySymbol()} ${compactNumber.format(Math.abs(minor) / 100)}`;
+}
+
+/** A change as a signed percentage, "+12%" / "−4.5%". */
+export function formatPct(fraction: number): string {
+  const pct = fraction * 100;
+  const digits = Math.abs(pct) < 10 ? 1 : 0;
+  const text = Math.abs(pct).toFixed(digits).replace(/\.0$/, "");
+  return `${pct > 0 ? "+" : pct < 0 ? "−" : ""}${text}%`;
 }
 
 export function formatDateShort(iso: string): string {

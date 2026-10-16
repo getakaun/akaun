@@ -140,9 +140,6 @@ export default defineConfig({
 			'tailwind-merge',
 			'clsx',
 
-			// Dashboard charts — large bundle, worth pre-bundling explicitly
-			'chart.js',
-
 			// Settings / profile pages — drag-and-drop reordering (nav prefs, custom fields).
 			// Previously missing here; only discoverable live via server.warmup crawling those
 			// pages, which forces an unrelated full-reload of any already-connected client.

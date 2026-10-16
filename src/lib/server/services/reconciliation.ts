@@ -65,14 +65,15 @@ function authorize(locals: App.Locals, permission: LeafPermission) {
  * account without a second lookup (FR-021).
  */
 function lineRemainders(db: ReconciliationDb) {
-  const allocations = listAllocations(db);
+  const allocatedByLine = new Map<number, number>();
+  for (const a of listAllocations(db)) {
+    allocatedByLine.set(a.lineId, (allocatedByLine.get(a.lineId) ?? 0) + a.amount);
+  }
   const accountByStatement = new Map(
     listStatements(db).map((statement) => [statement.id, statement.accountId]),
   );
   return listLines(db).map((line) => {
-    const allocated = allocations
-      .filter((a) => a.lineId === line.id)
-      .reduce((s, a) => s + a.amount, 0);
+    const allocated = allocatedByLine.get(line.id) ?? 0;
     return {
       ...line,
       accountId: accountByStatement.get(line.statementId) ?? null,
@@ -104,6 +105,23 @@ function statementSummary(
       remaining.length === 0,
   };
 }
+/**
+ * Statement lines that still have something left to match, counted per
+ * account — the dashboard's "needs attention" item (007 FR-011), by the same
+ * remainder rule each statement's own summary uses. Per account because
+ * reconciling happens on one account's page.
+ */
+export function unmatchedLinesByAccount(
+  db: ReconciliationDb,
+): { accountId: number; count: number }[] {
+  const counts = new Map<number, number>();
+  for (const line of lineRemainders(db)) {
+    if (line.remainingAmount < EPSILON || line.accountId === null) continue;
+    counts.set(line.accountId, (counts.get(line.accountId) ?? 0) + 1);
+  }
+  return [...counts].map(([accountId, count]) => ({ accountId, count }));
+}
+
 export function listStatementSummaries(
   db: ReconciliationDb,
   locals: App.Locals,

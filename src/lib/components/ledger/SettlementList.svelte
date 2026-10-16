@@ -4,6 +4,7 @@
 	import { resolve } from '$app/paths';
 	import { formatDate, formatMinor } from '$lib/format.js';
 	import { LedgerRecordKind } from '$lib/enums.js';
+	import ListExpand, { visibleItems } from '$lib/components/ui/ListExpand.svelte';
 
 	/**
 	 * What this payment covered, and what paid this record.
@@ -41,6 +42,9 @@
 		/** Shown in place of the list when there is nothing in it. */
 		emptyLabel?: string;
 	} = $props();
+
+	let expanded = $state(false);
+	const shown = $derived(visibleItems(links, expanded));
 
 	/**
 	 * Every kind opens now.
@@ -101,7 +105,7 @@
 
 {#if links.length > 0}
 	<div class="settle-list">
-		{#each links as link (link.settlementId)}
+		{#each shown as link (link.settlementId)}
 			{#if onundo}
 				<!-- Two independent actions on one row — open it, or take it back — so
 				     the row carries the shared hover and each action is its own target. -->
@@ -132,8 +136,9 @@
 			{/if}
 		{/each}
 	</div>
+	<ListExpand total={links.length} bind:expanded />
 {:else if emptyLabel}
-	<p class="settle-empty">{emptyLabel}</p>
+	<p class="card-empty">{emptyLabel}</p>
 {/if}
 
 <style>
@@ -217,10 +222,5 @@
 	.settle-undo:hover {
 		background: var(--accent);
 		color: var(--foreground);
-	}
-	.settle-empty {
-		font-size: 12.5px;
-		color: var(--muted-foreground);
-		margin: 0;
 	}
 </style>

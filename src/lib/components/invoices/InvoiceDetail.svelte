@@ -328,10 +328,15 @@
 		{/if}
 
 		<!-- The payments that settled it (FR-018a) -->
-		{#if invoice.settlements.length > 0}
+		<!-- Shown once the invoice is issued, the same gate as Payment status: from then
+		     on it can be paid, so an empty list is worth saying. -->
+		{#if invoice.settlements.length > 0 || invoice.ledgerRecordId !== null}
 			<section class="detail-card">
 				<div class="detail-card-head"><span class="detail-card-title">Payments</span></div>
-				<SettlementList links={invoice.settlements} />
+				<SettlementList
+					links={invoice.settlements}
+					emptyLabel="No payments are received yet."
+				/>
 			</section>
 		{/if}
 

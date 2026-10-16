@@ -546,6 +546,11 @@
 		gap: 8px;
 		margin-bottom: 16px;
 	}
+	/* The card's own padding ends it; scoped, so it outranks the margins above. */
+	.covers-note:last-child,
+	.covers-list:last-child {
+		margin-bottom: 0;
+	}
 	.covers-row {
 		display: flex;
 		align-items: center;

@@ -7,6 +7,7 @@
 	import DetailPage from '$lib/components/ui/DetailPage.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 	import AuditTrail from '$lib/components/ui/AuditTrail.svelte';
+	import ListExpand, { visibleItems } from '$lib/components/ui/ListExpand.svelte';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import OpeningBalanceSheet from './OpeningBalanceSheet.svelte';
@@ -126,6 +127,11 @@
 	 * parameter — a value, not part of the route — so the lint rule cannot see
 	 * through the template string.
 	 */
+	// The loader sends the latest few; the card folds them like every other list, and
+	// "See all" in its head is the way to the whole ledger.
+	let recentExpanded = $state(false);
+	const recentShown = $derived(visibleItems(data.recent, recentExpanded));
+
 	const movementsHref = $derived(
 		`${resolve('/(app)/records')}?account=${account.id}`
 	);
@@ -239,10 +245,10 @@
 				</a>
 			</div>
 			{#if data.recent.length === 0}
-				<p class="empty-note">No transactions are posted to this account yet.</p>
+				<p class="card-empty">No transactions are posted to this account yet.</p>
 			{:else}
 				<div class="mv-list">
-					{#each data.recent as r (r.id)}
+					{#each recentShown as r (r.id)}
 						{@const side = r.movements.find((m) => m.accountId === account.id)}
 						<a
 							class="mv-row related-link"
@@ -257,6 +263,7 @@
 						</a>
 					{/each}
 				</div>
+				<ListExpand total={data.recent.length} bind:expanded={recentExpanded} />
 				<p class="empty-note">
 					The running balance needs all transactions in date order. It shows only on the
 					account ledger.

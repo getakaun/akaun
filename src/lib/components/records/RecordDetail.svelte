@@ -78,9 +78,8 @@
 				? (record.lockedReason ?? '')
 				: null
 	);
-	const settlementsLabel = $derived(
-		record.kind === LedgerRecordKind.Payment ? 'Allocated to' : 'Payments applied'
-	);
+	const isPayment = $derived(record.kind === LedgerRecordKind.Payment);
+	const settlementsLabel = $derived(isPayment ? 'Allocated to' : 'Payments applied');
 	const contact = $derived(
 		data.contacts.find((c) => c.id === record.contactId) ?? null
 	);
@@ -259,7 +258,12 @@
 			</section>
 		{/if}
 
-		{#if settlementLinks.length > 0}
+		<!--
+			Shown wherever settling applies, empty or not: a payment can always be
+			allocated, and a record that is still owed can always be paid. A record paid
+			straight from an account reads paid with nothing to settle, so it has no card.
+		-->
+		{#if settlementLinks.length > 0 || isPayment || !record.paid}
 			<section class="detail-card">
 				<div class="detail-card-head">
 					<span class="detail-card-title">{settlementsLabel}</span>
@@ -267,6 +271,9 @@
 				<SettlementList
 					links={settlementLinks}
 					onundo={data.perms.delete ? undoPayment : undefined}
+					emptyLabel={isPayment
+						? 'This payment is not allocated to a record yet.'
+						: 'No payments are applied yet.'}
 				/>
 			</section>
 		{/if}

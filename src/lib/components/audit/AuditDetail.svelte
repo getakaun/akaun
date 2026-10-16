@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import DetailPage from '$lib/components/ui/DetailPage.svelte';
+	import ListExpand, { visibleItems } from '$lib/components/ui/ListExpand.svelte';
 	import {
 		ACTION_LABELS,
 		RECORD_TYPE_LABELS,
@@ -37,6 +38,9 @@
 	let {
 		data
 	}: { data: { entry: Entry; sameRequest: { entries: Entry[]; total: number } } } = $props();
+
+	let sameExpanded = $state(false);
+	const sameShown = $derived(visibleItems(data.sameRequest.entries, sameExpanded));
 
 	const entry = $derived(data.entry);
 	const typeLabel = $derived(RECORD_TYPE_LABELS[entry.recordType] ?? entry.recordType);
@@ -112,7 +116,7 @@
 					</tbody>
 				</table>
 			{:else}
-				<p class="muted" style="margin:0; font-size:13px;">No field details were recorded for this change.</p>
+				<p class="card-empty">No field details were recorded for this change.</p>
 			{/if}
 		</section>
 	{/snippet}
@@ -205,7 +209,7 @@
 					<span class="detail-card-title">Changed in the same request</span>
 				</div>
 				<div class="same-list">
-					{#each data.sameRequest.entries as other (other.id)}
+					{#each sameShown as other (other.id)}
 						<button
 							type="button"
 							class="related-link same-row"
@@ -221,7 +225,10 @@
 						</button>
 					{/each}
 				</div>
-				{#if data.sameRequest.total > data.sameRequest.entries.length && entry.requestId}
+				<ListExpand total={data.sameRequest.entries.length} bind:expanded={sameExpanded} />
+				<!-- The page holds only the first entries; the rest are on the audit log, and
+				     the link is offered once the reader has opened what is here. -->
+				{#if sameShown.length === data.sameRequest.entries.length && data.sameRequest.total > data.sameRequest.entries.length && entry.requestId}
 					<button
 						type="button"
 						class="list-expand-btn"
@@ -229,7 +236,7 @@
 							// eslint-disable-next-line svelte/no-navigation-without-resolve -- auditHref() starts from resolve(); the rule cannot see through the call.
 							goto(auditHref({ request: entry.requestId! }))}
 					>
-						See all {data.sameRequest.total + 1}
+						See all {data.sameRequest.total + 1} in the audit log
 					</button>
 				{/if}
 			</section>

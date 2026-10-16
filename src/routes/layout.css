@@ -516,7 +516,6 @@ th.sortable:hover .th-idle { opacity: .5; }
 .attach-del:disabled { cursor: not-allowed; opacity: 0.4; }
 .attach-upload-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 1px dashed var(--border); border-radius: 7px; font-size: 12.5px; color: var(--muted-foreground); cursor: pointer; margin-top: 10px; font-family: inherit; }
 .attach-upload-btn:hover { border-color: var(--primary); color: var(--primary); }
-.attach-section-header { display: flex; align-items: center; justify-content: space-between; margin: 24px 0 10px; }
 .attach-add-btn { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 11.5px; font-family: inherit; color: var(--muted-foreground); background: var(--card); cursor: pointer; }
 .attach-add-btn:hover { border-color: var(--primary); color: var(--primary); }
 .attach-drop-area { border-radius: 9px; transition: outline .15s, background .15s; }
@@ -609,8 +608,6 @@ th.sortable:hover .th-idle { opacity: .5; }
 .claim-exp-sub { font-size: 11.5px; color: var(--muted-foreground); }
 .claim-exp-amt { font-weight: 600; font-size: 13px; }
 .claim-exp-chevron { color: var(--muted-foreground); flex-shrink: 0; }
-.list-expand-btn { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; margin-top: 4px; border: none; background: none; font-family: inherit; font-size: 12px; font-weight: 500; color: var(--muted-foreground); cursor: pointer; padding: 2px 0; }
-.list-expand-btn:hover { color: var(--primary); }
 
 /* ===================== Audit trail ===================== */
 .audit-list { display: flex; flex-direction: column; gap: 2px; }
@@ -1223,8 +1220,17 @@ th.sortable:hover .th-idle { opacity: .5; }
   color: var(--primary); cursor: pointer; padding: 2px 0; display: inline-flex; align-items: center; gap: 3px;
 }
 .detail-card-action:hover { text-decoration: underline; }
+/* What a list card says when its list is empty. A card that applies to the record
+   always shows, so it never stands as a bare header (CLAUDE.md § List cards). */
+.card-empty { font-size: 12.5px; color: var(--muted-foreground); margin: 0; }
+/* "Show all N" under a list card that holds more than a few rows (ListExpand.svelte). */
+.list-expand-btn { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; margin-top: 8px; border: none; background: none; font-family: inherit; font-size: 12px; font-weight: 500; color: var(--muted-foreground); cursor: pointer; padding: 2px 0; }
+.list-expand-btn:hover { color: var(--primary); }
 .detail-card > .detail-list { margin-top: 0; border-top: none; }
 .detail-card > .detail-list .detail-row:last-child { border-bottom: none; padding-bottom: 0; }
+/* A card ends at its own padding: a trailing .field, note or a head with nothing under it
+   (an empty History card) must not add its margin below the last line. */
+.detail-card > :last-child { margin-bottom: 0; }
 
 /* Sticky save bar — appears only when the page is dirty, so a page that is only
    being read never grows a footer. */

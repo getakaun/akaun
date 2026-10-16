@@ -211,7 +211,7 @@ function owedSide(
   direction: OutstandingDirection,
   today: string,
 ): OwedSide {
-  const ageing = outstandingAgeing(db, { direction, asOf: today });
+  const ageing = outstandingAgeing(db, { direction, asOf: today, dateTo: today });
   const notYetDue = AGEING_BANDS[0].label;
   const bands = AGEING_BANDS.map((band) => {
     const found = ageing.bands.find((b) => b.label === band.label);
@@ -333,7 +333,7 @@ function loadAttention(
     }
   }
 
-  if (position && position.needsReviewCount > 0) {
+  if (can(locals, "accounts.read") && position && position.needsReviewCount > 0) {
     items.push({
       key: "needs-review",
       label: plural(position.needsReviewCount, "account without a sub-type", "accounts without a sub-type"),
@@ -348,8 +348,6 @@ function loadAttention(
 
 /** Which way money went, judged by what the record did to cash and equivalents. */
 function directionOf(record: RecordView): RecentItem["direction"] {
-  if (record.kind === LedgerRecordKind.Expense) return "out";
-  if (record.kind === LedgerRecordKind.Income) return "in";
   const cashMinor = record.movements
     .filter(
       (m) =>

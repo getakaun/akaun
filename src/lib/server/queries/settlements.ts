@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import {
   accounts,
   accountDefaults,
@@ -95,6 +95,8 @@ export type OutstandingFilters = {
   /** "Today" for the ageing arithmetic; the caller supplies it so a report for
    *  a past date ages against that date rather than now. */
   asOf?: string;
+  /** Include only records dated on or before this day; omit for allocation lists. */
+  dateTo?: string;
 };
 
 /**
@@ -134,6 +136,10 @@ function collectOutstanding(
   const conditions: SQL[] = [eq(ledgerMovements.accountId, defaultId ?? -1)];
   if (filters.contactId !== undefined) {
     conditions.push(eq(ledgerRecords.contactId, filters.contactId));
+  }
+
+  if (filters.dateTo !== undefined) {
+    conditions.push(lte(ledgerRecords.date, filters.dateTo));
   }
 
   // SQL equivalent of outstandingOf(): clamp abs(side) minus settlements at

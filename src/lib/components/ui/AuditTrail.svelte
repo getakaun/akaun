@@ -53,7 +53,6 @@
 </script>
 
 {#if !loading && entries.length > 0}
-	<div class="detail-section-label">Activity</div>
 	<div class="audit-list">
 		{#each entries as entry (entry.id)}
 			<div class="audit-entry">

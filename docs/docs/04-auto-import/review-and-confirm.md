@@ -172,15 +172,22 @@ The original document is attached to the record. See [Records](../02-concepts/re
 - [Contacts](../06-contacts.md)
 - [Accounts and categories](../02-concepts/accounts-and-categories.md)
 
-## Importing revenue into contra revenue
+## Importing deductions from clearing into contra revenue
 
-For an income card, select an ordinary Revenue source and a target under **Contra revenue**.
-The target must have the **Contra operating revenue** or **Contra other revenue** sub-type.
-You can also apply a contra target to income items with the group's bulk account action.
+Choose an Asset source that holds transaction funds, such as **Shopee clearing**, a wallet or
+a bank account. Select a target under **Contra revenue**, with the **Contra operating revenue**
+or **Contra other revenue** sub-type. Ordinary Revenue sources cannot target contra revenue.
 
-For example, importing RM100 from Sales to Sales discounts credits Sales RM100 and debits Sales
-discounts RM100. This increases gross revenue and its deduction equally, leaving total net
-revenue unchanged. A cash refund requires a different entry involving cash or receivables.
+For example, Sales → Shopee clearing records RM1,000 of gross sales. Shopee clearing → Sales
+discounts then records RM100 of deductions: credit clearing RM100 and debit contra revenue
+RM100. Net revenue is RM900 and clearing holds RM900. A separate RM50 expense charge uses
+Shopee clearing → Expense, leaving clearing RM850 and profit RM850.
 
-Contra accounts are review targets; they are excluded from ordinary income sources and AI
-income-category suggestions. Saved profiles continue to select money accounts.
+These deductions use the outgoing (Expense) import flow and record shape. Financial reports
+classify them by their Revenue account, so they reduce revenue rather than increase expenses.
+Select contra accounts for outgoing sections and fee types in import profiles, or as a target
+while reviewing an outgoing item. The profile's account remains the clearing, bank or wallet
+account. Income sections and AI income-category suggestions exclude contra accounts.
+
+You can bulk-assign a contra category to outgoing items and a clearing account as their funding
+account. Payables, credit cards and non-transaction assets cannot fund contra-revenue deductions.

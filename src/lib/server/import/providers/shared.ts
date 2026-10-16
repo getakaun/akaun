@@ -97,7 +97,7 @@ Instructions:
   contacts, so an altered name will fail to match even when the party is already known.
 - category_account_id = the id of the best matching account from the appropriate list below.
   Return null when the document does not provide enough information to choose one. Never invent an id.
-  Expense and asset-purchase accounts: ${accountChoicesJson(expenseAccounts)}
+  Expense, asset-purchase and contra-revenue deduction accounts: ${accountChoicesJson(expenseAccounts)}
   Income accounts: ${accountChoicesJson(incomeAccounts)}
 - item_name must be a short label — a few words, not a full sentence. If the document lists many
   items or a long description, summarize or shorten it rather than copying it verbatim (aim for

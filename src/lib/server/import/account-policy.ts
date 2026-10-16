@@ -44,7 +44,9 @@ export function isImportPurchaseSource(
 export function isImportPurchaseTarget(account: AccountView): boolean {
   return (
     posting(account) &&
-    (account.type === AccountType.Expense || isPurchaseAssetAccount(account))
+    (account.type === AccountType.Expense ||
+      isPurchaseAssetAccount(account) ||
+      isContraRevenueAccount(account))
   );
 }
 
@@ -62,8 +64,7 @@ export function isImportIncomeTarget(
 ): boolean {
   return (
     isImportTransactionAsset(account) ||
-    (posting(account) &&
-      (account.id === receivableAccountId || isContraRevenueAccount(account)))
+    (posting(account) && account.id === receivableAccountId)
   );
 }
 
@@ -98,7 +99,8 @@ export function validateImportAccountPair(
   const targetIsValid =
     kind === "income"
       ? isImportIncomeTarget(to, receivableAccountId)
-      : isImportPurchaseTarget(to);
+      : isImportPurchaseTarget(to) &&
+        (!isContraRevenueAccount(to) || isImportTransactionAsset(from));
   return targetIsValid
     ? { ok: true, kind }
     : {

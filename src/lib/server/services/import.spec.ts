@@ -316,11 +316,12 @@ describe("confirmImportRow", () => {
 
 describe("contra revenue confirmation", () => {
   it.each([true, false])(
-    "posts the exact balanced pair and preserves provenance (explicit sides: %s)",
+    "posts asset-to-contra and preserves provenance (explicit sides: %s)",
     (explicitSides) => {
       const source = createAccount(db, userId, {
-        name: "Sales",
-        type: AccountType.Revenue,
+        name: "Shopee clearing",
+        type: AccountType.Asset,
+        subType: AccountSubType.Clearing,
       });
       const target = createAccount(db, userId, {
         name: "Discounts",
@@ -329,28 +330,56 @@ describe("contra revenue confirmation", () => {
       });
       if (!source.ok || !target.ok) throw new Error("Account setup failed");
       const result = confirm({
-        documentType: DocumentType.Income,
+        documentType: DocumentType.Expense,
         amount: 100,
         sides: explicitSides
           ? { fromAccountId: source.value.id, toAccountId: target.value.id }
           : null,
-        categoryAccountId: source.value.id,
-        accountId: target.value.id,
+        categoryAccountId: target.value.id,
+        accountId: source.value.id,
       });
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error(result.reason);
-      expect(result.value.record.kind).toBe(2);
       expect(
         result.value.record.movements.map((m) => [m.accountId, m.amountMinor]),
       ).toEqual([
         [target.value.id, 10000],
         [source.value.id, -10000],
       ]);
-      expect(job().accountId).toBe(target.value.id);
-      expect(job().resultType).toBe(DocumentType.Income);
+      expect(job().accountId).toBe(source.value.id);
+      expect(job().resultType).toBe(DocumentType.Expense);
       expect(count.attachments()).toBe(1);
       expect(confirm().ok).toBe(false);
       expect(count.records()).toBe(1);
+    },
+  );
+
+  it.each([true, false])(
+    "rejects revenue-to-contra even without explicit sides (%s)",
+    (explicitSides) => {
+      const source = createAccount(db, userId, {
+        name: "Sales",
+        type: AccountType.Revenue,
+      });
+      const target = createAccount(db, userId, {
+        name: "Discounts",
+        type: AccountType.Revenue,
+        subType: AccountSubType.ContraOtherRevenue,
+      });
+      if (!source.ok || !target.ok) throw new Error("Account setup failed");
+      expect(
+        confirm({
+          documentType: DocumentType.Income,
+          amount: 100,
+          sides: explicitSides
+            ? { fromAccountId: source.value.id, toAccountId: target.value.id }
+            : null,
+          categoryAccountId: source.value.id,
+          accountId: target.value.id,
+        }).ok,
+      ).toBe(false);
+      expect(count.records()).toBe(0);
+      expect(job().state).toBe(ImportState.PendingReview);
     },
   );
 });

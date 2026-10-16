@@ -130,6 +130,10 @@ describe("contra revenue import eligibility", () => {
       account(6, AccountType.Asset, AccountSubType.Bank),
       account(7, AccountType.Asset, AccountSubType.Receivable),
       account(8, AccountType.Expense, AccountSubType.OperatingExpense),
+      account(11, AccountType.Asset, AccountSubType.Clearing),
+      account(12, AccountType.Liability, AccountSubType.CreditCard),
+      account(13, AccountType.Liability, AccountSubType.AccountsPayable),
+      account(14, AccountType.Asset, AccountSubType.Inventory),
       {
         ...account(9, AccountType.Revenue, AccountSubType.ContraOtherRevenue),
         active: false,
@@ -141,21 +145,22 @@ describe("contra revenue import eligibility", () => {
         false,
       ),
     ];
-    const sources = groupImportSourceAccounts(choices, null);
+    const sources = groupImportSourceAccounts(choices, 13);
     expect(sources.income.map((a) => a.id)).toEqual([1, 2, 3]);
     expect(
       targetAccountsForImportSource(choices, 1, null, 7).map((a) => a.id),
-    ).toEqual([4, 5, 6, 7]);
+    ).toEqual([6, 7, 11]);
+    expect(
+      targetAccountsForImportSource(choices, 11, 13, 7).map((a) => a.id),
+    ).toEqual([4, 5, 8, 14]);
+    expect(validateImportAccountPair(choices[0], choices[3], 13, 7).ok).toBe(
+      false,
+    );
     for (const source of choices) {
-      const targets = targetAccountsForImportSource(
-        choices,
-        source.id,
-        null,
-        7,
-      );
+      const targets = targetAccountsForImportSource(choices, source.id, 13, 7);
       for (const target of choices) {
         expect(
-          validateImportAccountPair(source, target, null, 7).ok,
+          validateImportAccountPair(source, target, 13, 7).ok,
           `${source.id} → ${target.id}`,
         ).toBe(targets.includes(target));
       }

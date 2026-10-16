@@ -101,15 +101,18 @@ export function targetAccountsForImportSource(
       (account) =>
         account.id !== source.id &&
         (transactionAsset(account) ||
-          (posting(account) &&
-            (account.id === receivableAccountId ||
-              isContraRevenueAccount(account)))),
+          (posting(account) && account.id === receivableAccountId)),
     );
   }
 
   if (!purchaseSource(source, payableAccountId)) return [];
   return accounts.filter(
-    (account) => account.id !== source.id && purchaseTarget(account),
+    (account) =>
+      account.id !== source.id &&
+      (purchaseTarget(account) ||
+        (transactionAsset(source) &&
+          posting(account) &&
+          isContraRevenueAccount(account))),
   );
 }
 

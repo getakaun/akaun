@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AccountType, DocumentType } from "$lib/enums.js";
+import { AccountSubType, AccountType, DocumentType } from "$lib/enums.js";
 import {
   describeReading,
   readingProgressLabel,
@@ -305,5 +305,38 @@ describe("hasProfileChoice", () => {
     expect(hasProfileChoice([{ value: "auto" }, { value: "profile:3" }])).toBe(
       true,
     );
+  });
+});
+
+describe("contra revenue review categories", () => {
+  it("restores an outgoing contra category by id or name, but never as an income source", () => {
+    const contra = {
+      id: 30,
+      name: "Discounts",
+      type: AccountType.Revenue,
+      subType: AccountSubType.ContraOperatingRevenue,
+    };
+    const choices = {
+      ...options,
+      categoryAccounts: [...options.categoryAccounts, contra],
+    } as ReviewOptions;
+    for (const fields of [
+      { categoryAccountId: 30 },
+      { category: "Discounts" },
+    ]) {
+      const outgoing = reviewRowFrom({
+        documentType: DocumentType.Expense,
+        accountId: 5,
+        ...fields,
+      });
+      expect(readCategoryAccountId(outgoing, choices)).toBe(30);
+      expect(itemSides(outgoing, choices)).toEqual({ source: 5, target: 30 });
+      expect(
+        readCategoryAccountId(
+          reviewRowFrom({ documentType: DocumentType.Income, ...fields }),
+          choices,
+        ),
+      ).toBe(4);
+    }
   });
 });

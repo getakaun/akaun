@@ -582,6 +582,17 @@ export function setGroupItemsCategory(
             : "That category is not one an expense can be filed under.",
       };
     }
+    const target = getAccount(db, choice.id);
+    if (target && isContraRevenueAccount(target) && item.accountId != null) {
+      const source = getAccount(db, item.accountId);
+      if (!source || !isImportTransactionAsset(source)) {
+        return {
+          ok: false,
+          reason:
+            "Choose a clearing, bank or wallet account to fund this revenue deduction.",
+        };
+      }
+    }
     // A category chosen by the reviewer answers the reading's note about it
     // (FR-034). The check note stays: a flag rule or a possible double count
     // is not answered by a category (FR-061, FR-066).
@@ -629,20 +640,17 @@ function accountFits(db: LedgerDb, account: AccountView): AccountFit {
     if (kind === "transfer") {
       return forTransfer && item.counterAccountId !== account.id;
     }
-    if (kind === "income" && isContraRevenueAccount(account)) {
-      const source =
-        item.categoryAccountId == null
-          ? null
-          : getAccount(db, item.categoryAccountId);
-      return (
-        source != null &&
-        validateImportAccountPair(
-          source,
-          account,
-          payable.ok ? payable.value : null,
-          receivable.ok ? receivable.value : null,
-        ).ok
-      );
+    const category =
+      item.categoryAccountId == null
+        ? null
+        : getAccount(db, item.categoryAccountId);
+    if (kind === "expense" && category && isContraRevenueAccount(category)) {
+      return validateImportAccountPair(
+        account,
+        category,
+        payable.ok ? payable.value : null,
+        receivable.ok ? receivable.value : null,
+      ).ok;
     }
     return kind === "income" ? forIncome : forExpense;
   };

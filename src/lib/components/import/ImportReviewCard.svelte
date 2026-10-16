@@ -130,7 +130,7 @@
 	const converted = $derived(reviewConverted(row, edits, main));
 	const rateMissing = $derived(reviewRateMissing(row, edits, main));
 	const contraTarget = $derived(options.allAccounts.find((account) => account.id === targetAccountId));
-	const isContraEntry = $derived(!transfer && isIncome && contraTarget != null && isContraRevenueAccount(contraTarget));
+	const isContraEntry = $derived(!transfer && !isIncome && contraTarget != null && isContraRevenueAccount(contraTarget));
 	const accountMissing = $derived(sourceAccountId == null || targetAccountId == null);
 	// The books record a transfer in the main currency only (FR-059). The
 	// server refuses one in another currency; the card says why up front.
@@ -200,13 +200,7 @@
 			</span>
 		{/if}
 		<div class="review-head-right">
-			{#if isContraEntry}
-		<p class="merge-note">
-			This credits the source revenue account and debits contra revenue. Gross revenue and its deduction increase equally; total net revenue is unchanged.
-		</p>
-	{/if}
-
-	{#if dup}
+			{#if dup}
 				<span class="dup-badge">
 					<AlertTriangle size={11} /> Duplicate · {row.duplicateConfidence}% · {dupReasonsLabel(row)}
 				</span>
@@ -219,6 +213,8 @@
 		{#if reading}<span class="review-reading">{reading}</span> ·{/if}
 		{#if transfer}
 			Read as a transfer between two of your own accounts — check both accounts before importing
+		{:else if isContraEntry}
+			Revenue deduction from the source account — check both accounts before importing
 		{:else}
 			AI classified this as {isIncome ? 'income' : 'an expense'} — change the category or edit any field before importing
 		{/if}
@@ -423,6 +419,12 @@
 			</div>
 		</div>
 	</fieldset>
+
+	{#if isContraEntry}
+		<p class="merge-note">
+			This credits the source asset account and debits contra revenue. It reduces the clearing or cash balance and net revenue; Profit & Loss shows a revenue deduction.
+		</p>
+	{/if}
 
 	{#if dup}
 		<div class="dup-note">

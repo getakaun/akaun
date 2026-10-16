@@ -744,9 +744,9 @@ function resolveSides(
     };
   }
 
-  if (!fields.sides && isIncome) {
-    const from = getAccount(db, categoryAccountId);
-    const to = getAccount(db, accountId);
+  if (!fields.sides) {
+    const from = getAccount(db, isIncome ? categoryAccountId : accountId);
+    const to = getAccount(db, isIncome ? accountId : categoryAccountId);
     if (!from || !to)
       return { ok: false, reason: "Choose accounts that are still available." };
     const receivable = requireAccountDefault(

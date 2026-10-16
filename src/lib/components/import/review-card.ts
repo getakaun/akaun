@@ -1,3 +1,4 @@
+import { isContraRevenueAccount } from "$lib/account-classification.js";
 import { AccountType, documentTypeEnum } from "$lib/enums.js";
 import {
   defaultTargetForImportSource,
@@ -311,22 +312,21 @@ export function initialCategoryAccountId(
   row: Pick<ReviewRow, "category" | "categoryAccountId" | "documentType">,
   options: ReviewOptions,
 ): number | null {
+  const categories = options.categoryAccounts.filter((account) =>
+    row.documentType === "income"
+      ? account.type === AccountType.Revenue && !isContraRevenueAccount(account)
+      : account.type !== AccountType.Revenue || isContraRevenueAccount(account),
+  );
   if (
     row.categoryAccountId != null &&
-    options.categoryAccounts.some(
-      (account) => account.id === row.categoryAccountId,
-    )
+    categories.some((account) => account.id === row.categoryAccountId)
   ) {
     return row.categoryAccountId;
   }
   const wanted = (row.category ?? "").trim().toLowerCase();
   if (!wanted) return null;
-  const candidates = options.categoryAccounts.filter(
-    (account) =>
-      account.name.trim().toLowerCase() === wanted &&
-      (row.documentType === "income"
-        ? account.type === AccountType.Revenue
-        : account.type !== AccountType.Revenue),
+  const candidates = categories.filter(
+    (account) => account.name.trim().toLowerCase() === wanted,
   );
   return candidates[0]?.id ?? null;
 }

@@ -229,7 +229,7 @@
 	function categoryGroups(kind: ProfileSectionKind) {
 		const groups: { label: string; choices: Choice[] }[] = [];
 		if (kind === 'transfer') return groups;
-		if (kind !== 'income') groups.push({ label: 'Expense', choices: expenseCategories });
+		if (kind !== 'income') groups.push({ label: 'Expense or revenue deduction', choices: expenseCategories });
 		if (kind !== 'expense') groups.push({ label: 'Income', choices: incomeCategories });
 		return groups;
 	}

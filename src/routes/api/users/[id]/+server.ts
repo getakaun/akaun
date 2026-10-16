@@ -7,10 +7,12 @@ import { oauth } from '$lib/server/oauth/runtime.js';
 import { users } from '$lib/server/db/schema.js';
 import { can } from '$lib/server/permissions.js';
 import {
+	auditUser,
 	keepsASuperuser,
 	LAST_SUPERUSER_MESSAGE,
 	memberships,
-	readUserGrants
+	readUserGrants,
+	userAuditSnapshot
 } from '$lib/server/admin/access.js';
 import { listTokens, revokeAllTokens } from '$lib/server/tokens/manage.js';
 
@@ -51,12 +53,19 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 	if (body.password) patch.passwordHash = await hash(body.password);
 
 	if (Object.keys(patch).length > 0) {
-		db.update(users).set(patch).where(eq(users.id, userId)).run();
+		db.transaction((tx) => {
+			const before = userAuditSnapshot(tx, userId);
+			tx.update(users).set(patch).where(eq(users.id, userId)).run();
+			// The log keeps only that the password changed, never the value.
+			auditUser(tx, locals.user!.id, userId, before, userAuditSnapshot(tx, userId), [
+				...(body.password ? [{ field: 'password', before: null, after: 'changed' }] : [])
+			]);
+		});
 		// A new password ends every way in that the old one could have set up:
 		// connected apps and personal access tokens alike.
 		if (body.password) {
-			oauth?.revokeUser(userId);
-			revokeAllTokens(db, userId);
+			oauth?.revokeUser(userId, locals.user!.id);
+			revokeAllTokens(db, userId, locals.user!.id);
 		}
 	}
 	return json({ success: true });
@@ -76,6 +85,10 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
 	if (!keepsASuperuser(db, { deleteUserId: userId }))
 		return json({ error: LAST_SUPERUSER_MESSAGE }, { status: 400 });
 
-	db.delete(users).where(eq(users.id, userId)).run();
+	db.transaction((tx) => {
+		const before = userAuditSnapshot(tx, userId);
+		tx.delete(users).where(eq(users.id, userId)).run();
+		auditUser(tx, locals.user!.id, userId, before, null);
+	});
 	return json({ success: true });
 };

@@ -3,7 +3,12 @@ import type { RequestHandler } from './$types.js';
 import { db } from '$lib/server/db/client.js';
 import { groups } from '$lib/server/db/schema.js';
 import { can } from '$lib/server/permissions.js';
-import { groupView, PROTECTED_GROUP } from '$lib/server/admin/access.js';
+import {
+	auditGroup,
+	groupAuditSnapshot,
+	groupView,
+	PROTECTED_GROUP
+} from '$lib/server/admin/access.js';
 
 /**
  * Groups, for Users & Groups. Every route here asks for `users.manage`, which
@@ -24,11 +29,15 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	if (String(name).trim() === PROTECTED_GROUP)
 		return json({ error: `"${PROTECTED_GROUP}" is reserved.` }, { status: 400 });
 
-	const [group] = db
-		.insert(groups)
-		.values({ name, description, isSuperuser: Boolean(isSuperuser) })
-		.returning({ id: groups.id })
-		.all();
+	const group = db.transaction((tx) => {
+		const [created] = tx
+			.insert(groups)
+			.values({ name, description, isSuperuser: Boolean(isSuperuser) })
+			.returning({ id: groups.id })
+			.all();
+		auditGroup(tx, locals.user!.id, created.id, null, groupAuditSnapshot(tx, created.id));
+		return created;
+	});
 
 	return json({ id: group.id }, { status: 201 });
 };

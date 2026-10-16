@@ -11,12 +11,50 @@ import type { LedgerDb } from "../ledger/types.js";
 import type { RoleAccess } from "../permissions.js";
 import { fail, missing, ok, type AppResult } from "../application/result.js";
 import { hashToken, mintPat, storedPermissions } from "./pat.js";
+import { diffRecords, recordAudit } from "../audit.js";
 
 /** Most live tokens one user may hold, as GitHub's fine-grained limit. */
 export const MAX_TOKENS_PER_USER = 50;
 /** What the New token page fills in: six months from today. */
 export const DEFAULT_EXPIRY_MONTHS = 6;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+type TokenRow = typeof personalAccessTokens.$inferSelect;
+
+/** What the audit log keeps of a token: never its hash. */
+function auditFields(row: TokenRow) {
+  return {
+    name: row.name,
+    ownerId: row.userId,
+    permissions: storedPermissions(row.permissions),
+    expiresOn:
+      row.expiresAt === null
+        ? null
+        : new Date(row.expiresAt).toISOString().slice(0, 10),
+    lastFour: row.lastFour,
+  };
+}
+
+function auditToken(
+  db: LedgerDb,
+  actorId: number,
+  action: "create" | "update" | "delete",
+  before: TokenRow | null,
+  after: TokenRow | null,
+) {
+  const row = (after ?? before)!;
+  recordAudit(db, {
+    recordType: "access_token",
+    recordId: row.id,
+    userId: actorId,
+    action,
+    changes: diffRecords(
+      before && auditFields(before),
+      after && auditFields(after),
+    ),
+    label: row.name,
+  });
+}
 
 export type TokenView = {
   id: number;
@@ -145,20 +183,24 @@ export function createToken(
   if (listTokens(db, args.ownerId).some((t) => t.name === args.input.name))
     return fail("REFUSED", "There is already a token with that name.");
   const token = mintPat();
-  const row = db
-    .insert(personalAccessTokens)
-    .values({
-      userId: args.ownerId,
-      name: args.input.name,
-      tokenHash: hashToken(token),
-      lastFour: token.slice(-4),
-      permissions: JSON.stringify(permissions.value),
-      expiresAt: expiresAt.value,
-      createdAt: now,
-      createdBy: args.createdBy,
-    })
-    .returning()
-    .get();
+  const row = db.transaction((tx) => {
+    const inserted = tx
+      .insert(personalAccessTokens)
+      .values({
+        userId: args.ownerId,
+        name: args.input.name,
+        tokenHash: hashToken(token),
+        lastFour: token.slice(-4),
+        permissions: JSON.stringify(permissions.value),
+        expiresAt: expiresAt.value,
+        createdAt: now,
+        createdBy: args.createdBy,
+      })
+      .returning()
+      .get();
+    auditToken(tx, args.createdBy, "create", null, inserted);
+    return inserted;
+  });
   return ok({ token, view: view(row) });
 }
 
@@ -185,6 +227,8 @@ export function updateToken(
     owner: RoleAccess;
     name: string;
     permissions: string[];
+    /** Who made the change, for the audit log. Default: the owner. */
+    actorId?: number;
   },
 ): AppResult<TokenView> {
   const existing = liveToken(db, args.ownerId, args.tokenId);
@@ -197,15 +241,19 @@ export function updateToken(
     )
   )
     return fail("REFUSED", "There is already a token with that name.");
-  const row = db
-    .update(personalAccessTokens)
-    .set({
-      name: args.name,
-      permissions: JSON.stringify(permissions.value),
-    })
-    .where(eq(personalAccessTokens.id, args.tokenId))
-    .returning()
-    .get();
+  const row = db.transaction((tx) => {
+    const updated = tx
+      .update(personalAccessTokens)
+      .set({
+        name: args.name,
+        permissions: JSON.stringify(permissions.value),
+      })
+      .where(eq(personalAccessTokens.id, args.tokenId))
+      .returning()
+      .get();
+    auditToken(tx, args.actorId ?? args.ownerId, "update", existing, updated);
+    return updated;
+  });
   return ok(view(row));
 }
 
@@ -220,6 +268,8 @@ export function regenerateToken(
     ownerId: number;
     tokenId: number;
     owner: RoleAccess;
+    /** Who made the change, for the audit log. Default: the owner. */
+    actorId?: number;
   },
   now = Date.now(),
 ): AppResult<{ token: string; view: TokenView }> {
@@ -232,55 +282,73 @@ export function regenerateToken(
   if (existing.expiresAt !== null && existing.expiresAt <= now)
     return fail("REFUSED", "This token has expired. Create a new one.");
   const token = mintPat();
-  const row = db
-    .update(personalAccessTokens)
-    .set({
-      tokenHash: hashToken(token),
-      lastFour: token.slice(-4),
-      lastUsedAt: null,
-    })
-    .where(eq(personalAccessTokens.id, args.tokenId))
-    .returning()
-    .get();
+  const row = db.transaction((tx) => {
+    const updated = tx
+      .update(personalAccessTokens)
+      .set({
+        tokenHash: hashToken(token),
+        lastFour: token.slice(-4),
+        lastUsedAt: null,
+      })
+      .where(eq(personalAccessTokens.id, args.tokenId))
+      .returning()
+      .get();
+    // Shows as a new `lastFour`: the only visible trace of a new secret.
+    auditToken(tx, args.actorId ?? args.ownerId, "update", existing, updated);
+    return updated;
+  });
   return ok({ token, view: view(row) });
 }
 
+/** Audited as a delete: a revoked token can never be used again. */
 export function revokeToken(
   db: LedgerDb,
   ownerId: number,
   tokenId: number,
+  /** Who revoked it, for the audit log: the owner, or an administrator. */
+  actorId = ownerId,
   now = Date.now(),
 ): boolean {
-  const row = db
-    .update(personalAccessTokens)
-    .set({ revokedAt: now })
-    .where(
-      and(
-        eq(personalAccessTokens.id, tokenId),
-        eq(personalAccessTokens.userId, ownerId),
-        isNull(personalAccessTokens.revokedAt),
-      ),
-    )
-    .returning({ id: personalAccessTokens.id })
-    .get();
-  return row !== undefined;
+  return db.transaction((tx) => {
+    const row = tx
+      .update(personalAccessTokens)
+      .set({ revokedAt: now })
+      .where(
+        and(
+          eq(personalAccessTokens.id, tokenId),
+          eq(personalAccessTokens.userId, ownerId),
+          isNull(personalAccessTokens.revokedAt),
+        ),
+      )
+      .returning()
+      .get();
+    if (row) auditToken(tx, actorId, "delete", row, null);
+    return row !== undefined;
+  });
 }
 
 /** Every live token of one user. On a password change, and by an administrator. */
 export function revokeAllTokens(
   db: LedgerDb,
   ownerId: number,
+  /** Who revoked them, for the audit log: the owner, or an administrator. */
+  actorId = ownerId,
   now = Date.now(),
 ): number {
-  return db
-    .update(personalAccessTokens)
-    .set({ revokedAt: now })
-    .where(
-      and(
-        eq(personalAccessTokens.userId, ownerId),
-        isNull(personalAccessTokens.revokedAt),
-      ),
-    )
-    .returning({ id: personalAccessTokens.id })
-    .all().length;
+  return db.transaction((tx) => {
+    const rows = tx
+      .update(personalAccessTokens)
+      .set({ revokedAt: now })
+      .where(
+        and(
+          eq(personalAccessTokens.userId, ownerId),
+          isNull(personalAccessTokens.revokedAt),
+        ),
+      )
+      .returning()
+      .all();
+    // One entry per token, so each can be found by its own name.
+    for (const row of rows) auditToken(tx, actorId, "delete", row, null);
+    return rows.length;
+  });
 }

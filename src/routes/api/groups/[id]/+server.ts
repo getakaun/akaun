@@ -5,6 +5,8 @@ import { db } from '$lib/server/db/client.js';
 import { groups, userGroups } from '$lib/server/db/schema.js';
 import { can } from '$lib/server/permissions.js';
 import {
+	auditGroup,
+	groupAuditSnapshot,
 	groupView,
 	keepsASuperuser,
 	LAST_SUPERUSER_MESSAGE,
@@ -48,7 +50,11 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 		return json({ error: LAST_SUPERUSER_MESSAGE }, { status: 400 });
 
 	if (Object.keys(patch).length > 0) {
-		db.update(groups).set(patch).where(eq(groups.id, groupId)).run();
+		db.transaction((tx) => {
+			const before = groupAuditSnapshot(tx, groupId);
+			tx.update(groups).set(patch).where(eq(groups.id, groupId)).run();
+			auditGroup(tx, locals.user!.id, groupId, before, groupAuditSnapshot(tx, groupId));
+		});
 	}
 
 	return json({ success: true });
@@ -68,6 +74,10 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
 		return json({ error: 'Cannot delete a group with members. Remove all members first.' }, { status: 400 });
 	}
 
-	db.delete(groups).where(eq(groups.id, groupId)).run();
+	db.transaction((tx) => {
+		const before = groupAuditSnapshot(tx, groupId);
+		tx.delete(groups).where(eq(groups.id, groupId)).run();
+		auditGroup(tx, locals.user!.id, groupId, before, null);
+	});
 	return json({ success: true });
 };

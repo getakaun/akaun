@@ -16,17 +16,32 @@ import { createLogger } from "$lib/server/logger.js";
 import { normaliseExtractedLines } from "./statement-parse.js";
 import { extractStatementLines } from "./statement-llm.js";
 import { reconciliationEvents } from "./events.js";
+import { runAsSystem } from "$lib/server/audit-context.js";
 
 const log = createLogger("reconciliation:statement-import");
 
-export async function processStatementImport(
+type StatementImportInput = {
+  statementId: number;
+  relativePath: string;
+  originalFilename: string;
+  userId: number;
+};
+
+/**
+ * Started with `void` after the upload responds, so it runs as the system: the
+ * extraction is the app's work, not the request's, and must not be recorded
+ * under whichever channel happened to upload the file.
+ */
+export function processStatementImport(
   db: ReconciliationDb,
-  input: {
-    statementId: number;
-    relativePath: string;
-    originalFilename: string;
-    userId: number;
-  },
+  input: StatementImportInput,
+): Promise<void> {
+  return runAsSystem(() => importStatement(db, input));
+}
+
+async function importStatement(
+  db: ReconciliationDb,
+  input: StatementImportInput,
 ): Promise<void> {
   try {
     log.info({ statementId: input.statementId }, "Statement import started");

@@ -33,7 +33,7 @@ beforeEach(() => {
   sqlite = new Database(":memory:");
   sqlite.exec(`
     PRAGMA foreign_keys = ON;
-    CREATE TABLE users (id INTEGER PRIMARY KEY);
+    CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, name TEXT);
     CREATE TABLE accounts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       role INTEGER NOT NULL,
@@ -60,8 +60,16 @@ beforeEach(() => {
     CREATE TABLE audit_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       record_type TEXT NOT NULL,
-      record_id INTEGER NOT NULL,
+      record_id TEXT NOT NULL,
+      record_label TEXT,
       user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actor_name TEXT,
+      via TEXT NOT NULL,
+      credential_id TEXT,
+      client_id TEXT,
+      credential_label TEXT,
+      request_id TEXT,
+      operation TEXT,
       action TEXT NOT NULL,
       changes TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))

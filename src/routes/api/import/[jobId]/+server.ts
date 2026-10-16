@@ -11,6 +11,7 @@ import { discardGroup, setGroupSourceAccount } from '$lib/server/services/import
 import { ImportState } from '$lib/enums.js';
 import type { RequestHandler } from './$types.js';
 import { can } from '$lib/server/permissions.js';
+import { auditJobDiscarded } from '$lib/server/import/audit.js';
 
 export const GET: RequestHandler = async ({ locals, params }) => {
 	if (!locals.user) return new Response('Unauthorized', { status: 401 });
@@ -71,7 +72,10 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
 	}
 
 	importEvents.emit('job-deleted', { userId: row.createdBy, jobId: params.jobId });
-	db.delete(importQueue).where(eq(importQueue.id, params.jobId)).run();
+	db.transaction((tx) => {
+		tx.delete(importQueue).where(eq(importQueue.id, params.jobId)).run();
+		auditJobDiscarded(tx, row, locals.user!.id);
+	});
 	// After the row is gone, so it no longer counts as using the file.
 	releaseIfUnreferenced(db, row.tempFilePath);
 

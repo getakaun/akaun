@@ -240,6 +240,26 @@ export const PERMISSION_CATALOG = {
       },
     },
   },
+  audit: {
+    label: "Audit log",
+    noun: "the audit log",
+    description:
+      "Every change anyone made, and whether it came through the app, a token or a connected app.",
+    children: {
+      read: {
+        label: "View",
+        description:
+          "See every change across the books and the administration, including who changed users, groups, tokens and settings.",
+        verb: "see",
+        // It shows administrative changes that the holder may not otherwise
+        // see, so it is chosen by name, kept out of default ceilings, and never
+        // held by a token or an app: no agent reads who did what.
+        explicit: true,
+        sensitive: true,
+        delegable: false,
+      },
+    },
+  },
   users: {
     label: "Users & Groups",
     noun: "users and groups",

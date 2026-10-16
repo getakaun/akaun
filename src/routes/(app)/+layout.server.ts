@@ -39,6 +39,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
     // shows from a permission, so a group can be given exactly that.
     canManageUsers: can(locals, "users.manage"),
     canSeeSettings: can(locals, "settings.read"),
+    canReadAudit: can(locals, "audit.read"),
     navItems,
   };
 };

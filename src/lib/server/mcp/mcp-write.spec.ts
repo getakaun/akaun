@@ -429,11 +429,23 @@ for (const era of ["legacy", "modern"] as const) {
         const audit = db
           .select()
           .from(auditLog)
-          .where(eq(auditLog.recordId, created.record.id))
+          .where(eq(auditLog.recordId, String(created.record.id)))
           .all();
-        expect(
-          audit.some((row) => row.userId === 1 && row.action === "create"),
-        ).toBe(true);
+        // Credited to the user, and marked as the app's doing: one request id
+        // per tool call, so the log groups everything the call changed.
+        const made = audit.find(
+          (row) =>
+            row.recordType === "record" &&
+            row.userId === 1 &&
+            row.action === "create",
+        );
+        expect(made).toMatchObject({
+          via: "oauth",
+          credentialId: "grant",
+          clientId: "client",
+          operation: "mcp:create_record",
+        });
+        expect(made?.requestId).toBeTruthy();
       });
 
       it("saves nothing on a dry run", async () => {
@@ -1102,7 +1114,7 @@ for (const era of ["legacy", "modern"] as const) {
         const audit = db
           .select()
           .from(auditLog)
-          .where(eq(auditLog.recordId, confirmed.recordId))
+          .where(eq(auditLog.recordId, String(confirmed.recordId)))
           .all()
           .find(
             (row) => row.recordType === "record" && row.action === "create",

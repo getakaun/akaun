@@ -483,7 +483,7 @@ describe("confirming every item", () => {
       .all()
       .filter((row) => row.action === "create" && row.recordType === "record");
     expect(created.map((row) => row.recordId).sort()).toEqual(
-      made.map((r) => r.id).sort(),
+      made.map((r) => String(r.id)).sort(),
     );
   });
 

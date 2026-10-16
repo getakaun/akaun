@@ -163,7 +163,12 @@
 <div class="ae">
 	{#each roots as root (root)}
 		{@const a = area(root)}
-		<div class="ae-area" class:is-none={a.level === 'none' && !a.custom}>
+		<!-- An area of explicit abilities only (the audit log) has no levels:
+		     it is "none" by level even while its one switch is on. -->
+		<div
+			class="ae-area"
+			class:is-none={a.level === 'none' && !a.custom && !a.explicit.some(held)}
+		>
 			<div class="ae-head">
 				<div class="ae-text">
 					<div class="ae-name">{a.label}</div>
@@ -171,7 +176,7 @@
 						{a.anything ? a.sentence : unavailableNote}
 					</div>
 				</div>
-				{#if a.anything}
+				{#if a.anything && a.levels.length > 1}
 					<div class="seg sm ae-seg" role="radiogroup" aria-label={`${a.label} access`}>
 						{#each a.levels as level (level)}
 							{@const blocked = levelBlocked(root, level)}

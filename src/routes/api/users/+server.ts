@@ -5,7 +5,12 @@ import { eq } from 'drizzle-orm';
 import { db } from '$lib/server/db/client.js';
 import { users, userGroups } from '$lib/server/db/schema.js';
 import { can } from '$lib/server/permissions.js';
-import { memberships, readUserGrants } from '$lib/server/admin/access.js';
+import {
+	auditUser,
+	memberships,
+	readUserGrants,
+	userAuditSnapshot
+} from '$lib/server/admin/access.js';
 import { listTokens } from '$lib/server/tokens/manage.js';
 
 export const GET: RequestHandler = async ({ locals }) => {
@@ -45,17 +50,21 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	if (existing) return json({ error: 'Email already in use' }, { status: 409 });
 
 	const passwordHash = await hash(password);
-	const [newUser] = db
-		.insert(users)
-		.values({ email, username, name: name || null, passwordHash, role: 'user' })
-		.returning({ id: users.id })
-		.all();
+	const newUser = db.transaction((tx) => {
+		const [created] = tx
+			.insert(users)
+			.values({ email, username, name: name || null, passwordHash, role: 'user' })
+			.returning({ id: users.id })
+			.all();
 
-	if (groupIds.length > 0) {
-		db.insert(userGroups)
-			.values(groupIds.map((gid: number) => ({ userId: newUser.id, groupId: gid })))
-			.run();
-	}
+		if (groupIds.length > 0) {
+			tx.insert(userGroups)
+				.values(groupIds.map((gid: number) => ({ userId: created.id, groupId: gid })))
+				.run();
+		}
+		auditUser(tx, locals.user!.id, created.id, null, userAuditSnapshot(tx, created.id));
+		return created;
+	});
 
 	return json({ id: newUser.id }, { status: 201 });
 };

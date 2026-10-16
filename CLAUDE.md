@@ -253,6 +253,52 @@ invoice-issue gaps existed.
 - **Deliberate exception:** import confirm needs only `import.confirm`, not `records.create`
   (006 FR-045). Do not "fix" it.
 
+### Audit Log
+
+`audit_log` is the one audit table. Each record's Activity section reads it for that
+record, and `/audit` reads all of it. `recordAudit` (`src/lib/server/audit.ts`) is the only
+writer, and the log is append-only: nothing deletes an entry.
+
+- **Who made a change, and through what channel, are separate.**
+  - The caller passes `userId`, the person the change is credited to. An import confirm
+    credits the confirmer.
+  - The channel comes from the **audit scope** (`audit-context.ts`, an AsyncLocalStorage). No
+    caller passes it. The channel is `session`, `pat`, `oauth` (a connected app) or `system`.
+  - Scopes are opened in two places. `request-hook.ts` opens one for every authenticated
+    request, and `registerWrite` opens one per MCP tool call, so each call gets its own
+    `request_id`.
+  - Work that runs with no scope is recorded as `system`.
+  - **Detached work** (started with `void` after the response) must be wrapped in
+    `runAsSystem`, or it keeps the scope of the request that started it. See
+    `processStatementImport`.
+- **Copy names in when writing.** `actor_name`, `credential_label` (the token or app name) and
+  `record_label` are copied in at write time, so the log still reads after a rename or a
+  delete. Users are hard-deleted, and OAuth clients are cleaned up.
+- **Secrets are redacted in `recordAudit`, whatever the caller passes.**
+  - Redacted names: `password`, `passwordHash`, `tokenHash`, `secretHash`, `apiKey`,
+    `oauthCredentials`, `bearerToken`, `token`.
+  - A name matches by its last segment, and nested objects are searched.
+  - To log "password changed", pass a `password` change; it is stored redacted.
+- **Every write is audited, administration included.** Users and groups snapshot themselves
+  inside the same transaction as the write (`userAuditSnapshot`/`auditUser` in
+  `admin/access.ts`).
+- **Log user actions only.**
+  - Settings and providers are audited in the Settings actions (`settings-audit.ts`), never
+    inside `setSetting`/`updateProvider`. Seeding and a ChatGPT token refresh also write
+    there, and are no one's change.
+  - Expiry cleanup, `lastUsedAt` and logins are not logged.
+- **Show coded values by name.**
+  - The log stores codes such as quotation `status` 2, and names them only when they are
+    shown.
+  - `ENUM_FIELDS` in `components/audit/audit-format.ts` maps each audited code field, per
+    record type, to a `*DisplayLabels` map in `$lib/enums.ts`. A code column you start
+    auditing needs a line there.
+  - Every enum needs a display map. `src/lib/enums.spec.ts` fails if a code has no name.
+- **Who can read what.** The administrative kinds (`user`, `group`, `access_token`,
+  `oauth_grant`, `settings`, `llm_provider`, `import_job`) and the `/audit` page need
+  `audit.read`. That leaf is explicit, sensitive and never delegable, so no token or agent
+  reads the log. MCP `get_audit_history` offers only the kinds a token could read.
+
 ### Settings Page Patterns
 
 The Settings page (`src/routes/(app)/settings/+page.svelte`) has two patterns. Use them

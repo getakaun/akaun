@@ -27,7 +27,7 @@ export const PUT: RequestHandler = async ({ locals, params, request }) => {
     return new Response("Not Found", { status: 404 });
   const body = await request.json().catch(() => null);
   return toResponse(
-    saveUserGrants(db, userId, body?.grants),
+    saveUserGrants(db, userId, body?.grants, locals.user!.id),
     200,
     (grants) => ({ grants }),
   );

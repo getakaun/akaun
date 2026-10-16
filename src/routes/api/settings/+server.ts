@@ -2,6 +2,7 @@ import type { RequestHandler } from '@sveltejs/kit';
 import { db } from '$lib/server/db/client.js';
 import { getSetting, setSetting, SETTING_KEYS, hasAnyDocuments } from '$lib/server/settings.js';
 import { can } from '$lib/server/permissions.js';
+import { auditSettings, readSettings } from '$lib/server/settings-audit.js';
 
 /**
  * Settings over HTTP.
@@ -85,9 +86,14 @@ export const PATCH: RequestHandler = async ({ locals, request }) => {
 		);
 	}
 
+	const before = readSettings(
+		db,
+		entries.map(([key]) => key)
+	);
 	for (const [key, value] of entries) {
 		setSetting(db, key, String(value));
 	}
+	auditSettings(db, locals.user!.id, before, readSettings(db, Object.keys(before)));
 
 	return Response.json(readable());
 };

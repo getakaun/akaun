@@ -254,7 +254,7 @@ describe("turning profiles on and off from the list", () => {
     const audit = profileAudit();
     expect(audit).toHaveLength(before + 1);
     expect(audit.at(-1)).toEqual(
-      expect.objectContaining({ recordId: on, action: "update" }),
+      expect.objectContaining({ recordId: String(on), action: "update" }),
     );
   });
 

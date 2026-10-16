@@ -814,15 +814,35 @@ export const auditLog = sqliteTable(
   "audit_log",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    // 'expense' | 'income' | 'claim' | 'contact' | 'quotation' | 'invoice'
+    // A RecordType from src/lib/server/audit.ts.
     recordType: text("record_type").notNull(),
-    recordId: integer("record_id").notNull(),
+    // Text, because some audited things have text ids (an OAuth grant, an LLM
+    // provider, an import job) or none at all (a settings section).
+    recordId: text("record_id").notNull(),
+    // What the record was called when this was written, so a deleted record
+    // still reads as something.
+    recordLabel: text("record_label"),
     userId: integer("user_id").references(() => users.id, {
       onDelete: "set null",
     }),
+    // The acting user's name when this was written — users are hard-deleted.
+    actorName: text("actor_name"),
+    // How the change arrived: 'session' | 'pat' | 'oauth' | 'system'.
+    via: text("via").notNull(),
+    // The personal access token id or OAuth grant id behind a 'pat'/'oauth' write.
+    credentialId: text("credential_id"),
+    // The OAuth client id behind an 'oauth' write.
+    clientId: text("client_id"),
+    // The token's name or the app's name when this was written.
+    credentialLabel: text("credential_label"),
+    // Every change made by one request (one MCP tool call) shares this.
+    requestId: text("request_id"),
+    // 'POST /api/records' or 'mcp:create_record'.
+    operation: text("operation"),
     // 'create' | 'update' | 'delete'
     action: text("action").notNull(),
-    // JSON: FieldChange[] — [{ field, before, after }]. Null for create/delete.
+    // JSON: FieldChange[] — [{ field, before, after }]. A delete carries the
+    // whole row as `before`.
     changes: text("changes"),
     createdAt: text("created_at")
       .notNull()
@@ -830,6 +850,10 @@ export const auditLog = sqliteTable(
   },
   (t) => [
     index("audit_log_record_idx").on(t.recordType, t.recordId, t.createdAt),
+    index("audit_log_user_idx").on(t.userId, t.id),
+    index("audit_log_via_idx").on(t.via, t.id),
+    index("audit_log_client_idx").on(t.clientId, t.id),
+    index("audit_log_request_idx").on(t.requestId),
   ],
 );
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { PROVIDER_LABELS } from '$lib/llm-provider-labels.js';
 	import { enhance } from '$app/forms';
 	import { beforeNavigate, goto, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
@@ -961,13 +962,6 @@
 			sfFetching = false;
 		}
 	}
-
-	const PROVIDER_LABELS: Record<string, string> = {
-		openrouter: 'OpenRouter',
-		google_ai_studio: 'Google AI Studio',
-		groq: 'Groq',
-		chatgpt: 'ChatGPT plan'
-	};
 
 	const PROVIDER_DEFAULT_NAMES: Record<string, string> = {
 		openrouter: 'OpenRouter',

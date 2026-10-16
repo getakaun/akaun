@@ -5,7 +5,11 @@
     AccountDefaultView,
     AccountView,
   } from "$lib/components/accounts/account-types.js";
-  import { AccountSubType, DefaultAccountPurpose } from "$lib/enums.js";
+  import {
+    AccountSubType,
+    DefaultAccountPurpose,
+    DefaultAccountPurposeDisplayLabels,
+  } from "$lib/enums.js";
 
   let {
     defaults,
@@ -17,35 +21,23 @@
     disabled?: boolean;
   } = $props();
 
-  const labels: Record<number, { title: string; help: string }> = {
-    1: {
-      title: "Accounts receivable",
-      help: "Used when an invoice is sent or a customer pays.",
-    },
-    2: {
-      title: "Accounts payable",
-      help: "Used when somebody else pays a business expense.",
-    },
-    3: {
-      title: "Opening balances",
-      help: "Balances the amounts present when these books begin.",
-    },
-    4: {
-      title: "Sales revenue",
-      help: "Used when an invoice does not choose another revenue account.",
-    },
-    5: {
-      title: "Uncategorised expense",
-      help: "Used when an imported expense has no matching expense account.",
-    },
-    6: {
-      title: "Default transaction account",
-      help: "The account new income and expenses default to.",
-    },
-    7: {
-      title: "Uncategorised income",
-      help: "Used when an imported income document has no matching revenue account.",
-    },
+  // The names come from `DefaultAccountPurposeDisplayLabels`; only the help
+  // line, which explains this screen's choice, lives here.
+  const help: Record<number, string> = {
+    [DefaultAccountPurpose.Receivable]:
+      "Used when an invoice is sent or a customer pays.",
+    [DefaultAccountPurpose.Payable]:
+      "Used when somebody else pays a business expense.",
+    [DefaultAccountPurpose.OpeningBalances]:
+      "Balances the amounts present when these books begin.",
+    [DefaultAccountPurpose.SalesRevenue]:
+      "Used when an invoice does not choose another revenue account.",
+    [DefaultAccountPurpose.UncategorisedExpense]:
+      "Used when an imported expense has no matching expense account.",
+    [DefaultAccountPurpose.EverydayTransaction]:
+      "The account new income and expenses default to.",
+    [DefaultAccountPurpose.UncategorisedIncome]:
+      "Used when an imported income document has no matching revenue account.",
   };
   // svelte-ignore state_referenced_locally
   let selected = $state<Record<number, number>>(
@@ -118,9 +110,9 @@
   <div class="mt-5 grid gap-4 md:grid-cols-2">
     {#each defaults as item (item.purpose)}
       <label class="grid gap-1.5 text-sm">
-        <span class="font-medium">{labels[item.purpose].title}</span>
+        <span class="font-medium">{DefaultAccountPurposeDisplayLabels[item.purpose]}</span>
         <span class="text-xs text-muted-foreground"
-          >{labels[item.purpose].help}</span
+          >{help[item.purpose]}</span
         >
         <Select.Root
           type="single"

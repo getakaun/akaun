@@ -151,7 +151,7 @@ describe("account service", () => {
       auditWasVisible = db
         .select({ action: auditLog.action })
         .from(auditLog)
-        .where(eq(auditLog.recordId, id))
+        .where(eq(auditLog.recordId, String(id)))
         .all()
         .some((row: { action: string }) => row.action === "delete");
     };

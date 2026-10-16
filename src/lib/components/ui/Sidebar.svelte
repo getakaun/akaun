@@ -1,5 +1,17 @@
 <script lang="ts">
-	import { Settings, Sun, Moon, LogOut, ChevronLeft, ChevronRight, Users, User, MoreHorizontal } from '@lucide/svelte';
+	import { resolve } from '$app/paths';
+	import {
+		Settings,
+		Sun,
+		Moon,
+		LogOut,
+		ChevronLeft,
+		ChevronRight,
+		Users,
+		User,
+		MoreHorizontal,
+		History
+	} from '@lucide/svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { appState } from '$lib/state/app.svelte.js';
 	import { mode, setMode } from 'mode-watcher';
@@ -12,6 +24,7 @@
 		unpaidCount = 0,
 		canManageUsers = false,
 		canSeeSettings = false,
+		canReadAudit = false,
 		navItems = []
 	}: {
 		user: { username: string; name?: string | null; email?: string } | null;
@@ -19,6 +32,7 @@
 		unpaidCount?: number;
 		canManageUsers?: boolean;
 		canSeeSettings?: boolean;
+		canReadAudit?: boolean;
 		navItems?: SerializableNavItem[];
 	} = $props();
 
@@ -112,21 +126,36 @@
 
 	<div class="sb-spacer"></div>
 
-	{#if canManageUsers}
+	{#if canManageUsers || canReadAudit}
 		<div class="sb-section">
 			{#if !collapsed}<div class="sb-section-label">Administration</div>{/if}
 			<nav class="sb-nav">
-				<a
-					href="/users-groups"
-					class="sb-item"
-					class:active={isActive('/users-groups')}
-					title={collapsed ? 'Users & Groups' : undefined}
-				>
-					<Users size={18} />
-					{#if !collapsed}
-						<span class="sb-item-label">Users &amp; Groups</span>
-					{/if}
-				</a>
+				{#if canManageUsers}
+					<a
+						href="/users-groups"
+						class="sb-item"
+						class:active={isActive('/users-groups')}
+						title={collapsed ? 'Users & Groups' : undefined}
+					>
+						<Users size={18} />
+						{#if !collapsed}
+							<span class="sb-item-label">Users &amp; Groups</span>
+						{/if}
+					</a>
+				{/if}
+				{#if canReadAudit}
+					<a
+						href={resolve('/(app)/audit')}
+						class="sb-item"
+						class:active={isActive('/audit')}
+						title={collapsed ? 'Audit log' : undefined}
+					>
+						<History size={18} />
+						{#if !collapsed}
+							<span class="sb-item-label">Audit log</span>
+						{/if}
+					</a>
+				{/if}
 			</nav>
 		</div>
 	{/if}

@@ -228,7 +228,11 @@ describe("OAuth authorization and persistence", () => {
       const journal = JSON.parse(
         readFileSync("drizzle/meta/_journal.json", "utf8"),
       ) as { entries: { tag: string }[] };
-      journal.entries = journal.entries.slice(0, -1);
+      // Everything before 0033, the migration that revokes old API tokens.
+      journal.entries = journal.entries.slice(
+        0,
+        journal.entries.findIndex((entry) => entry.tag.startsWith("0033_")),
+      );
       mkdirSync(join(folder, "meta"));
       writeFileSync(
         join(folder, "meta", "_journal.json"),

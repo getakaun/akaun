@@ -313,3 +313,44 @@ describe("confirmImportRow", () => {
     expect(seen).toEqual([]);
   });
 });
+
+describe("contra revenue confirmation", () => {
+  it.each([true, false])(
+    "posts the exact balanced pair and preserves provenance (explicit sides: %s)",
+    (explicitSides) => {
+      const source = createAccount(db, userId, {
+        name: "Sales",
+        type: AccountType.Revenue,
+      });
+      const target = createAccount(db, userId, {
+        name: "Discounts",
+        type: AccountType.Revenue,
+        subType: AccountSubType.ContraOperatingRevenue,
+      });
+      if (!source.ok || !target.ok) throw new Error("Account setup failed");
+      const result = confirm({
+        documentType: DocumentType.Income,
+        amount: 100,
+        sides: explicitSides
+          ? { fromAccountId: source.value.id, toAccountId: target.value.id }
+          : null,
+        categoryAccountId: source.value.id,
+        accountId: target.value.id,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.reason);
+      expect(result.value.record.kind).toBe(2);
+      expect(
+        result.value.record.movements.map((m) => [m.accountId, m.amountMinor]),
+      ).toEqual([
+        [target.value.id, 10000],
+        [source.value.id, -10000],
+      ]);
+      expect(job().accountId).toBe(target.value.id);
+      expect(job().resultType).toBe(DocumentType.Income);
+      expect(count.attachments()).toBe(1);
+      expect(confirm().ok).toBe(false);
+      expect(count.records()).toBe(1);
+    },
+  );
+});

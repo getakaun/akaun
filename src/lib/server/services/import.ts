@@ -1,3 +1,4 @@
+import { isContraRevenueAccount } from "$lib/account-classification.js";
 import { and, eq, isNull } from "drizzle-orm";
 import {
   DefaultAccountPurpose,
@@ -706,6 +707,18 @@ function resolveSides(
     const selectedAccountId =
       fields.categoryAccountId ??
       matchCategoryAccount(choices, fields.category);
+    const selectedAccount =
+      selectedAccountId == null ? null : getAccount(db, selectedAccountId);
+    if (
+      isIncome &&
+      selectedAccount &&
+      isContraRevenueAccount(selectedAccount)
+    ) {
+      return {
+        ok: false,
+        reason: "Contra revenue cannot be used as an import source.",
+      };
+    }
     const selectedCategory = categoryAccountForImport(
       kind,
       choices,
@@ -729,6 +742,24 @@ function resolveSides(
         ? "Say which account received this before importing it."
         : "Say which account paid for this before importing it.",
     };
+  }
+
+  if (!fields.sides && isIncome) {
+    const from = getAccount(db, categoryAccountId);
+    const to = getAccount(db, accountId);
+    if (!from || !to)
+      return { ok: false, reason: "Choose accounts that are still available." };
+    const receivable = requireAccountDefault(
+      db,
+      DefaultAccountPurpose.Receivable,
+    );
+    const pair = validateImportAccountPair(
+      from,
+      to,
+      payableAccountId,
+      receivable.ok ? receivable.value : null,
+    );
+    if (!pair.ok) return pair;
   }
 
   return {

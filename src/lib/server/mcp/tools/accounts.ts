@@ -59,7 +59,7 @@ export function registerAccounts(server: McpServer, context: McpContext) {
     server,
     context,
     "list_accounts",
-    "Discover accounts and categories (categories are accounts). Balances are current signed ledger amounts; displayBalanceMinor applies the app's normal-balance sign. Archived accounts are optionally included. The chart is small and is read as one set before output paging.",
+    "Discover accounts and categories (categories are accounts). Balances are current signed ledger amounts; displayBalanceMinor applies the account type's reporting sign, so contra revenue debit balances display as deductions. Archived accounts are optionally included. The chart is small and is read as one set before output paging.",
     {
       ...pageShape,
       type: z

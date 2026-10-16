@@ -313,8 +313,8 @@
 					</Select.Content>
 				</Select.Root>
 				<p class="field-hint">
-					The type decides which report this appears on and which direction its balance
-					normally runs.
+					The type decides which report this appears on. Contra revenue sub-types
+					normally have a debit balance.
 				</p>
 			</div>
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { isContraRevenueAccount } from '$lib/account-classification.js';
 	import { onMount, untrack } from 'svelte';
 	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
@@ -816,7 +817,8 @@
 		if (kinds.expense) groups.push({ label: 'Payment account', accounts: data.expensePaymentAccounts });
 		if (kinds.income) {
 			const shown = new Set(groups.flatMap((g) => g.accounts.map((a) => a.id)));
-			groups.push({ label: 'Deposit account', accounts: data.accounts.filter((a) => !shown.has(a.id)) });
+			groups.push({ label: 'Deposit account', accounts: data.accounts.filter((a) => !shown.has(a.id) && !isContraRevenueAccount(a)) });
+			groups.push({ label: 'Contra revenue', accounts: data.accounts.filter(isContraRevenueAccount) });
 		}
 		if (kinds.transfer) {
 			const shown = new Set(groups.flatMap((g) => g.accounts.map((a) => a.id)));

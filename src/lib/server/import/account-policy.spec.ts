@@ -115,3 +115,50 @@ describe("auto-import account policy", () => {
     ).toBe(false);
   });
 });
+
+// The picker and confirmation API must offer the same account pairs.
+describe("contra revenue import eligibility", () => {
+  it("agrees with client choices across sources, targets and lifecycle states", async () => {
+    const { targetAccountsForImportSource, groupImportSourceAccounts } =
+      await import("$lib/import-account-groups.js");
+    const choices = [
+      account(1, AccountType.Revenue, AccountSubType.OperatingRevenue),
+      account(2, AccountType.Revenue, AccountSubType.OtherRevenue),
+      account(3, AccountType.Revenue, null),
+      account(4, AccountType.Revenue, AccountSubType.ContraOperatingRevenue),
+      account(5, AccountType.Revenue, AccountSubType.ContraOtherRevenue),
+      account(6, AccountType.Asset, AccountSubType.Bank),
+      account(7, AccountType.Asset, AccountSubType.Receivable),
+      account(8, AccountType.Expense, AccountSubType.OperatingExpense),
+      {
+        ...account(9, AccountType.Revenue, AccountSubType.ContraOtherRevenue),
+        active: false,
+      },
+      account(
+        10,
+        AccountType.Revenue,
+        AccountSubType.ContraOtherRevenue,
+        false,
+      ),
+    ];
+    const sources = groupImportSourceAccounts(choices, null);
+    expect(sources.income.map((a) => a.id)).toEqual([1, 2, 3]);
+    expect(
+      targetAccountsForImportSource(choices, 1, null, 7).map((a) => a.id),
+    ).toEqual([4, 5, 6, 7]);
+    for (const source of choices) {
+      const targets = targetAccountsForImportSource(
+        choices,
+        source.id,
+        null,
+        7,
+      );
+      for (const target of choices) {
+        expect(
+          validateImportAccountPair(source, target, null, 7).ok,
+          `${source.id} → ${target.id}`,
+        ).toBe(targets.includes(target));
+      }
+    }
+  });
+});

@@ -1041,3 +1041,91 @@ describe("a receipt read the standard way (US11 AS8)", () => {
     expect(job(row.id).state).toBe(ImportState.PendingReview);
   });
 });
+
+describe("contra revenue group imports", () => {
+  it("persists reviewed targets and confirms all from stored fields with balanced movements", async () => {
+    const contra = account(
+      "Sales discounts",
+      AccountType.Revenue,
+      AccountSubType.ContraOperatingRevenue,
+    );
+    const row = await read(
+      saveProfile(walletProfile()),
+      answer({
+        orders: [
+          { description: "Order A", amount: 80 },
+          { description: "Order B", amount: 20 },
+        ],
+        withdrawals: [],
+      }),
+    );
+    const bulk = setGroupItemsAccount(db, row.id, "all", contra, options());
+    expect(bulk.ok && bulk.value.every((outcome) => outcome.ok)).toBe(true);
+    expect(itemsOf(row.id).map((item) => item.accountId)).toEqual([
+      contra,
+      contra,
+    ]);
+    const run = await confirmGroupItems(db, row.id, "all", options());
+    expect(run.ok).toBe(true);
+    expect(
+      db
+        .select()
+        .from(ledgerRecords)
+        .all()
+        .map((record) => record.kind),
+    ).toEqual([LedgerRecordKind.Income, LedgerRecordKind.Income]);
+    const movements = db.select().from(ledgerMovements).all();
+    expect(
+      movements.filter((m) => m.accountId === contra).map((m) => m.amountMinor),
+    ).toEqual([8000, 2000]);
+    expect(
+      movements
+        .filter((m) => m.accountId === ids.sales)
+        .map((m) => m.amountMinor),
+    ).toEqual([-8000, -2000]);
+    expect(db.select().from(recordAttachments).all()).toHaveLength(2);
+    expect(
+      itemsOf(row.id).every(
+        (item) =>
+          item.state === ImportState.Imported &&
+          item.resultType === DocumentType.Income,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects ordinary revenue targets and excludes contra accounts from AI categories", async () => {
+    const contra = account(
+      "Other deductions",
+      AccountType.Revenue,
+      AccountSubType.ContraOtherRevenue,
+    );
+    const { categoryChoices } = await import("./category-accounts.js");
+    expect(
+      categoryChoices(db, "income").some((choice) => choice.id === contra),
+    ).toBe(false);
+    const row = await read(
+      saveProfile(walletProfile()),
+      answer({
+        orders: [
+          { description: "Order", amount: 80 },
+          { description: "Second order", amount: 20 },
+        ],
+        withdrawals: [],
+      }),
+    );
+    const bulk = setGroupItemsAccount(db, row.id, "all", ids.sales, options());
+    expect(bulk.ok && bulk.value.every((outcome) => !outcome.ok)).toBe(true);
+    const item = itemsOf(row.id)[0];
+    const edited = updateGroupItem(
+      db,
+      row.id,
+      item.id,
+      { fromAccountId: ids.sales, toAccountId: contra },
+      options(),
+    );
+    expect(edited.ok).toBe(true);
+    expect(itemsOf(row.id)[0].accountId).toBe(contra);
+    const confirmed = await confirmGroupItem(db, row.id, item.id, options());
+    expect(confirmed.ok).toBe(true);
+  });
+});

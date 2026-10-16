@@ -1,3 +1,4 @@
+import { isContraRevenueAccount } from "$lib/account-classification.js";
 import {
   AccountRole,
   AccountSubType,
@@ -56,8 +57,18 @@ const TYPE_BY_LEGACY_ROLE: Record<AccountRoleCode, AccountTypeCode> = {
   [AccountRole.ExpenseCategory]: AccountType.Expense,
 };
 
+/** Type default only; use normalBalanceForAccount for an individual account. */
 export function normalBalanceFor(type: AccountTypeCode): NormalBalance {
   return TYPE_RULES[type].normalBalance;
+}
+
+/** Expected balance, independent of the signed contribution to financial reports. */
+export function normalBalanceForAccount(
+  account: TypeAndSubType,
+): NormalBalance {
+  return isContraRevenueAccount(account)
+    ? "debit"
+    : normalBalanceFor(account.type);
 }
 
 export function financialStatementFor(
@@ -217,6 +228,7 @@ export const OTHER_EXPENSE_SUBTYPES: AccountSubTypeCode[] = [
 ];
 export const OTHER_REVENUE_SUBTYPES: AccountSubTypeCode[] = [
   RevenueSubType.OtherRevenue,
+  RevenueSubType.ContraOtherRevenue,
 ];
 
 /**
@@ -277,5 +289,8 @@ export type RevenueBucket = "operating" | "other";
 export function revenueBucket(
   subType: AccountSubTypeCode | null,
 ): RevenueBucket {
-  return subType === RevenueSubType.OtherRevenue ? "other" : "operating"; // OperatingRevenue, or null
+  return subType === RevenueSubType.OtherRevenue ||
+    subType === RevenueSubType.ContraOtherRevenue
+    ? "other"
+    : "operating"; // Operating and contra operating revenue, or null
 }

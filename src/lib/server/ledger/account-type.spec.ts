@@ -20,6 +20,7 @@ import {
   isNeedsReview,
   liabilityBucket,
   normalBalanceFor,
+  normalBalanceForAccount,
   revenueBucket,
 } from "./account-type.js";
 
@@ -169,5 +170,31 @@ describe("statement buckets", () => {
     expect(revenueBucket(RevenueSubType.OtherRevenue)).toBe("other");
     expect(revenueBucket(RevenueSubType.OperatingRevenue)).toBe("operating");
     expect(revenueBucket(null)).toBe("operating");
+  });
+});
+
+describe("contra revenue classification", () => {
+  it("derives debit normal balance independently of the reporting bucket", () => {
+    for (const subType of [
+      RevenueSubType.ContraOperatingRevenue,
+      RevenueSubType.ContraOtherRevenue,
+    ]) {
+      expect(
+        normalBalanceForAccount({ type: AccountType.Revenue, subType }),
+      ).toBe("debit");
+    }
+    expect(
+      normalBalanceForAccount({ type: AccountType.Revenue, subType: null }),
+    ).toBe("credit");
+    expect(
+      normalBalanceForAccount({
+        type: AccountType.Asset,
+        subType: AccountSubType.Bank,
+      }),
+    ).toBe("debit");
+    expect(revenueBucket(RevenueSubType.ContraOperatingRevenue)).toBe(
+      "operating",
+    );
+    expect(revenueBucket(RevenueSubType.ContraOtherRevenue)).toBe("other");
   });
 });

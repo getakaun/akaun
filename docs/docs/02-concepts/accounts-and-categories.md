@@ -60,7 +60,7 @@ The sub-type puts an account into a line of a report. Each type except **Equity*
 |---|---|
 | **Asset** | **Cash**, **Bank**, **Wallet**, **Prepaid/debit card**, **Accounts receivable**, **Inventory**, **Prepayments and deposits**, **Clearing**, **Tax receivable**, **Other current asset**, **Fixed asset**, **Intangible asset**, **Other non-current asset** |
 | **Liability** | **Accounts payable**, **Credit card**, **Accrued liabilities**, **Short-term loan**, **Tax payable**, **Other current liability**, **Long-term loan**, **Other non-current liability** |
-| **Revenue** | **Operating revenue**, **Other revenue** |
+| **Revenue** | **Operating revenue**, **Other revenue**, **Contra operating revenue**, **Contra other revenue** |
 | **Expense** | **Cost of goods sold**, **Operating expense**, **Other expense** |
 
 The sub-type is important for the reports:
@@ -75,6 +75,16 @@ The sub-type is important for the reports:
 An Asset or Liability account must have a sub-type. If an account has no sub-type, it shows
 **Unclassified**. Give it a sub-type on its account page. A Revenue or Expense account can have no
 sub-type. The reports then count it as operating.
+
+## Contra revenue
+
+Sales discounts, returns and allowances can use a **Revenue** account with the sub-type
+**Contra operating revenue** or **Contra other revenue**. These accounts normally have a debit
+balance. Profit & Loss shows their debit balances as deductions from revenue. Contra operating
+revenue reduces operating revenue; Contra other revenue reduces other revenue.
+
+Existing accounts keep their sub-types. To identify an existing contra account, edit its sub-type
+on the account page. Contra accounts cannot be the default Sales revenue or Uncategorised income.
 
 ## Account code
 

@@ -1,5 +1,8 @@
 import { AccountType, type AccountTypeCode } from "$lib/enums.js";
-import { isImportPurchaseTarget } from "./account-policy.js";
+import {
+  isImportIncomeSource,
+  isImportPurchaseTarget,
+} from "./account-policy.js";
 import { listAccounts } from "../queries/accounts.js";
 import type { LedgerDb } from "../ledger/types.js";
 
@@ -40,8 +43,9 @@ export function categoryChoices(
         // Purchasable assets are on this list for the same reason fixed assets
         // were historically offered beside expense categories: a purchase
         // document may capitalise value instead of putting it on the P&L.
-        (a.type === CATEGORY_TYPES[kind] ||
-          (kind === "expense" && isImportPurchaseTarget(a))),
+        (kind === "income"
+          ? isImportIncomeSource(a)
+          : a.type === CATEGORY_TYPES[kind] || isImportPurchaseTarget(a)),
     )
     .map((a) => ({
       id: a.id,

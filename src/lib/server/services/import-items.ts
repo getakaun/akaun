@@ -13,6 +13,7 @@
  * carrying its counts.
  */
 
+import { isContraRevenueAccount } from "$lib/account-classification.js";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import {
   DefaultAccountPurpose,
@@ -596,7 +597,9 @@ export function setGroupItemsCategory(
 }
 
 type AccountFit = (
-  item: Pick<ImportItemRow, "documentType" | "counterAccountId">,
+  item: Pick<ImportItemRow, "documentType" | "counterAccountId"> & {
+    categoryAccountId?: number | null;
+  },
 ) => boolean;
 
 /**
@@ -625,6 +628,21 @@ function accountFits(db: LedgerDb, account: AccountView): AccountFit {
     const kind = kindOf(item);
     if (kind === "transfer") {
       return forTransfer && item.counterAccountId !== account.id;
+    }
+    if (kind === "income" && isContraRevenueAccount(account)) {
+      const source =
+        item.categoryAccountId == null
+          ? null
+          : getAccount(db, item.categoryAccountId);
+      return (
+        source != null &&
+        validateImportAccountPair(
+          source,
+          account,
+          payable.ok ? payable.value : null,
+          receivable.ok ? receivable.value : null,
+        ).ok
+      );
     }
     return kind === "income" ? forIncome : forExpense;
   };
@@ -974,7 +992,12 @@ function itemChanges(
   const finalDoc = out.documentType ?? item.documentType;
   const flipped = isFlip(item, finalDoc);
   // An expense or an income here: a transfer returned above.
-  const entryKind = { documentType: finalDoc, counterAccountId: null };
+  const entryKind = {
+    documentType: finalDoc,
+    counterAccountId: null,
+    categoryAccountId:
+      out.categoryAccountId ?? (flipped ? null : item.categoryAccountId),
+  };
   if (overrides.accountId != null) {
     const account = getAccount(db, overrides.accountId);
     if (!account) {

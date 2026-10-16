@@ -379,6 +379,8 @@ export const ExpenseSubType = {
 export const RevenueSubType = {
   OperatingRevenue: 18,
   OtherRevenue: 19,
+  ContraOperatingRevenue: 27,
+  ContraOtherRevenue: 28,
 } as const;
 
 const FixedAccountSubType = {
@@ -498,6 +500,8 @@ export const AccountSubTypeLabels: Record<number, string> = {
   [AccountSubType.OtherExpense]: "other_expense",
   [AccountSubType.OperatingRevenue]: "operating_revenue",
   [AccountSubType.OtherRevenue]: "other_revenue",
+  [AccountSubType.ContraOperatingRevenue]: "contra_operating_revenue",
+  [AccountSubType.ContraOtherRevenue]: "contra_other_revenue",
 };
 
 // Same split as `AccountTypeDisplayLabels` above — the wire labels stay
@@ -530,6 +534,8 @@ export const AccountSubTypeDisplayLabels: Record<number, string> = {
   [AccountSubType.OtherExpense]: "Other expense",
   [AccountSubType.OperatingRevenue]: "Operating revenue",
   [AccountSubType.OtherRevenue]: "Other revenue",
+  [AccountSubType.ContraOperatingRevenue]: "Contra operating revenue",
+  [AccountSubType.ContraOtherRevenue]: "Contra other revenue",
 };
 
 /**

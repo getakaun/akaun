@@ -171,3 +171,16 @@ The original document is attached to the record. See [Records](../02-concepts/re
 - [Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md)
 - [Contacts](../06-contacts.md)
 - [Accounts and categories](../02-concepts/accounts-and-categories.md)
+
+## Importing revenue into contra revenue
+
+For an income card, select an ordinary Revenue source and a target under **Contra revenue**.
+The target must have the **Contra operating revenue** or **Contra other revenue** sub-type.
+You can also apply a contra target to income items with the group's bulk account action.
+
+For example, importing RM100 from Sales to Sales discounts credits Sales RM100 and debits Sales
+discounts RM100. This increases gross revenue and its deduction equally, leaving total net
+revenue unchanged. A cash refund requires a different entry involving cash or receivables.
+
+Contra accounts are review targets; they are excluded from ordinary income sources and AI
+income-category suggestions. Saved profiles continue to select money accounts.

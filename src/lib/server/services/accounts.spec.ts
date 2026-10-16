@@ -204,3 +204,38 @@ describe("account service", () => {
     expect(getAccount(db, source.value.id)?.id).toBe(survivor.value.id);
   });
 });
+
+describe("contra revenue account subtypes", () => {
+  it("creates and edits Revenue accounts without allowing contra subtypes on other types", () => {
+    for (const subType of [
+      AccountSubType.ContraOperatingRevenue,
+      AccountSubType.ContraOtherRevenue,
+    ]) {
+      const created = createAccount(db, 1, {
+        name: "Deduction",
+        type: AccountType.Revenue,
+        subType,
+      });
+      expect(created.ok).toBe(true);
+      if (!created.ok) throw new Error(created.reason);
+      expect(getAccount(db, created.value.id)?.subType).toBe(subType);
+      for (const type of [
+        AccountType.Asset,
+        AccountType.Liability,
+        AccountType.Expense,
+        AccountType.Equity,
+      ]) {
+        expect(
+          createAccount(db, 1, { name: "Invalid", type, subType }).ok,
+        ).toBe(false);
+      }
+      const patched = patchAccount(db, created.value.id, 1, {
+        subType: AccountSubType.OtherRevenue,
+      });
+      expect(patched.ok).toBe(true);
+      expect(getAccount(db, created.value.id)?.subType).toBe(
+        AccountSubType.OtherRevenue,
+      );
+    }
+  });
+});

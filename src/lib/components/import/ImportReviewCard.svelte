@@ -8,6 +8,7 @@
 	import AmountInput from '$lib/components/ui/AmountInput.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
+	import { isContraRevenueAccount } from '$lib/account-classification.js';
 	import { Role } from '$lib/enums.js';
 	import { mainCurrency } from '$lib/currency-state.svelte.js';
 	import { CURRENCIES, currencySymbol } from '$lib/currency.js';
@@ -128,6 +129,8 @@
 	const rateText = $derived(reviewRateText(row, edits, main));
 	const converted = $derived(reviewConverted(row, edits, main));
 	const rateMissing = $derived(reviewRateMissing(row, edits, main));
+	const contraTarget = $derived(options.allAccounts.find((account) => account.id === targetAccountId));
+	const isContraEntry = $derived(!transfer && isIncome && contraTarget != null && isContraRevenueAccount(contraTarget));
 	const accountMissing = $derived(sourceAccountId == null || targetAccountId == null);
 	// The books record a transfer in the main currency only (FR-059). The
 	// server refuses one in another currency; the card says why up front.
@@ -197,7 +200,13 @@
 			</span>
 		{/if}
 		<div class="review-head-right">
-			{#if dup}
+			{#if isContraEntry}
+		<p class="merge-note">
+			This credits the source revenue account and debits contra revenue. Gross revenue and its deduction increase equally; total net revenue is unchanged.
+		</p>
+	{/if}
+
+	{#if dup}
 				<span class="dup-badge">
 					<AlertTriangle size={11} /> Duplicate · {row.duplicateConfidence}% · {dupReasonsLabel(row)}
 				</span>

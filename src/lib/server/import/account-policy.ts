@@ -1,3 +1,4 @@
+import { isContraRevenueAccount } from "$lib/account-classification.js";
 import {
   AccountSubType,
   AccountType,
@@ -48,7 +49,11 @@ export function isImportPurchaseTarget(account: AccountView): boolean {
 }
 
 export function isImportIncomeSource(account: AccountView): boolean {
-  return posting(account) && account.type === AccountType.Revenue;
+  return (
+    posting(account) &&
+    account.type === AccountType.Revenue &&
+    !isContraRevenueAccount(account)
+  );
 }
 
 export function isImportIncomeTarget(
@@ -57,7 +62,8 @@ export function isImportIncomeTarget(
 ): boolean {
   return (
     isImportTransactionAsset(account) ||
-    (posting(account) && account.id === receivableAccountId)
+    (posting(account) &&
+      (account.id === receivableAccountId || isContraRevenueAccount(account)))
   );
 }
 

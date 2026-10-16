@@ -228,3 +228,29 @@ describe("saved account defaults", () => {
     expect(after.ok).toBe(false);
   });
 });
+
+describe("contra revenue defaults", () => {
+  it("does not use contra revenue as ordinary sales or uncategorised income", () => {
+    const inputs = validInputs();
+    const contra = account(
+      AccountType.Revenue,
+      "Discounts",
+      "",
+      AccountSubType.ContraOperatingRevenue,
+    );
+    for (const purpose of [
+      DefaultAccountPurpose.SalesRevenue,
+      DefaultAccountPurpose.UncategorisedIncome,
+    ]) {
+      expect(
+        replaceAccountDefaults(
+          db,
+          7,
+          inputs.map((input) =>
+            input.purpose === purpose ? { purpose, accountId: contra } : input,
+          ),
+        ).ok,
+      ).toBe(false);
+    }
+  });
+});

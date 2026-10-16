@@ -1,5 +1,6 @@
 <script lang="ts">
   import * as Select from "$lib/components/ui/select/index.js";
+  import { isContraRevenueAccount } from "$lib/account-classification.js";
   import { AccountType } from "$lib/enums.js";
   import type { AccountView } from "$lib/server/ledger/types.js";
 
@@ -14,6 +15,7 @@
   } = $props();
 
   const orderedGroups = $derived([
+    { label: "Contra revenue", accounts: accounts.filter(isContraRevenueAccount) },
     {
       label: "Expense",
       accounts: accounts.filter(

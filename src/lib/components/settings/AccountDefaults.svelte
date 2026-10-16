@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isContraRevenueAccount } from "$lib/account-classification.js";
   import { toast } from "svelte-sonner";
   import * as Select from "$lib/components/ui/select/index.js";
   import type {
@@ -50,6 +51,9 @@
   function eligible(item: AccountDefaultView, account: AccountView): boolean {
     if (account.type !== item.requiredType || !account.postingEligible)
       return false;
+    if (item.purpose === DefaultAccountPurpose.SalesRevenue || item.purpose === DefaultAccountPurpose.UncategorisedIncome) {
+      return !isContraRevenueAccount(account);
+    }
     if (item.purpose === DefaultAccountPurpose.Payable) {
       return account.subType === AccountSubType.AccountsPayable;
     }

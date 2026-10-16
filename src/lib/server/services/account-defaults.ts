@@ -1,3 +1,4 @@
+import { isContraRevenueAccount } from "$lib/account-classification.js";
 import { asc, eq } from "drizzle-orm";
 import {
   AccountSubType,
@@ -42,10 +43,13 @@ const TRANSACTION_SUBTYPES = new Set<number>([
 
 function matchesPurpose(
   purpose: DefaultAccountPurposeCode,
-  account: { type: number; subType: number | null },
+  account: Pick<ReturnType<typeof accountViews>[number], "type" | "subType">,
 ): boolean {
   if (account.type !== DefaultAccountPurposeTypes[purpose]) return false;
   switch (purpose) {
+    case DefaultAccountPurpose.SalesRevenue:
+    case DefaultAccountPurpose.UncategorisedIncome:
+      return !isContraRevenueAccount(account);
     case DefaultAccountPurpose.Payable:
       return account.subType === AccountSubType.AccountsPayable;
     case DefaultAccountPurpose.Receivable:

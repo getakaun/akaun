@@ -455,3 +455,51 @@ describe("Gross profit and Operating income", () => {
     expect(report.resultMinor).toBe(49_000);
   });
 });
+
+describe("contra revenue reporting", () => {
+  it("deducts debit balances and keeps contra other revenue outside operating profit", () => {
+    const report = profitLoss({
+      dateFrom: "2026-01-01",
+      dateTo: "2026-12-31",
+      totals: [
+        total(
+          1,
+          "Sales",
+          AccountRole.IncomeCategory,
+          -10000,
+          RevenueSubType.OperatingRevenue,
+        ),
+        total(
+          2,
+          "Discounts",
+          AccountRole.IncomeCategory,
+          1000,
+          RevenueSubType.ContraOperatingRevenue,
+        ),
+        total(
+          3,
+          "Other income",
+          AccountRole.IncomeCategory,
+          -2000,
+          RevenueSubType.OtherRevenue,
+        ),
+        total(
+          4,
+          "Other deductions",
+          AccountRole.IncomeCategory,
+          500,
+          RevenueSubType.ContraOtherRevenue,
+        ),
+      ],
+    });
+    expect(report.income.map((line) => line.amountMinor)).toEqual([
+      10000, -1000, 2000, -500,
+    ]);
+    expect(report.totalIncomeMinor).toBe(10500);
+    expect(report.resultMinor).toBe(10500);
+    expect(report.subtotals).toEqual([
+      { label: "Gross profit", amountMinor: 9000 },
+      { label: "Operating income", amountMinor: 9000 },
+    ]);
+  });
+});

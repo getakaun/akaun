@@ -1,3 +1,4 @@
+import { isContraRevenueAccount } from "$lib/account-classification.js";
 import {
   AccountSubType,
   AccountType,
@@ -74,7 +75,10 @@ export function groupImportSourceAccounts(
 ): ImportSourceGroups {
   return {
     income: accounts.filter(
-      (account) => posting(account) && account.type === AccountType.Revenue,
+      (account) =>
+        posting(account) &&
+        account.type === AccountType.Revenue &&
+        !isContraRevenueAccount(account),
     ),
     payment: accounts.filter((account) =>
       purchaseSource(account, payableAccountId),
@@ -92,12 +96,14 @@ export function targetAccountsForImportSource(
   const source = accounts.find((account) => account.id === sourceAccountId);
   if (!source || !posting(source)) return [];
 
-  if (source.type === AccountType.Revenue) {
+  if (source.type === AccountType.Revenue && !isContraRevenueAccount(source)) {
     return accounts.filter(
       (account) =>
         account.id !== source.id &&
         (transactionAsset(account) ||
-          (posting(account) && account.id === receivableAccountId)),
+          (posting(account) &&
+            (account.id === receivableAccountId ||
+              isContraRevenueAccount(account)))),
     );
   }
 

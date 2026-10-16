@@ -116,12 +116,15 @@
 	let dateFrom = $state(localDate(data.filters.from));
 	// svelte-ignore state_referenced_locally
 	let dateTo = $state(localDate(data.filters.to));
-	$effect(() => {
-		const from = dateFrom ? new Date(`${dateFrom}T00:00:00`).toISOString() : undefined;
-		const to = dateTo ? new Date(`${dateTo}T23:59:59.999`).toISOString() : undefined;
-		if (localDate(from) === localDate(filters.from) && localDate(to) === localDate(filters.to)) return;
+	// Only picker edits write to the URL. Synchronizing after navigation must
+	// never restore stale dates when filters are cleared or history changes.
+	function setDates(fromDate: string, toDate: string) {
+		dateFrom = fromDate;
+		dateTo = toDate;
+		const from = fromDate ? new Date(`${fromDate}T00:00:00`).toISOString() : undefined;
+		const to = toDate ? new Date(`${toDate}T23:59:59.999`).toISOString() : undefined;
 		setFilter({ from, to });
-	});
+	}
 	$effect(() => {
 		dateFrom = localDate(filters.from);
 		dateTo = localDate(filters.to);
@@ -150,18 +153,35 @@
 	}
 
 	// Live: the stream says only that something was written. One fetch per
-	// burst asks for what is newer than the top row, with this page's filters.
+	// burst asks for every page newer than the top row, with this page's filters.
 	let pending: ReturnType<typeof setTimeout> | undefined;
 	async function fetchNewer() {
+		const currentData = data;
 		const newest = entries.reduce((max, e) => Math.max(max, e.id), 0);
-		const res = await fetch(
-			apiQuery(newest > 0 ? { after: String(newest) } : {})
-		);
-		if (!res.ok) return;
-		const body = (await res.json()) as { entries: Entry[] };
+		const query = new SvelteURLSearchParams(page.url.searchParams);
+		if (newest > 0) query.set('after', String(newest));
+		const fresh: Entry[] = [];
+		let cursor: number | null;
+		do {
+			const res = await fetch(`/api/audit?${query.toString()}`);
+			if (!res.ok || data !== currentData) return;
+			const body = (await res.json()) as { entries: Entry[]; nextCursor: number | null };
+			if (data !== currentData) return;
+			fresh.push(...body.entries);
+			cursor = body.nextCursor;
+			// An empty list has no older rows to join: retain the first page's
+			// cursor so its remaining history can be loaded normally.
+			if (newest === 0) {
+				entries = body.entries;
+				nextCursor = cursor;
+				return;
+			}
+			if (cursor !== null) query.set('before', String(cursor));
+		} while (cursor !== null);
+		// Publish only after the whole range is fetched, so another refresh
+		// cannot advance past entries still missing from this burst.
 		const known = new Set(entries.map((e) => e.id));
-		const fresh = body.entries.filter((e) => !known.has(e.id));
-		if (fresh.length) entries = [...fresh, ...entries];
+		entries = [...fresh.filter((e) => !known.has(e.id)), ...entries].sort((a, b) => b.id - a.id);
 	}
 	createResourceStream<{ type: string }>('/api/audit/stream', (msg) => {
 		if (msg.type !== 'entry-added') return;
@@ -276,7 +296,11 @@
 						{@render optionList('What changed', TYPE_OPTIONS, typeFilter, (v) => setFilter({ type: v }))}
 						{@render optionList('Action', ACTION_OPTIONS, filters.action, (v) => setFilter({ action: v }))}
 					</FilterDropdown>
-					<DateRangeFilter variant="dropdown" bind:from={dateFrom} bind:to={dateTo} />
+					<DateRangeFilter
+						variant="dropdown"
+						bind:from={() => dateFrom, (value) => setDates(value, dateTo)}
+						bind:to={() => dateTo, (value) => setDates(dateFrom, value)}
+					/>
 				</div>
 			</div>
 

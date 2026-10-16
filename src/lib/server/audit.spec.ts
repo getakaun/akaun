@@ -226,6 +226,20 @@ describe("the audit feed", () => {
     );
   });
 
+  it("recovers a burst across every page without including older history", async () => {
+    const { listAuditLog } = await feed();
+    write(null, "contact", 3);
+    for (let i = 0; i < 125; i += 1) write(null, "contact", 3);
+    const ids: number[] = [];
+    let before: number | undefined;
+    do {
+      const page = listAuditLog(db, {}, { after: 1, before });
+      ids.push(...page.entries.map((entry) => entry.id));
+      before = page.nextCursor ?? undefined;
+    } while (before !== undefined);
+    expect(ids).toEqual(Array.from({ length: 125 }, (_, i) => 126 - i));
+  });
+
   it("filters by date as instants, and reads filters from an address", async () => {
     const { listAuditLog, parseAuditFilters } = await feed();
     write(null, "contact", 3);
@@ -264,6 +278,36 @@ describe("the audit feed", () => {
     expect(settings).toMatchObject({
       href: "/settings",
       recordLabel: "Company details",
+    });
+  });
+
+  it("uses the latest stored labels even when older names sort last", async () => {
+    const { auditFilterOptions } = await feed();
+    for (const name of ["Zoe", "Alice"]) {
+      raw.exec(`UPDATE users SET name = '${name}';
+        UPDATE personal_access_tokens SET name = '${name}';
+        UPDATE oauth_clients SET name = '${name}';`);
+      write(
+        scopeFromLocals({ credential: { kind: "pat", tokenId: 5 } }, null),
+        "contact",
+        3,
+      );
+      write(
+        scopeFromLocals(
+          { credential: { kind: "oauth", grantId: "g1", clientId: "c1" } },
+          null,
+        ),
+        "contact",
+        3,
+      );
+    }
+    raw.exec(
+      "DELETE FROM personal_access_tokens; DELETE FROM oauth_grants; DELETE FROM oauth_clients",
+    );
+    expect(auditFilterOptions(db)).toEqual({
+      actors: [{ userId: 1, name: "Alice" }],
+      tokens: [{ credentialId: "5", label: "Alice" }],
+      apps: [{ clientId: "c1", label: "Alice" }],
     });
   });
 

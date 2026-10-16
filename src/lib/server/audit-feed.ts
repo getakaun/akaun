@@ -181,8 +181,8 @@ export function listAuditLog(
   if (page.before !== undefined) where.push(lt(auditLog.id, page.before));
   if (page.after !== undefined) where.push(gt(auditLog.id, page.after));
 
-  // The newest first in both cases; `after` is capped at a page too, and a
-  // page that falls that far behind reloads instead.
+  // Newest first in both cases; `after` is capped at a page too. The
+  // client pages through the complete range before advancing its newest id.
   const rows = db
     .select()
     .from(auditLog)
@@ -250,14 +250,23 @@ export function auditFilterOptions(db: Db): AuditFilterOptions {
   const actors = db
     .select({
       userId: auditLog.userId,
-      name: sql<string>`max(${auditLog.actorName})`,
+      name: auditLog.actorName,
     })
     .from(auditLog)
-    .where(isNotNull(auditLog.userId))
-    .groupBy(auditLog.userId)
+    .where(
+      inArray(
+        auditLog.id,
+        db
+          .select({ id: sql<number>`max(${auditLog.id})` })
+          .from(auditLog)
+          .where(isNotNull(auditLog.userId))
+          .groupBy(auditLog.userId),
+      ),
+    )
     .all()
     .filter(
-      (row): row is { userId: number; name: string } => row.userId !== null,
+      (row): row is { userId: number; name: string | null } =>
+        row.userId !== null,
     )
     .map((row) => ({
       userId: row.userId,
@@ -266,11 +275,19 @@ export function auditFilterOptions(db: Db): AuditFilterOptions {
   const tokens = db
     .select({
       credentialId: auditLog.credentialId,
-      label: sql<string>`max(${auditLog.credentialLabel})`,
+      label: auditLog.credentialLabel,
     })
     .from(auditLog)
-    .where(and(eq(auditLog.via, "pat"), isNotNull(auditLog.credentialId)))
-    .groupBy(auditLog.credentialId)
+    .where(
+      inArray(
+        auditLog.id,
+        db
+          .select({ id: sql<number>`max(${auditLog.id})` })
+          .from(auditLog)
+          .where(and(eq(auditLog.via, "pat"), isNotNull(auditLog.credentialId)))
+          .groupBy(auditLog.credentialId),
+      ),
+    )
     .all()
     .map((row) => ({
       credentialId: row.credentialId!,
@@ -279,11 +296,19 @@ export function auditFilterOptions(db: Db): AuditFilterOptions {
   const apps = db
     .select({
       clientId: auditLog.clientId,
-      label: sql<string>`max(${auditLog.credentialLabel})`,
+      label: auditLog.credentialLabel,
     })
     .from(auditLog)
-    .where(and(eq(auditLog.via, "oauth"), isNotNull(auditLog.clientId)))
-    .groupBy(auditLog.clientId)
+    .where(
+      inArray(
+        auditLog.id,
+        db
+          .select({ id: sql<number>`max(${auditLog.id})` })
+          .from(auditLog)
+          .where(and(eq(auditLog.via, "oauth"), isNotNull(auditLog.clientId)))
+          .groupBy(auditLog.clientId),
+      ),
+    )
     .all()
     .map((row) => ({
       clientId: row.clientId!,

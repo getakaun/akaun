@@ -21,12 +21,12 @@
     // (FR-012–FR-014). The key stays `owed` — it is the status code the server
     // and `record-status.ts` agree on, not a label.
     owed: { label: "Outstanding", tone: "red" },
-    "part-paid": { label: "Part paid", tone: "amber" },
+    "part-paid": { label: "Partially paid", tone: "amber" },
     settled: { label: "Settled", tone: "green" },
     // Whether the bank agrees the money moved — a different question from
     // whether it is paid, so a different chip (FR-056).
-    cleared: { label: "Cleared", tone: "blue" },
-    "not cleared": { label: "Not cleared", tone: "" },
+    cleared: { label: "Reconciled", tone: "blue" },
+    "not cleared": { label: "Unreconciled", tone: "" },
     // Quotation statuses (labels from QuotationStatusLabels in enums.ts)
     draft: { label: "Draft", tone: "" },
     sent: { label: "Sent", tone: "blue" },

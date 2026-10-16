@@ -28,6 +28,6 @@ export const GET: RequestHandler = async ({ locals, url }) => {
     formatFrom(url),
     report,
     () => profitLossCsv(report),
-    `money-in-and-out-${dateFrom}-to-${dateTo}`,
+    `profit-and-loss-${dateFrom}-to-${dateTo}`,
   );
 };

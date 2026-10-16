@@ -24,7 +24,7 @@ On a locked record, you cannot change these fields:
 - The amount.
 - The date.
 - The currency and the exchange rate.
-- The accounts. On an expense or an income, only the money account is locked. The category is
+- The accounts. On an expense or an income, only the cash or bank account is locked. The category is
   not locked.
 
 You also cannot delete a locked record.
@@ -56,8 +56,8 @@ settlement before changing its amount, date or the account it moved through."
 
 Remove each thing that locks the record:
 
-- If a payment settles the record, click the undo icon (**Take this back**) beside the payment. See
-  [Owed, part paid and paid](./owed-and-paid.md).
+- If a payment settles the record, click the undo icon (**Reverse allocation**) beside the payment. See
+  [Outstanding, partially paid and paid](./owed-and-paid.md).
 - If a bank statement line matches the record, remove the match on the reconciliation screen of
   the account. See [Bank reconciliation](../07-bank-reconciliation.md).
 

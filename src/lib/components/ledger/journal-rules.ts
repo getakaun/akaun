@@ -84,29 +84,29 @@ export function whyNotSaveable(
   contactId: number | null,
 ): string | null {
   if (sides.length < 2) {
-    return "A record needs at least two lines — one account to post from, and one to post to.";
+    return "A journal entry needs at least two lines: one debit and one credit.";
   }
 
   // The server never sees a side with no account on it: the request would be
   // turned away before any rule ran, so this one sentence is the screen's own.
   if (sides.some((side) => side.accountId === null)) {
-    return "Pick an account for every side.";
+    return "Select an account for each line.";
   }
 
   if (sides.some((side) => sideMinor(side) === 0)) {
-    return "A side of a record cannot be worth nothing.";
+    return "A line amount cannot be zero.";
   }
 
   const difference = differenceMinor(sides);
   if (difference !== 0) {
-    return `The two sides do not cancel out — they are ${plainAmount(difference)} apart.`;
+    return `Debits and credits do not balance. Difference: ${plainAmount(difference)}.`;
   }
 
   const touchesSharedOwed = sides.some((side) => {
     return side.accountId !== null && requiresContact(side.accountId);
   });
   if (touchesSharedOwed && contactId === null) {
-    return "Say who this money is owed to, or owed by, before saving it.";
+    return "Select the contact for this receivable or payable.";
   }
 
   return null;

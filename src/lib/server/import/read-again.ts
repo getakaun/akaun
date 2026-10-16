@@ -55,7 +55,7 @@ export function readAgainRefusal(
       confirmedItems === 1
         ? "1 item is already confirmed"
         : `${confirmedItems} items are already confirmed`;
-    return `${counted}, so this document can no longer be read again. Reading it again would replace items that are already in the books.`;
+    return `${counted}, so this document can no longer be read again. Reading it again would replace items that are already posted to the ledger.`;
   }
   switch (state) {
     case ImportState.PendingReview:

@@ -25,7 +25,7 @@ At the start, the period is from 1 January of this year to today.
 
 ## What counts as cash
 
-Cash is the money in Asset accounts with the sub-type **Cash**, **Bank**, **Wallet** or
+Cash means cash and cash equivalents: the money in Asset accounts with the sub-type **Cash**, **Bank**, **Wallet** or
 **Prepaid/debit card**. A transfer between two of these accounts does not change the cash. Thus it
 is not on this report. See [Accounts and categories](../02-concepts/accounts-and-categories.md).
 
@@ -63,17 +63,17 @@ Each line is the total of a group of accounts. The account type and the sub-type
 The report shows only the lines with an amount in the period. If a section is empty, it shows
 "Nothing this period."
 
-### Needs review
+### Unclassified
 
 An Asset or Liability account without a sub-type does not go into a section. Its amount shows in a
-separate **Needs review** box, on the line **Not yet classified**. A note below the report also
+separate **Unclassified** box, on the line **Unclassified movements**. A note below the report also
 tells you about it.
 
 To give an account a sub-type, you need the **Change** permission on **Accounts**.
 
 1. Click **Accounts**.
 2. Click the account.
-3. Make sure that the top of the account page shows **Needs review**.
+3. Make sure that the top of the account page shows **Unclassified**.
 4. In **Sub-type**, choose the correct sub-type.
 5. Click **Save changes**.
 
@@ -110,7 +110,7 @@ red. The text below it gives the difference. A warning also shows below the repo
 that the data of a record is damaged.
 
 1. Click **Settings**.
-2. Click the **Books** tab.
+2. Click the **Ledger** tab.
 3. In **Ledger integrity check**, click **Check now**.
 4. Give the result to your administrator.
 
@@ -124,9 +124,11 @@ See [Find records](../03-everyday-tasks/find-records.md).
 
 1. Click **Export**.
 
-Akaun downloads a CSV file. The file has the columns "Section", "Account" and "Amount". It has the
-lines and the "Total" of each section. If an amount needs review, the file has a "Needs review" row.
-At the end, it has three "Cash" rows: the cash at the start, the net change and the cash at the end.
+Akaun downloads a CSV file, for example `cash-flow-2026-01-01-to-2026-03-31.csv`. The file has the
+columns "Section", "Account" and "Amount". It has the lines and the "Total" of each section. If an
+amount is unclassified, the file has an "Unclassified movements" row. At the end, it has three
+"Cash" rows: "Opening cash and cash equivalents", "Net change in cash" and "Closing cash and cash
+equivalents".
 Below the table, the file gives the period and the notes of the report.
 
 ## Notes

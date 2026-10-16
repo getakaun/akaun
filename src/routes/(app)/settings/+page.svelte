@@ -545,12 +545,12 @@
 		try {
 			const res = await fetch('/api/ledger/integrity');
 			if (!res.ok) {
-				toast.error('The books could not be checked just now.');
+				toast.error('The ledger integrity check could not run. Try again.');
 				return;
 			}
 			integrity = await res.json();
 		} catch {
-			toast.error('The books could not be checked just now.');
+			toast.error('The ledger integrity check could not run. Try again.');
 		} finally {
 			integrityChecking = false;
 		}
@@ -572,7 +572,7 @@
 		'sole-user-name-match': 'matched by name, through the only other user account',
 		'created-contact': 'nobody matched, so a new contact was created from the login',
 		'named-contact': 'the record already said who it was',
-		'bank-fallback': 'nobody was named, so it was treated as paid from the bank account'
+		'bank-fallback': 'no contact was named, so the bank account was credited'
 	};
 
 	const upgradeReport = $derived(data.upgrade?.report ?? null);
@@ -1255,7 +1255,7 @@
 	const TABS: { id: Tab; label: string }[] = $derived([
 		{ id: 'general', label: 'General' },
 		{ id: 'company', label: 'Company' },
-		...(data.canSeeBooks ? [{ id: 'books' as Tab, label: 'Books' }] : []),
+		...(data.canSeeBooks ? [{ id: 'books' as Tab, label: 'Ledger' }] : []),
 		{ id: 'intelligence', label: 'Intelligence' },
 		{ id: 'templates', label: 'Templates' },
 		{ id: 'advanced', label: 'Advanced' }
@@ -1342,7 +1342,7 @@
 							{#if data.moneyAccounts.length > 1}
 								<div class="set-row">
 									<div>
-										<div class="set-row-label">Money usually comes from</div>
+										<div class="set-row-label">Default payment account</div>
 										<div class="set-row-value" style="font-size:12px; margin-top:2px;">New expenses and income start with this account already filled in. You can still change it on any record.</div>
 									</div>
 									{#if data.canManageAccounts}
@@ -1541,8 +1541,7 @@
 					<div class="set-section-head">
 						<h2 class="set-section-title">Ledger integrity check</h2>
 						<p class="set-section-sub">
-							Every record's debits and credits have to cancel each other out. This adds up
-							every side of every record and tells you straight away if any of them don't.
+							The debits of each record must equal its credits. This check examines all ledger entries.
 						</p>
 					</div>
 					<div class="set-rows">
@@ -1568,26 +1567,26 @@
 						{#if integrity.ok}
 							<p class="books-note books-note-good">
 								<ShieldCheck size={14} />
-								<span>All good. Every record balances, and so does everything added up together.</span>
+								<span>The ledger is in balance. All records and the trial balance agree.</span>
 							</p>
 						{:else}
 							<p class="books-note books-note-bad">
 								<AlertTriangle size={14} />
 								<span>
 									{integrity.unbalancedRecords.length === 1
-										? 'One record does not add up.'
-										: `${integrity.unbalancedRecords.length} records do not add up.`}
+										? '1 unbalanced record.'
+										: `${integrity.unbalancedRecords.length} unbalanced records.`}
 									Nothing has been changed — this is only a report.
 								</span>
 							</p>
 							<ul class="books-list">
 								{#each integrity.unbalancedRecords as row (row.recordId)}
-									<li>Record #{row.recordId} is out by {formatMinor(Math.abs(row.differenceMinor))}</li>
+									<li>Record #{row.recordId} is out of balance by {formatMinor(Math.abs(row.differenceMinor))}</li>
 								{/each}
 							</ul>
 							{#if !integrity.booksBalance}
 								<p class="set-hint">
-									Added up across everything, the books are out by
+									Trial balance difference:
 									{formatMinor(Math.abs(integrity.wholeBooksDifferenceMinor))}.
 								</p>
 							{/if}
@@ -1605,7 +1604,7 @@
 						<div class="set-section-head">
 							<h2 class="set-section-title">Migration results</h2>
 							<p class="set-section-sub">
-								Moving your records to the new way of keeping them{#if data.upgrade?.finishedAt}, on
+								The migration to double-entry accounting{#if data.upgrade?.finishedAt}, on
 									{formatDate(data.upgrade.finishedAt.slice(0, 10))}{/if}, meant making a few
 								calls without asking you. Here is every one of them, so you can check.
 							</p>
@@ -1652,9 +1651,9 @@
 						{#if upgradeReport.bankFallbackRecordIds.length > 0}
 							<p class="set-subsection-label">Expenses with no contact</p>
 							<p class="set-hint" style="margin-top:0;">
-								These were never marked paid and named nobody, so there was no one to owe them
-								to. They are recorded as paid from your bank account — if any of them were
-								really paid by a person, open the record and say so.
+								These expenses had no contact, so they were not recorded in accounts payable.
+								They are recorded as paid from the bank account. If a person paid one of them,
+								open the record and change it.
 							</p>
 							<ul class="books-list">
 								<li>{recordList(upgradeReport.bankFallbackRecordIds)}</li>
@@ -1664,7 +1663,7 @@
 						{#if upgradeReport.uncategorisedRecordIds.length > 0}
 							<p class="set-subsection-label">Uncategorised records</p>
 							<p class="set-hint" style="margin-top:0;">
-								No category could be read for these, so they sit under Uncategorised until you
+								No category could be read for these, so they are posted to Uncategorised until you
 								give them one.
 							</p>
 							<ul class="books-list">
@@ -1686,7 +1685,7 @@
 						{/if}
 
 						{#if upgradeReport.roundingDifferences.length > 0}
-							<p class="set-subsection-label">Amounts that did not divide evenly</p>
+							<p class="set-subsection-label">Rounding differences</p>
 							<p class="set-hint" style="margin-top:0;">
 								Money is now kept in whole cents. These amounts had a fraction of a cent that
 								had to go somewhere.

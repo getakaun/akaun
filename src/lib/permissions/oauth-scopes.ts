@@ -141,7 +141,7 @@ export const SCOPE_LABELS: Record<OAuthScope, string> = {
   "import:write":
     "Review import jobs, and confirm them into records or skip them",
   "records:delete":
-    "Delete records, take back settlements, and clear opening balances",
+    "Delete records, reverse allocations, and clear opening balances",
   "accounts:delete": "Delete accounts",
   "contacts:delete": "Delete contacts",
   "invoices:delete": "Delete draft invoices",

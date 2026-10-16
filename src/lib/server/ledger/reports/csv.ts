@@ -95,7 +95,7 @@ export function profitLossCsv(report: ProfitLossReport): CsvTable {
   rows.push([EXPENSES, "Total expenses", fromMinor(report.totalExpensesMinor)]);
 
   rows.push([
-    "Result",
+    "Net profit (loss)",
     report.resultMinor < 0 ? "Net loss" : "Net profit",
     fromMinor(report.resultMinor),
   ]);
@@ -157,8 +157,8 @@ export function cashFlowCsv(report: CashFlowReport): CsvTable {
   ];
   if (report.needsReviewMinor !== 0) {
     rows.push([
-      "Needs review",
-      "Not yet classified as cash or another asset type",
+      "Unclassified",
+      "Unclassified accounts",
       fromMinor(report.needsReviewMinor),
     ]);
   }

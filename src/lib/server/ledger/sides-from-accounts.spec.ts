@@ -325,7 +325,7 @@ describe("sidesFromAccounts — refusals", () => {
       ctx(),
     );
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.reason).toBe("Say who this is owed to or by.");
+    expect(!result.ok && result.reason).toBe("Select the contact for this receivable or payable.");
   });
 
   it("refuses a receivable side with no contact, in the same sentence", () => {
@@ -334,7 +334,7 @@ describe("sidesFromAccounts — refusals", () => {
       ctx(),
     );
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.reason).toBe("Say who this is owed to or by.");
+    expect(!result.ok && result.reason).toBe("Select the contact for this receivable or payable.");
   });
 
   it("refuses an archived account", () => {
@@ -358,7 +358,7 @@ describe("sidesFromAccounts — refusals", () => {
     );
     expect(result.ok).toBe(false);
     expect(!result.ok && result.reason).toBe(
-      "These two accounts need the Adjustments ability. Ask an administrator for it, or choose an everyday account on each side.",
+      "These two accounts need the Adjustments ability. Ask an administrator for it, or choose an everyday account on each line.",
     );
   });
 
@@ -475,7 +475,7 @@ describe("a bill spanning several categories", () => {
       ctx({ canAdjust: false }),
     );
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.reason).toBe("Say who this is owed to or by.");
+    expect(!result.ok && result.reason).toBe("Select the contact for this receivable or payable.");
   });
 
   // "Amount" is the bill's whole 100.00 (data-model.md invariant 6: it must

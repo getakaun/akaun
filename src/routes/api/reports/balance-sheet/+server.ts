@@ -29,6 +29,6 @@ export const GET: RequestHandler = async ({ locals, url }) => {
     formatFrom(url),
     report,
     () => balanceSheetCsv(report),
-    `what-the-business-is-worth-${asAt}`,
+    `balance-sheet-${asAt}`,
   );
 };

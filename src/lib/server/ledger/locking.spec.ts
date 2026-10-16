@@ -88,7 +88,7 @@ describe("the refusal names what unlocks it", () => {
   it("tells a settled record's owner to undo the payment", () => {
     const reason = lockStateOf(SETTLED).reason ?? "";
     expect(reason).toMatch(/payment/i);
-    expect(reason).toMatch(/undo/i);
+    expect(reason).toMatch(/undo|reverse/i);
     expect(reason).not.toMatch(/bank/i);
   });
 
@@ -108,7 +108,7 @@ describe("the refusal names what unlocks it", () => {
   it("says the same thing when refusing a delete", () => {
     const deleteReason = canDeleteRecord(SETTLED);
     expect(deleteReason.ok).toBe(false);
-    if (!deleteReason.ok) expect(deleteReason.reason).toMatch(/undo/i);
+    if (!deleteReason.ok) expect(deleteReason.reason).toMatch(/undo|reverse/i);
   });
 });
 

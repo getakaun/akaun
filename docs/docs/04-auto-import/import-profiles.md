@@ -70,11 +70,12 @@ A profile that reads a table needs a sample. The sample is a real report of the 
 2. Make sure that Akaun found the correct heading row.
 3. If the heading row is wrong, click **Select a different table**.
 4. Check the role of each column: **Date**, **Description**, **Amount**, **Reference**,
-   **Money in or out**, **Running balance** or **Not used**.
+   **Direction (inflow or outflow)**, **Running balance** or **Not used**.
 
 Akaun gives a role to some columns from the sample. **Date**, **Description** and **Amount** are
 necessary. If one column tells the direction of the
-money, give it **Money in or out**. Then set each of its values to **In** or **Out**.
+money, give it **Direction (inflow or outflow)**. Then set each of its values to **Inflow** or
+**Outflow**. An inflow is money into the account. An outflow is money out of the account.
 
 Akaun does not keep the sample. **More options** has the less common settings, for example
 **Date format**, **Decimal separator**, **CSV separator** and **Labels of the stated totals**.

@@ -1221,17 +1221,17 @@
 
 			{#if section.kind === 'transfer'}
 				<div class="field" id="pf-s-{section.uid}-counter">
-					<span class="field-label">Other account *</span>
+					<span class="field-label">Contra account *</span>
 					<ProfileCategorySelect
 						groups={counterGroups}
 						value={section.counterAccountId}
 						noneLabel="Select account"
-						ariaLabel="Other account of {section.name || `section ${index + 1}`}"
+						ariaLabel="Contra account of {section.name || `section ${index + 1}`}"
 						missingLabel="Account no longer available"
 						disabled={!canChange}
 						onchange={(value) => (section.counterAccountId = value)}
 					/>
-					<p class="field-hint">The account that the money goes to or comes from. Example: the bank account for withdrawals.</p>
+					<p class="field-hint">The contra account of the transfer. Example: the bank account for withdrawals.</p>
 					{@render problemList(shown(`${at}.counterAccountId`))}
 				</div>
 			{:else if section.feeTypes.length === 0}
@@ -1265,8 +1265,8 @@
 			<Disclosure label="More" forceOpen={sectionMoreForced(section, index)}>
 				{#if section.kind !== 'transfer' && (otherProfiles.length > 0 || section.sameMoneyAs.length > 0)}
 					<div class="field" id="pf-s-{section.uid}-same">
-						<span class="field-label">Same money as</span>
-						<div class="chip-row" role="group" aria-label="Same money as">
+						<span class="field-label">Overlaps with</span>
+						<div class="chip-row" role="group" aria-label="Overlaps with">
 							{#each otherProfiles as other (other.id)}
 								<label class="chip" class:on={section.sameMoneyAs.includes(other.id)}>
 									<input
@@ -1287,7 +1287,7 @@
 							{/each}
 						</div>
 						<p class="field-hint">
-							Select the profiles that record the same money. Example: an income statement that shows the same sales. If their records include the month, the item is marked for review. This prevents a double count.
+							Select the profiles that record the same transactions. Example: an income statement that shows the same sales. If their records include the month, the item is marked for review. This prevents a double count.
 						</p>
 						{@render problemList(attempted ? errorsUnder(problems, `${at}.sameMoneyAs`) : [])}
 					</div>
@@ -1440,11 +1440,11 @@
 				{#if layout.directionColumn}
 					<div class="pf-grid" id="pf-l-direction">
 						<div class="field">
-							<label class="field-label" for="pf-dir-in">Money in values</label>
+							<label class="field-label" for="pf-dir-in">Inflow values</label>
 							<Textarea id="pf-dir-in" rows={2} bind:value={layout.directionInText} disabled={!canChange} placeholder="One per line" />
 						</div>
 						<div class="field">
-							<label class="field-label" for="pf-dir-out">Money out values</label>
+							<label class="field-label" for="pf-dir-out">Outflow values</label>
 							<Textarea id="pf-dir-out" rows={2} bind:value={layout.directionOutText} disabled={!canChange} placeholder="One per line" />
 						</div>
 					</div>

@@ -120,8 +120,8 @@
 					</Select.Root>
 					<input type="hidden" name="type" value={selectedType} />
 					<p class="field-hint">
-						The type decides which report the account appears on, and it cannot be changed once the
-						account has movements.
+						The type decides which report the account appears on. You cannot change it after
+						transactions are posted to it.
 					</p>
 				</div>
 
@@ -160,12 +160,12 @@
 						>
 							<Select.Trigger id="account-sub-type" class="w-full justify-between">
 								{selectedSubType == null
-									? 'Not yet classified'
+									? 'Unclassified'
 									: AccountSubTypeDisplayLabels[selectedSubType]}
 							</Select.Trigger>
 							<Select.Content>
 								{#if !subTypeRequired}
-									<Select.Item value={NONE_SUB_TYPE} label="Not yet classified" />
+									<Select.Item value={NONE_SUB_TYPE} label="Unclassified" />
 								{/if}
 								{#each subTypes as subType (subType)}
 									<Select.Item
@@ -180,7 +180,7 @@
 							{#if subTypeRequired}
 								What kind of {AccountTypeDisplayLabels[selectedType].toLowerCase()} this is.
 							{:else}
-								Leave unclassified to have it treated as operating for now.
+								If you leave it unclassified, the reports show it as operating.
 							{/if}
 						</p>
 					</div>

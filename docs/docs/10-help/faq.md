@@ -53,10 +53,10 @@ See [Prepare your book](../01-getting-started/set-up-your-book.md#1-choose-the-m
 
 You do not mark a bill as paid. You record a payment, and Akaun calculates the status from the
 payments. On the **Records** screen, find the **Outstanding payables** panel. Click
-**Pay all outstanding**, or click **View details** and then **Record a payment** for one contact.
+**Pay all payables**, or click **View details** and then **Record a payment** for one contact.
 
 See [Bills you pay later](../03-everyday-tasks/bills-you-pay-later.md) and
-[Owed, part paid and paid](../02-concepts/owed-and-paid.md).
+[Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md).
 
 ## How do I record a payment from a customer?
 
@@ -107,7 +107,7 @@ See [Profit & Loss](../08-reports/profit-and-loss.md#export-the-report).
 
 Not directly. Akaun cannot read a backup file or an export of the chart of accounts of a different
 program. **Auto Import** can read records from an Excel workbook (.xlsx) or a CSV file. Add the
-accounts and the starting balances by hand.
+accounts and the opening balances by hand.
 
 See [Import spreadsheets](../04-auto-import/spreadsheets.md) and
 [Prepare your book](../01-getting-started/set-up-your-book.md).
@@ -124,8 +124,8 @@ See [Find your way around](../01-getting-started/finding-your-way.md#on-a-phone)
 ## Why is a category an account?
 
 Each record moves money out of one account and into a different account. The category is the
-account at one end of the record. For example, an expense moves money out of **Bank** and into
-**Software**. Thus a category is an account of the type **Expense** or **Revenue**.
+account on one line of the record. For example, an expense of software paid from the bank has
+**Software** on the **Debit** line and **Bank** on the **Credit** line. Thus a category is an account of the type **Expense** or **Revenue**.
 
 See [Accounts and categories](../02-concepts/accounts-and-categories.md) and
 [How a record moves money](../02-concepts/how-an-entry-works.md).

@@ -929,14 +929,14 @@ function tableLayout(
     const valuesIn = valueList(
       value.in,
       join(dirPath, "in"),
-      "Money in",
+      "Inflow values",
       errors,
       { min: 1, max: ROW_VALUES_MAX },
     );
     const valuesOut = valueList(
       value.out,
       join(dirPath, "out"),
-      "Money out",
+      "Outflow values",
       errors,
       { min: 1, max: ROW_VALUES_MAX },
     );
@@ -945,7 +945,7 @@ function tableLayout(
       if (ins.has(foldTableText(entry))) {
         errors.push({
           path: `${join(dirPath, "out")}[${index}]`,
-          message: `"${entry}" cannot mean both money in and money out.`,
+          message: `"${entry}" cannot be both an inflow value and an outflow value.`,
         });
       }
     });

@@ -87,7 +87,7 @@
 	const deleteBlockedReason = $derived(
 		data.usage.records === 0 && data.usage.quotations === 0 && data.usage.invoices === 0
 			? null
-			: 'Records name this contact, so it cannot be deleted. Archive it instead — everything already recorded stays exactly as it is.'
+			: 'Transactions or documents refer to this contact, so you cannot delete it. Archive it instead. The existing records do not change.'
 	);
 
 	/**
@@ -147,11 +147,11 @@
 				<span class="detail-hero-amount">{formatMinor(Math.abs(data.balanceMinor))}</span>
 				<span class="detail-hero-note">
 					{#if data.balanceMinor === 0}
-						nothing outstanding either way
+						No open balance
 					{:else if data.balanceMinor > 0}
-						still owed to you
+						Receivable
 					{:else}
-						you still owe them
+						Payable
 					{/if}
 				</span>
 			</div>
@@ -175,7 +175,7 @@
 			<input type="hidden" name="id" value={contact.id} />
 
 			<section class="detail-card">
-				<div class="detail-card-head"><span class="detail-card-title">Who they are</span></div>
+				<div class="detail-card-head"><span class="detail-card-title">Contact details</span></div>
 
 				<div class="field">
 					<span class="field-label">Entity type *</span>
@@ -226,15 +226,15 @@
 					</div>
 					{#if roles.includes(Role.Partner)}
 						<p class="field-hint">
-							A partner's money in and money out is recorded against Equity accounts, so
-							they show up by name in the partner statement.
+							Capital contributions and drawings of a partner are posted to equity accounts.
+							The partner statement shows these accounts by name.
 						</p>
 					{/if}
 				</div>
 			</section>
 
 			<section class="detail-card" style="margin-top:16px;">
-				<div class="detail-card-head"><span class="detail-card-title">How to reach them</span></div>
+				<div class="detail-card-head"><span class="detail-card-title">Contact information</span></div>
 
 				<div class="field-grid">
 					<div class="field">
@@ -295,12 +295,12 @@
 	{#snippet rail()}
 		{#if data.perms.records}
 			<section class="detail-card">
-				<div class="detail-card-head"><span class="detail-card-title">Their ledger</span></div>
+				<div class="detail-card-head"><span class="detail-card-title">Contact ledger</span></div>
 				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the route comes from resolve(); only the query string is appended. -->
 				<a class="related-link ob-card" href={statementHref}>
 					<span class="ob-icon"><Scale size={15} /></span>
 					<span class="ob-main">
-						<span class="ob-title">See everything with this contact</span>
+						<span class="ob-title">View contact ledger</span>
 						<span class="ob-sub">
 							{data.usage.records} record{data.usage.records === 1 ? '' : 's'},
 							{data.usage.invoices} invoice{data.usage.invoices === 1 ? '' : 's'}
@@ -325,7 +325,7 @@
 <ConfirmDialog
 	bind:open={deleteDialogOpen}
 	title="Delete this contact?"
-	description="This removes the contact. It is only possible while nothing names them."
+	description="This removes the contact. You cannot delete it while transactions or documents refer to this contact."
 	confirmLabel="Delete"
 	danger
 	onConfirm={() =>

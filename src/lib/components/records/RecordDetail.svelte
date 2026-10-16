@@ -78,9 +78,8 @@
 				? (record.lockedReason ?? '')
 				: null
 	);
-	const settlementsLabel = $derived(
-		record.kind === LedgerRecordKind.Payment ? 'Allocated to' : 'Payments applied'
-	);
+	const isPayment = $derived(record.kind === LedgerRecordKind.Payment);
+	const settlementsLabel = $derived(isPayment ? 'Allocated to' : 'Payments applied');
 	const contact = $derived(
 		data.contacts.find((c) => c.id === record.contactId) ?? null
 	);
@@ -127,7 +126,7 @@
 		const res = await fetch(`/api/settlements/${link.settlementId}`, { method: 'DELETE' });
 		if (!res.ok) {
 			const body = await res.json().catch(() => null);
-			error = body?.reason ?? body?.error ?? 'That could not be taken back.';
+			error = body?.reason ?? body?.error ?? 'The allocation could not be reversed.';
 			return;
 		}
 		settlementLinks = settlementLinks.filter((l) => l.settlementId !== link.settlementId);
@@ -241,7 +240,7 @@
 					<span class="ob-icon"><Users size={15} /></span>
 					<span class="ob-main">
 						<span class="ob-title">{contact.legalName}</span>
-						<span class="ob-sub">Everything owed either way</span>
+						<span class="ob-sub">Contact ledger: receivables and payables</span>
 					</span>
 					<ChevronRight size={14} color="var(--muted-foreground)" />
 				</button>
@@ -253,13 +252,18 @@
 					<span class="ob-icon"><Users size={15} /></span>
 					<span class="ob-main">
 						<span class="ob-title">{batchContactCount} contacts</span>
-						<span class="ob-sub">One transfer, split across several suppliers — see below.</span>
+						<span class="ob-sub">Batch payment allocated to several contacts. See below.</span>
 					</span>
 				</div>
 			</section>
 		{/if}
 
-		{#if settlementLinks.length > 0}
+		<!--
+			Shown wherever settling applies, empty or not: a payment can always be
+			allocated, and a record that is still owed can always be paid. A record paid
+			straight from an account reads paid with nothing to settle, so it has no card.
+		-->
+		{#if settlementLinks.length > 0 || isPayment || !record.paid}
 			<section class="detail-card">
 				<div class="detail-card-head">
 					<span class="detail-card-title">{settlementsLabel}</span>
@@ -267,6 +271,9 @@
 				<SettlementList
 					links={settlementLinks}
 					onundo={data.perms.delete ? undoPayment : undefined}
+					emptyLabel={isPayment
+						? 'This payment is not allocated to a record yet.'
+						: 'No payments are applied yet.'}
 				/>
 			</section>
 		{/if}
@@ -291,12 +298,12 @@
 				<span class="ob-icon" class:cleared={record.reconciled}><Scale size={15} /></span>
 				<span class="ob-main">
 					<span class="ob-title">
-						{record.reconciled ? 'Matched to the bank' : 'Not matched to the bank yet'}
+						{record.reconciled ? 'Reconciled' : 'Unreconciled'}
 					</span>
 					<span class="ob-sub">
 						{record.reconciled
-							? 'A line on a bank statement has been matched to this.'
-							: 'No bank statement line has been matched to this yet.'}
+							? 'Matched to a bank statement line.'
+							: 'Not matched to a bank statement line.'}
 					</span>
 				</span>
 			</div>
@@ -331,7 +338,7 @@
 <ConfirmDialog
 	bind:open={deleteDialogOpen}
 	title="Delete this record?"
-	description="This removes the record and both of its sides. It cannot be undone."
+	description="This removes the record and its journal lines. It cannot be undone."
 	confirmLabel="Delete"
 	danger
 	onConfirm={remove}

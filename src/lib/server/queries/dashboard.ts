@@ -1,202 +1,164 @@
-import { desc, eq, sql } from "drizzle-orm";
-import {
-  accounts,
-  contacts,
-  ledgerMovements,
-  ledgerRecords,
-} from "../db/schema.js";
-import {
-  AccountSubType,
-  AccountType,
-  LedgerRecordKind,
-  type AccountTypeCode,
-  type LedgerRecordKindCode,
-} from "$lib/enums.js";
-import type { LedgerDb, Minor } from "../ledger/types.js";
-import { balanceSheetReport, cashFlowReport, profitLossReport } from "./reports.js";
+import { sql } from "drizzle-orm";
+import { ledgerRecords } from "../db/schema.js";
+import { profitLoss } from "../ledger/reports/profit-loss.js";
+import type {
+  AccountTotal,
+  CashFlowReport,
+  LedgerDb,
+  Minor,
+  ProfitLossReport,
+  ReportLine,
+} from "../ledger/types.js";
+import type {
+  CashBridge,
+  Delta,
+  MonthPoint,
+  TopLine,
+} from "$lib/components/dashboard/types.js";
+import type { MonthBucket } from "$lib/dashboard-periods.js";
 
 /**
- * Dashboard aggregates computed in SQL (SUM / COUNT / GROUP BY) instead of
- * loading every row into JS. The dashboard is the PWA start_url, so keeping this
- * load cheap directly improves cold-start time. (SQLite here is synchronous, so
- * streaming / Promise.all would not help — doing less work is the win.)
+ * The dashboard's arithmetic, and only the arithmetic that is not a report's.
  *
- * Every figure is the sum of `ledger_movements.amount_minor` over a window of
- * record dates — the same rows, and the same arithmetic, the profit and loss
- * runs (FR-031). Because a category is an account (FR-006a), "income" and
- * "expenses" here mean the movements on income-category and expense-category
- * accounts, so money moved between two places the business holds touches
- * neither and can never show up as either (FR-007).
- *
- * Movement amounts are whole cents, positive when value goes into the account.
- * Income therefore accumulates negative and is turned the right way up by
- * `displaySign`, in the same one place every report uses (D-03). The figures
- * leave here in whole currency units, which is what the dashboard formats.
+ * Every money figure the dashboard shows is a report's own output (005 FR-014,
+ * 007 FR-001). What lives here is what a report has no opinion on: how two of
+ * its figures compare, how its lines are trimmed to the few worth a glance,
+ * and how long the cash lasts. Each is pure so it can be checked without a
+ * database; the reads are in `loaders/dashboard.ts`.
  */
 
-/** Cents, turned the way a reader expects, in whole currency units. */
-function toDisplayAmount(amountMinor: number, type: AccountTypeCode): number {
-  const sign =
-    type === AccountType.Asset || type === AccountType.Expense ? 1 : -1;
-  return (amountMinor * sign) / 100;
+/** How a figure moved against its comparison. No percentage off a zero base. */
+export function delta(current: Minor, previous: Minor): Delta {
+  return {
+    diffMinor: current - previous,
+    pct: previous === 0 ? null : (current - previous) / Math.abs(previous),
+  };
+}
+
+/** Net result as a share of income; null when there was no income to share. */
+export function netMarginPct(report: ProfitLossReport): number | null {
+  return report.totalIncomeMinor > 0
+    ? report.resultMinor / report.totalIncomeMinor
+    : null;
 }
 
 /**
- * The newest records of one kind with the contact they name and the figure that
- * landed on their category, newest first.
+ * The largest `n` lines, with everything else folded into one "Other" line.
  *
- * One statement however many sides each record has: the movements are joined in
- * and summed per record, counting only the sides on a category account so the
- * figure shown is what was spent or earned rather than every side added up.
+ * "Other" is the *net* of the rest, so the lines shown always add up to the
+ * report's own total — a refund (a negative line) lands in Other rather than
+ * being dropped. The order is amount, then name, then id, so two equal lines
+ * never swap places between refreshes.
  */
-function recentRecords(
-  db: LedgerDb,
-  kind: LedgerRecordKindCode,
-  type: AccountTypeCode,
-  limit: number,
-) {
-  // Which side of the record carries the figure to show. An expense record can
-  // name equipment, which is an asset (002 FR-006b), so a plain type test leaves
-  // those rows reading 0.00 — the one place the row set is chosen by `kind` and
-  // the figure by the account. The period totals above stay type-only on
-  // purpose: they must agree with the profit and loss, which equipment leaves.
-  const onCategorySide =
-    type === AccountType.Expense
-      ? sql`(${accounts.type} = ${type} or ${accounts.subType} = ${AccountSubType.Equipment})`
-      : sql`${accounts.type} = ${type}`;
-  return db
-    .select({
-      date: ledgerRecords.date,
-      description: ledgerRecords.description,
-      contactName: contacts.legalName,
-      totalMinor: sql<number>`coalesce(sum(case when ${onCategorySide} then ${ledgerMovements.amountMinor} else 0 end), 0)`,
-    })
+export function topLinesWithOther(
+  lines: ReportLine[],
+  previous: ReportLine[],
+  n: number,
+): TopLine[] {
+  const prevById = new Map(previous.map((l) => [l.accountId, l.amountMinor]));
+  const sorted = [...lines].sort(
+    (a, b) =>
+      b.amountMinor - a.amountMinor ||
+      a.accountName.localeCompare(b.accountName) ||
+      a.accountId - b.accountId,
+  );
+  const top = sorted.slice(0, n).filter((l) => l.amountMinor > 0);
+  const topIds = new Set(top.map((l) => l.accountId));
+  const rest = lines.filter((l) => !topIds.has(l.accountId));
+
+  const out: TopLine[] = top.map((l) => ({
+    accountId: l.accountId,
+    name: l.accountName,
+    amountMinor: l.amountMinor,
+    prevMinor: prevById.get(l.accountId) ?? 0,
+  }));
+  if (rest.length > 0) {
+    out.push({
+      accountId: null,
+      name: "Other",
+      amountMinor: rest.reduce((sum, l) => sum + l.amountMinor, 0),
+      prevMinor: previous
+        .filter((l) => !topIds.has(l.accountId))
+        .reduce((sum, l) => sum + l.amountMinor, 0),
+    });
+  }
+  return out;
+}
+
+/**
+ * How many months the cash on hand lasts, at the average monthly fall over the
+ * last three complete months.
+ *
+ * `monthEnds` is the twelve month-end balances oldest first, the last being
+ * today's. Only meaningful while cash is actually falling and there is some
+ * left: a business whose cash grew has no runway to speak of.
+ */
+export function runwayMonths(
+  monthEnds: Minor[],
+): { months: number; burnMinor: Minor } | null {
+  if (monthEnds.length < 5) return null;
+  const onHand = monthEnds[monthEnds.length - 1];
+  const lastComplete = monthEnds[monthEnds.length - 2];
+  const threeBefore = monthEnds[monthEnds.length - 5];
+  const burnMinor = Math.round((threeBefore - lastComplete) / 3);
+  if (burnMinor <= 0 || onHand <= 0) return null;
+  return { months: onHand / burnMinor, burnMinor };
+}
+
+/**
+ * Each month's Profit & Loss, by the report's own pure rule over that month's
+ * account totals (`accountTotalsByRanges`) — a trend is the report run twelve
+ * times, never a second sum (007 FR-001).
+ */
+export function monthlySeries(
+  months: MonthBucket[],
+  totalsByMonth: AccountTotal[][],
+): MonthPoint[] {
+  return months.map((month, i) => {
+    const report = profitLoss({
+      dateFrom: month.from,
+      dateTo: month.to,
+      totals: totalsByMonth[i] ?? [],
+    });
+    return {
+      key: month.key,
+      label: month.label,
+      from: month.from,
+      to: month.to,
+      incomeMinor: report.totalIncomeMinor,
+      expensesMinor: report.totalExpensesMinor,
+      resultMinor: report.resultMinor,
+    };
+  });
+}
+
+/**
+ * Net profit to the change in cash, all read off the period's two statements
+ * (007 FR-007). Investing is all capital spending today — the Cash Flow
+ * Statement's only investing line — so free cash flow is operating plus
+ * investing.
+ */
+export function cashBridge(
+  pl: ProfitLossReport,
+  cf: CashFlowReport,
+): CashBridge {
+  return {
+    netProfitMinor: pl.resultMinor,
+    operatingMinor: cf.operating.totalMinor,
+    investingMinor: cf.investing.totalMinor,
+    freeCashFlowMinor: cf.operating.totalMinor + cf.investing.totalMinor,
+    financingMinor: cf.financing.totalMinor,
+    netChangeMinor: cf.netChangeMinor,
+    needsReviewMinor: cf.needsReviewMinor,
+  };
+}
+
+/** Whether the book has any records at all — a new book gets one empty state. */
+export function hasAnyRecord(db: LedgerDb): boolean {
+  const row = db
+    .select({ one: sql<number>`1` })
     .from(ledgerRecords)
-    .leftJoin(ledgerMovements, eq(ledgerMovements.recordId, ledgerRecords.id))
-    .leftJoin(accounts, eq(accounts.id, ledgerMovements.accountId))
-    .leftJoin(contacts, eq(contacts.id, ledgerRecords.contactId))
-    .where(eq(ledgerRecords.kind, kind))
-    .groupBy(ledgerRecords.id)
-    .orderBy(desc(ledgerRecords.date), desc(ledgerRecords.id))
-    .limit(limit)
-    .all()
-    .map((r) => ({
-      date: r.date,
-      description: r.description,
-      contactName: r.contactName,
-      amount: toDisplayAmount(r.totalMinor, type),
-    }));
-}
-
-/** Most recent expenses (with contact name), newest first. */
-export function recentExpenses(db: LedgerDb, limit: number) {
-  return recentRecords(
-    db,
-    LedgerRecordKind.Expense,
-    AccountType.Expense,
-    limit,
-  ).map((r) => ({
-    date: r.date,
-    name: r.description,
-    sub: r.contactName,
-    amount: r.amount,
-  }));
-}
-
-/** Most recent incomes (with contact name), newest first. */
-export function recentIncomes(db: LedgerDb, limit: number) {
-  return recentRecords(
-    db,
-    LedgerRecordKind.Income,
-    AccountType.Revenue,
-    limit,
-  ).map((r) => ({
-    date: r.date,
-    name: r.contactName,
-    sub: r.description,
-    amount: r.amount,
-  }));
-}
-
-// ---------------------------------------------------------------------------
-// The three statement-based indicators (005 FR-013, FR-014). Each is a thin
-// read of the same report function `/reports` itself calls — never a second,
-// separately written calculation — so the dashboard and Reports can never
-// disagree (User Story 4's tally guarantee, research.md §9).
-// ---------------------------------------------------------------------------
-
-export type NetProfitIndicator = {
-  amountMinor: Minor;
-  dateFrom: string;
-  dateTo: string;
-};
-
-/** Income less expenses over the period — the same figure `/reports/profit-loss` shows. */
-export function netProfitIndicator(
-  db: LedgerDb,
-  dateFrom: string,
-  dateTo: string,
-): NetProfitIndicator {
-  return {
-    amountMinor: profitLossReport(db, dateFrom, dateTo).resultMinor,
-    dateFrom,
-    dateTo,
-  };
-}
-
-export type PositionIndicator = {
-  assetsTotalMinor: Minor;
-  liabilitiesTotalMinor: Minor;
-  equityTotalMinor: Minor;
-  balances: boolean;
-  asAt: string;
-};
-
-/**
- * What the business owns, owes and is worth, as at a date.
- *
- * This calls the balance sheet rather than summing the three types again, so
- * the dashboard's figures and `/reports/balance-sheet` are the same
- * arithmetic over the same rows and cannot drift (FR-031). `balances` comes
- * along for the ride: it is false only when the books do not add up, and a
- * dashboard that showed a net worth without saying so would be the more
- * misleading of the two (FR-016). The old standalone "current assets" and
- * "accounts payable" tiles are lines *within* this one statement, not figures
- * beside it (research.md §11) — `assetsTotalMinor`/`liabilitiesTotalMinor`
- * already include them.
- */
-export function positionIndicator(
-  db: LedgerDb,
-  asAt: string,
-): PositionIndicator {
-  const report = balanceSheetReport(db, asAt);
-  return {
-    assetsTotalMinor: report.owned.totalMinor,
-    liabilitiesTotalMinor: report.owed.totalMinor,
-    equityTotalMinor: report.ownersStake.totalMinor,
-    balances: report.balances,
-    asAt,
-  };
-}
-
-export type CashFlowIndicator = {
-  netChangeMinor: Minor;
-  needsReviewMinor: Minor;
-  dateFrom: string;
-  dateTo: string;
-};
-
-/** The same net change in cash `/reports/cash-flow` shows, for the same period. */
-export function cashFlowIndicator(
-  db: LedgerDb,
-  dateFrom: string,
-  dateTo: string,
-): CashFlowIndicator {
-  const report = cashFlowReport(db, dateFrom, dateTo);
-  return {
-    netChangeMinor: report.netChangeMinor,
-    needsReviewMinor: report.needsReviewMinor,
-    dateFrom,
-    dateTo,
-  };
+    .limit(1)
+    .get();
+  return row !== undefined;
 }

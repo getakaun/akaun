@@ -26,9 +26,10 @@ The list has these columns: **Item**, **Kind**, **Accounts**, **Status**, **Date
 - **Item** shows the description and the record number. A lock icon shows beside a locked record.
   Put the pointer on the icon to see the reason. See [Locked records](../02-concepts/locked-records.md).
 - **Kind** shows the kind and the contact.
-- **Accounts** shows the account that the money came out of and the account that it went into. A
-  record with more than two lines shows the number of lines, for example **3 sides**.
-- **Status** shows **Outstanding**, **Part paid** or **Paid**. **Not cleared** shows when bank
+- **Accounts** shows the credit account (the money came out of it) and the debit account (the
+  money went into it). A record with more than two lines shows the number of lines, for example
+  **3 lines**.
+- **Status** shows **Outstanding**, **Partially paid** or **Paid**. **Unreconciled** shows when bank
   statement lines do not yet match the full amount of the record.
 - **Amount** shows an income with a plus sign (+). A foreign amount also shows in its own currency.
 
@@ -38,11 +39,11 @@ Above the list, click a tab to show the records with one status:
 
 - **All**
 - **Outstanding**
-- **Part paid**
+- **Partially paid**
 - **Paid**
 
 Each tab shows the number of records that it contains. See
-[Owed, part paid and paid](../02-concepts/owed-and-paid.md).
+[Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md).
 
 ## Search
 
@@ -60,7 +61,7 @@ The filters are above the list. You can use more than one filter at the same tim
 
 | Filter | What it does |
 |---|---|
-| **Not yet cleared** | Shows only the records that show **Not cleared**. Click it again to remove the filter. |
+| **Unreconciled** | Shows only the records that show **Unreconciled**. Click it again to remove the filter. |
 | **Kind** | Shows one or more kinds, for example **Expense** and **Transfer**. |
 | **Contact** | Shows the records of one contact. |
 | **Account** | Shows the records that use one account. See [See the statement of one account](#see-the-statement-of-one-account). |
@@ -87,7 +88,7 @@ By default, the list shows the newest records first.
 ## See the statement of one account
 
 When you filter by one account, the screen shows the statement of that account. The statement
-shows each movement in date order, with a running balance.
+shows each transaction in date order, with a running balance.
 
 1. On the **Records** screen, click **Account**.
 2. Choose the account, for example **Bank**.
@@ -95,12 +96,13 @@ shows each movement in date order, with a running balance.
 
 The statement shows:
 
-- **Balance before the first movement**: the balance before the first row.
-- A table with **Date**, **Description**, **Movement** and **Balance**. **Balance** is the running
+- **Opening balance**: the balance before the first row.
+- A table with **Date**, **Description**, **Amount** and **Balance**. **Balance** is the running
   balance after each row.
-- **Balance after the last movement**: the balance after the last row.
+- **Closing balance**: the balance after the last row.
 
-You can also open the statement from the page of an account. Click **See every movement**.
+You can also open the statement from the page of an account. In the **Account ledger** card, click
+**View account ledger**.
 
 The statement shows only with the **Account** filter and an optional date range. If you add a
 different filter, a search or a tab, the screen shows the normal list. If you sort by a column
@@ -144,11 +146,12 @@ To open a record in a new browser tab, hold Ctrl (Cmd on a Mac) and click its de
 
 - The screen loads the newest 1,000 records. If there are more, the bottom of the list says so,
   for example "Showing the 1000 most recent of 1250". Use the search to find an older record.
-- Paid and cleared are different. A record can show **Paid** and **Not cleared** at the same time.
+- Paid and reconciled are different. A record can show **Paid** and **Unreconciled** at the same
+  time.
   See [Bank reconciliation](../07-bank-reconciliation.md).
 
 ## Related
 
 - [Records](../02-concepts/records.md)
-- [Owed, part paid and paid](../02-concepts/owed-and-paid.md)
+- [Outstanding, partially paid and paid](../02-concepts/owed-and-paid.md)
 - [Change, delete or undo a record](./edit-delete-undo.md)

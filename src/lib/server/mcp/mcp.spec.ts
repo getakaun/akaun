@@ -1054,7 +1054,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         },
       });
       expect(JSON.stringify(result.structuredContent)).toContain(
-        "not the whole picture",
+        "the earlier period are incomplete",
       );
       for (const type of ["balance-sheet", "cash-flow", "partner-statement"]) {
         const args =

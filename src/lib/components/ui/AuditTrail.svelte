@@ -7,6 +7,7 @@
 		type AuditChange,
 		type AuditVia
 	} from '$lib/components/audit/audit-format.js';
+	import ListExpand, { visibleItems } from './ListExpand.svelte';
 
 	type AuditEntry = {
 		id: number;
@@ -23,11 +24,24 @@
 
 	let entries = $state<AuditEntry[]>([]);
 	let loading = $state(true);
+	let expanded = $state(false);
+	const shown = $derived(visibleItems(entries, expanded));
+
+	// The record the entries on screen belong to. A refresh of the same record keeps them
+	// (and the toggle) in place; pointing at another record drops them, so the old
+	// record's history never stands under the new one while the fetch runs.
+	let loadedFor = '';
 
 	export async function refresh() {
+		const url = `/api/audit/${recordType}/${encodeURIComponent(String(recordId))}`;
+		if (url !== loadedFor) {
+			entries = [];
+			expanded = false;
+			loadedFor = url;
+		}
 		loading = true;
 		try {
-			const res = await fetch(`/api/audit/${recordType}/${encodeURIComponent(String(recordId))}`);
+			const res = await fetch(url);
 			if (res.ok) entries = await res.json();
 		} finally {
 			loading = false;
@@ -52,10 +66,10 @@
 	}
 </script>
 
-{#if !loading && entries.length > 0}
-	<div class="detail-section-label">Activity</div>
+<!-- Entries already shown stay put during a refresh(); only the first load says so. -->
+{#if entries.length > 0}
 	<div class="audit-list">
-		{#each entries as entry (entry.id)}
+		{#each shown as entry (entry.id)}
 			<div class="audit-entry">
 				<div class="audit-entry-icon"><History size={13} /></div>
 				<div class="audit-entry-main">
@@ -69,6 +83,11 @@
 			</div>
 		{/each}
 	</div>
+	<ListExpand total={entries.length} bind:expanded />
+{:else if loading}
+	<p class="card-empty">Loading…</p>
+{:else}
+	<p class="card-empty">No changes are recorded yet.</p>
 {/if}
 
 <style>

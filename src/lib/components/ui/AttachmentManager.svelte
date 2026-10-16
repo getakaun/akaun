@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Paperclip, Plus, X } from '@lucide/svelte';
+	import ListExpand, { visibleItems } from './ListExpand.svelte';
 
 	export type Attachment = { id: number; filename: string; displayName: string; addedDate: string };
 
@@ -18,6 +19,8 @@
 	let drag = $state(false);
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let error = $state('');
+	let expanded = $state(false);
+	const shown = $derived(visibleItems(attachments, expanded));
 
 	async function upload(files: FileList) {
 		for (const file of Array.from(files)) {
@@ -54,8 +57,8 @@
 	}
 </script>
 
-<div class="attach-section-header">
-	<div class="detail-section-label" style="margin:0;">Attachments</div>
+<div class="detail-card-head">
+	<span class="detail-card-title">Attachments</span>
 	<button type="button" class="attach-add-btn" onclick={() => fileInput?.click()}>
 		<Plus size={11} /> Add
 	</button>
@@ -74,7 +77,7 @@
 >
 	{#if attachments.length > 0}
 		<div class="attach-list">
-			{#each attachments as att (att.id)}
+			{#each shown as att (att.id)}
 				<div class="attach-item related-link">
 					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- an API endpoint under apiBase that serves the file, not an app page. -->
 					<a href="{apiBase}/attachments/{att.id}"
@@ -101,6 +104,7 @@
 				</div>
 			{/each}
 		</div>
+		<ListExpand total={attachments.length} bind:expanded />
 	{:else}
 		<div
 			class="attach-empty attach-empty-drop"

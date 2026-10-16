@@ -45,12 +45,14 @@ To find a contact, use these controls:
 ### Balances on the list
 
 If you have the permission to see records, the list also shows the **Balance** column. Each
-balance shows **owed to you** or **you owe**. A dash (—) shows that nothing is outstanding.
+balance shows **Receivable** or **Payable**. **Receivable** is money that the contact owes to the
+business. **Payable** is money that the business owes to the contact. A dash (—) shows that nothing
+is outstanding.
 
 Under the title, the screen shows two totals:
 
-- **you owe**: the total that the business owes to all contacts.
-- **owed to you**: the total that all contacts owe to the business.
+- **Payables**: the total that the business owes to all contacts.
+- **Receivables**: the total that all contacts owe to the business.
 
 The totals show only when one of them is more than zero.
 
@@ -90,14 +92,14 @@ contacts. The **Contact** field on a record has the same button.
 Click a contact on the list to open its page.
 
 At the top, the page shows the entity type, the roles and the name. If you have the permission to
-see records, it also shows the balance. The text beside the balance is **still owed to you**,
-**you still owe them** or **nothing outstanding either way**.
+see records, it also shows the balance. The text beside the balance is **Receivable**,
+**Payable** or **nothing outstanding either way**.
 
 The page has these sections:
 
-- **Who they are**: **Entity type**, **Legal name** and **Roles**.
-- **How to reach them**: **Email**, **Phone**, **Registration no.**, **Address** and **Remark**.
-- **Their ledger** (in the rail): **See everything with this contact**, with the number of
+- **Contact details**: **Entity type**, **Legal name** and **Roles**.
+- **Contact information**: **Email**, **Phone**, **Registration no.**, **Address** and **Remark**.
+- **Contact ledger** (in the rail): **See everything with this contact**, with the number of
   records and invoices. Click it to open the **Records** screen with only the records of this
   contact.
 - **History** (in the rail): who made each change, and when.
@@ -105,7 +107,7 @@ The page has these sections:
 ## Change a contact
 
 1. Open the contact.
-2. Change the fields in **Who they are** or **How to reach them**.
+2. Change the fields in **Contact details** or **Contact information**.
 
    A bar shows at the bottom of the page.
 

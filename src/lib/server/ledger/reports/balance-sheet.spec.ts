@@ -404,7 +404,7 @@ describe("books that do not add up", () => {
     );
     const sheet = balanceSheet({ asAt: "2026-02-28", totals: broken });
     expect(
-      sheet.notes.some((n) => /do not add up|does not add up/i.test(n)),
+      sheet.notes.some((n) => /out of balance/i.test(n)),
     ).toBe(true);
   });
 });
@@ -467,7 +467,7 @@ describe("Current / Non-current subsections", () => {
     expect(bySubsection("Non-current")?.lines.map((l) => l.accountId)).toEqual(
       [102],
     );
-    expect(bySubsection("Needs review")?.lines.map((l) => l.accountId)).toEqual(
+    expect(bySubsection("Unclassified")?.lines.map((l) => l.accountId)).toEqual(
       [103],
     );
     const subsectionTotal = (sheet.owned.subsections ?? []).reduce(
@@ -515,7 +515,7 @@ describe("Current / Non-current subsections", () => {
     expect(bySubsection("Non-current")?.lines.map((l) => l.accountId)).toEqual(
       [202],
     );
-    expect(bySubsection("Needs review")?.lines.map((l) => l.accountId)).toEqual(
+    expect(bySubsection("Unclassified")?.lines.map((l) => l.accountId)).toEqual(
       [203],
     );
     const subsectionTotal = (sheet.owed.subsections ?? []).reduce(

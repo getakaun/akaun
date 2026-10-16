@@ -264,8 +264,8 @@ export const StatementDirectionLabels: Record<number, string> = {
 };
 
 export const StatementDirectionDisplayLabels: Record<number, string> = {
-  [StatementDirection.In]: "Money in",
-  [StatementDirection.Out]: "Money out",
+  [StatementDirection.In]: "Credit",
+  [StatementDirection.Out]: "Debit",
 };
 
 export const StatementExtractionStateLabels: Record<number, string> = {
@@ -438,8 +438,8 @@ export const AccountRoleDisplayLabels: Record<number, string> = {
   [AccountRole.Cash]: "Cash",
   [AccountRole.Card]: "Card",
   [AccountRole.Equipment]: "Equipment",
-  [AccountRole.Receivable]: "Money owed to us",
-  [AccountRole.Payable]: "Money we owe",
+  [AccountRole.Receivable]: "Accounts receivable",
+  [AccountRole.Payable]: "Accounts payable",
   [AccountRole.OpeningBalances]: "Opening balances",
   [AccountRole.PartnerCapital]: "Partner capital",
   [AccountRole.PartnerDrawings]: "Partner drawings",
@@ -591,9 +591,9 @@ export const LedgerRecordKindLabels: Record<number, string> = {
 };
 
 /**
- * Everyday words, not the enum's names (Principle VII). Payment, transfer,
- * opening balance and hand-made entries have no screen of their own, so each
- * needs a name a person recognises.
+ * Display names, not the enum's names (Principle VII). Screens use the
+ * standard accounting term as the label, with a short ASD-STE100 hint where a
+ * hint helps.
  */
 export const LedgerRecordKindDisplayLabels: Record<number, string> = {
   [LedgerRecordKind.Expense]: "Expense",

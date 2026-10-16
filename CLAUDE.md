@@ -498,6 +498,21 @@ same but behave differently.
   stays outside the anchor as its own click target. Use the `goto()` button only for
   navigation inside the app, where there is no real href.
 
+**List cards: empty and long**
+- **A list card that applies to the record always shows.** When the list is empty, it says what
+  is absent in one muted line, `<p class="card-empty">` (for example, "No changes are recorded
+  yet." or "No payments are applied yet."). A card that cannot apply stays hidden. For example,
+  the settlements card does not show on a record that was paid straight from an account. Never
+  leave a bare header: that is what every History card did before.
+- **A list longer than 6 shows the first 5**, then "Show all N" / "Show fewer", which expands in
+  place. `ListExpand.svelte` (`$lib/components/ui`) holds the number (`LIST_CAP`), the slice
+  (`visibleItems`) and the button. Do not write a second cap. `SettlementList`, `AuditTrail` and
+  `AttachmentManager` fold their own rows, so their callers get this for free.
+- When the loader sends only part of the list (Recent transactions on an account, "Changed in
+  the same request"), the card folds what it has. Its "See all" link to the full screen stays.
+- This does not apply to the record's own content (line items) or to a list the user acts on
+  (the payment form's open items).
+
 **Deep-link pattern (each record has a URL the user can share)**
 
 Each record detail has a real path, `/<feature>/[id]`, so a user can copy the URL and send it to

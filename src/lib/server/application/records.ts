@@ -149,7 +149,7 @@ function sidesContext(
 }
 
 const NEEDS_ADJUSTMENTS =
-  "These accounts need the Adjustments ability. Ask an administrator for it, or choose an everyday account on each side.";
+  "These accounts need the Adjustments ability. Ask an administrator for it, or choose an everyday account on each line.";
 const ARCHIVED =
   "That account is no longer in use. Choose one that is still open.";
 
@@ -361,7 +361,7 @@ export function createRecord(
           throw new Rollback(
             fail(
               "REFUSED",
-              "This payment does not touch anything that is owed.",
+              "This payment is not allocated to an open receivable or payable.",
             ),
           );
         }

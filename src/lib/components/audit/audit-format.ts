@@ -150,7 +150,7 @@ const FIELD_LABELS: Record<string, string> = {
 	amountMinor: 'Amount',
 	contactId: 'Contact',
 	accountId: 'Account',
-	counterAccountId: 'Other account',
+	counterAccountId: 'Contra account',
 	categoryAccountId: 'Category',
 	groupAccountId: 'Source account',
 	ownerId: 'Owner',

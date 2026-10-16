@@ -691,7 +691,7 @@ describe("a transfer already in the books (FR-060)", () => {
       "accounts",
     ]);
     expect(items[1].duplicateConfidence).toBe(95);
-    expect(itemAttention(items[1], "MYR")).toMatch(/already be in the books/);
+    expect(itemAttention(items[1], "MYR")).toMatch(/already be recorded/);
   });
 
   it("flags every item an existing transfer can account for, not only the nearest", async () => {
@@ -739,7 +739,7 @@ describe("confirming transfer items", () => {
     expect(run.ok).toBe(true);
     if (!run.ok) return;
     expect(run.value.map((outcome) => outcome.ok)).toEqual([false, true, true]);
-    expect(run.value[0].reason).toMatch(/already be in the books/);
+    expect(run.value[0].reason).toMatch(/already be recorded/);
 
     const made = db
       .select()

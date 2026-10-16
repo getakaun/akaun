@@ -26,14 +26,14 @@
 	const sections = $derived([
 		{
 			title: 'Revenue',
-			sub: 'What the business earned, by revenue account',
+			sub: 'Revenue by account',
 			lines: report.income,
 			totalLabel: 'Total revenue',
 			totalMinor: report.totalIncomeMinor
 		},
 		{
 			title: 'Expenses',
-			sub: 'What the business spent, by expense account',
+			sub: 'Expenses by account',
 			lines: report.expenses,
 			totalLabel: 'Total expenses',
 			totalMinor: report.totalExpensesMinor
@@ -67,7 +67,7 @@
 				</div>
 
 				{#if section.lines.length === 0}
-					<p class="rep-empty">Nothing in this period.</p>
+					<p class="rep-empty">No transactions in this period.</p>
 				{:else}
 					<table class="rep-table">
 						<tbody>
@@ -102,7 +102,7 @@
 			<div class="rep-block-head">
 				<div>
 					<div class="rep-block-title">Summary</div>
-					<div class="rep-block-sub">Revenue and expenses split by what they're for</div>
+					<div class="rep-block-sub">Gross profit and operating income</div>
 				</div>
 			</div>
 			<table class="rep-table">

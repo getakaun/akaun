@@ -66,7 +66,7 @@ export function itemAttention(
 ): string | null {
   if (item.state !== ImportState.PendingReview) return null;
   if (item.duplicateOf != null) {
-    return "It may already be in the books. Open it and choose Import anyway if it is a separate transaction.";
+    return "It may already be recorded. Open it and choose Import anyway if it is a separate transaction.";
   }
   const currency = (item.currency ?? mainCurrency).toUpperCase();
   if (isTransferType(item.documentType)) {

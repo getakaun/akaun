@@ -551,7 +551,7 @@ export type ProfitLossReport = {
 };
 
 export type BalanceSheetSubsection = {
-  label: "Current" | "Non-current" | "Needs review";
+  label: "Current" | "Non-current" | "Unclassified";
   lines: ReportLine[];
   totalMinor: Minor;
 };

@@ -1259,7 +1259,7 @@
 <ConfirmDialog
   bind:open={deleteLineOpen}
   title="Delete Statement Transaction?"
-  description="This removes the transaction and its allocations. Affected Akaun records may return to Needs Review."
+  description="This removes the transaction and its allocations. Affected Akaun records can become unreconciled again."
   confirmLabel="Delete Transaction"
   danger
   onConfirm={deleteLine}

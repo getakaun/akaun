@@ -82,7 +82,7 @@ The interest is in **Net profit**, but not in **Operating income**.
 To open a line, you also need the **View** permission on **Accounts** and on **Records**.
 
 1. Click the name of a line, for example **Advertising**.
-2. On the account page, click **See every movement**.
+2. On the account page, click **View account ledger**.
 
 The **Records** screen shows all records of the account, with a running balance. It shows all
 dates, not only the period of the report. Choose the dates again in the **Date** filter. See
@@ -92,8 +92,9 @@ dates, not only the period of the report. Choose the dates again in the **Date**
 
 1. Click **Export**.
 
-Akaun downloads a CSV file. The file has the columns "Section", "Account" and "Amount". It has the
-revenue lines, the expense lines, the totals and the result. Below the table, the file gives the
+Akaun downloads a CSV file, for example `profit-and-loss-2026-01-01-to-2026-03-31.csv`. The file
+has the columns "Section", "Account" and "Amount". It has the revenue lines, the expense lines, the
+totals and the "Net profit (loss)" row. Below the table, the file gives the
 period and the notes of the report. The **Summary** subtotals are not in the file.
 
 ## Notes

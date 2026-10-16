@@ -140,7 +140,7 @@ export function registerSales(server: McpServer, context: McpContext) {
     server,
     context,
     "list_invoices",
-    "Search invoices by status, customer, issue date or text. Amounts are in each invoice's own currency; outstandingMinor is main-currency cents still owed. Use get_invoice for lines, settlements and the owedMovementId a payment settles.",
+    "Search invoices by status, customer, issue date or text. Amounts are in each invoice's own currency; outstandingMinor is the outstanding receivable, in main-currency cents. Use get_invoice for lines, settlements and the owedMovementId a payment settles.",
     {
       ...dateRangeShape,
       ...pageShape,
@@ -258,7 +258,7 @@ export function registerSales(server: McpServer, context: McpContext) {
     server,
     context,
     "create_invoice",
-    `Create a draft invoice. Name the customer by contactId, or by newContactName to match or create one (creating needs contacts access). ${linesNote} A draft is not in the books until issue_invoice.`,
+    `Create a draft invoice. Name the customer by contactId, or by newContactName to match or create one (creating needs contacts access). ${linesNote} A draft is not posted to the ledger until issue_invoice.`,
     createInvoiceShape,
     (input) => invoiceResult(createInvoice(context, input)),
   );
@@ -278,7 +278,7 @@ export function registerSales(server: McpServer, context: McpContext) {
     server,
     context,
     "issue_invoice",
-    "Mark a draft invoice as sent. This puts it in the books: the customer owes its total (Money owed to us) against the default sales account, or `incomeAccountId` (an open Revenue account). The app does not email it. Requires a customer.",
+    "Mark a draft invoice as sent. This posts it to the ledger: debit Accounts Receivable, credit the default sales account or `incomeAccountId` (an open Revenue account), for its total. The app does not email it. Requires a customer.",
     { invoiceId: id, expectedVersion, incomeAccountId: id.optional() },
     ({ invoiceId, expectedVersion, incomeAccountId }) =>
       invoiceResult(
@@ -291,7 +291,7 @@ export function registerSales(server: McpServer, context: McpContext) {
     server,
     context,
     "void_invoice",
-    "Void a sent invoice: it keeps its number, is marked cancelled and its posting leaves the books (including past reports). Refused once anything is paid against it or its posting is bank-matched. With `reissue`, a corrected draft copy is created to edit and send. Confirm with the user before calling.",
+    "Void a sent invoice: it keeps its number, is marked cancelled and its ledger posting is removed (past reports change too). Refused once anything is paid against it or its posting is bank-matched. With `reissue`, a corrected draft copy is created to edit and send. Confirm with the user before calling.",
     { invoiceId: id, expectedVersion, reissue: z.boolean().default(false) },
     ({ invoiceId, expectedVersion, reissue }) => {
       const result = voidInvoice(
@@ -399,7 +399,7 @@ export function registerSales(server: McpServer, context: McpContext) {
     server,
     context,
     "convert_quotation_to_invoice",
-    "Turn an accepted quotation into a draft invoice with the same customer and lines. The invoice still needs issue_invoice to enter the books.",
+    "Turn an accepted quotation into a draft invoice with the same customer and lines. The invoice still needs issue_invoice to be posted to the ledger.",
     { quotationId: id, expectedVersion },
     ({ quotationId, expectedVersion }) => {
       const result = convertQuotation(context, quotationId, expectedVersion);

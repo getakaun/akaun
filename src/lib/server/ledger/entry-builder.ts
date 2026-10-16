@@ -64,7 +64,7 @@ function validate(
 ): Refusable<MovementDraft[]> {
   if (movements.length < 2) {
     return refuse(
-      "A record needs at least two lines — one account to post from, and one to post to.",
+      "A journal entry needs at least two lines: one debit and one credit.",
     );
   }
 
@@ -77,13 +77,13 @@ function validate(
   }
 
   if (movements.some((m) => m.amountMinor === 0)) {
-    return refuse("A side of a record cannot be worth nothing.");
+    return refuse("A line amount cannot be zero.");
   }
 
   const difference = movements.reduce((sum, m) => sum + m.amountMinor, 0);
   if (difference !== 0) {
     return refuse(
-      `The two sides do not cancel out — they are ${money(difference)} apart.`,
+      `Debits and credits do not balance. Difference: ${money(difference)}.`,
     );
   }
 
@@ -100,9 +100,7 @@ function validate(
   const isBatchPayment =
     input.kind === "payment" && (input.settlements?.length ?? 0) > 0;
   if (touchesSharedOwed && contactId === null && !isBatchPayment) {
-    return refuse(
-      "Say who this money is owed to, or owed by, before saving it.",
-    );
+    return refuse("Select the contact for this receivable or payable.");
   }
 
   return accept(movements);
@@ -124,7 +122,7 @@ function buildFor(
   // A journal entry names its own sides; every other kind derives them, and
   // none of those can be built from an amount of nothing.
   if (input.kind !== "journal" && input.amountMinor === 0) {
-    return refuse("Enter an amount greater than nothing.");
+    return refuse("Enter an amount greater than zero.");
   }
 
   const amount = input.amountMinor;

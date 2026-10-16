@@ -157,7 +157,7 @@ lost. Save before you do this.
 - A new record, payment, quotation or invoice opens on a full page. After you save it, Akaun
   opens the page of the new item. A payment that you start from an invoice is different: after
   you save it, Akaun opens the invoice again.
-- A new account, contact or starting balance opens in a panel at the side of the screen. After
+- A new account, contact or opening balance opens in a panel at the side of the screen. After
   you save it, you stay on the same screen. A new account or contact shows in the list.
 
 ## Go back

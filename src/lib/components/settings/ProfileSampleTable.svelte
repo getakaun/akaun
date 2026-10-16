@@ -233,7 +233,7 @@
 
 	{#if layout.directionColumn}
 		<div class="st-direction">
-			<span class="field-label">Set each value of “{layout.directionColumn}” to money in or money out.</span>
+			<span class="field-label">Set each value of “{layout.directionColumn}” to inflow or outflow.</span>
 			{#if directionValues.length}
 				<div class="st-values">
 					{#each directionValues as value (value)}
@@ -246,14 +246,14 @@
 									class:on={way === 'in'}
 									aria-pressed={way === 'in'}
 									disabled={!canChange}
-									onclick={() => setDirection(layout, value, way === 'in' ? null : 'in')}>In</button
+									onclick={() => setDirection(layout, value, way === 'in' ? null : 'in')}>Inflow</button
 								>
 								<button
 									type="button"
 									class:on={way === 'out'}
 									aria-pressed={way === 'out'}
 									disabled={!canChange}
-									onclick={() => setDirection(layout, value, way === 'out' ? null : 'out')}>Out</button
+									onclick={() => setDirection(layout, value, way === 'out' ? null : 'out')}>Outflow</button
 								>
 							</span>
 						</span>

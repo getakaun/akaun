@@ -35,9 +35,9 @@ The name of the account field tells what the account does:
 
 | Field | When it shows |
 |---|---|
-| **Paid from** | All items are expenses. |
-| **Received into** | All items are income. |
-| **Paid from or received into** | The document has expenses and income. |
+| **Payment account** | All items are expenses. |
+| **Deposit account** | All items are income. |
+| **Payment or deposit account** | The document has expenses and income. |
 | **Statement account** | The document has transfers. |
 
 The account field shows **Choose one for every item** until you choose an account. Akaun saves

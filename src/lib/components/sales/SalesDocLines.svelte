@@ -27,7 +27,7 @@
 <section class="detail-card">
 	<div class="detail-card-head"><span class="detail-card-title">Line items</span></div>
 	{#if doc.lines.length === 0}
-		<p class="empty-note">This {cfg.noun.toLowerCase()} has no line items yet.</p>
+		<p class="card-empty">This {cfg.noun.toLowerCase()} has no line items yet.</p>
 	{:else}
 		<!-- The line items, as the table they are. This is what the drawer could
 		     not hold: four columns in 456px meant the description was the only one
@@ -112,11 +112,6 @@
 </section>
 
 <style>
-	.empty-note {
-		font-size: 12.5px;
-		color: var(--muted-foreground);
-		margin: 0;
-	}
 	.lines-table {
 		display: flex;
 		flex-direction: column;

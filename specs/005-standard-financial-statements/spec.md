@@ -234,6 +234,8 @@ figure together (the SSE update already in place for both screens).
 - **FR-013**: The Dashboard MUST replace its revenue-vs-expense chart, spending-by-category chart,
   and profit-trend chart with headline indicators drawn from the Profit & Loss, Balance Sheet, and
   Cash Flow Statement for the period or as-at date currently selected on the dashboard.
+  *Superseded by 007 FR-001: charts are allowed again when every value they plot is the
+  statement's own calculation.*
 - **FR-014**: Every figure a Dashboard indicator shows MUST be computed by the same calculation the
   matching Reports statement uses for the same period or date — never a second, separately written
   calculation — so the two screens cannot disagree.
@@ -245,6 +247,7 @@ figure together (the SSE update already in place for both screens).
   reliable.
 - **FR-017**: The Dashboard MUST keep the "Recent activity" list and the period selector; these
   are unrelated to the chart-to-indicator change and remain as they are today.
+  *Superseded by 007 FR-003 (period selector) and FR-012 (Recent activity).*
 
 **Scope guard**
 

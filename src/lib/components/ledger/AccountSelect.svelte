@@ -131,7 +131,7 @@
         aria-label={bare ? label : undefined}
       >
         {#if value === null}
-          Paid by a third party
+          Accounts payable (paid by another party)
         {:else}
           {@const selected = choices.find((account) => account.id === value)}
           {selected ? accountLabel(selected) : "Select account"}
@@ -139,7 +139,7 @@
       </Select.Trigger>
       <Select.Content>
         {#if !required}
-          <Select.Item value={NONE_VALUE} label="Paid by a third party" />
+          <Select.Item value={NONE_VALUE} label="Accounts payable (paid by another party)" />
         {/if}
         {#each choices as account (account.id)}
           <Select.Item

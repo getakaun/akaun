@@ -185,7 +185,7 @@ export function registerReconciliation(server: McpServer, context: McpContext) {
     server,
     context,
     "record_transfer_from_line",
-    "Record an unmatched bank line as a transfer between this statement's account and another of the user's own accounts (`otherAccountId`), and match it — for money that moved between their own pots, which needs no expense or income. Requires the line's `version`.",
+    "Record an unmatched bank line as a transfer between this statement's account and another of the user's own accounts (`otherAccountId`), and match it — for a transfer between the user's own cash or bank accounts, which needs no expense or income. Requires the line's `version`.",
     {
       lineId: id,
       expectedVersion,

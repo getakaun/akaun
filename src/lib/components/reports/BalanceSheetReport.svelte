@@ -33,12 +33,12 @@
 	const owedAndOwners = $derived([
 		{
 			title: 'Liabilities',
-			sub: 'What the business owes',
+			sub: 'Amounts that the business must pay to other parties',
 			section: report.owed
 		},
 		{
 			title: 'Equity',
-			sub: 'Contributions, less drawings, plus earnings kept in the business',
+			sub: 'Capital contributions minus drawings, plus retained earnings',
 			section: report.ownersStake
 		}
 	]);
@@ -70,7 +70,7 @@
 
 {#snippet sectionTable(section: BalanceSheetSection)}
 	{#if section.lines.length === 0}
-		<p class="rep-empty">Nothing at this date.</p>
+		<p class="rep-empty">No balances at this date.</p>
 	{:else if section.subsections && section.subsections.length > 0}
 		{#each section.subsections as subsection (subsection.label)}
 			<div class="rep-subsection-title">{subsection.label}</div>
@@ -115,12 +115,10 @@
 			<div class="rep-result-label">Total assets, as at {formatDate(report.asAt)}</div>
 			<div class="rep-result-sub">
 				{#if report.balances}
-					This is the same figure as liabilities plus equity, which is how you know the books add
-					up.
+					Total assets equal total liabilities plus equity. The balance sheet is in balance.
 				{:else}
-					This does not match liabilities plus equity — the difference is {formatMinor(
-						report.differenceMinor
-					)}.
+					The balance sheet is out of balance by {formatMinor(report.differenceMinor)}. Total
+					assets do not equal total liabilities plus equity.
 				{/if}
 			</div>
 		</div>
@@ -134,7 +132,7 @@
 			<div class="rep-block-head">
 				<div>
 					<div class="rep-block-title">Assets</div>
-					<div class="rep-block-sub">Cash, receivables and property the business owns</div>
+					<div class="rep-block-sub">Cash and cash equivalents, receivables and other resources that the business controls</div>
 				</div>
 			</div>
 			{@render sectionTable(report.owned)}

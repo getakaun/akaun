@@ -544,7 +544,7 @@ describe("confirming every item", () => {
     const res = await routes.confirm(refusedId);
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe(
-      "Enter an amount greater than nothing.",
+      "Enter an amount greater than zero.",
     );
 
     expect(records()).toHaveLength(0);
@@ -598,7 +598,7 @@ describe("confirming every item", () => {
     expect(byId.get(itemIds[0])!.ok).toBe(true);
     expect(byId.get(itemIds[4])!.ok).toBe(true);
     expect(byId.get(itemIds[1])).toMatchObject({ ok: false });
-    expect(byId.get(itemIds[1])!.reason).toMatch(/already be in the books/);
+    expect(byId.get(itemIds[1])!.reason).toMatch(/already be recorded/);
     expect(byId.get(itemIds[2])!.reason).toBe(
       "It needs an exchange rate for USD.",
     );
@@ -1066,7 +1066,7 @@ describe("editing items", () => {
       "item-2",
     ]);
     expect(listed[0].attention).toBeNull();
-    expect(listed[1].attention).toMatch(/already be in the books/);
+    expect(listed[1].attention).toMatch(/already be recorded/);
 
     const jobs = await (await routes.listJobs()).json();
     expect(jobs[0].itemCounts).toEqual({

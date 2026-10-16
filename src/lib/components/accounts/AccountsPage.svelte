@@ -247,7 +247,7 @@
 					<thead>
 						<tr>
 							<th>Account</th>
-							<th>Records</th>
+							<th>Transactions</th>
 							<th class="ta-right">Balance</th>
 						</tr>
 					</thead>
@@ -285,13 +285,13 @@
 											<span class="cell-itemnum">
 												{account.code}{#if !account.active}
 													· Inactive{/if}{#if account.id === data.defaultAccountId}
-													· Used by default{/if}
+													· Default account{/if}
 											</span>
 										</a>
 									</td>
-									<td data-label="Records">
+									<td data-label="Transactions">
 										{account.movementCount}
-										{account.movementCount === 1 ? 'record' : 'records'}
+										{account.movementCount === 1 ? 'transaction' : 'transactions'}
 									</td>
 									<td class="td-amount" data-label="Balance">
 										<span class="amount-num">

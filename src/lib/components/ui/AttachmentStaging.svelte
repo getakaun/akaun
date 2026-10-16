@@ -90,8 +90,8 @@
 	}
 </script>
 
-<div class="attach-section-header">
-	<div class="detail-section-label" style="margin:0;">Attachments</div>
+<div class="detail-card-head">
+	<span class="detail-card-title">Attachments</span>
 	{#if !disabled}
 		<button type="button" class="attach-add-btn" onclick={() => fileInput?.click()}>
 			<Plus size={11} /> Add

@@ -66,12 +66,12 @@ const SUBSECTION_ORDER: {
 }[] = [
   { key: "current", label: "Current" },
   { key: "nonCurrent", label: "Non-current" },
-  { key: "needsReview", label: "Needs review" },
+  { key: "needsReview", label: "Unclassified" },
 ];
 
 /**
  * Buckets a flat `lines` list (one account type) into Current / Non-current /
- * Needs review, by each account's own `subType`.
+ * Unclassified, by each account's own `subType`.
  */
 function subsectionsFor(
   lines: ReportLine[],
@@ -164,9 +164,9 @@ export function balanceSheet(input: BalanceSheetInput): BalanceSheetReport {
   const notes = historyGapNotes(null, input.trackingStartedOn);
   if (!balances) {
     notes.unshift(
-      "These figures do not add up: what the business owns is not what it owes plus " +
-        "what the owners have in it. Something is wrong in the records — run the " +
-        "balance check before sending this to anyone.",
+      "The balance sheet is out of balance: total assets do not equal total " +
+        "liabilities plus equity. Run the ledger integrity check in Settings before " +
+        "you use this report.",
     );
   }
 

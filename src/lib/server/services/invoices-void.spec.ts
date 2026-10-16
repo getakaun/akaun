@@ -296,7 +296,7 @@ describe("voiding a sent invoice", () => {
 
     const result = cancelInvoice(db as never, invoice.id, userId);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toMatch(/bank line/);
+    if (!result.ok) expect(result.reason).toMatch(/bank statement line/);
 
     expect(getInvoice(db, invoice.id)!.status).toBe(InvoiceStatus.Sent);
     expect(getRecord(db, invoice.ledgerRecordId!)).not.toBeNull();

@@ -40,7 +40,8 @@ If the account has statements that are not complete, the button shows their numb
 **Reconcile · 2 open**.
 
 The **Bank reconciliation** screen shows the statements of this account. Below the title, Akaun
-shows the amount that is still to clear.
+shows the unreconciled amount, for example **1,250.00 unreconciled**. When nothing is left, it
+shows **Fully reconciled**.
 
 ## Upload a statement
 
@@ -102,7 +103,7 @@ line. Upload a different file of the statement instead.
 :::caution
 
 You cannot undo this. Akaun deletes the statement, its lines and all their matches. Each record
-that only this statement matched is then not cleared.
+that only this statement matched is then unreconciled.
 
 :::
 
@@ -148,7 +149,8 @@ the filters show, for example "Showing 8 of 20".
 
 ### How Akaun suggests a match
 
-Akaun looks for statement lines that have the same direction as the record: money in or money out.
+Akaun looks for statement lines that have the same direction as the record: **Credit** (money into
+the account) or **Debit** (money out of the account).
 The total of the lines must be equal to the amount of the record. If Akaun finds them, the record
 shows **Exact match**. If more than one set fits, Akaun prefers lines with a date near the date of
 the record.
@@ -204,7 +206,7 @@ Click **Reset** to remove the changes that you did not save.
 
 :::caution
 
-This saves many matches at one time. To remove a match later, you must clear it one record at a
+This saves many matches at one time. To remove a match later, you must remove it one record at a
 time.
 
 :::
@@ -229,7 +231,7 @@ Sometimes Akaun reads a line incorrectly. You can correct the line.
 2. Change **Date**, **Description**, **Amount**, **Direction** or **Note**.
 
 Akaun saves each change when you leave the field. You need the **Change** permission. In **Direction**, **Credit** is money into the account.
-**Debit** is money out of the account.
+**Debit** is money out of the account. These are the terms of the bank statement.
 
 ### Record a line as a transfer
 
@@ -249,8 +251,8 @@ Akaun makes a **Transfer** record in the main currency, with the date and amount
 it matches the line to the transfer. The button shows only on a line without a match. You need the
 **Add** permission on **Reconciliation** and on **Records**.
 
-The list of other accounts shows only places where money sits, such as a bank or cash account. A
-category, an owner account or money owed is not a transfer: record the line as an expense or
+The list of other accounts shows only cash and bank accounts. A category, an owner account, a
+receivable or a payable is not a transfer: record the line as an expense or
 income, or as a payment, and match it. A user with **Adjustments** on **Records** sees every
 account.
 
@@ -274,7 +276,7 @@ You need the **Delete** permission.
 2. Remove the tick from each statement line.
 3. Click **Save & Next** or **Save**.
 
-The record then has no match. If nothing else locks it, you can change its amount, date and money
+The record then has no match. If nothing else locks it, you can change its amount, date and payment
 account again.
 
 ## Finish a statement
@@ -291,19 +293,19 @@ If a statement line has no record, do one of these things:
 
 ## What a match does to a record
 
-- When statement lines cover the full amount of a record, the record is cleared. On the **Records**
-  screen, a record without a full match shows **Not cleared**.
-- When a record has a match, also a part match, the record page shows **Matched to the bank** in
-  the **Bank** section.
-- A record with a match, also a part match, is locked. You cannot change its amount, date or money account, and you
+- When statement lines cover the full amount of a record, the record is reconciled. On the
+  **Records** screen, a record without a full match shows **Unreconciled**.
+- When a record has a match, also a part match, the record page shows **Reconciled** in the
+  **Bank** section.
+- A record with a match, also a part match, is locked. You cannot change its amount, date or payment account, and you
   cannot delete it. See [Locked records](./02-concepts/locked-records.md).
 
-Cleared and paid are different. **Paid** tells that the money has moved. **Cleared** tells that the
-bank agrees.
+Reconciled and paid are different. **Paid** tells that the money has moved. **Reconciled** tells
+that the bank statement agrees.
 
 ## Notes
 
-- To find the records of all accounts without a full match, use the **Not yet cleared** filter on
+- To find the records of all accounts without a full match, use the **Unreconciled** filter on
   the **Records** screen. See [Find records](./03-everyday-tasks/find-records.md).
 - On a narrow screen, the match panel opens as a drawer.
 - If you open a different record or leave the match screen with changes that you did not save,

@@ -224,7 +224,7 @@ describe("confirmImportRow", () => {
 
     expect(result).toEqual({
       ok: false,
-      reason: "Enter an amount greater than nothing.",
+      reason: "Enter an amount greater than zero.",
     });
     expect(count.records()).toBe(0);
     expect(count.attachments()).toBe(0);

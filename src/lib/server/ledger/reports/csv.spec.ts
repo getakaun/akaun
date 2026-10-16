@@ -166,13 +166,13 @@ describe("the profit and loss as a table", () => {
       "Revenue",
       "Expenses",
       "Expenses",
-      "Result",
+      "Net profit (loss)",
     ]);
   });
 
   it("writes amounts as ordinary decimals a spreadsheet can add", () => {
     expect(table.rows[0]).toEqual(["Revenue", "Consulting", 1500]);
-    expect(table.rows[4]).toEqual(["Result", "Net profit", 1455]);
+    expect(table.rows[4]).toEqual(["Net profit (loss)", "Net profit", 1455]);
   });
 
   it("says what period it covers, and carries the report's own notes", () => {

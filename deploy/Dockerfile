@@ -39,6 +39,6 @@ ENV BODY_SIZE_LIMIT=21M
 ENV SSL_ENABLED=false
 EXPOSE 6969
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD sh -c 'wget -qO /dev/null --no-check-certificate "http$( [ "$SSL_ENABLED" = true ] && echo s )://localhost:${PORT}/health"'
+  CMD sh -c 'wget -qO /dev/null --no-check-certificate "http$( [ "$SSL_ENABLED" = true ] && echo s )://127.0.0.1:${PORT}/health"'
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bun", "server.js"]

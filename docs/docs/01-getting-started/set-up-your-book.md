@@ -19,7 +19,7 @@ Sign in as a superuser, for example `admin`, to do all the steps on this page.
 - [ ] 2. [Add the company details](#2-add-the-company-details)
 - [ ] 3. [Choose the document numbers](#3-choose-the-document-numbers)
 - [ ] 4. [Check the accounts](#4-check-the-accounts)
-- [ ] 5. [Enter the starting balances](#5-enter-the-starting-balances)
+- [ ] 5. [Enter the opening balances](#5-enter-the-opening-balances)
 - [ ] 6. [Check the default accounts](#6-check-the-default-accounts)
 - [ ] 7. [Add the users](#7-add-the-users)
 - [ ] 8. [Connect an AI provider](#8-connect-an-ai-provider)
@@ -123,31 +123,31 @@ The new account shows in the list.
 
 To change the name of a starter account, click the account, change **Name**, and click
 **Save changes**. On their account pages, **Marketplace Clearing** and **Loans** show
-**Needs review** until you choose a sub-type.
+**Unclassified** until you choose a sub-type.
 
 See [Accounts and categories](../02-concepts/accounts-and-categories.md).
 
-## 5. Enter the starting balances
+## 5. Enter the opening balances
 
-The starting balance is the money in an account on the day that you start to use Akaun. Enter it
+The opening balance is the money in an account on the day that you start to use Akaun. Enter it
 for each account that holds money, for example **Cash** and each bank account.
 
 1. In the sidebar, click **Accounts**.
 2. Click the account.
-3. On the right side of the account page, under **Starting balance**, click the card.
-4. In **On this date**, choose the first day of your books in Akaun.
+3. On the right side of the account page, under **Opening balance**, click the card.
+4. In **As at date**, choose the first day of your books in Akaun.
 5. In **Amount**, type the balance on that day, in the main currency. If the account was overdrawn, type a negative
    amount.
-6. Click **Save starting balance**.
+6. Click **Save opening balance**.
 
 The card shows the amount and the date. Akaun saves an **Opening balance** record. The other
 side of the record goes to the **Opening balances** default account, which is **Owner's Equity**
 at the start.
 
-Each account has one starting balance only. If you save a new one, it replaces the old one. If
-you save zero, Akaun removes the starting balance.
+Each account has one opening balance only. If you save a new one, it replaces the old one. If
+you save zero, Akaun removes the opening balance.
 
-You cannot change a starting balance after a payment settles it or a bank line matches it.
+You cannot change an opening balance after a payment settles it or a bank line matches it.
 
 ## 6. Check the default accounts
 
@@ -158,19 +158,19 @@ most businesses.
 |---|---|---|
 | **Accounts receivable** | An invoice that you send, and a payment from a customer. | **Accounts Receivable** |
 | **Accounts payable** | An expense that a different person pays for the business. | **Accounts Payable** |
-| **Opening balances** | The other side of each starting balance. | **Owner's Equity** |
+| **Opening balances** | The other side of each opening balance. | **Owner's Equity** |
 | **Sales revenue** | An invoice that does not choose a different revenue account. | **Product Sales** |
 | **Uncategorised expense** | An imported expense with no matching expense account. | **Other Expenses** |
 | **Default transaction account** | The account that new expenses and income use first. | **Bank** |
 | **Uncategorised income** | An imported income with no matching revenue account. | **Other Revenue** |
 
-1. In **Settings**, click the **Books** tab.
+1. In **Settings**, click the **Ledger** tab.
 2. Under **Default accounts**, choose an account for each default.
 3. Click **Save defaults**.
 
 :::info
 
-The **Books** tab shows only for a user with the **View** permission on **Reports**. To change a
+The **Ledger** tab shows only for a user with the **View** permission on **Reports**. To change a
 default account, the user needs the **Change** permission on **Accounts** and the **Manage**
 permission on **Settings**.
 
@@ -193,5 +193,5 @@ See [Connect an AI provider](../04-auto-import/connect-an-ai-provider.md).
 
 ## Result
 
-Your book has the correct currency, company details, accounts and starting balances. You can
+Your book has the correct currency, company details, accounts and opening balances. You can
 start to record money. See [Record an expense or income](../03-everyday-tasks/record-expense-or-income.md).

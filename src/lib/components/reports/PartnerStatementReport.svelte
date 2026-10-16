@@ -52,7 +52,7 @@
 
 		{#if report.partners.length === 0}
 			<p class="rep-empty">
-				Nobody is marked as a partner yet. Give a contact the Partner role and their figures appear
+				No contacts have the Partner role. Give a contact the Partner role to show their figures
 				here.
 			</p>
 		{:else if isMobile}

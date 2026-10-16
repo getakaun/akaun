@@ -433,7 +433,7 @@
 						? 'Choose both accounts of this transfer before importing it.'
 						: 'Choose both the source and target account before importing it.'}
 				{:else if !transfer && !isIncome && sourceAccountId === options.payableAccountId}
-					Marked as paid personally — owed to the contact above until reimbursed.
+					Recorded in accounts payable to the contact above until it is paid.
 				{:else if note}
 					{note}
 				{:else if numEdits > 0}

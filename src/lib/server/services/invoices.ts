@@ -236,7 +236,7 @@ function voidInvoice(
         invoice.ledgerRecordId === null
       ) {
         throw new Refused(
-          "This invoice has not been sent, so nothing is in the books yet. Delete it instead.",
+          "This invoice has not been sent, so nothing is posted to the ledger yet. Delete it instead.",
         );
       }
       if (

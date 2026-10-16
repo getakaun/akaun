@@ -7,6 +7,7 @@
 	import DetailPage from '$lib/components/ui/DetailPage.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 	import AuditTrail from '$lib/components/ui/AuditTrail.svelte';
+	import ListExpand, { visibleItems } from '$lib/components/ui/ListExpand.svelte';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import OpeningBalanceSheet from './OpeningBalanceSheet.svelte';
@@ -126,6 +127,11 @@
 	 * parameter — a value, not part of the route — so the lint rule cannot see
 	 * through the template string.
 	 */
+	// The loader sends the latest few; the card folds them like every other list, and
+	// "See all" in its head is the way to the whole ledger.
+	let recentExpanded = $state(false);
+	const recentShown = $derived(visibleItems(data.recent, recentExpanded));
+
 	const movementsHref = $derived(
 		`${resolve('/(app)/records')}?account=${account.id}`
 	);
@@ -209,14 +215,14 @@
 			{#if NEEDS_REVIEW_TYPES.includes(account.type)}
 				<span>·</span>
 				<span>
-					{account.subType != null ? AccountSubTypeDisplayLabels[account.subType] : 'Needs review'}
+					{account.subType != null ? AccountSubTypeDisplayLabels[account.subType] : 'Unclassified'}
 				</span>
 			{:else if account.subType != null}
 				<span>·</span>
 				<span>{AccountSubTypeDisplayLabels[account.subType]}</span>
 			{/if}
 			{#if !account.active}<span>·</span><span>Inactive</span>{/if}
-			{#if account.id === data.defaultAccountId}<span>·</span><span>Used by default</span>{/if}
+			{#if account.id === data.defaultAccountId}<span>·</span><span>Default account</span>{/if}
 		</div>
 		<h1 class="detail-hero-title">{account.name}</h1>
 		<div class="detail-hero-figure">
@@ -232,17 +238,17 @@
 		     and the one thing a drawer could never hold. -->
 		<section class="detail-card">
 			<div class="detail-card-head">
-				<span class="detail-card-title">Recent movements</span>
+				<span class="detail-card-title">Recent transactions</span>
 				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the route comes from resolve(); only the query string is appended. -->
 				<a class="detail-card-action" href={movementsHref}>
 					See all {data.recentTotal} <ChevronRight size={13} />
 				</a>
 			</div>
 			{#if data.recent.length === 0}
-				<p class="empty-note">Nothing has been recorded against this account yet.</p>
+				<p class="card-empty">No transactions are posted to this account yet.</p>
 			{:else}
 				<div class="mv-list">
-					{#each data.recent as r (r.id)}
+					{#each recentShown as r (r.id)}
 						{@const side = r.movements.find((m) => m.accountId === account.id)}
 						<a
 							class="mv-row related-link"
@@ -257,15 +263,16 @@
 						</a>
 					{/each}
 				</div>
+				<ListExpand total={data.recent.length} bind:expanded={recentExpanded} />
 				<p class="empty-note">
-					A running balance needs the whole account in date order, so it lives on the
-					full list rather than on this extract.
+					The running balance needs all transactions in date order. It shows only on the
+					account ledger.
 				</p>
 			{/if}
 		</section>
 
 		<section class="detail-card">
-			<div class="detail-card-head"><span class="detail-card-title">What it is called</span></div>
+			<div class="detail-card-head"><span class="detail-card-title">Account details</span></div>
 
 			<div class="field">
 				<label class="field-label" for="acc-name">Name *</label>
@@ -325,17 +332,13 @@
 						}}
 					>
 						<Select.Trigger id="acc-sub-type" class="w-full justify-between" disabled={!canEdit}>
-							{subType == null
-								? needsReview
-									? 'Needs review'
-									: 'Not yet classified'
-								: AccountSubTypeDisplayLabels[subType]}
+							{subType == null ? 'Unclassified' : AccountSubTypeDisplayLabels[subType]}
 						</Select.Trigger>
 						<Select.Content>
 							{#if subType == null}
 								<Select.Item
 									value={NONE_SUB_TYPE}
-									label={needsReview ? 'Needs review' : 'Not yet classified'}
+									label="Unclassified"
 								/>
 							{/if}
 							{#each subTypes as st (st)}
@@ -353,7 +356,7 @@
 
 	{#snippet rail()}
 		<section class="detail-card">
-			<div class="detail-card-head"><span class="detail-card-title">Starting balance</span></div>
+			<div class="detail-card-head"><span class="detail-card-title">Opening balance</span></div>
 			<button class="related-link ob-card" onclick={() => (openingOpen = true)} disabled={!data.perms.change}>
 				<span class="ob-icon"><Wallet size={15} /></span>
 				<span class="ob-main">
@@ -363,7 +366,7 @@
 					<span class="ob-sub">
 						{data.openingBalance
 							? `As at ${formatDate(data.openingBalance.date)}`
-							: 'What was already here when the books started'}
+							: 'Balance on the start date of the books'}
 					</span>
 				</span>
 				<ChevronRight size={14} color="var(--muted-foreground)" />
@@ -371,14 +374,14 @@
 		</section>
 
 		<section class="detail-card">
-			<div class="detail-card-head"><span class="detail-card-title">Every movement</span></div>
+			<div class="detail-card-head"><span class="detail-card-title">Account ledger</span></div>
 			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the route comes from resolve(); only the query string is appended. -->
 			<a class="related-link ob-card" href={movementsHref}>
 				<span class="ob-icon"><Landmark size={15} /></span>
 				<span class="ob-main">
-					<span class="ob-title">See every movement</span>
+					<span class="ob-title">View account ledger</span>
 					<span class="ob-sub">
-						{data.recentTotal} record{data.recentTotal === 1 ? '' : 's'}, with a running balance
+						{data.recentTotal} transaction{data.recentTotal === 1 ? '' : 's'}, with a running balance
 					</span>
 				</span>
 				<ChevronRight size={14} color="var(--muted-foreground)" />

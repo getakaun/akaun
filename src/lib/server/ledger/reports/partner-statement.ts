@@ -43,8 +43,8 @@ export type PartnerStatementInput = {
  * quietly disappearing here is the kind of wrong nobody notices.
  */
 const EQUAL_SHARE_NOTE =
-  "The result is split equally between the partners, because the app does not " +
-  "record a different share for each of them.";
+  "Net profit is allocated equally among the partners, because no " +
+  "profit-sharing ratio is recorded.";
 
 export function partnerStatement(
   input: PartnerStatementInput,

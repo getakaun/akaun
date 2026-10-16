@@ -64,9 +64,8 @@
    * column, so this list and the record's own drawer can never disagree
    * (FR-012).
    *
-   * Nothing here uses an accounting word (Principle VII): the question is "what
-   * was it for?" and "where did the money come from?", never a debit or a
-   * credit.
+   * Labels use the standard accounting term (debit, credit, receivable,
+   * payable, reconciled), with a short ASD-STE100 hint where a hint helps.
    */
   type PageData = ReturnType<typeof loadRecordsPage>;
   type ActionData = {
@@ -262,7 +261,7 @@
   const STATUS_TABS = [
     ["all", "All"],
     ["owed", "Outstanding"],
-    ["part-paid", "Part paid"],
+    ["part-paid", "Partially paid"],
     ["paid", "Paid"],
   ] as const;
 
@@ -498,7 +497,7 @@
       const contact = data.contacts.find((c) => c.id === selectedContactId);
       names.push(contact ? `the contact “${contact.legalName}”` : "a contact");
     }
-    if (clearedFilter === "not-cleared") names.push("“not yet cleared”");
+    if (clearedFilter === "not-cleared") names.push("“unreconciled”");
     if (dateFrom && dateTo) names.push(`dates ${dateFrom} to ${dateTo}`);
     else if (dateFrom) names.push(`dates from ${dateFrom}`);
     else if (dateTo) names.push(`dates up to ${dateTo}`);
@@ -799,7 +798,7 @@
     <div class="topbar-left">
       <h1 class="page-title">Records</h1>
       <p class="page-sub">
-        {counts.all} records · everything that happened
+        {counts.all} records · all transactions
       </p>
     </div>
     <div class="topbar-right">
@@ -875,15 +874,15 @@
       label="Outstanding"
       cur={mainCurrencySymbol()}
       value={formatMinorAmount(stats.owedTotal)}
-      sub="{stats.owedCount} not fully settled"
+      sub="{stats.owedCount} open items"
     />
     <!-- A count, not money, so no currency prefix — the other three carry one. -->
     <StatCard
       label={isNarrowed ? "Records shown" : "All records"}
       value={String(filtered.length)}
       sub={isNarrowed
-        ? `of ${counts.all} · the three figures above cover these`
-        : "every kind, newest first"}
+        ? `of ${counts.all} · totals reflect the filtered records`
+        : "all types, newest first"}
     />
   </div>
 
@@ -907,14 +906,14 @@
             <span class="owed-head-title">Outstanding payables</span>
             <span class="owed-head-sub">
               {owedGroups.length}
-              {owedGroups.length === 1 ? "contact" : "contacts"} · paid for
-              things on the business's behalf
+              {owedGroups.length === 1 ? "contact" : "contacts"} · amounts due
+              to contacts
             </span>
           </div>
           <span class="owed-head-total num">{formatMinor(owedTotal)}</span>
           {#if data.perms.add && owedGroups.length > 1}
             <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the href comes from resolve(); the rule cannot see through the helper call. -->
-            <a class="owed-pay-btn" href={payAllHref()}>Pay all outstanding</a>
+            <a class="owed-pay-btn" href={payAllHref()}>Pay all payables</a>
           {/if}
           <button
             type="button"
@@ -974,7 +973,7 @@
               (clearedFilter =
                 clearedFilter === "not-cleared" ? "all" : "not-cleared")}
           >
-            Not yet cleared
+            Unreconciled
           </button>
 
           <FilterDropdown label="Kind" active={selectedKinds.length > 0}>
@@ -1186,9 +1185,9 @@
               </h2>
               <p class="statement-sub">
                 {#if runningBalanceHolds && statement}
-                  {statement.total} movements{dateFrom || dateTo ? " in this date range" : ""}
+                  {statement.total} transactions{dateFrom || dateTo ? " in this date range" : ""}
                 {:else}
-                  Every movement on this account
+                  All transactions on this account
                 {/if}
               </p>
             </div>
@@ -1199,15 +1198,15 @@
 
           {#if runningBalanceHolds && statement}
             <div class="statement-figure">
-              <span>Balance before the first movement</span>
+              <span>Opening balance</span>
               <b class="num">{formatMinor(statement.openingBalanceMinor)}</b>
             </div>
           {:else if statementMode}
             <!-- Said out loud, because a figure that simply vanished would read
                  as a fault rather than as a consequence of the sort (FR-043). -->
             <p class="statement-note">
-              The running balance is only shown with the movements in date order and
-              nothing else filtering them. Sort by date and clear the other filters to
+              The running balance shows only when the transactions are in date order
+              and no other filter applies. Sort by date and clear the other filters to
               see it again.
             </p>
           {/if}
@@ -1219,7 +1218,7 @@
                   <tr>
                     <th>Date</th>
                     <th>Description</th>
-                    <th class="ta-right">Movement</th>
+                    <th class="ta-right">Amount</th>
                     <th class="ta-right">Balance</th>
                   </tr>
                 </thead>
@@ -1259,7 +1258,7 @@
             </div>
 
             <div class="statement-figure statement-figure-closing">
-              <span>Balance after the last movement</span>
+              <span>Closing balance</span>
               <b class="num">{formatMinor(statement.closingBalanceMinor)}</b>
             </div>
 
@@ -1267,7 +1266,7 @@
               <p class="statement-note">{note}</p>
             {/each}
           {:else if statementLoading}
-            <p class="statement-note">Working out the balance…</p>
+            <p class="statement-note">Calculating balance…</p>
           {/if}
         </div>
       {/if}
@@ -1414,7 +1413,7 @@
                     <!-- A record made by hand can have five sides. There is no
                          pair of accounts to show, so it says how many it has
                          rather than picking two arbitrarily. -->
-                    <span class="sides-count">{e.sideCount} sides</span>
+                    <span class="sides-count">{e.sideCount} lines</span>
                   {:else}
                     {@const sides = sidesOf(e)}
                     <span class="cell-sides">
@@ -1427,8 +1426,8 @@
                 <td class="td-status">
                   <StatusBadge status={statusLabelFor(e)} />
                   {#if !e.cleared}
-                    <span class="row-uncleared" title="No bank line accounts for this yet."
-                      >Not cleared</span
+                    <span class="row-uncleared" title="Not reconciled to a bank statement."
+                      >Unreconciled</span
                     >
                   {/if}
                 </td>
@@ -1531,8 +1530,8 @@
   bind:open={deleteDialogOpen}
   title={selected.size === 1 ? "Delete this record?" : "Delete these records?"}
   description={lockedSelected > 0
-    ? `${lockedSelected} of the ${selected.size} selected can't be deleted while a payment or a bank line still points at them — the rest will be removed. This can't be undone.`
-    : `This removes ${selected.size} ${selected.size === 1 ? "record" : "records"} and every side of each. It can't be undone.`}
+    ? `${lockedSelected} of the ${selected.size} selected are settled or reconciled and cannot be deleted. The others will be removed. This can't be undone.`
+    : `This removes ${selected.size} ${selected.size === 1 ? "record" : "records"} and all their journal lines. It can't be undone.`}
   confirmLabel="Delete"
   danger
   onConfirm={() => deleteFormEl?.requestSubmit()}
@@ -1575,7 +1574,7 @@
         {#if data.perms.add && owedGroups.length > 1}
           <div class="owed-all-row">
             <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the href comes from resolve(); the rule cannot see through the helper call. -->
-            <a class="owed-pay-btn" href={payAllHref()}>Pay all outstanding</a>
+            <a class="owed-pay-btn" href={payAllHref()}>Pay all payables</a>
           </div>
         {/if}
         {#each owedGroups as group (group.contactId)}
@@ -1606,7 +1605,7 @@
                     {formatDateShort(item.date)}{item.recordNumber
                       ? ` · ${item.recordNumber}`
                       : ""}{item.daysOverdue > 0
-                      ? ` · ${item.daysOverdue} days`
+                      ? ` · ${item.daysOverdue} days overdue`
                       : ""}
                   </span>
                 </span>

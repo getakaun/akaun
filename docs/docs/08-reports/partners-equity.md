@@ -85,7 +85,7 @@ Each partner gets half of the profit, because Akaun divides it equally.
 
 1. Click **Export**.
 
-Akaun downloads a CSV file. The file has the columns "Partner", "Contributions", "Share of profit",
+Akaun downloads a CSV file, for example `partners-equity-2026-01-01-to-2026-12-31.csv`. The file has the columns "Partner", "Contributions", "Share of profit",
 "Drawings" and "Closing balance". It has one row for each partner. It has no "All partners" row.
 Below the table, the file gives the period and the notes of the report.
 

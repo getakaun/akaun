@@ -4,8 +4,11 @@ sidebar_position: 3
 
 # Balance Sheet
 
-The **Balance Sheet** tells you what the business has, what it owes and what the owners have in it,
-on one date.
+The **Balance Sheet** shows the assets, the liabilities and the equity of the business on one date.
+
+- **Assets**: what the business owns.
+- **Liabilities**: what the business owes.
+- **Equity**: what the owners have in the business.
 
 :::info
 
@@ -25,12 +28,12 @@ At the start, **As at** is today. The report includes all records up to and incl
 ## What the report shows
 
 The top of the report shows **Total assets, as at** the date. Below it, Akaun compares this figure
-with the liabilities plus the equity. If the two are equal, Akaun tells you that the books agree.
+with the liabilities plus the equity. If the two are equal, Akaun tells you that the balance sheet is in balance.
 
 The report has three sections:
 
-- **Assets**: the Asset accounts. These are the things that the business has.
-- **Liabilities**: the Liability accounts. This is the money that the business owes.
+- **Assets**: the Asset accounts.
+- **Liabilities**: the Liability accounts.
 - **Equity**: the Equity accounts and **Current earnings**.
 
 Each section ends with **Total**. The report shows only the accounts with a balance on the date.
@@ -45,10 +48,10 @@ not an account. You cannot click it.
 
 - **Current**: money and things that the business uses or pays within about one year.
 - **Non-current**: things that the business keeps for longer, and loans for longer.
-- **Needs review**: accounts without a sub-type.
+- **Unclassified**: accounts without a sub-type.
 
 The sub-type of the account selects the group. For example, **Fixed asset** goes into
-**Non-current**, and **Credit card** goes into **Current**. Give each account in **Needs review** a
+**Non-current**, and **Credit card** goes into **Current**. Give each account in **Unclassified** a
 sub-type. See [Accounts and categories](../02-concepts/accounts-and-categories.md).
 
 ## Signs
@@ -77,14 +80,15 @@ made a profit of 2,000.00.
 
 The assets are 10,000.00. The liabilities plus the equity are 3,000.00 + 7,000.00 = 10,000.00.
 
-## If the figures do not agree
+## If the balance sheet is out of balance
 
 The assets must always be equal to the liabilities plus the equity. If they are not equal, the
-**Total assets** figure shows in red. The text below it gives the difference. A warning also shows
+balance sheet is out of balance. The **Total assets** figure shows in red. The text below it gives
+the difference. A warning also shows
 below the report. This tells you that the data of a record is damaged.
 
 1. Click **Settings**.
-2. Click the **Books** tab.
+2. Click the **Ledger** tab.
 3. In **Ledger integrity check**, click **Check now**.
 4. Give the result to your administrator.
 
@@ -95,7 +99,7 @@ Do not send this report to anybody until the check is good.
 To open a line, you also need the **View** permission on **Accounts** and on **Records**.
 
 1. Click the name of a line, for example **Bank**.
-2. On the account page, click **See every movement**.
+2. On the account page, click **View account ledger**.
 
 The **Records** screen shows all records of the account, with a running balance. It shows all
 dates, not only the dates up to **As at**. See
@@ -105,10 +109,10 @@ dates, not only the dates up to **As at**. See
 
 1. Click **Export**.
 
-Akaun downloads a CSV file. The file has the columns "Section", "Account" and "Amount". The
+Akaun downloads a CSV file, for example `balance-sheet-2026-03-31.csv`. The file has the columns "Section", "Account" and "Amount". The
 sections are "Assets", "Liabilities" and "Equity", each with a "Total" row. Below the table, the
-file gives the date and the notes of the report. The **Current**, **Non-current** and **Needs
-review** groups are not in the file.
+file gives the date and the notes of the report. The **Current**, **Non-current** and
+**Unclassified** groups are not in the file.
 
 ## Notes
 

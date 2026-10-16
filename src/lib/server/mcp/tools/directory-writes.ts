@@ -31,7 +31,7 @@ export function registerDirectoryWrites(
     server,
     context,
     "create_account",
-    "Create an account or category. A category is an account: type 5 Expense for what money is spent on, 4 Revenue for what it is earned from. Asset and Liability accounts need a `subType` (see list_accounts for the kinds in use). `code` is optional and must sit in the type's range; omitted, the lowest free code is used.",
+    "Create an account or category. A category is an account: type 5 Expense or 4 Revenue. Asset and Liability accounts need a `subType` (see list_accounts for the kinds in use). `code` is optional and must sit in the type's range; omitted, the lowest free code is used.",
     createAccountShape,
     (input) => createAccount(context, input),
     { ids: (input) => ({ type: input.type }) },

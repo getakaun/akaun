@@ -8,7 +8,7 @@ This page tells what each setting in **Settings** does, tab by tab. To prepare a
 correct order, use [Prepare your book](../01-getting-started/set-up-your-book.md).
 
 To open the settings, click **Settings** in the sidebar. The tabs are **General**, **Company**,
-**Books**, **Intelligence**, **Templates** and **Advanced**.
+**Ledger**, **Intelligence**, **Templates** and **Advanced**.
 
 :::info
 
@@ -22,7 +22,7 @@ only a superuser can change the settings. Akaun never shows the key of an AI pro
 
 ## Save your changes
 
-Each part of a tab has its own **Save** button. On the **Books** tab, the button is
+Each part of a tab has its own **Save** button. On the **Ledger** tab, the button is
 **Save defaults**. Click the button of the part that you changed before you go to a different
 part. After a save, Akaun shows **Settings saved**.
 
@@ -33,7 +33,7 @@ If you have unsaved changes and you click a different tab or a different screen,
 - Click **Discard changes** to remove your changes and continue.
 
 A reload of the page, or a closed browser tab, removes unsaved changes without a message. The
-**Unsaved changes** message also does not cover the **Default accounts** lists on the **Books** tab.
+**Unsaved changes** message also does not cover the **Default accounts** lists on the **Ledger** tab.
 
 ## General
 
@@ -43,17 +43,17 @@ The **General** tab has two parts: **Display** and **Numbering**.
 
 - **Currency**: the main currency of the book. All amounts show in this currency. Akaun changes
   the amounts of foreign records into it.
-- **Money usually comes from**: the account that new expenses and income use first. You can still
-  change the account on each record. This row shows only when the book has two or more money
+- **Default payment account**: the account that new expenses and income use first. You can still
+  change the account on each record. This row shows only when the book has two or more cash or bank
   accounts. At this time, a change in this row is not kept. To change this account, use
-  **Default transaction account** on the **Books** tab.
+  **Default transaction account** on the **Ledger** tab.
 - **Chart of Accounts**: click **Open accounts →** to open the **Accounts** screen.
 
 Click **Save** under these rows to save **Currency**.
 
 :::caution
 
-**Currency** locks when the first record, quotation or invoice exists. A starting balance is also
+**Currency** locks when the first record, quotation or invoice exists. An opening balance is also
 a record. After the lock, **Currency** shows a lock icon and you cannot change it.
 
 :::
@@ -97,27 +97,27 @@ Akaun shows these details on printed quotations and invoices.
 
 Click **Save** to save the fields.
 
-## Books
+## Ledger
 
 :::info
 
-The **Books** tab shows only for a user with the **View** permission on **Reports**.
+The **Ledger** tab shows only for a user with the **View** permission on **Reports**.
 
 :::
 
 ### Default accounts
 
-Akaun uses these accounts for the automatic side of some records. Each list shows only the
+Akaun uses these accounts for the automatic line of some records. Each list shows only the
 accounts that fit the default.
 
 | Default | What Akaun uses it for |
 |---|---|
 | **Accounts receivable** | An invoice that you send, and a payment from a customer. |
-| **Accounts payable** | An expense that a different person pays for the business. |
-| **Opening balances** | The other side of each starting balance. |
+| **Accounts payable** | The amounts that the business must pay to suppliers and other parties, for example a bill that you pay later. |
+| **Opening balances** | The other line of each opening balance. |
 | **Sales revenue** | An invoice that does not choose a different revenue account. |
 | **Uncategorised expense** | An imported expense with no matching expense account. |
-| **Default transaction account** | The account that new expenses and income use first. **Money usually comes from** on the **General** tab shows this account. |
+| **Default transaction account** | The account that new expenses and income use first. **Default payment account** on the **General** tab shows this account. |
 | **Uncategorised income** | An imported income with no matching revenue account. |
 
 Click **Save defaults** to save. Akaun shows **Default accounts updated**. To change a default,
@@ -138,12 +138,15 @@ See [Prepare your book](../01-getting-started/set-up-your-book.md#6-check-the-de
 The check adds the lines of each record and makes sure that each record balances. It only reads
 the book. It changes nothing.
 
-1. On the **Books** tab, find **Ledger integrity check**.
+1. On the **Ledger** tab, find **Ledger integrity check**.
 2. Click **Check now**.
 
-If all records balance, Akaun shows **All good. Every record balances, and so does everything
-added up together.** If a record does not balance, Akaun shows the record number and the
-difference. Report this problem. See [Troubleshooting](../10-help/troubleshooting.md).
+If all records balance, Akaun shows **The ledger is in balance. All records and the trial balance agree.**
+
+If a record does not balance, Akaun shows the number of unbalanced records, for example
+**2 unbalanced records.** Each line shows the record number and the difference, for example
+**Record #41 is out of balance by 10.00**. If the totals of all accounts also do not agree, Akaun
+shows **Trial balance difference** and the amount. Report this problem. See [Troubleshooting](../10-help/troubleshooting.md).
 
 ### Migration results
 

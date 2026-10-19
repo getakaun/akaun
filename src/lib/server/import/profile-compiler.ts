@@ -448,7 +448,8 @@ function headerField(profile: ReadingProfile): FieldSpec {
   header.date = {
     type: "string",
     nullable: true,
-    description: "The document's date as YYYY-MM-DD. Null when it is unclear.",
+    description:
+      "The date this document is for, as YYYY-MM-DD. For a statement or any document that covers a period, the statement or issue date printed on it, else the last day of the period. Never a range. Null only when the document prints no date at all.",
   };
   header.reference = {
     type: "string",
@@ -681,6 +682,8 @@ const SAVED_PROFILE_RULES = `- Read only the sections the schema names under sec
   choices). Never make up a value for it.
 - Every item shares the document's other party, date, reference and currency, given once in the
   header. Give an item its own date or reference only when its line prints one of its own.
+- The header date is one day as YYYY-MM-DD, never a range. For a statement or any document that
+  covers a period, use the statement or issue date printed on it, else the last day of the period.
 - Copy every amount exactly as printed, with its sign. Never add up, subtract or work out a figure
   yourself.`;
 

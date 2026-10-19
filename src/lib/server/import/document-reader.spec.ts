@@ -47,6 +47,7 @@ import {
   DOCUMENT_READ_TIMEOUT_MS,
   DocumentLimitError,
   readDocumentItems,
+  NO_DATE_NOTE,
   readingFromEnvelope,
   type DocumentReadingParams,
 } from "./document-reader.js";
@@ -593,6 +594,44 @@ describe("readingFromEnvelope — a profile's sections", () => {
     stated_total: stated,
     sections,
     ignored: [],
+  });
+
+  it("files under today and flags each item when no date was found", () => {
+    const profile: ReadingProfile = {
+      ...SEVERAL_ITEMS_PROFILE,
+      sections: [
+        {
+          key: "lines",
+          name: "Lines",
+          description: "",
+          kind: "by_sign",
+          categoryFromModel: false,
+        },
+      ],
+    };
+    const dated = (date: string | null): ReadEnvelope => ({
+      ...envelope({ lines: [item("Sale", 100)] }, null),
+      header: { ...envelope({}, null).header, date },
+    });
+
+    const missing = readingFromEnvelope(dated(null), profile, context);
+    expect(missing.date).toBe("2026-09-30");
+    expect(missing.items.map((entry) => entry.reviewNote)).toEqual([
+      NO_DATE_NOTE,
+    ]);
+
+    // A range is not a date: it is flagged like a missing one.
+    const range = readingFromEnvelope(
+      dated("1 Sep to 30 Sep 2026"),
+      profile,
+      context,
+    );
+    expect(range.items[0].reviewNote).toBe(NO_DATE_NOTE);
+
+    const found = readingFromEnvelope(dated("2026-08-31"), profile, context);
+    expect(found.date).toBe("2026-08-31");
+    expect(found.items[0].date).toBe("2026-08-31");
+    expect(found.items[0].reviewNote).toBeNull();
   });
 
   it("counts income as plus and expenses as minus in a by-sign section", () => {

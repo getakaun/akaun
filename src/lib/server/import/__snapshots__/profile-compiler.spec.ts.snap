@@ -22,7 +22,7 @@ exports[`compileProfile — built-in several items > compiles to the schema the 
           ],
         },
         "date": {
-          "description": "The document's date as YYYY-MM-DD. Null when it is unclear.",
+          "description": "The date this document is for, as YYYY-MM-DD. For a statement or any document that covers a period, the statement or issue date printed on it, else the last day of the period. Never a range. Null only when the document prints no date at all.",
           "type": [
             "string",
             "null",
@@ -163,7 +163,7 @@ exports[`savedReadingProfile > compiles the fee_document draft to the schema the
           ],
         },
         "date": {
-          "description": "The document's date as YYYY-MM-DD. Null when it is unclear.",
+          "description": "The date this document is for, as YYYY-MM-DD. For a statement or any document that covers a period, the statement or issue date printed on it, else the last day of the period. Never a range. Null only when the document prints no date at all.",
           "type": [
             "string",
             "null",
@@ -308,7 +308,7 @@ exports[`savedReadingProfile > compiles the marketplace_summary draft to the sch
           ],
         },
         "date": {
-          "description": "The document's date as YYYY-MM-DD. Null when it is unclear.",
+          "description": "The date this document is for, as YYYY-MM-DD. For a statement or any document that covers a period, the statement or issue date printed on it, else the last day of the period. Never a range. Null only when the document prints no date at all.",
           "type": [
             "string",
             "null",

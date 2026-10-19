@@ -528,6 +528,10 @@ function tiedCategoryFor(section: SectionSpec, line: ReadItem): number | null {
   return id != null && id > 0 ? id : null;
 }
 
+/** What the reviewer is told when no date was found and today was used. */
+export const NO_DATE_NOTE =
+  "No date was found on the document, so today's date was used. Check it before confirming.";
+
 /**
  * Turns the model's answer into proposed records, in code. Exported for the
  * tests; `readDocumentItems` is the way in.
@@ -539,7 +543,10 @@ export function readingFromEnvelope(
 ): DocumentReading {
   const { header } = envelope;
   const currency = parseCurrency(header.currency, context.mainCurrency);
-  const date = parseDate(header.date ?? "", context.today);
+  // The model decides which printed date is the document's. When it gives
+  // none we read, the records are filed under today and each says so.
+  const headerDate = parseDate(header.date ?? "", "");
+  const date = headerDate || context.today;
   const reference = (header.reference ?? "").trim();
   const documentKind: DocumentTypeCode =
     header.document_type === "income"
@@ -656,7 +663,13 @@ export function readingFromEnvelope(
             : null,
         tiedCategoryAccountId: tiedCategoryFor(section, line),
         extras: line.extras ?? null,
-        reviewNote: line.review_note?.trim() || null,
+        reviewNote:
+          [
+            line.review_note?.trim(),
+            ownDate || headerDate ? null : NO_DATE_NOTE,
+          ]
+            .filter(Boolean)
+            .join(" ") || null,
       });
     });
   }

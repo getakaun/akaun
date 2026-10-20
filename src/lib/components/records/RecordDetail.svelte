@@ -11,6 +11,7 @@
 	} from '$lib/components/ui/AttachmentManager.svelte';
 	import AuditTrail from '$lib/components/ui/AuditTrail.svelte';
 	import RecordForm from '$lib/components/ledger/RecordForm.svelte';
+	import DateCorrectionDialog from './DateCorrectionDialog.svelte';
 	import SettlementList, {
 		type SettlementLink
 	} from '$lib/components/ledger/SettlementList.svelte';
@@ -53,6 +54,7 @@
 	let saving = $state(false);
 	let error = $state('');
 	let deleteDialogOpen = $state(false);
+	let dateCorrectionOpen = $state(false);
 	let auditTrailRef = $state<{ refresh: () => Promise<void> } | null>(null);
 
 	const KIND_TITLES: Record<number, string> = {
@@ -71,6 +73,13 @@
 	 * removed by cancelling it. The server refuses both here too.
 	 */
 	const fromInvoice = $derived(record.kind === LedgerRecordKind.InvoiceIssue);
+	const canCorrectDate = $derived(
+		data.perms.change &&
+			data.perms.correctDate &&
+			record.locked &&
+			!record.reconciled &&
+			(record.kind === LedgerRecordKind.Expense || record.kind === LedgerRecordKind.Income)
+	);
 	const deleteBlockedReason = $derived(
 		fromInvoice
 			? 'Cancel the invoice instead'
@@ -172,6 +181,14 @@
 	dirtyNote={formRef?.blockedBy() ?? 'Unsaved changes'}
 >
 	{#snippet actions()}
+		{#if canCorrectDate}
+			<button
+				class="sheet-btn"
+				disabled={dirty || saving}
+				title={dirty ? 'Save or discard your changes before correcting the date.' : undefined}
+				onclick={() => (dateCorrectionOpen = true)}>Correct date</button
+			>
+		{/if}
 		{#if data.perms.delete}
 			<button
 				class="sheet-btn sheet-btn-delete"
@@ -211,6 +228,11 @@
 	{/snippet}
 
 	{#snippet main()}
+		{#if canCorrectDate}
+			<p class="text-muted-foreground mb-3 text-sm">
+				To correct only this settled date, use Correct date. A reason and review are required.
+			</p>
+		{/if}
 		<RecordForm
 			bind:this={formRef}
 			bind:dirty
@@ -334,6 +356,17 @@
 		</section>
 	{/snippet}
 </DetailPage>
+
+{#if dateCorrectionOpen}
+	<DateCorrectionDialog
+		recordId={record.id}
+		onclose={() => (dateCorrectionOpen = false)}
+		oncorrected={() => {
+			auditTrailRef?.refresh();
+			toast('The record date was corrected.');
+		}}
+	/>
+{/if}
 
 <ConfirmDialog
 	bind:open={deleteDialogOpen}

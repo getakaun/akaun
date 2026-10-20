@@ -22,6 +22,7 @@
 		clearable = false,
 		clearLabel = 'Clear date',
 		labelledBy = undefined,
+		popoverClass = undefined,
 		min = undefined
 	}: {
 		name?: string;
@@ -36,6 +37,8 @@
 		clearLabel?: string;
 		/** ID of a visible label that names the calendar trigger. */
 		labelledBy?: string;
+		/** Allows calendars in dialogs to render above the dialog overlay. */
+		popoverClass?: string;
 		/** The earliest day that can be picked (YYYY-MM-DD). */
 		min?: string;
 	} = $props();
@@ -104,7 +107,7 @@
 			<CalendarIcon size={14} style="flex-shrink:0; opacity:0.5;" />
 			{displayLabel}
 		</Popover.Trigger>
-		<Popover.Content align="start" class="w-auto p-0">
+		<Popover.Content align="start" class={cn('w-auto p-0', popoverClass)}>
 			<Calendar
 				type="single"
 				value={dateValue}

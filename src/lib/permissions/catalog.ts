@@ -89,13 +89,21 @@ export const PERMISSION_CATALOG = {
   records: {
     label: "Records",
     noun: "records",
-    description:
-      "All transactions: purchases, sales, transfers and payments.",
+    description: "All transactions: purchases, sales, transfers and payments.",
     children: {
       read: read("records, their files and statements"),
       create: create("records and payments"),
       update: update("records, settle payments and attach files"),
       delete: remove("records, settlements and attachments"),
+      correctDate: {
+        label: "Correct settled dates",
+        description:
+          "Correct a settled expense or income date with a reason and review. Browser only; changes can affect previously finalized reports.",
+        phrase: "correct settled dates",
+        explicit: true,
+        sensitive: true,
+        delegable: false,
+      },
       adjust: {
         label: "Adjustments",
         description:

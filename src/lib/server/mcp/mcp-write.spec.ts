@@ -100,9 +100,12 @@ const RESOURCES = [
 ] as const;
 const inScope = (leaf: LeafPermission) =>
   (RESOURCES as readonly string[]).includes(leaf.split(".")[0]);
-/** Every ability in these areas except Adjustments, like the seeded Owner without a grant. */
+/** Delegable abilities in these areas except Adjustments. */
 const WRITER = LEAF_PERMISSIONS.filter(
-  (leaf) => inScope(leaf) && leaf !== "records.adjust",
+  (leaf) =>
+    inScope(leaf) &&
+    leaf !== "records.adjust" &&
+    leaf !== "records.correctDate",
 );
 /** A bookkeeper: adds and changes, never deletes or merges. */
 const KEEPER = WRITER.filter(

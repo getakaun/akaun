@@ -4,9 +4,14 @@ import type { Minor } from "$lib/server/ledger/types.js";
 import { suggestExactAllocationSet } from "./allocation.js";
 import { EPSILON } from "./types.js";
 
-const MILLISECONDS_PER_DAY = 86_400_000;
-/** Suggestion relevance decays one point per day between the movement and the line. */
-const DATE_PROXIMITY_SCORE = 30;
+/** Reject malformed and overflowing dates instead of normalising them. */
+function validDay(date: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const time = Date.parse(date);
+  return (
+    Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === date
+  );
+}
 
 /** The side of a record that a statement line could be, on that statement's account. */
 export type SuggestionMovement = {
@@ -41,8 +46,8 @@ export function directionFor(amountMinor: Minor): StatementDirectionCode {
  * movement "exact match") and the bulk auto-match service (so it saves the same
  * set the UI promised) — keep it the only definition of that rule.
  *
- * Lines from a statement on a *different* account are never eligible, which is
- * FR-021 enforced on the suggestion side as well as on the candidate side.
+ * Lines must have the same valid date, account and direction as the movement.
+ * Different posting dates require a manual allocation.
  *
  * `savedLineIds` are lines already allocated to *this* movement: they stay
  * eligible even with no remaining balance, since re-saving reclaims them.
@@ -53,25 +58,68 @@ export function suggestLinesForMovement(
   savedLineIds: ReadonlySet<number> = new Set(),
 ): number[] {
   const direction = directionFor(movement.amountMinor);
-  const movementTime = Date.parse(movement.date);
+  if (!validDay(movement.date)) return [];
   return suggestExactAllocationSet(
     movement.remainingAmount ?? 0,
     lines
       .filter(
         (line) =>
           line.accountId === movement.accountId &&
+          line.date === movement.date &&
           line.direction === direction &&
           (line.remainingAmount >= EPSILON || savedLineIds.has(line.id)),
       )
       .map((line) => ({
         id: line.id,
         amount: line.remainingAmount,
-        score: Math.max(
-          0,
-          DATE_PROXIMITY_SCORE -
-            Math.abs(movementTime - Date.parse(line.date)) /
-              MILLISECONDS_PER_DAY,
-        ),
+        score: 0,
       })),
+  );
+}
+
+export type MovementSuggestion = {
+  suggestedLineIds: number[];
+  suggestionConflict: boolean;
+};
+
+/**
+ * Evaluate the whole population before filtering or truncating results. A line
+ * proposed for multiple movements requires a human choice, never input order.
+ * Conflicting proposals are not preselected in the manual composer.
+ */
+export function suggestionsForMovements(
+  movements: readonly (SuggestionMovement & {
+    movementId: number;
+    allocatedAmount?: number;
+  })[],
+  lines: readonly SuggestionLine[],
+): Map<number, MovementSuggestion> {
+  const proposals = new Map<number, number[]>();
+  const owners = new Map<number, number[]>();
+  for (const movement of movements) {
+    const ids =
+      (movement.allocatedAmount ?? 0) >= EPSILON
+        ? []
+        : suggestLinesForMovement(movement, lines);
+    proposals.set(movement.movementId, ids);
+    for (const id of ids) {
+      const group = owners.get(id) ?? [];
+      group.push(movement.movementId);
+      owners.set(id, group);
+    }
+  }
+  return new Map(
+    [...proposals].map(([id, ids]) => {
+      const suggestionConflict = ids.some(
+        (lineId) => owners.get(lineId)!.length > 1,
+      );
+      return [
+        id,
+        {
+          suggestedLineIds: suggestionConflict ? [] : ids,
+          suggestionConflict,
+        },
+      ];
+    }),
   );
 }

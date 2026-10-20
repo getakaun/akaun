@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { beforeNavigate, goto, invalidateAll, replaceState } from "$app/navigation";
+  import {
+    beforeNavigate,
+    goto,
+    invalidateAll,
+    replaceState,
+  } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
   import { SvelteURLSearchParams } from "svelte/reactivity";
@@ -49,11 +54,9 @@
    * address**, so somebody can send a colleague the statement they are part-way
    * through (FR-052).
    *
-   * **Nothing about matching's behaviour changes** (FR-051, FR-057). In
-   * particular the candidate rule is untouched: only movements on the
-   * statement's own account are ever offered, enforced in
-   * `listMovementCandidates` on the way in and again in `suggestLinesForMovement`
-   * — which is why a wallet purchase can never appear against a bank statement.
+   * Only movements on the statement's own account are offered. Automatic
+   * suggestions also require the same date and no competing record. Manual
+   * matching remains available for different bank posting dates.
    *
    * What is gone is the "Akaun Records" tab and its "Needs Review" status
    * filter. That question — what still needs clearing, across every account —
@@ -102,6 +105,10 @@
   let transferAccountId = $state<number | null>(null);
   let transferDescription = $state("");
   let transferSaving = $state(false);
+  let statementAction = $state<"move" | "delete" | "retry" | null>(null);
+  let targetAccountId = $state("");
+  let deleteStatementOpen = $state(false);
+  let statementError = $state("");
 
   /** Records on this account that bank lines do not yet fully account for. */
   const reviewMovements = $derived(
@@ -110,7 +117,10 @@
     ),
   );
   const bankRemaining = $derived(
-    data.lines.reduce((sum, line) => sum + Math.max(0, line.remainingAmount), 0),
+    data.lines.reduce(
+      (sum, line) => sum + Math.max(0, line.remainingAmount),
+      0,
+    ),
   );
   const dateRangeActive = $derived(!!(from || to));
   const activeFilterCount = $derived(dateRangeActive ? 1 : 0);
@@ -183,7 +193,8 @@
       JSON.stringify(normalizeDrafts(initialDrafts)),
   );
   const hasSuggestion = $derived(
-    !!selectedMovement?.suggestedLineIds.length && savedAllocations.length === 0,
+    !!selectedMovement?.suggestedLineIds.length &&
+      savedAllocations.length === 0,
   );
   const suggestionApplied = $derived(
     !!selectedMovement &&
@@ -239,18 +250,101 @@
   createResourceStream<{ type: string }>(
     "/api/reconciliation/stream",
     (event) => {
-      if (event.type !== "snapshot") void invalidateAll();
+      if (event.type !== "snapshot" && !statementAction) void invalidateAll();
     },
   );
+
+  function clearAllocationDrafts() {
+    selectedMovementId = null;
+    selectedMovement = null;
+    drafts = [];
+    savedDrafts = [];
+    initialDrafts = [];
+  }
+
+  async function manageStatement(action: "move" | "delete" | "retry") {
+    if (statementAction) return;
+    const accountId = Number(targetAccountId);
+    if (action === "move" && (!accountId || accountId === data.account.id))
+      return;
+    statementAction = action;
+    statementError = "";
+    try {
+      const response = await fetch(
+        `/api/reconciliation/statements/${data.statement.id}${action === "retry" ? "/retry" : ""}`,
+        action === "move"
+          ? {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ accountId }),
+            }
+          : { method: action === "delete" ? "DELETE" : "POST" },
+      );
+      if (!response.ok) {
+        const result = await response.json().catch(() => null);
+        throw new Error(
+          result?.error ?? "Statement could not be updated. Try again.",
+        );
+      }
+      if (action === "retry") {
+        toast.success("Statement extraction restarted");
+        await invalidateAll();
+      } else {
+        // The action was guarded before the write. Do not prompt a second time
+        // after deletion or leave the old account's now-stale address on screen.
+        clearAllocationDrafts();
+        deleteStatementOpen = false;
+        toast.success(
+          action === "delete"
+            ? "Statement deleted"
+            : "Statement account updated",
+        );
+        if (action === "move") {
+          await goto(
+            resolve("/(app)/accounts/[id]/reconcile/[statementId]", {
+              id: String(accountId),
+              statementId: String(data.statement.id),
+            }),
+          );
+          targetAccountId = "";
+        } else {
+          await goto(
+            resolve("/(app)/accounts/[id]/reconcile", {
+              id: String(data.account.id),
+            }),
+          );
+        }
+      }
+    } catch (error) {
+      statementError =
+        error instanceof Error
+          ? error.message
+          : "Statement could not be updated. Try again.";
+    } finally {
+      statementAction = null;
+    }
+  }
 
   function kindLabel(kind: number | undefined) {
     return (kind && LedgerRecordKindDisplayLabels[kind]) || "Record";
   }
+  function transactionStatus(line: StatementLine) {
+    if (line.remainingAmount < -CENT) return "overallocated";
+    if (line.allocatedAmount >= CENT && Math.abs(line.remainingAmount) < CENT)
+      return "reconciled";
+    return line.allocatedAmount >= CENT ? "partial" : "unreconciled";
+  }
   function matchStatus(
     movement: MovementRow,
-  ): "matched" | "exact-match" | "partial-match" | "no-match" {
+  ):
+    | "matched"
+    | "exact-match"
+    | "partial-match"
+    | "no-match"
+    | "needs-manual-choice" {
     if (Math.abs(movement.remainingAmount ?? 0) < CENT) return "matched";
     if ((movement.allocatedAmount ?? 0) >= CENT) return "partial-match";
+    if (movement.suggestionConflict) return "needs-manual-choice";
     return movement.suggestedLineIds.length ? "exact-match" : "no-match";
   }
   function matchRank(movement: MovementRow) {
@@ -456,6 +550,7 @@
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          statementId: data.statement.id,
           movementIds: targets.slice(start, start + BULK_MATCH_CHUNK),
         }),
       }).catch(() => null);
@@ -482,7 +577,11 @@
     await invalidateAll();
     const next = visibleMovements.find((movement) => {
       const status = matchStatus(movement);
-      return status === "partial-match" || status === "no-match";
+      return (
+        status === "partial-match" ||
+        status === "no-match" ||
+        status === "needs-manual-choice"
+      );
     });
     if (next) {
       loadMovement(next);
@@ -523,7 +622,8 @@
     if (!response?.ok) {
       const result = await response?.json().catch(() => null);
       toast.error(
-        result?.error ?? "This transaction could not be recorded as a transfer.",
+        result?.error ??
+          "This transaction could not be recorded as a transfer.",
       );
       return;
     }
@@ -579,57 +679,195 @@
     return "";
   }}
 />
-<svelte:head><title>{data.statement.originalFilename} · Match</title></svelte:head>
+<svelte:head
+  ><title>{data.statement.originalFilename} · Match</title></svelte:head
+>
 
 <div class="screen reconciliation-screen">
   <header class="topbar">
     <div class="topbar-left">
       <BackLink
-        href={resolve("/(app)/accounts/[id]/reconcile", { id: String(data.account.id) })}
+        href={resolve("/(app)/accounts/[id]/reconcile", {
+          id: String(data.account.id),
+        })}
         label={data.account.name}
       />
-      <h1 class="page-title filename" title={data.statement.originalFilename}>
-        {data.statement.originalFilename}
-      </h1>
-      <p class="page-sub">
-        <StatusBadge status={statusLabel()} />
-        <span class="num">{reviewMovements.length}</span> to match ·
-        <span class="num">{formatMoney(bankRemaining)}</span> unallocated
-        {#if data.statement.storedFilePath}
-          · <a
-            class="source-link"
-            href={resolve("/api/reconciliation/statements/[statementId]/file", {
-              statementId: String(data.statement.id),
-            })}
-            target="_blank"
-            rel="noopener"><ExternalLink size={12} /> Source file</a
-          >
-        {/if}
-      </p>
-    </div>
-    <div class="topbar-right">
-      <div class="search-box recon-search">
-        <div style="position:relative; display:flex; align-items:center;">
-          <span
-            style="position:absolute; left:10px; color:var(--muted-foreground); display:flex; pointer-events:none;"
-          >
-            <Search size={15} />
-          </span>
-          <input
-            type="search"
-            placeholder="Search records…"
-            bind:value={query}
-            oninput={updateUrl}
-            aria-label="Search records"
-          />
-        </div>
-      </div>
     </div>
   </header>
 
   <div class="work">
     <div class="work-main recon-work">
-      <div class="toolbar">
+      <section class="statement-overview" aria-label="Statement summary">
+        <div class="statement-heading">
+          <h1 class="page-title">{data.statement.originalFilename}</h1>
+          <StatusBadge status={statusLabel()} />
+        </div>
+        <p class="statement-meta">
+          <span>{data.account.name}</span>
+          <span
+            >{data.statement.dateFrom && data.statement.dateTo
+              ? `${formatDate(data.statement.dateFrom)} – ${formatDate(data.statement.dateTo)}`
+              : "No transaction dates"}</span
+          >
+        </p>
+        <div class="statement-progress">
+          <div>
+            <span class="mini-label">Matched transactions</span>
+            <strong class="num"
+              >{data.statement.matchedCount} / {data.statement
+                .totalLines}</strong
+            >
+          </div>
+          <div>
+            <span class="mini-label">Unallocated statement amount</span>
+            <strong class="num">{formatMoney(bankRemaining)}</strong>
+          </div>
+        </div>
+        {#if data.statement.extractionState === StatementExtractionState.Extracting}
+          <p class="extraction-notice" role="status">
+            Extracting transactions… This page will update automatically.
+          </p>
+        {:else if data.statement.extractionState === StatementExtractionState.Failed}
+          <div class="extraction-error" role="alert">
+            <p>
+              {data.statement.extractionError ||
+                "Transactions could not be extracted. Retry extraction or upload a clearer file."}
+            </p>
+            {#if data.permissions.add}
+              <button
+                type="button"
+                class="sheet-btn sheet-btn-primary"
+                disabled={statementAction !== null}
+                onclick={() => guard(() => void manageStatement("retry"))}
+              >
+                {statementAction === "retry" ? "Retrying…" : "Retry extraction"}
+              </button>
+            {/if}
+          </div>
+        {/if}
+        <details class="statement-details">
+          <summary>Statement details</summary>
+          <div class="statement-details-body">
+            <dl class="statement-information">
+              <div>
+                <dt>Filename</dt>
+                <dd>{data.statement.originalFilename}</dd>
+              </div>
+              <div>
+                <dt>Uploaded</dt>
+                <dd>{formatDate(data.statement.createdAt.slice(0, 10))}</dd>
+              </div>
+              <div>
+                <dt>Source file</dt>
+                <dd>
+                  {#if data.statement.storedFilePath}
+                    <a
+                      class="source-link"
+                      href={resolve(
+                        "/api/reconciliation/statements/[statementId]/file",
+                        {
+                          statementId: String(data.statement.id),
+                        },
+                      )}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <ExternalLink size={14} aria-hidden="true" />View source
+                      file<span class="sr-only"> (opens in a new tab)</span>
+                    </a>
+                  {:else}<span class="muted">Source file unavailable</span>{/if}
+                </dd>
+              </div>
+            </dl>
+            {#if data.permissions.change}
+              <div class="statement-move">
+                <span class="field-label" id="statement-account-label"
+                  >Account this statement belongs to</span
+                >
+                <div class="statement-move-controls">
+                  <Select.Root
+                    type="single"
+                    value={targetAccountId || String(data.account.id)}
+                    onValueChange={(value) => {
+                      targetAccountId = value;
+                    }}
+                    disabled={statementAction !== null}
+                  >
+                    <Select.Trigger
+                      aria-labelledby="statement-account-label"
+                      class="statement-account-select"
+                    >
+                      {data.accounts.find(
+                        (account) =>
+                          String(account.id) ===
+                          (targetAccountId || String(data.account.id)),
+                      )?.name ?? "Choose an account"}
+                    </Select.Trigger>
+                    <Select.Content>
+                      {#each data.accounts as account (account.id)}
+                        <Select.Item
+                          value={String(account.id)}
+                          label={account.name}
+                        />
+                      {/each}
+                    </Select.Content>
+                  </Select.Root>
+                  <button
+                    type="button"
+                    class="sheet-btn"
+                    disabled={statementAction !== null ||
+                      !targetAccountId ||
+                      Number(targetAccountId) === data.account.id}
+                    onclick={() => guard(() => void manageStatement("move"))}
+                  >
+                    {statementAction === "move" ? "Moving…" : "Move statement"}
+                  </button>
+                </div>
+              </div>
+            {/if}
+            {#if data.permissions.delete}
+              <div class="statement-danger">
+                <button
+                  type="button"
+                  class="sheet-btn sheet-btn-delete"
+                  disabled={statementAction !== null}
+                  onclick={() =>
+                    guard(() => {
+                      deleteStatementOpen = true;
+                    })}
+                >
+                  <Trash2 size={14} aria-hidden="true" />Delete statement
+                </button>
+              </div>
+            {/if}
+          </div>
+        </details>
+        {#if statementError}<p class="extraction-error" role="alert">
+            {statementError}
+          </p>{/if}
+      </section>
+      <div class="toolbar matching-toolbar">
+        <div class="matching-heading">
+          <h2>Records to match</h2>
+          <span class="num">{reviewMovements.length}</span>
+        </div>
+        <div class="search-box recon-search">
+          <div style="position:relative; display:flex; align-items:center;">
+            <span
+              style="position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--muted-foreground); display:flex; pointer-events:none;"
+            >
+              <Search size={15} aria-hidden="true" />
+            </span>
+            <input
+              type="search"
+              placeholder="Search records…"
+              bind:value={query}
+              oninput={updateUrl}
+              aria-label="Search records"
+            />
+          </div>
+        </div>
+
         <div class="mobile-filter-row">
           <button
             class="btn-outline btn-sm"
@@ -655,142 +893,139 @@
               <X size={13} /> Clear
             </button>
           {/if}
-            <FilterDropdown label="Date" active={dateRangeActive} align="right">
-              {#snippet icon()}<Calendar
-                  size={14}
-                  aria-hidden="true"
-                />{/snippet}
-              <div class="filter-daterange">
-                <div class="filter-daterange-head">
-                  <span>Date range</span>
-                  {#if from || to}<button
-                      type="button"
-                      onclick={() => {
-                        from = "";
-                        to = "";
-                        updateUrl();
-                        void invalidateAll();
-                      }}>Clear</button
-                    >{/if}
-                </div>
-                <span class="mini-label">From</span>
-                <DatePicker
-                  value={from}
-                  placeholder="From date"
-                  onchange={(value) => {
-                    from = value;
-                    updateUrl();
-                    void invalidateAll();
-                  }}
-                />
-                <span class="mini-label">To</span>
-                <DatePicker
-                  value={to}
-                  placeholder="To date"
-                  onchange={(value) => {
-                    to = value;
-                    updateUrl();
-                    void invalidateAll();
-                  }}
-                />
+          <FilterDropdown label="Date" active={dateRangeActive} align="right">
+            {#snippet icon()}<Calendar size={14} aria-hidden="true" />{/snippet}
+            <div class="filter-daterange">
+              <div class="filter-daterange-head">
+                <span>Date range</span>
+                {#if from || to}<button
+                    type="button"
+                    onclick={() => {
+                      from = "";
+                      to = "";
+                      updateUrl();
+                      void invalidateAll();
+                    }}>Clear</button
+                  >{/if}
               </div>
-            </FilterDropdown>
+              <span class="mini-label">From</span>
+              <DatePicker
+                value={from}
+                placeholder="From date"
+                onchange={(value) => {
+                  from = value;
+                  updateUrl();
+                  void invalidateAll();
+                }}
+              />
+              <span class="mini-label">To</span>
+              <DatePicker
+                value={to}
+                placeholder="To date"
+                onchange={(value) => {
+                  to = value;
+                  updateUrl();
+                  void invalidateAll();
+                }}
+              />
+            </div>
+          </FilterDropdown>
         </div>
       </div>
 
       <!-- Lines, candidates and the current selection, all visible at once —
            which is why this is a full-width page and not a drawer. -->
       <div class="split-workspace">
-          <div class="record-pane">
-            <div class="table-card">
-              <table class="exp-table">
-                <thead
-                  ><tr
-                    ><th>Record</th><th>Account</th><th>Date</th><th
-                      class="ta-right">Total</th
-                    ><th>Match</th><th class="ta-right">Remaining</th><th
-                      aria-label="Open"
-                    ></th></tr
-                  ></thead
-                ><tbody
-                  >{#each visibleMovements as movement (movement.movementId)}<tr
-                      class="exp-row"
-                      class:selected={movement.movementId ===
-                        selectedMovementId}
-                      tabindex="0"
-                      onclick={() => chooseMovement(movement)}
-                      onkeydown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          chooseMovement(movement);
-                        }
-                      }}
-                      ><td class="td-primary"
-                        ><div class="cell-item">
-                          <span class="cell-itemname">{movement.label}</span
-                          ><span class="cell-itemnum"
-                            >{kindLabel(movement.kind)} · {movement.contactName ||
-                              "No contact"}</span
-                          >
-                        </div></td
-                      ><td data-label="Account"
-                        ><span class="type-chip"
-                          >{movement.accountName ?? "No account"}</span
-                        ></td
-                      ><td class="td-date" data-label="Date"
-                        >{formatDate(movement.date)}</td
-                      ><td class="td-amount" data-label="Total"
-                        ><span class="amount-num"
-                          >{formatMoney(movement.amount)}</span
-                        ></td
-                      ><td data-label="Match"
-                        ><StatusBadge status={matchStatus(movement)} /></td
-                      ><td class="td-amount remaining" data-label="Remaining"
-                        ><span class="amount-num"
-                          >{formatMoney(movement.remainingAmount ?? 0)}</span
-                        ></td
-                      ><td class="td-chevron"
-                        ><ChevronRight size={15} aria-hidden="true" /></td
-                      ><td class="row-break"></td></tr
-                    >{/each}{#if visibleMovements.length === 0}<tr
-                      class="empty-row"
-                      ><td colspan="7"
-                        ><EmptyState
-                          title="Nothing to match"
-                          sub={query.trim() || dateRangeActive
-                            ? "No record on this account matches the current search or date range."
-                            : "Every record on this account is already accounted for by a bank line."}
-                          >{#snippet icon()}{#if query.trim() || dateRangeActive}<Banknote
-                                size={20}
-                              />{:else}<Check
-                                size={20}
-                              />{/if}{/snippet}</EmptyState
-                        ></td
-                      ></tr
-                    >{/if}</tbody
-                >
-              </table>
-            </div>
-            <div class="table-foot">
-              <span
-                >Showing <b>{visibleMovements.length}</b> of {data.movements.length}</span
+        <div class="record-pane">
+          <div class="table-card">
+            <table class="exp-table">
+              <thead
+                ><tr
+                  ><th>Record</th><th>Account</th><th>Date</th><th
+                    class="ta-right">Total</th
+                  ><th>Match</th><th class="ta-right">Remaining</th><th
+                    aria-label="Open"
+                  ></th></tr
+                ></thead
+              ><tbody
+                >{#each visibleMovements as movement (movement.movementId)}<tr
+                    class="exp-row"
+                    class:selected={movement.movementId === selectedMovementId}
+                    tabindex="0"
+                    onclick={() => chooseMovement(movement)}
+                    onkeydown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        chooseMovement(movement);
+                      }
+                    }}
+                    ><td class="td-primary"
+                      ><div class="cell-item">
+                        <span class="cell-itemname">{movement.label}</span><span
+                          class="cell-itemnum"
+                          >{kindLabel(movement.kind)} · {movement.contactName ||
+                            "No contact"}</span
+                        >
+                      </div></td
+                    ><td data-label="Account"
+                      ><span class="type-chip"
+                        >{movement.accountName ?? "No account"}</span
+                      ></td
+                    ><td class="td-date" data-label="Date"
+                      >{formatDate(movement.date)}</td
+                    ><td class="td-amount" data-label="Total"
+                      ><span class="amount-num"
+                        >{formatMoney(movement.amount)}</span
+                      ></td
+                    ><td data-label="Match"
+                      ><StatusBadge status={matchStatus(movement)} /></td
+                    ><td class="td-amount remaining" data-label="Remaining"
+                      ><span class="amount-num"
+                        >{formatMoney(movement.remainingAmount ?? 0)}</span
+                      ></td
+                    ><td class="td-chevron"
+                      ><ChevronRight size={15} aria-hidden="true" /></td
+                    ><td class="row-break"></td></tr
+                  >{/each}{#if visibleMovements.length === 0}<tr
+                    class="empty-row"
+                    ><td colspan="7"
+                      ><EmptyState
+                        title="Nothing to match"
+                        sub={query.trim() || dateRangeActive
+                          ? "No record on this account matches the current search or date range."
+                          : "Every record on this account is already accounted for by a bank line."}
+                        >{#snippet icon()}{#if query.trim() || dateRangeActive}<Banknote
+                              size={20}
+                            />{:else}<Check
+                              size={20}
+                            />{/if}{/snippet}</EmptyState
+                      ></td
+                    ></tr
+                  >{/if}</tbody
               >
-            </div>
+            </table>
           </div>
-          <div class="desktop-composer">
-            {#if selectedMovement}{@render AllocationComposer()}{:else if reviewMovements.length === 0}<EmptyState
-                title="You're all caught up"
-                sub="Every record on this account is accounted for by a bank line."
-                >{#snippet icon()}<Check size={20} />{/snippet}</EmptyState
-              >{:else}<EmptyState
-                title="Select an Akaun record"
-                sub="Choose a record to review compatible bank transactions and stage allocations."
-                >{#snippet icon()}<CircleDollarSign
-                    size={20}
-                  />{/snippet}</EmptyState
-              >{/if}
+          <div class="table-foot">
+            <span
+              >Showing <b>{visibleMovements.length}</b> of {data.movements
+                .length}</span
+            >
           </div>
         </div>
+        <div class="desktop-composer">
+          {#if selectedMovement}{@render AllocationComposer()}{:else if reviewMovements.length === 0}<EmptyState
+              title="You're all caught up"
+              sub="Every record on this account is accounted for by a bank line."
+              >{#snippet icon()}<Check size={20} />{/snippet}</EmptyState
+            >{:else}<EmptyState
+              title="Select an Akaun record"
+              sub="Choose a record to review compatible bank transactions and stage allocations."
+              >{#snippet icon()}<CircleDollarSign
+                  size={20}
+                />{/snippet}</EmptyState
+            >{/if}
+        </div>
+      </div>
 
       <!-- The bank's own lines, as extracted from the statement. -->
       <div class="statement-lines-panel">
@@ -798,9 +1033,9 @@
           Extracted Transactions ({data.lines.length})
         </div>
         <div class="statement-lines">
-          {#each data.lines as line (line.id)}<div
-              class="statement-line"
-            >
+          {#each data.lines as line (line.id)}
+            {@const status = transactionStatus(line)}
+            <div class="statement-line">
               <button
                 class="statement-line-summary related-link"
                 type="button"
@@ -815,11 +1050,28 @@
                 ><span class="statement-line-copy"
                   ><strong title={line.description}
                     >{line.description || "Statement transaction"}</strong
-                  ><small
-                    >{formatDate(line.date)} · {formatMoney(
-                      line.remainingAmount,
-                    )} remaining</small
-                  ></span
+                  ><small class="statement-line-meta">
+                    <span>{formatDate(line.date)}</span>
+                    <span
+                      class="statement-line-status"
+                      class:reconciled={status === "reconciled"}
+                      class:partial={status === "partial"}
+                      class:overallocated={status === "overallocated"}
+                    >
+                      {#if status === "reconciled"}
+                        <Check size={12} aria-hidden="true" /> Reconciled
+                      {:else if status === "partial"}
+                        Partially reconciled
+                      {:else if status === "overallocated"}
+                        Overallocated
+                      {:else}
+                        Unreconciled
+                      {/if}
+                    </span>
+                    {#if status !== "reconciled"}
+                      <span>{formatMoney(line.remainingAmount)} remaining</span>
+                    {/if}
+                  </small></span
                 ><span class="line-total">{formatMoney(line.amount)}</span><span
                   class:rotated={editingLineId === line.id}
                   class="line-chevron"><ChevronRight size={14} /></span
@@ -863,7 +1115,8 @@
                     ><span>Direction</span><Select.Root
                       type="single"
                       value={String(line.direction)}
-                      onValueChange={(next) => next && editLine(line, "direction", next)}
+                      onValueChange={(next) =>
+                        next && editLine(line, "direction", next)}
                       ><Select.Trigger
                         aria-label="Direction"
                         class="w-full justify-between"
@@ -873,7 +1126,9 @@
                           ? "Credit"
                           : "Debit"}</Select.Trigger
                       ><Select.Content
-                        ><Select.Item value={String(StatementDirection.In)} label="Credit"
+                        ><Select.Item
+                          value={String(StatementDirection.In)}
+                          label="Credit"
                         ></Select.Item><Select.Item
                           value={String(StatementDirection.Out)}
                           label="Debit"
@@ -923,6 +1178,15 @@
     </div>
   </div>
 </div>
+
+<ConfirmDialog
+  bind:open={deleteStatementOpen}
+  title="Delete Bank Statement?"
+  description="This removes the statement and every line extracted from it. Allocations against those lines are removed too. This cannot be undone."
+  confirmLabel="Delete statement"
+  danger
+  onConfirm={() => manageStatement("delete")}
+/>
 
 <!-- Mobile filters -->
 <Sheet.Root
@@ -1044,11 +1308,17 @@
         </div>
       </div>
       <div class="composer-body">
+        {#if selectedMovement.suggestionConflict}
+          <p>
+            Other records fit the same statement lines. Choose the correct match
+            manually.
+          </p>
+        {/if}
         {#if hasSuggestion}<div class="suggestion">
             <div>
               <strong
                 >{suggestionApplied
-                  ? "Auto-matched"
+                  ? "Suggested match"
                   : "Exact Match Found"}</strong
               ><span
                 >{selectedMovement.suggestedLineIds.length} transaction{selectedMovement
@@ -1171,9 +1441,7 @@
     style="gap:0; width:500px; max-width:95vw; height:100dvh; border-radius:0;"
     ><div class="sheet-head">
       <div>
-        <span class="sheet-eyebrow"
-          ><ArrowLeftRight size={13} />Transfer</span
-        >
+        <span class="sheet-eyebrow"><ArrowLeftRight size={13} />Transfer</span>
         <h2 class="sheet-title-text">Record as a transfer</h2>
       </div>
       <Sheet.Close class="sheet-close" aria-label="Close transfer"
@@ -1200,15 +1468,17 @@
           <Select.Root
             type="single"
             value={transferAccountId != null ? String(transferAccountId) : ""}
-            onValueChange={(next) => (transferAccountId = next ? Number(next) : null)}
+            onValueChange={(next) =>
+              (transferAccountId = next ? Number(next) : null)}
             ><Select.Trigger
               aria-label="The other account in this transfer"
               class="w-full justify-between"
               disabled={transferTargets.length === 0}
               >{transferTargets.length === 0
                 ? "No other account to choose from"
-                : (transferTargets.find((account) => account.id === transferAccountId)
-                    ?.name ?? "Choose an account")}</Select.Trigger
+                : (transferTargets.find(
+                    (account) => account.id === transferAccountId,
+                  )?.name ?? "Choose an account")}</Select.Trigger
             ><Select.Content
               >{#each transferTargets as account (account.id)}<Select.Item
                   value={String(account.id)}
@@ -1273,6 +1543,178 @@
 />
 
 <style>
+  .reconciliation-screen > .topbar {
+    flex: none;
+    padding-bottom: 12px;
+  }
+  .statement-overview {
+    flex: none;
+    min-width: 0;
+    margin-bottom: 16px;
+  }
+  .statement-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+  }
+  .statement-heading h1 {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 20px;
+  }
+  .statement-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    margin: 6px 0 12px;
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+    overflow-wrap: anywhere;
+  }
+  .statement-progress {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 32px;
+  }
+  .statement-progress > div {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .statement-progress strong {
+    font-size: 16px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .statement-details {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+  }
+  .statement-details summary {
+    cursor: pointer;
+    padding: 9px 12px;
+    font-size: 12.5px;
+    font-weight: 500;
+  }
+  .statement-details-body {
+    padding: 0 12px 12px;
+    max-height: 240px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .statement-information {
+    display: grid;
+    gap: 8px;
+    margin: 0 0 12px;
+    font-size: 12.5px;
+  }
+  .statement-information > div {
+    display: grid;
+    grid-template-columns: 90px minmax(0, 1fr);
+    gap: 12px;
+    align-items: center;
+  }
+  .statement-information dt,
+  .muted {
+    color: var(--muted-foreground);
+  }
+  .statement-information dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .statement-move-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .statement-move-controls :global(.statement-account-select) {
+    min-width: 0;
+    width: min(100%, 360px);
+  }
+  .statement-danger {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .statement-danger button {
+    color: var(--red);
+  }
+  .extraction-notice,
+  .extraction-error {
+    margin: 12px 0 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+  .extraction-notice {
+    color: var(--primary);
+    background: var(--primary-soft);
+  }
+  .extraction-error {
+    color: var(--red);
+    background: var(--red-soft);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+  .extraction-error p {
+    margin: 0;
+    flex: 1 1 200px;
+  }
+  .matching-heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .matching-heading h2 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .matching-heading > span {
+    color: var(--muted-foreground);
+    font-size: 12px;
+  }
+  .matching-toolbar > .recon-search {
+    margin-left: auto;
+  }
+  .statement-overview button,
+  .statement-move-controls button {
+    white-space: nowrap;
+  }
+  .statement-overview button:focus-visible,
+  summary:focus-visible,
+  .source-link:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .source-link:hover {
+    border-color: var(--primary);
+    background: var(--accent);
+  }
+  @media (max-width: 767px) {
+    .matching-toolbar > .recon-search {
+      display: block;
+      width: 100%;
+      order: 3;
+    }
+    .statement-heading h1 {
+      font-size: 18px;
+    }
+    .statement-progress {
+      gap: 12px 20px;
+    }
+    .statement-information > div {
+      grid-template-columns: 70px minmax(0, 1fr);
+    }
+  }
+
   /* The bank's own lines, now a panel on the page rather than a drawer. */
   .statement-lines-panel {
     margin-top: 14px;
@@ -1280,6 +1722,32 @@
     border-radius: 10px;
     padding: 14px;
     background: var(--card);
+  }
+  .statement-lines-panel > .detail-section-label {
+    margin-top: 0;
+  }
+  .statement-line-copy .statement-line-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 3px 8px;
+    white-space: normal;
+    overflow: visible;
+  }
+  .statement-line-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-weight: 600;
+  }
+  .statement-line-status.reconciled {
+    color: var(--green);
+  }
+  .statement-line-status.partial {
+    color: var(--amber);
+  }
+  .statement-line-status.overallocated {
+    color: var(--red);
   }
   .reconciliation-screen {
     min-width: 0;
@@ -1313,14 +1781,8 @@
     display: flex;
     align-items: center;
   }
-  .recon-search :global(svg) {
-    position: absolute;
-    left: 10px;
-    color: var(--muted-foreground);
-    pointer-events: none;
-  }
   .recon-search input {
-    width: 240px;
+    width: 100%;
     height: 34px;
     padding: 0 10px 0 32px;
     border: 1px solid var(--border);
@@ -1329,6 +1791,9 @@
     color: var(--foreground);
     font: inherit;
     font-size: 13px;
+  }
+  .recon-search > div {
+    width: 100%;
   }
   .recon-search input:focus-visible,
   input:focus-visible,
@@ -1409,13 +1874,6 @@
     border-radius: var(--radius);
     background: var(--card);
     box-shadow: var(--shadow-sm);
-  }
-  .filename {
-    display: block;
-    max-width: 360px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .num,
   .amount-num,
@@ -1810,7 +2268,7 @@
     text-transform: uppercase;
   }
   .source-link {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 9px;
     padding: 10px 11px;
@@ -1957,6 +2415,14 @@
     }
     .recon-work {
       padding-bottom: 20px;
+      overflow-y: auto;
+    }
+    .split-workspace {
+      flex-shrink: 0;
+      min-height: 360px;
+    }
+    .statement-lines-panel {
+      flex-shrink: 0;
     }
     .record-pane {
       display: flex;
@@ -1993,9 +2459,6 @@
     }
     .record-pane .table-card {
       overflow: visible;
-    }
-    .filename {
-      max-width: 210px;
     }
     :global(.recon-sheet) {
       width: 100vw !important;

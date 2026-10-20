@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { StatementDirection } from "$lib/enums.js";
 import type { StatementDirectionCode } from "$lib/enums.js";
-import { directionFor, suggestLinesForMovement } from "./suggestions.js";
+import {
+  directionFor,
+  suggestLinesForMovement,
+  suggestionsForMovements,
+} from "./suggestions.js";
 import type { SuggestionLine, SuggestionMovement } from "./suggestions.js";
 
 const BANK = 7;
@@ -65,7 +69,12 @@ describe("reconciliation suggestions", () => {
   });
 
   it("scopes suggestions by account even when both accounts share a fixed type", () => {
-    expect(suggestLinesForMovement(movement(), [line(1, 100), line(2, 100, StatementDirection.Out, "2026-03-10", WALLET)])).toEqual([1]);
+    expect(
+      suggestLinesForMovement(movement(), [
+        line(1, 100),
+        line(2, 100, StatementDirection.Out, "2026-03-10", WALLET),
+      ]),
+    ).toEqual([1]);
   });
 
   it("drops a line an earlier movement already consumed", () => {
@@ -95,12 +104,101 @@ describe("reconciliation suggestions", () => {
     ).toEqual([]);
   });
 
-  it("prefers the line closest in date when several match exactly", () => {
+  it("only offers lines on the same date", () => {
     expect(
       suggestLinesForMovement(movement(), [
         line(1, 100, StatementDirection.Out, "2026-03-25"),
-        line(2, 100, StatementDirection.Out, "2026-03-11"),
+        line(2, 100, StatementDirection.Out, "2026-03-10"),
       ]),
     ).toEqual([2]);
+  });
+});
+
+describe("same-date suggestions and conflicts", () => {
+  const creditLines = [
+    line(1, 1000, StatementDirection.In, "2026-01-30"),
+    line(2, 0.22, StatementDirection.In, "2026-01-31"),
+  ];
+  const credit = (movementId: number, date: string) => ({
+    ...movement({ amountMinor: 100000, remainingAmount: 1000, date }),
+    movementId,
+  });
+
+  it("only suggests the January record for the two-entry statement", () => {
+    const suggestions = suggestionsForMovements(
+      [
+        credit(1, "2026-01-30"),
+        credit(2, "2026-02-07"),
+        credit(3, "2026-08-29"),
+      ],
+      creditLines,
+    );
+    expect(suggestions.get(1)).toEqual({
+      suggestedLineIds: [1],
+      suggestionConflict: false,
+    });
+    expect(suggestions.get(2)?.suggestedLineIds).toEqual([]);
+    expect(suggestions.get(3)?.suggestedLineIds).toEqual([]);
+  });
+
+  it("rejects adjacent dates and invalid calendar dates", () => {
+    for (const date of [
+      "2026-01-29",
+      "2026-01-31",
+      "2026-02-30",
+      "invalid",
+      "2026-1-30",
+    ]) {
+      expect(suggestLinesForMovement(credit(1, date), creditLines)).toEqual([]);
+    }
+    expect(
+      suggestLinesForMovement(credit(1, "2026-02-30"), [
+        line(1, 1000, StatementDirection.In, "2026-02-30"),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("requires manual choice for every competing proposal regardless of order", () => {
+    for (const movements of [
+      [credit(1, "2026-01-30"), credit(2, "2026-01-30")],
+      [credit(2, "2026-01-30"), credit(1, "2026-01-30")],
+    ]) {
+      const suggestions = suggestionsForMovements(movements, creditLines);
+      for (const id of [1, 2])
+        expect(suggestions.get(id)).toEqual({
+          suggestedLineIds: [],
+          suggestionConflict: true,
+        });
+    }
+  });
+
+  it("detects conflicts between combinations and individual lines", () => {
+    const suggestions = suggestionsForMovements(
+      [
+        { ...movement(), movementId: 1 },
+        {
+          ...movement({ amountMinor: -4000, remainingAmount: 40 }),
+          movementId: 2,
+        },
+      ],
+      [line(1, 40), line(2, 60)],
+    );
+    expect(suggestions.get(1)?.suggestionConflict).toBe(true);
+    expect(suggestions.get(2)?.suggestionConflict).toBe(true);
+  });
+
+  it("does not treat an already allocated movement as an automatic competitor", () => {
+    const suggestions = suggestionsForMovements(
+      [
+        credit(1, "2026-01-30"),
+        { ...credit(2, "2026-01-30"), allocatedAmount: 5 },
+      ],
+      creditLines,
+    );
+    expect(suggestions.get(1)?.suggestedLineIds).toEqual([1]);
+    expect(suggestions.get(2)).toEqual({
+      suggestedLineIds: [],
+      suggestionConflict: false,
+    });
   });
 });

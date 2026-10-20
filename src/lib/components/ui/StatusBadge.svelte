@@ -49,6 +49,7 @@
     leftovers: { label: "Leftovers", tone: "amber" },
     "exact-match": { label: "Exact match", tone: "green" },
     "partial-match": { label: "Partial", tone: "amber" },
+    "needs-manual-choice": { label: "Needs manual choice", tone: "amber" },
     "no-match": { label: "No match", tone: "gray" },
     // An item of an imported document read as several items (006 FR-017).
     // Keyed apart from the record statuses above: "confirmed" here means the

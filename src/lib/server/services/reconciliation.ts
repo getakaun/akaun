@@ -9,7 +9,7 @@ import type { LeafPermission } from "$lib/permissions/catalog.js";
 import { reconciliationEvents } from "$lib/server/reconciliation/events.js";
 import {
   directionFor,
-  suggestLinesForMovement,
+  suggestionsForMovements,
 } from "$lib/server/reconciliation/suggestions.js";
 import { EPSILON, round2 } from "$lib/server/reconciliation/types.js";
 import type {
@@ -67,7 +67,10 @@ function authorize(locals: App.Locals, permission: LeafPermission) {
 function lineRemainders(db: ReconciliationDb) {
   const allocatedByLine = new Map<number, number>();
   for (const a of listAllocations(db)) {
-    allocatedByLine.set(a.lineId, (allocatedByLine.get(a.lineId) ?? 0) + a.amount);
+    allocatedByLine.set(
+      a.lineId,
+      (allocatedByLine.get(a.lineId) ?? 0) + a.amount,
+    );
   }
   const accountByStatement = new Map(
     listStatements(db).map((statement) => [statement.id, statement.accountId]),
@@ -400,12 +403,8 @@ function remainingOf(movement: MovementCandidate): number {
 /**
  * Save the suggested exact-match allocations for many movements in one pass.
  *
- * Suggestions are computed per movement and independently, so two movements can
- * both propose the same statement line. Walking the list against a live
- * remainder map — rather than the snapshot each movement was suggested from —
- * lets an already-consumed line drop out of the next movement's candidate set:
- * that movement is reported as skipped and left for review instead of failing
- * the whole batch with a 409.
+ * Conflicts are checked against all movements, including ones omitted from
+ * the request. Live balances are rechecked before each atomic write.
  *
  * Deliberately not wrapped in an outer transaction:
  * `replaceMovementAllocations` opens its own, so every movement's write is
@@ -416,9 +415,25 @@ export function autoMatchMovements(
   db: ReconciliationDb,
   locals: App.Locals,
   movementIds: number[],
+  statementId?: number,
 ) {
   const userId = authorize(locals, "reconciliation.match");
-  const lines = lineRemainders(db);
+  const statement =
+    statementId === undefined ? undefined : getStatement(db, statementId);
+  if (statementId !== undefined && !statement)
+    throw new ReconciliationError("Bank statement not found", 404);
+  const lines = lineRemainders(db).filter(
+    (line) => statementId === undefined || line.statementId === statementId,
+  );
+  const accountIds = [
+    ...new Set(
+      lines.flatMap((line) =>
+        line.accountId === null ? [] : [line.accountId],
+      ),
+    ),
+  ];
+  const allMovements = listMovementCandidates(db, accountIds);
+  const initialSuggestions = suggestionsForMovements(allMovements, lines);
   const remainingByLine = new Map(
     lines.map((line) => [line.id, line.remainingAmount]),
   );
@@ -433,19 +448,23 @@ export function autoMatchMovements(
     // allocation is somebody's decision and is never overwritten here.
     if (
       !movement ||
+      initialSuggestions.get(movementId)?.suggestionConflict ||
       (movement.allocatedAmount ?? 0) >= EPSILON ||
       remainingOf(movement) < EPSILON
     ) {
       skipped += 1;
       continue;
     }
-    const suggested = suggestLinesForMovement(
-      { ...movement, remainingAmount: remainingOf(movement) },
-      lines.map((line) => ({
-        ...line,
-        remainingAmount: remainingByLine.get(line.id) ?? 0,
-      })),
-    );
+    // Recheck current balances and the full population before each save.
+    const liveLines = lines.map((line) => ({
+      ...line,
+      remainingAmount: remainingByLine.get(line.id) ?? 0,
+    }));
+    const suggested =
+      suggestionsForMovements(
+        listMovementCandidates(db, accountIds),
+        liveLines,
+      ).get(movementId)?.suggestedLineIds ?? [];
     if (!suggested.length) {
       skipped += 1;
       continue;
@@ -694,16 +713,21 @@ export function createTransferForLine(
   // a failed match then rolls back.
   const deferredEmits: DeferredEmits = [];
   const written = db.transaction(() => {
-    const created = createRecord(db, userId, {
-      kind: "transfer",
-      date: line.date,
-      description,
-      amount: line.amount,
-      currency: mainCurrencyCode(db),
-      exchangeRate: 1,
-      fromAccountId: movesIn ? input.otherAccountId : statementAccountId,
-      toAccountId: movesIn ? statementAccountId : input.otherAccountId,
-    }, deferredEmits);
+    const created = createRecord(
+      db,
+      userId,
+      {
+        kind: "transfer",
+        date: line.date,
+        description,
+        amount: line.amount,
+        currency: mainCurrencyCode(db),
+        exchangeRate: 1,
+        fromAccountId: movesIn ? input.otherAccountId : statementAccountId,
+        toAccountId: movesIn ? statementAccountId : input.otherAccountId,
+      },
+      deferredEmits,
+    );
     if (!created.ok) throw new ReconciliationError(created.reason, 409);
 
     const movement = findRecordMovementOnAccount(

@@ -46,7 +46,7 @@ shows **Fully reconciled**.
 ## Upload a statement
 
 1. On the **Bank reconciliation** screen, click **Upload Statement**.
-2. Click **Choose a PDF, JPEG or PNG**.
+2. Click **Choose file**.
 3. Select the statement file.
 4. Click **Upload**.
 
@@ -63,33 +63,29 @@ The list has these columns:
 - **Matched**: the number of statement lines with a full match, out of all lines.
 - **Remaining**: the amount of the statement lines that has no match yet.
 
-The **Status** filter has two choices, each with a count, for example **Active (2)**. **Active**
-shows the statements that you must still work on. **Completed** shows the statements with a full
-match on each line. At the start, only **Active** is on. Use **Search statements…** to find a
-statement by its file name.
+The **Active**, **Completed** and **All** tabs show a count for each group. **Active** shows
+statements that still need work. **Completed** shows statements with a full match on each line.
+**All** shows both groups. The page opens on **Active** by default. Use **Search statements…**
+to find a statement by its file name.
 
-### Open the statement drawer
+### Statement details
 
-The statement drawer shows the numbers of one statement and its actions.
-
-1. Find the statement in the list.
-2. Click the three-dot button (**Statement options**) at the end of the row.
-
-The drawer shows **Lines**, **Matched** and **Remaining**. **Lines** is the number of statement
-lines. **Matched** is the number of lines with a full match. **Remaining** is the amount without a
-match. Click **Match this statement** to open the match screen.
+Click a statement in the list to open its matching page. The summary shows the account, statement
+period, matched transactions and unallocated statement amount. Open **Statement details** to see
+the full filename, upload date and **View source file** link, which opens the original in a new tab.
 
 If you uploaded the statement to the wrong account, choose the correct account in **Account this
-statement belongs to**. You can move a statement only before it has a match. This field shows only
-if you have the **Change** permission.
+statement belongs to**, then click **Move statement**. You can move a statement only before it
+has a match. This control shows only if you have the **Change** permission. After the move, the
+matching page opens under the new account.
 
 ### If the upload fails
 
-If Akaun cannot read the file, the status is **Failed**. The drawer shows the reason.
+If Akaun cannot read the file, the status is **Failed**. The matching page shows the reason.
 
-1. Open the statement drawer.
-2. Read the reason.
-3. Click **Retry Extraction**.
+1. Open the statement from the list.
+2. Read the reason shown below the summary.
+3. Click **Retry extraction**.
 
 If the retry fails again, delete the statement. Then upload a clearer file.
 
@@ -107,9 +103,9 @@ that only this statement matched is then unreconciled.
 
 :::
 
-1. Open the statement drawer.
-2. Click **Delete**.
-3. Click **Delete statement**.
+1. Open the statement from the list, then expand **Statement details**.
+2. Click **Delete statement**.
+3. Confirm **Delete statement**. Akaun returns to the statement list.
 
 ## Match the lines
 
@@ -151,13 +147,15 @@ the filters show, for example "Showing 8 of 20".
 
 Akaun looks for statement lines that have the same direction as the record: **Credit** (money into
 the account) or **Debit** (money out of the account).
-The total of the lines must be equal to the amount of the record. If Akaun finds them, the record
-shows **Exact match**. If more than one set fits, Akaun prefers lines with a date near the date of
-the record.
+The lines must have the same date as the record, and their total must equal its amount.
+If Akaun finds them, the record shows **Exact match**. If records compete for the same line,
+they show **Needs manual choice** and automatic matching skips them. You can still select
+lines manually when the bank and record dates differ.
 
 The **Match** column shows one of these statuses:
 
 - **Exact match**: Akaun found statement lines with exactly the amount of the record.
+- **Needs manual choice**: records compete for the same statement line; choose the correct record manually.
 - **Partial**: some of the amount has a match, but not all of it.
 - **No match**: Akaun found no lines that fit.
 - **Matched**: statement lines cover the full amount of the record.
@@ -174,7 +172,7 @@ When you click a record, the panel shows three amounts:
 - **Remaining**: the amount of the record that has no line yet.
 
 If Akaun found an exact match, it ticks those lines for you. The panel then shows
-**Auto-matched**. If you change the ticks, the panel shows **Exact Match Found**. Click **Use
+**Suggested match**. If you change the ticks, the panel shows **Exact Match Found**. Click **Use
 Suggested Match** to tick the suggested lines again.
 
 **Compatible Statement Lines** lists the lines that can match this record. A record of money into
@@ -216,8 +214,9 @@ time.
 3. Click **Save Matches**.
 
 Akaun saves the suggested lines for each record that shows **Exact match**. It does not change a
-record that already has a part of a match. A record is skipped if a different record used its
-lines first. Akaun then shows the number of records that it matched and skipped.
+record that already has a part of a match. Competing records are skipped until you choose a
+match manually. A record is also skipped if its suggested lines are no longer available.
+Akaun then shows the number of records that it matched and skipped.
 
 The button counts only the records that the list shows. If you search or filter the list, the
 button saves only the matches in the filtered list. You need the **Match** permission to see the

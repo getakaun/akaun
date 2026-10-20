@@ -7,6 +7,7 @@ import {
 } from "$lib/server/services/reconciliation.js";
 
 const schema = z.object({
+  statementId: z.number().int().positive().optional(),
   movementIds: z
     .array(z.number().int().positive())
     // Mirrors BULK_MATCH_CHUNK in ReconciliationPage.svelte, which slices
@@ -20,7 +21,12 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     return Response.json({ error: "Invalid movements" }, { status: 400 });
   try {
     return Response.json(
-      autoMatchMovements(db, locals, parsed.data.movementIds),
+      autoMatchMovements(
+        db,
+        locals,
+        parsed.data.movementIds,
+        parsed.data.statementId,
+      ),
     );
   } catch (e) {
     if (e instanceof ReconciliationError)

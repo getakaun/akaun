@@ -54,6 +54,24 @@ settlement before changing its amount, date or the account it moved through."
 
 ## How to unlock a record
 
+### Correct only a settled date
+
+Trusted users with both **Edit records** and the separately granted **Correct settled dates**
+permission can use **Correct date** on a settled expense or income record. This action is
+available only in the browser, and only when the record has no bank statement matches.
+Payment records and records created by issuing an invoice cannot use it.
+
+Save or discard other edits first. Enter the corrected date and a reason of 10–500 characters,
+then review and confirm. Moving between calendar months or years requires an extra
+acknowledgement. Both dates, your reason, and who made the correction are saved in History.
+
+The correction preserves payment allocations and payment dates. It changes the accounting
+date, so reports and historical balances can change. **Do not use it for a finalized period
+without consulting the person responsible for your accounts.** Akaun does not enforce a
+closed-books cutoff for this action. Ordinary date editing remains locked.
+
+### Unlock other changes
+
 Remove each thing that locks the record:
 
 - If a payment settles the record, click the undo icon (**Reverse allocation**) beside the payment. See

@@ -24,6 +24,7 @@ describe("access levels", () => {
       "invoices.issue",
     ]);
     expect(levelLeaves("records", "full")).not.toContain("records.adjust");
+    expect(levelLeaves("records", "full")).not.toContain("records.correctDate");
     expect(levelLeaves("contacts", "full")).toContain("contacts.merge");
   });
 

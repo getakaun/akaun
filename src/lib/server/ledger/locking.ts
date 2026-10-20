@@ -49,7 +49,7 @@ export const ALWAYS_EDITABLE_FIELDS = [
 const LOCKED = new Set<string>(LOCKED_FIELDS);
 
 const SETTLED_REASON =
-  "This record is settled by a payment. Reverse the settlement before you change its amount, date or account.";
+  "This record is settled by a payment. Reverse the settlement before you change its amount, date or account. Eligible expenses and income can instead use Correct date with the required permission.";
 const RECONCILED_REASON =
   "This record is reconciled to a bank statement line. Unmatch it from that line before you change its amount, date or account.";
 const BOTH_REASON =

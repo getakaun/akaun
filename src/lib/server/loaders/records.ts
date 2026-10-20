@@ -55,8 +55,7 @@ const LIST_PATH = "/records";
 const PAGE_LIMIT = 1000;
 
 export function loadRecordsPage(locals: App.Locals) {
-  if (!can(locals, "records.read"))
-    throw redirect(302, "/dashboard");
+  if (!can(locals, "records.read")) throw redirect(302, "/dashboard");
 
   // No `kind` filter: one list of everything that happened, newest first
   // (FR-001).
@@ -78,8 +77,7 @@ export function loadRecordsPage(locals: App.Locals) {
  * `locked`, `lockedReason`, `reconciled` — so nothing here recomputes them.
  */
 export function loadRecordDetail(locals: App.Locals, id: number) {
-  if (!can(locals, "records.read"))
-    throw redirect(302, "/dashboard");
+  if (!can(locals, "records.read")) throw redirect(302, "/dashboard");
 
   const record = getRecord(db, id);
   // Deleted, never existed, or a mistyped id. The list, not a bare error page:
@@ -218,6 +216,10 @@ function recordFormOptions(locals: App.Locals) {
     perms: {
       add: can(locals, "records.create"),
       change: can(locals, "records.update"),
+      correctDate:
+        !locals.credential &&
+        !locals.oauth &&
+        can(locals, "records.correctDate"),
       delete: can(locals, "records.delete"),
       // Free choice of account and a third side. The server enforces this at
       // the point of derivation; the screen only stops offering what would be

@@ -147,6 +147,7 @@ function nameOf(map: NameMap, value: unknown): string {
 
 // Fields whose names do not read well when split.
 const FIELD_LABELS: Record<string, string> = {
+	dateCorrectionReason: 'Date correction reason',
 	amountMinor: 'Amount',
 	contactId: 'Contact',
 	accountId: 'Account',

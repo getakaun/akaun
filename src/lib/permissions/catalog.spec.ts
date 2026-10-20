@@ -19,7 +19,7 @@ import {
 describe("permission catalog", () => {
   it("names every leaf root.verb, with a label and a description", () => {
     for (const leaf of LEAF_PERMISSIONS) {
-      expect(leaf).toMatch(/^[a-z]+\.[a-z]+$/);
+      expect(leaf).toMatch(/^[a-z]+\.[a-z][a-zA-Z]*$/);
       const meta = leafMeta(leaf);
       expect(meta.label.length).toBeGreaterThan(0);
       expect(meta.description.length).toBeGreaterThan(0);
@@ -34,6 +34,9 @@ describe("permission catalog", () => {
       "records.delete",
     ]);
     expect(expandPermission("records")).not.toContain("records.adjust");
+    expect(expandPermission("records")).not.toContain("records.correctDate");
+    expect(leafMeta("records.correctDate").sensitive).toBe(true);
+    expect(isDelegable("records.correctDate")).toBe(false);
     expect(expandPermission("records.adjust")).toEqual(["records.adjust"]);
   });
 
@@ -72,6 +75,7 @@ describe("OAuth scopes", () => {
 
   it("never offers settings, users or the dashboard to an app", () => {
     const offered = new Set(expandScopes(OAUTH_SCOPES));
+    expect(offered.has("records.correctDate")).toBe(false);
     for (const leaf of offered)
       expect(leaf.split(".")[0]).not.toMatch(/^(settings|users|dashboard)$/);
   });

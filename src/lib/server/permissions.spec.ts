@@ -82,6 +82,17 @@ describe("effectivePermissions", () => {
     });
     expect(can(locals, "users.manage")).toBe(false);
   });
+
+  it("never delegates settled date corrections, even from a superuser", () => {
+    const locals = localsFor([], {
+      superuser: true,
+      credential: ["records.correctDate"],
+    });
+    expect(can(locals, "records.correctDate")).toBe(false);
+    expect(can(localsFor([], { superuser: true }), "records.correctDate")).toBe(
+      true,
+    );
+  });
 });
 
 describe("loadRoleAccess", () => {

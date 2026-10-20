@@ -27,7 +27,7 @@
     return `${resolve("/(app)/dashboard")}?period=${id}&compare=${compare}`;
   }
 
-  function onCompare(compare: string) {
+  function onCompare(compare: CompareMode) {
     // eslint-disable-next-line svelte/no-navigation-without-resolve -- the href comes from resolve(); the rule cannot see through the helper call.
     goto(hrefFor(period.id, compare), {
       replaceState: true,
@@ -57,7 +57,7 @@
     <div class="compare-choice">
       <span id="dashboard-compare-label">compared with</span>
       {#if period.canComparePrevious}
-        <Select.Root type="single" value={period.compare} onValueChange={(next) => next && onCompare(next)}>
+        <Select.Root type="single" value={period.compare} onValueChange={(next) => next && onCompare(next as CompareMode)}>
           <Select.Trigger aria-labelledby="dashboard-compare-label" size="sm" class="compare-trigger">
             {compareOptions.find((option) => option.id === period.compare)?.label.toLowerCase() ?? period.compare}
           </Select.Trigger>

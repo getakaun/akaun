@@ -783,23 +783,15 @@ async function detectDocument(
 }
 
 /**
- * Auto-detect for a spreadsheet (FR-039, US10 AS12), cheapest first:
+ * Auto-detect for a spreadsheet (FR-039, US10 AS12), in priority order:
  *
- * 1. **The table's headings.** Exactly one enabled profile whose layout's
- *    headings are all in one row of the workbook is used, with no AI.
- * 2. **Several profiles' headings match.** Their recognition phrases, looked
- *    for in the cells' words (`detectionText`), decide among those profiles
- *    only; then the AI detect call, among those profiles only. With no
- *    provider the job fails, naming them: the table fits each of them, and
- *    the standard reading would be the wrong answer.
- * 3. **No profile's headings match.** Only the profiles that could read the
- *    document are looked at: a profile that reads a table by code could not,
- *    since its headings are not there, and would only fail with its table
- *    not found. The phrases decide among the
- *    rest; otherwise the AI detect call chooses among them. When there are
- *    none, or no provider is set up, no AI is asked and the standard reading
- *    follows, whose own checks name a spreadsheet too long for it (FR-052) or
- *    the missing provider.
+ * 1. Fixed phrases across all enabled profiles that can read the file.
+ *    Table profiles need their headings; file types and sheet restrictions
+ *    are respected. One phrase match wins without AI.
+ * 2. With no phrase matches, one matching table layout wins without AI.
+ * 3. Otherwise AI resolves matching phrases, matching layouts, or the
+ *    remaining readable profiles, in that order. Ambiguous matches without
+ *    a provider fail with an explanation rather than reading as a receipt.
  *
  * Returns the detection, or the reason the job fails.
  */
@@ -821,18 +813,12 @@ async function detectSpreadsheet(
       profile.layout &&
       hasProfileTable(workbook, profile, profile.layout.headers),
   );
-  if (byHeadings.length === 1) {
-    log.info(
-      { jobId: job.id, route: byHeadings[0].id, via: "layout" },
-      "Auto-detect decided",
-    );
-    return { route: byHeadings[0].id };
-  }
-
-  const among =
-    byHeadings.length > 1
-      ? byHeadings
-      : readable.filter((profile) => !readsTable(profile));
+  // Fixed phrases are checked across every profile that can read this file,
+  // including AI-read profiles beside a matching table layout. A table
+  // profile without its required headings cannot read the file.
+  const eligible = readable.filter(
+    (profile) => !readsTable(profile) || byHeadings.includes(profile),
+  );
   // A profile that names its sheet is recognised by that sheet's words, and
   // any other by the whole workbook's. Each text is made once, however many
   // profiles look in it.
@@ -848,7 +834,7 @@ async function detectSpreadsheet(
     }
     return text;
   };
-  const byPhrases = phraseMatch(words, among);
+  const byPhrases = phraseMatch(words, eligible);
   if (byPhrases.length === 1) {
     log.info(
       { jobId: job.id, route: byPhrases[0].id, via: "phrases" },
@@ -857,7 +843,26 @@ async function detectSpreadsheet(
     return { route: byPhrases[0].id };
   }
 
-  if (byHeadings.length > 1 && calls.providers.length === 0) {
+  if (byPhrases.length === 0 && byHeadings.length === 1) {
+    log.info(
+      { jobId: job.id, route: byHeadings[0].id, via: "layout" },
+      "Auto-detect decided",
+    );
+    return { route: byHeadings[0].id };
+  }
+
+  const among =
+    byPhrases.length > 1
+      ? byPhrases
+      : byHeadings.length > 0
+        ? byHeadings
+        : eligible;
+
+  if (calls.providers.length === 0 && byPhrases.length > 1) {
+    const names = byPhrases.map((profile) => `"${profile.name}"`).join(", ");
+    return `This spreadsheet matches the fixed phrases of several import profiles (${names}), and no AI provider is set up to choose. Give each profile phrases unique to its documents, or choose a profile under Read as.`;
+  }
+  if (calls.providers.length === 0 && byHeadings.length > 1) {
     return severalLayoutsFit(byHeadings);
   }
   if (among.length === 0 || calls.providers.length === 0) {

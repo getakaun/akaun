@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PROFILE_ENUM_VALUES_MAX,
+  ROW_CONDITIONS_MAX,
   PROFILE_EXTRAS_MAX,
   PROFILE_FEE_TYPES_MAX,
   PROFILE_SAME_MONEY_MAX,
@@ -860,21 +861,48 @@ describe("table layout and row rules (FR-053, FR-054)", () => {
     ]);
   });
 
-  it("needs a note for a flag rule, and a flag rule for a note", () => {
-    expect(
-      paths(
-        errorsOf((value) => {
-          value.sections[2].rows.flagNote = "";
-        }),
-      ),
-    ).toEqual(["sections[2].rows.flagNote"]);
-    expect(
-      paths(
-        errorsOf((value) => {
-          value.sections[0].rows.flagNote = "Check it.";
-        }),
-      ),
-    ).toEqual(["sections[0].rows.flagNote"]);
+  it("validates table filter columns, comparisons, values and limits like assignment rules", () => {
+    const value = wallet() as Loose;
+    value.sections[0].rows.filter = [
+      { column: "Missing", op: "empty" },
+      { column: "Status", op: "unknown" },
+      { column: "Status", op: "is" },
+      { column: "Status", op: "is_one_of", values: [] },
+    ];
+    const result = checkProfile(value);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(paths(result.errors)).toEqual(
+      expect.arrayContaining([
+        "sections[0].rows.filter[0].column",
+        "sections[0].rows.filter[1].op",
+        "sections[0].rows.filter[2].value",
+        "sections[0].rows.filter[3].values",
+      ]),
+    );
+  });
+
+  it("rejects too many filter conditions", () => {
+    const value = wallet() as Loose;
+    value.sections[0].rows.filter = Array.from(
+      { length: ROW_CONDITIONS_MAX + 1 },
+      () => ({ column: "Status", op: "empty" }),
+    );
+    const result = checkProfile(value);
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(paths(result.errors)).toContain("sections[0].rows.filter");
+  });
+
+  it("ignores and drops legacy row review rules", () => {
+    const value = wallet() as Loose;
+    value.sections[0].rows.flagWhen = [{ column: "Missing", op: "is" }];
+    value.sections[0].rows.flagNote = "Legacy note";
+    const result = checkProfile(value);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.profile.sections[0].rows).not.toHaveProperty("flagWhen");
+    expect(result.profile.sections[0].rows).not.toHaveProperty("flagNote");
   });
 
   it("ties line types to their column and values, and no value to two types", () => {

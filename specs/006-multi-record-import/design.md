@@ -1,3 +1,5 @@
+> Update (2026-10-20): Profile-defined “Rows for review” rules (FR-061) have been removed. Legacy `flagWhen` and `flagNote` fields are ignored. References below to those rules describe the original design. Duplicate, overlap and extraction checks remain active.
+
 # 006 Multi-record Import + Profiles — technical design
 
 ## Context
@@ -5,6 +7,7 @@
 Today Auto Import turns one document into one record. The single-record assumption is hard-coded in the LLM schema (`import/providers/shared.ts:3-12`), in a silent `slice(0, 6000)` (`shared.ts:76`), in the flat review columns and the scalar `result_id` (`db/schema.ts:278-320`), in the one-row worker (`worker.ts:211-348`), in the inline confirm (`api/import/[jobId]/confirm/+server.ts:69-361`) and in four unconditional file deletes. The goal is for receipts, invoices and marketplace statements to produce N records: either Summary lines or Every transaction, never both, through user-defined **import profiles**, with the standard reading (today's receipt path) as the fallback. The requirements are already in `specs/006-multi-record-import/spec.md` (FR-001 to FR-049). An earlier brief (`plans/currently-the-auto-import-elegant-lecun.md`) was checked against the code by 6 agents. This plan keeps its direction and corrects it in the places listed under "Changes from the earlier brief".
 
 **Decided with the user (2026-09-30):**
+
 - A form writes the schema. Raw JSON is used only for extra fields.
 - The router runs in code. There is no tool-calling loop.
 
@@ -46,14 +49,14 @@ else       → withProviderFailover(closure: header call + one structured call p
 
 ## Changes from the earlier brief
 
-| Brief | Now | Why |
-|---|---|---|
-| Fan out into child `import_queue` rows | New **`import_items`** table (FK `job_id`, index `(job_id,state)`) | The spec now wants a paged table of up to 1,000 items. With child rows, every queue reader, the SSE snapshot and `mergeServerJobs` would need to filter children out, and 4 routes would delete the file they share. |
-| US1-3 on a separate `items[]` envelope, cards UI | One section→schema compiler from the start. "Several items" is a **built-in profile** | The envelope, the separate prompt, the group cards and the Split fan-out would all be thrown away later. |
-| Merge pieces by de-duplicating on (date, ref, amount, desc) | **Each line belongs to one piece**: lines prefixed `L0412│`, each piece has an owned range plus ~15 lines of context, items carry `source_line`, and code keeps an item only if its line is in the owned range | The old dedupe merges genuinely identical rows, such as two 1.00 ad fees on one day. Uncertain cases near a boundary are flagged for the reviewer, never deleted. |
-| `z.fromJSONSchema` to validate | Hand-written `FieldSpec[]` model with two outputs: the schema sent (`jsonSchema(wire, {validate})`) and a validator | `z.fromJSONSchema` is semi-experimental, no client file imports zod today, and the whitelist is small. |
-| Output.choice | Output.object with an enum | `Output.choice` wraps its answer in `{result}`, so the text fallback would need a special case for it. |
-| Caps of 40k chars and 50 items | 200k chars and 1,000 items, read in pieces | These are the numbers in the spec's Assumptions. |
+| Brief                                                       | Now                                                                                                                                                                                                            | Why                                                                                                                                                                                                                  |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fan out into child `import_queue` rows                      | New **`import_items`** table (FK `job_id`, index `(job_id,state)`)                                                                                                                                             | The spec now wants a paged table of up to 1,000 items. With child rows, every queue reader, the SSE snapshot and `mergeServerJobs` would need to filter children out, and 4 routes would delete the file they share. |
+| US1-3 on a separate `items[]` envelope, cards UI            | One section→schema compiler from the start. "Several items" is a **built-in profile**                                                                                                                          | The envelope, the separate prompt, the group cards and the Split fan-out would all be thrown away later.                                                                                                             |
+| Merge pieces by de-duplicating on (date, ref, amount, desc) | **Each line belongs to one piece**: lines prefixed `L0412│`, each piece has an owned range plus ~15 lines of context, items carry `source_line`, and code keeps an item only if its line is in the owned range | The old dedupe merges genuinely identical rows, such as two 1.00 ad fees on one day. Uncertain cases near a boundary are flagged for the reviewer, never deleted.                                                    |
+| `z.fromJSONSchema` to validate                              | Hand-written `FieldSpec[]` model with two outputs: the schema sent (`jsonSchema(wire, {validate})`) and a validator                                                                                            | `z.fromJSONSchema` is semi-experimental, no client file imports zod today, and the whitelist is small.                                                                                                               |
+| Output.choice                                               | Output.object with an enum                                                                                                                                                                                     | `Output.choice` wraps its answer in `{result}`, so the text fallback would need a special case for it.                                                                                                               |
+| Caps of 40k chars and 50 items                              | 200k chars and 1,000 items, read in pieces                                                                                                                                                                     | These are the numbers in the spec's Assumptions.                                                                                                                                                                     |
 
 ## Stages
 
@@ -85,6 +88,7 @@ else       → withProviderFailover(closure: header call + one structured call p
 ### S0.5 — Phase 0 research (no product code)
 
 A throwaway script imports only `document-text.ts` and `structured-call.ts`, **never `db/client.ts`**, and runs on copies of the maintainer's samples outside `data/`. It checks four things:
+
 - whether the right lines are picked
 - whether text-only reading scrambles the marketplace table (test `unpdf mergePages:false`)
 - whether `Output.object` works with a compiled schema on OpenRouter, Google and Groq, including enum size
@@ -152,23 +156,23 @@ If the table comes out scrambled, US8 is blocked, so this must run before any UI
 
 Samples: a Shopee monthly Income Statement (3 pages), a Shopee ads e-invoice (2 lines plus tax), and a Shopify bill in USD. Model: `gemma-4-31b-it` on Google AI Studio (what the book uses). OpenRouter's `google/gemma-4-31b-it:free` returned 429 from the shared free pool for every attempt over 6 minutes, so it gave no results. The research script used only `unpdf` and the SDK, not app modules and not the database.
 
-| Case | Result |
-|---|---|
-| Ads invoice, several items | Exact: 732.87 and 1,080.00 (amounts including tax); stated total 1,812.87. |
-| Shopee statement, Summary, 15 fee types | Exact: 15 of 15 leaf lines, each with a distinct fee type and none null; they sum to 13,732.56 to the cent, matching Total Payout Released. The 4 group subtotals were left out. 90 s, 7.3k tokens in, 0.9k out. |
-| Shopify bill, standard | Values correct, but Gemma wrapped the JSON in a ``` fence, so strict parsing failed. The text fallback in `structured-call.ts` covers this. |
+| Case                                                    | Result                                                                                                                                                                                                                           |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ads invoice, several items                              | Exact: 732.87 and 1,080.00 (amounts including tax); stated total 1,812.87.                                                                                                                                                       |
+| Shopee statement, Summary, 15 fee types                 | Exact: 15 of 15 leaf lines, each with a distinct fee type and none null; they sum to 13,732.56 to the cent, matching Total Payout Released. The 4 group subtotals were left out. 90 s, 7.3k tokens in, 0.9k out.                 |
+| Shopify bill, standard                                  | Values correct, but Gemma wrapped the JSON in a ```fence, so strict parsing failed. The text fallback in`structured-call.ts` covers this.                                                                                        |
 | Shopee daily payout table, page 1 (6 rows × 15 columns) | All 90 cells correct, including cells the PDF split across lines (`719.1` / `7`) and the U+2212 minus sign. **Every row total the model added up itself was wrong** (381.10 against the true 470.22). 88 s for 2k output tokens. |
-| Same table, all 31 rows | Stopped by Bun's default 300 s fetch timeout. |
+| Same table, all 31 rows                                 | Stopped by Bun's default 300 s fetch timeout.                                                                                                                                                                                    |
 
 **What this changes**
 
 - **Code does all the arithmetic.** The model transcribes and code adds up. This is already true of the control total. Never ask the model for a derived figure.
-- **Every transaction is not built for now** (user decision). The Shopee table is one row per day with 15 amount columns, not one transaction per line, so it would need one row to produce several records. Summary covers the real case exactly. US8 and FR-043 (pieces) are deferred. *(Taken up again in § S4 for one-transaction-per-line tables; this statement's day-by-column table is still out of scope.)* FR-010 still applies: an over-long document fails with the limit named, and is never cut short.
+- **Every transaction is not built for now** (user decision). The Shopee table is one row per day with 15 amount columns, not one transaction per line, so it would need one row to produce several records. Summary covers the real case exactly. US8 and FR-043 (pieces) are deferred. _(Taken up again in § S4 for one-transaction-per-line tables; this statement's day-by-column table is still out of scope.)_ FR-010 still applies: an over-long document fails with the limit named, and is never cut short.
 - **Output speed is the limit, not input size.** About 10–20 tokens/s on this model. Any later piece plan must size pieces by expected output tokens and keep each call well under 300 s, because Bun's `fetch` times out at 300 s.
 - **Text:** `unpdf` with `mergePages: true` returns the text on one line with no line breaks. Several-items and profile readings use `mergePages: false`, joined with line breaks and L-numbers. The receipt path is left as it is (FR-004).
 - **The structured-to-text fallback is required, not optional,** for Gemma on Google.
 
-**Revised S3:** auto-detect (recognition phrases, then one detect call) and Read again. The piece reader waits for a document type that needs it. *(It is built in § S4.6.)*
+**Revised S3:** auto-detect (recognition phrases, then one detect call) and Read again. The piece reader waits for a document type that needs it. _(It is built in § S4.6.)_
 
 ## S4 — spreadsheets, transfers and every-transaction reading
 
@@ -204,20 +208,20 @@ The sample itself stays outside the repository. Tests use a synthetic workbook o
 
 A plan agent checked the four decisions against the spec and the code. Each conflict below is now settled in `spec.md`.
 
-| # | Conflict | Resolution | Spec |
-|---|---|---|---|
-| C1 | Out of Scope listed CSV import. | Removed. A source document is a PDF, a photo, an `.xlsx` or a `.csv`. One row making several records stays out of scope. | Update 2026-10-02, Glossary, FR-050, Out of Scope |
-| C2 | Kinds were only Income and Expense. | A third kind, Transfer. Control total: income +, expense −, transfer out −, transfer in +. A profile can name a "Money moves in" account (the wallet); its items start there instead of on Accounts payable or receivable. | Glossary, FR-008, FR-013, FR-058–060 |
-| C3 | US8 was deferred. | Un-deferred, aimed at one-transaction-per-line tables. There is no long PDF sample yet, so only the spreadsheet path can be accepted against real data. | US8, SC-017 |
-| C4 | Is a wallet report a bank statement (FR-049)? | No. It is a source document for money that has no other one. It never makes statement lines. | Glossary, FR-049, Assumptions |
-| C5 | The receipt reading cuts its text at 6,000 characters (`providers/shared.ts`), silently. | A spreadsheet read as a receipt over 6,000 characters fails and names the limit. PDFs and images keep the cut, unchanged (FR-004). | FR-052 |
-| C6 | Where does the table layout live? | On the profile (header, columns, stated-total labels, other party, currency). Sections carry only row rules. Code checks each row belongs to at most one section. | FR-053–055 |
-| C7 | An item falls back to the header's reference (`document-reader.ts`, item push). | In Every transaction mode an item takes no reference from the header. | FR-006, FR-062 |
-| C8 | Same date, amount and contact flags a duplicate even when the references differ. | When an item has its own reference and a candidate has a different one, it is not a duplicate. Table readings, and Every transaction readings by the AI (in pieces or in one call). | FR-063 |
-| C9 | FR-033 relied only on the upload stop (FR-026), which two uploads made before either confirm both pass. | Confirm is refused when another job with the same file hash already made a record, checked inside the confirm transaction. | FR-033, FR-064 |
-| C10 | The "Processing" withdrawal. | Imported but flagged ("check that this withdrawal completed"), not filtered out. Confirm all leaves it. | FR-061 |
-| C11 | `createRecord` requires rate 1 for a transfer. | A transfer must be in the main currency; otherwise it needs attention. | FR-059 |
-| C12 | Failover covered the whole document. | Failover per piece: a failure on piece 20 does not read pieces 1–19 again. | FR-043 |
+| #   | Conflict                                                                                                | Resolution                                                                                                                                                                                                                 | Spec                                              |
+| --- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| C1  | Out of Scope listed CSV import.                                                                         | Removed. A source document is a PDF, a photo, an `.xlsx` or a `.csv`. One row making several records stays out of scope.                                                                                                   | Update 2026-10-02, Glossary, FR-050, Out of Scope |
+| C2  | Kinds were only Income and Expense.                                                                     | A third kind, Transfer. Control total: income +, expense −, transfer out −, transfer in +. A profile can name a "Money moves in" account (the wallet); its items start there instead of on Accounts payable or receivable. | Glossary, FR-008, FR-013, FR-058–060              |
+| C3  | US8 was deferred.                                                                                       | Un-deferred, aimed at one-transaction-per-line tables. There is no long PDF sample yet, so only the spreadsheet path can be accepted against real data.                                                                    | US8, SC-017                                       |
+| C4  | Is a wallet report a bank statement (FR-049)?                                                           | No. It is a source document for money that has no other one. It never makes statement lines.                                                                                                                               | Glossary, FR-049, Assumptions                     |
+| C5  | The receipt reading cuts its text at 6,000 characters (`providers/shared.ts`), silently.                | A spreadsheet read as a receipt over 6,000 characters fails and names the limit. PDFs and images keep the cut, unchanged (FR-004).                                                                                         | FR-052                                            |
+| C6  | Where does the table layout live?                                                                       | On the profile (header, columns, stated-total labels, other party, currency). Sections carry only row rules. Code checks each row belongs to at most one section.                                                          | FR-053–055                                        |
+| C7  | An item falls back to the header's reference (`document-reader.ts`, item push).                         | In Every transaction mode an item takes no reference from the header.                                                                                                                                                      | FR-006, FR-062                                    |
+| C8  | Same date, amount and contact flags a duplicate even when the references differ.                        | When an item has its own reference and a candidate has a different one, it is not a duplicate. Table readings, and Every transaction readings by the AI (in pieces or in one call).                                        | FR-063                                            |
+| C9  | FR-033 relied only on the upload stop (FR-026), which two uploads made before either confirm both pass. | Confirm is refused when another job with the same file hash already made a record, checked inside the confirm transaction.                                                                                                 | FR-033, FR-064                                    |
+| C10 | The "Processing" withdrawal.                                                                            | Imported but flagged ("check that this withdrawal completed"), not filtered out. Confirm all leaves it.                                                                                                                    | FR-061                                            |
+| C11 | `createRecord` requires rate 1 for a transfer.                                                          | A transfer must be in the main currency; otherwise it needs attention.                                                                                                                                                     | FR-059                                            |
+| C12 | Failover covered the whole document.                                                                    | Failover per piece: a failure on piece 20 does not read pieces 1–19 again.                                                                                                                                                 | FR-043                                            |
 
 ### Data model
 
@@ -239,7 +243,7 @@ profile, every section of the
 profile, Every transaction,
   read by AI                 → piece-reader (header call + owned-range pieces, failover per piece)
 otherwise                    → today's profile / several-items reading
-auto-detect on a spreadsheet → layout headings → recognition phrases
+auto-detect on a spreadsheet → fixed phrases across compatible profiles → layout headings
                                → AI detect (only when a provider exists) → standard
 ```
 
@@ -247,7 +251,7 @@ auto-detect on a spreadsheet → layout headings → recognition phrases
 
 Each stage is built, reviewed by a second agent, fixed and committed, as in S0–S3.
 
-**S4.0 Spec and design.** C1–C12 applied to `spec.md`; this section. *Exit:* the maintainer has read both.
+**S4.0 Spec and design.** C1–C12 applied to `spec.md`; this section. _Exit:_ the maintainer has read both.
 
 **S4.1 Spreadsheet parser.** Hand-written, in `src/lib/server/extraction/spreadsheet/`.
 
@@ -255,9 +259,9 @@ Each stage is built, reviewed by a second agent, fixed and committed, as in S0�
 - `xml.ts`: a small tokenizer that drops namespace prefixes and decodes entities, and refuses any `<!DOCTYPE` (no entity tricks).
 - `xlsx.ts`: workbook, relationships, shared strings (rich-text runs too), styles (to recognise date formats) and sheets; cell types `s`, `inlineStr`, `str`, `b`, `e`, `d`, `n`; 1900 and 1904 date serials; a formula's cached value, never evaluated; a row or cell with no position goes after the previous one; an old `.xls` or a password-protected workbook is named in the error.
 - `csv.ts`: BOM (UTF-8, UTF-16), then UTF-8, then windows-1252; an Excel `sep=` line, else detect `, ; \t |`; RFC 4180 quoting, ragged rows allowed; caps on rows and cells.
-- `render.ts`: one page per sheet as `Sheet: <name>`, cells joined by ` | `, dates as `YYYY-MM-DD[ HH:MM:SS]`; the output feeds the existing L-numbering. `detectionText()` gives text for phrase matching.
+- `render.ts`: one page per sheet as `Sheet: <name>`, cells joined by `|`, dates as `YYYY-MM-DD[ HH:MM:SS]`; the output feeds the existing L-numbering. `detectionText()` gives text for phrase matching.
 - Tests build `.xlsx` files in memory, including a synthetic workbook shaped like the wallet report.
-- *Exit:* a throwaway script that never imports `db/client` reads the real report (outside the repo and `data/`): header at row 14, 736 rows, and the Money Out rows add up to the report's own Total Money Out.
+- _Exit:_ a throwaway script that never imports `db/client` reads the real report (outside the repo and `data/`): header at row 14, 736 rows, and the Money Out rows add up to the report's own Total Money Out.
 
 **S4.2 Upload and extraction plumbing.**
 
@@ -265,7 +269,7 @@ Each stage is built, reviewed by a second agent, fixed and committed, as in S0�
 - `api/import/+server.ts`: the type checks and their messages. Client: `accept`, the drop-zone text and a "Spreadsheet" label on the upload page. The two file routes serve xlsx and csv as downloads.
 - `document-text.ts`: `inferMimeType`, and `extractDocumentSource()` returning `{ plain, numbered, workbook? }`. `process-job.ts` gets the spreadsheet branches and the C5 guard.
 - `attachment-text.ts` renders a one-record spreadsheet so it can be searched. Group files are still never indexed (FR-029).
-- *Exit:* an xlsx or csv uploaded as Several items is read by the AI; Reconciliation and record attachments still refuse xlsx; the receipt tests are unchanged.
+- _Exit:_ an xlsx or csv uploaded as Several items is read by the AI; Reconciliation and record attachments still refuse xlsx; the receipt tests are unchanged.
 
 **S4.3 Import mode (FR-002, FR-023, FR-033).**
 
@@ -302,8 +306,8 @@ Each stage is built, reviewed by a second agent, fixed and committed, as in S0�
   6. the stated total is the number to the right of each label, summed in code;
   7. `source_line` is the rendered line number;
   8. then the existing `readingFromEnvelope`, with no header-reference fallback (C7); the item cap counted after filtering.
-- Routing (`process-job.ts`): a profile whose sections in the chosen mode all have row rules uses the table reader **without an AI provider**, so the provider check moves into the AI branches. Auto-detect on a spreadsheet: layout header match, then phrases on `detectionText`, then the AI detect call (only with providers), then standard; when several profiles' headings match, the phrases and the AI choose among those only, and with no provider the job fails naming them (FR-039). The C8 veto goes in `detectDuplicate`. The group rail shows "Ignored N lines (20 shown)" and "read from columns" (FR-041).
-- *Exit* (synthetic workbook, then the real file by hand, both with no AI provider): a full profile gives 736 items, 726 income or expense and 10 transfers out, one flagged, with a matching control total; a withdrawals-only profile gives 10 transfers and "Ignored 726", with no control total.
+- Routing (`process-job.ts`): a profile whose sections in the chosen mode all have row rules uses the table reader **without an AI provider**, so the provider check moves into the AI branches. Auto-detect on a spreadsheet: fixed phrases on `detectionText` across every compatible profile, then a unique layout header match when no phrases match, then the AI detect call (only with providers), then standard. Multiple phrase matches restrict AI to those matches; otherwise multiple layout matches restrict AI to those layouts. Ambiguous matches with no provider fail naming the profiles (FR-039). The C8 veto goes in `detectDuplicate`. The group rail shows "Ignored N lines (20 shown)" and "read from columns" (FR-041).
+- _Exit_ (synthetic workbook, then the real file by hand, both with no AI provider): a full profile gives 736 items, 726 income or expense and 10 transfers out, one flagged, with a matching control total; a withdrawals-only profile gives 10 transfers and "Ignored 726", with no control total.
 
 **S4.6 PDF piece reading (FR-043).** New `import/piece-reader.ts`, for Every transaction readings done by the AI.
 
@@ -313,9 +317,9 @@ Each stage is built, reviewed by a second agent, fixed and committed, as in S0�
 - Merging: keep an item whose line is in its piece's owned range; an item read from another piece's context is dropped if the owning piece listed it, else kept and flagged; an item with no line, or outside its piece's window, is kept and flagged; identical rows on different lines both stay.
 - Failover per piece (C12). All or nothing for the document (FR-011); the job state is checked between pieces.
 - Progress: `progress_done` / `progress_total` (there since `0022`) are emitted, and the queue shows "Reading part 3 of 25".
-- *Exit:* tests with a mock model. A real run waits for a PDF sample (C3).
+- _Exit:_ tests with a mock model. A real run waits for a PDF sample (C3).
 
-*Decisions made while building S4.6:*
+_Decisions made while building S4.6:_
 
 - **A short document is read in one call.** When the whole document fits one piece (about 37 lines at the first guess of 40 tokens a line), it is read with the whole schema in one call, under the same 3,000-token and 240 s caps as a piece. If that call is cut off or runs out of time on every provider, the document is read in pieces. Such a reading stores `method` "ai" (absent stays the Summary reading in one call, and every older row), and gets the FR-063 reference veto as a reading in pieces does: in Every transaction mode each item carries only its own reference (FR-062).
 - **The header call** is shown at most 120 lines of the first page and 120 of the last, with one mark for the lines between. A printed page rarely has more; a spreadsheet's rows are all one page, so it is capped. A total printed further into a long first page is not seen, and the reading then has no control total.
@@ -334,7 +338,7 @@ Each stage is built, reviewed by a second agent, fixed and committed, as in S0�
 - Optional: a running-balance check on a balance column, reported as a note.
 - Final audit: a completeness audit of all of spec 006, and a manual test script.
 
-*Decisions made while building S4.7:*
+_Decisions made while building S4.7:_
 
 - **The overlap guard works by month, not by day** (FR-066). An income statement's summary records all carry the statement's one date, while a wallet report's rows carry the day of each order, so the two never share a day even when they hold the same sales. An income or expense item of a section that names another profile is noted when an income or expense record made from a document read with that profile (chosen, or found by Auto-detect) is dated in the item's calendar month. Only records that exist count: a document read but not confirmed has made none, and a deleted record is gone. The check runs when the document is read, as the duplicate check does; a statement confirmed after the wallet report was read does not reach back. The note holds the item back from "Confirm all", which leaves it to be confirmed on its own. **No category choice clears it**: the obvious way through 700 order lines is to select them all, set one category and confirm all, and that must not wipe the warning. So an item keeps two notes apart: `review_note`, the FR-034 tied-category note, which choosing a category answers and clears; and `check_note` (migration 0027), the section's flag rule (FR-061) and this overlap note, which nothing but confirming the item on its own clears.
 - **The guard finds a profile's records through `import_record_profiles`** (migration 0027), written when an item or card read with a saved profile is confirmed. The queue row and its items say the same, but clearing the import history deletes them while the records stay, and the guard would then stop seeing them. The queue and items are still asked, for records confirmed before 0027. Deleting a record deletes its row. The repeat-file guard (FR-026, FR-064) still asks the queue only and so still forgets a file once the history is cleared; that is unchanged here.
@@ -361,7 +365,7 @@ Each stage is built, reviewed by a second agent, fixed and committed, as in S0�
 
 ### Left open by the plan
 
-- **The screen label of the "Money moves in" account.** Constitution VII asks UI labels to use the accounting term and rules out "money in" / "money out" wording, so the editor's label is chosen when the editor is built (S4.7); the spec uses the working name in prose only. *Chosen in S4.7: "Account".*
+- **The screen label of the "Money moves in" account.** Constitution VII asks UI labels to use the accounting term and rules out "money in" / "money out" wording, so the editor's label is chosen when the editor is built (S4.7); the spec uses the working name in prose only. _Chosen in S4.7: "Account"._
 - **FR-064 reaches documents read as several items or with a profile.** The plan says only "another job with the same file hash". A receipt read the standard way keeps today's behaviour (a possible-duplicate flag and "Import anyway"), so FR-004 holds.
 - **A Transfer section needs the profile's "Money moves in" account.** Implied by "both accounts must be different", and written as a rule in FR-058.
 - **The exact parser caps** (file size, zip entries, rows, cell length) are set in S4.1. The 200,000-character limit applies to what the AI reads, not to reading from columns.
@@ -410,3 +414,12 @@ Each stage is built, reviewed by a second agent, fixed and committed, as in S0�
 ## Delivery
 
 No spec-kit. S0 is implemented directly, tests first, one commit per piece. Stop at S0.5 for the maintainer's sample documents. S1, S2 and S3 follow in order, with a manual check after each.
+
+### Table row filters
+
+`SectionRows.filter?: RowCondition[]` adds keep-matching conditions independently of
+`where` section assignment. Missing or empty filters keep all assigned rows. Section
+eligibility is `where.every(...) && filter.every(...)`, evaluated before overlap checks
+and date/amount parsing. The editor retains filters while rewriting assignment rules;
+preview, import, snapshots, and portable profiles preserve them. Portable format v3
+prevents older installations silently importing a profile without its filters.

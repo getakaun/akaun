@@ -5,6 +5,7 @@ import {
   type ImportProfileDraft,
   type ProfileSection,
   type TableLayout,
+  type RowCondition,
 } from "$lib/import-profile-schema.js";
 import {
   IGNORED_LINES_MAX,
@@ -21,6 +22,7 @@ import { readCsv } from "../extraction/spreadsheet/csv.js";
 import { renderWorkbook } from "../extraction/spreadsheet/render.js";
 import { readXlsx } from "../extraction/spreadsheet/xlsx.js";
 import type { Workbook } from "../extraction/spreadsheet/types.js";
+import { previewTable } from "./table-preview.js";
 import { DocumentLimitError } from "./document-reader.js";
 import { savedReadingProfile } from "./profile-compiler.js";
 import {
@@ -341,15 +343,12 @@ describe("readFromColumns", () => {
     });
   });
 
-  it("flags a row its section's flag rule picks, and keeps it (FR-061)", () => {
+  it("keeps withdrawals without profile review flags", () => {
     const reading = read(readXlsx(walletReportFixture().xlsx), full());
-    const flagged = reading.items.filter((item) => item.reviewNote);
-    expect(flagged).toHaveLength(1);
-    expect(flagged[0]).toMatchObject({
-      kind: DocumentType.TransferOut,
-      amountMinor: 10000,
-      reviewNote: "Check that this withdrawal completed.",
-    });
+    expect(reading.items.filter((item) => item.reviewNote)).toHaveLength(0);
+    expect(
+      reading.items.some((item) => item.kind === DocumentType.TransferOut),
+    ).toBe(true);
   });
 
   it("gives each item the line its row has in the numbered text (FR-051)", () => {
@@ -398,7 +397,7 @@ describe("readFromColumns", () => {
     );
     expect(transfers).toHaveLength(10);
     expect(all.items.length - transfers.length).toBe(726);
-    expect(all.items.filter((item) => item.reviewNote)).toHaveLength(1);
+    expect(all.items.filter((item) => item.reviewNote)).toHaveLength(0);
     expect(all.notes.statedTotal?.minor).toBe(
       report.moneyInMinor + report.moneyOutMinor,
     );
@@ -406,7 +405,7 @@ describe("readFromColumns", () => {
 
     const withdrawals = read(workbook, withdrawalsOnly());
     expect(withdrawals.items).toHaveLength(10);
-    expect(withdrawals.items.filter((item) => item.reviewNote)).toHaveLength(1);
+    expect(withdrawals.items.filter((item) => item.reviewNote)).toHaveLength(0);
     expect(withdrawals.notes.ignoredCount).toBe(726);
     expect(withdrawals.notes.ignored).toHaveLength(IGNORED_LINES_MAX);
     expect(ignoredSummary(withdrawals.notes)).toBe(
@@ -556,8 +555,7 @@ describe("readFromColumns", () => {
         ],
         rows: {
           where: [],
-          flagWhen: [],
-          flagNote: "",
+
           feeTypeColumn: "Transaction Type",
         },
       },
@@ -804,7 +802,13 @@ describe("withoutTableRows (FR-057)", () => {
       layout: walletLayout(),
       sections: orderSections(),
     };
+    for (const section of profile.sections) {
+      section.rows!.filter = [
+        { column: "Status", op: "is", value: "No matches" },
+      ];
+    }
     const table = readTable(workbook, profile);
+    expect(table.ignoredCount).toBe(table.found.rows);
     const { pages } = renderWorkbook(workbook);
     const numbered = numberDocumentLines(pages);
     const cut = withoutTableRows(numbered, table.dataLines);
@@ -832,5 +836,116 @@ describe("withoutTableRows (FR-057)", () => {
 
   it("leaves the text as it is when the table has no rows", () => {
     expect(withoutTableRows("L0001│a\nL0002│b", [])).toBe("L0001│a\nL0002│b");
+  });
+});
+
+describe("table row filters", () => {
+  const profile = (filter: RowCondition[] = []) => {
+    const section = orderSections()[0];
+    section.rows = { where: [], filter, feeTypeColumn: null };
+    return { ...draft([section], noTotals), layout: noTotals };
+  };
+
+  it.each([
+    [
+      { column: "Status", op: "is", value: " completed " },
+      "COMPLETED",
+      "Processing",
+    ],
+    [
+      { column: "Status", op: "is_not", value: "Processing" },
+      "Completed",
+      "processing",
+    ],
+    [
+      { column: "Status", op: "is_one_of", values: ["Completed", "Settled"] },
+      " settled ",
+      "Processing",
+    ],
+    [
+      { column: "Status", op: "contains", value: "completed" },
+      "Transaction Completed",
+      "Processing",
+    ],
+    [{ column: "Status", op: "empty" }, "", "Processing"],
+    [{ column: "Status", op: "not_empty" }, "Completed", ""],
+  ] as [RowCondition, string, string][])(
+    "keeps matching rows for %j",
+    (condition, kept, skipped) => {
+      const result = read(
+        small([row({ Status: kept }), row({ Status: skipped })]),
+        profile([condition]),
+      );
+      expect(result.items).toHaveLength(1);
+      expect(result.notes.ignoredCount).toBe(1);
+    },
+  );
+
+  it("combines filters with AND before parsing dates and amounts", () => {
+    const result = read(
+      small([
+        row(),
+        row({ Status: "Processing", Date: "invalid", Amount: "invalid" }),
+        row({ Description: "Other" }),
+      ]),
+      profile([
+        { column: "Status", op: "contains", value: "Completed" },
+        { column: "Description", op: "contains", value: "order" },
+      ]),
+    );
+    expect(result.items).toHaveLength(1);
+    expect(result.notes.ignoredCount).toBe(2);
+  });
+
+  it("keeps all assigned rows with an empty filter and counts all rejected rows once", () => {
+    const workbook = small([row(), row()]);
+    expect(read(workbook, profile()).items).toHaveLength(2);
+    const result = readTable(
+      workbook,
+      profile([{ column: "Status", op: "is", value: "Missing" }]),
+    );
+    expect(Object.values(result.envelope.sections).flat()).toEqual([]);
+    expect(result.ignoredCount).toBe(2);
+  });
+
+  it("combines section assignment with independent filters and rejects overlaps", () => {
+    const sections = orderSections();
+    sections[0].rows!.filter = [
+      { column: "Status", op: "is", value: "Completed" },
+    ];
+    sections[1].rows!.filter = [
+      { column: "Status", op: "is", value: "Settled" },
+    ];
+    const workbook = small([
+      row({ Status: "Completed" }),
+      row({ Status: "Settled", "Transaction Type": "Adjustment" }),
+      row({ Status: "Processing" }),
+    ]);
+    const result = read(workbook, draft(sections, noTotals));
+    expect(result.items).toHaveLength(2);
+    expect(result.notes.ignoredCount).toBe(1);
+    sections[1].rows!.where = [];
+    sections[1].rows!.filter = [];
+    expect(() => read(workbook, draft(sections, noTotals))).toThrow(
+      /more than one section/,
+    );
+  });
+
+  it("uses the same filtered output and counts in preview and import", () => {
+    const input = profile([
+      { column: "Status", op: "contains", value: "Completed" },
+    ]);
+    const rows = [WALLET_HEADERS, row(), row({ Status: "Processing" })];
+    const bytes = buildXlsx({ sheets: [{ name: "Report", rows }] });
+    const imported = read(readXlsx(bytes), input);
+    const preview = previewTable(
+      input,
+      { bytes, type: "xlsx" },
+      { mainCurrency: "MYR", today: "2026-10-02" },
+    );
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) return;
+    expect(preview.preview.itemCount).toBe(imported.items.length);
+    expect(preview.preview.ignoredCount).toBe(imported.notes.ignoredCount);
   });
 });

@@ -300,11 +300,11 @@
 		setProfileKind(form, kind);
 	}
 
-	function addCondition(rows: RowsForm, which: 'where' | 'flagWhen') {
+	function addCondition(rows: RowsForm, which: 'where' | 'filter') {
 		rows[which] = [...rows[which], newCondition(headings[0] ?? '')];
 	}
 
-	function removeCondition(rows: RowsForm, which: 'where' | 'flagWhen', uid: string) {
+	function removeCondition(rows: RowsForm, which: 'where' | 'filter', uid: string) {
 		rows[which] = rows[which].filter((condition) => condition.uid !== uid);
 	}
 
@@ -521,7 +521,7 @@
 		if (revealed[section.uid]) return true;
 		if (!attempted) return false;
 		const at = `sections[${index}]`;
-		return ['rows.where', 'rows.flagWhen', 'rows.flagNote', 'sameMoneyAs', 'extras'].some(
+		return ['rows.where', 'sameMoneyAs', 'extras'].some(
 			(part) => errorsUnder(problems, `${at}.${part}`).length > 0
 		);
 	}
@@ -956,7 +956,7 @@
 			<div class="detail-card-head"><span class="detail-card-title">Auto-detect</span></div>
 			<p class="field-hint" style="margin-top:0;">
 				{kindReadsTable(form.kind)
-					? 'Optional. Auto-detect finds this profile by the table headings. Add a description or phrases only if two profiles read the same table.'
+					? 'Optional. Auto-detect checks fixed phrases first, then table headings, then asks AI if the choice is still unclear.'
 					: 'Auto-detect uses these fields to select this profile for an upload.'}
 			</p>
 			{@render detectFields()}
@@ -1134,7 +1134,7 @@
 				<h3 class="pf-section-title">{section.name.trim() || `Section ${index + 1}`}</h3>
 				<span class="pf-fold-meta">
 					{KIND_LABELS[section.kind] ?? section.kind}{count !== null
-						? `, ${count.toLocaleString('en-US')} row${count === 1 ? '' : 's'} in the sample`
+						? `, ${count.toLocaleString('en-US')} row${count === 1 ? '' : 's'} assigned before filtering`
 						: ''}
 				</span>
 			</Collapsible.Trigger>
@@ -1262,6 +1262,16 @@
 				{@render feeTypesField(section, at, fromTable)}
 			{/if}
 
+			{#if fromTable && section.rows}
+				<div class="field" id="pf-s-{section.uid}-filter">
+					<span class="field-label">Import rows only when</span>
+					<p class="field-hint">Optional. A row must match every condition to be imported. With no conditions, all assigned rows are kept. Use Test sample to see the filtered counts.</p>
+					<div class="pf-rules">
+						{@render conditionList(section.rows, 'filter', `${at}.rows`, 'Add condition')}
+					</div>
+				</div>
+			{/if}
+
 			<Disclosure label="More" forceOpen={sectionMoreForced(section, index)}>
 				{#if section.kind !== 'transfer' && (otherProfiles.length > 0 || section.sameMoneyAs.length > 0)}
 					<div class="field" id="pf-s-{section.uid}-same">
@@ -1293,7 +1303,6 @@
 					</div>
 				{/if}
 				{#if fromTable && section.rows}
-					{@render flagRule(section.rows, at, section.uid)}
 					{#if !sorting}
 						{@render customRules(section.rows, at, section.uid)}
 					{/if}
@@ -1589,28 +1598,6 @@
 	</div>
 {/snippet}
 
-{#snippet flagRule(rows: RowsForm, at: string, uid: string)}
-	<div class="field" id="pf-s-{uid}-review" style="margin-top:10px;">
-		<span class="field-label">Rows for review</span>
-		<div class="pf-rules">
-			{#if rows.flagWhen.length === 0}
-				<p class="field-hint" style="margin:0;">Optional. If a row agrees with all the conditions, the app marks it for review with the note.</p>
-			{/if}
-			{@render conditionList(rows, 'flagWhen', `${at}.rows`, 'Add condition')}
-			{#if rows.flagWhen.length > 0 || rows.flagNote}
-				<Input
-					bind:value={rows.flagNote}
-					aria-label="Note for a marked row"
-					placeholder="Note. Example: Make sure that the withdrawal is complete."
-					disabled={!canChange}
-					class="w-full"
-				/>
-				{@render problemList(shown(`${at}.rows.flagNote`))}
-			{/if}
-		</div>
-	</div>
-{/snippet}
-
 {#snippet customRules(rows: RowsForm, at: string, uid: string)}
 	<div class="field" id="pf-s-{uid}-where">
 		<span class="field-label">Rows for this section</span>
@@ -1718,7 +1705,7 @@
 	</section>
 {/snippet}
 
-{#snippet conditionList(rows: RowsForm, which: 'where' | 'flagWhen', path: string, label: string)}
+{#snippet conditionList(rows: RowsForm, which: 'where' | 'filter', path: string, label: string)}
 	{#each rows[which] as condition, conditionIndex (condition.uid)}
 		{@const conditionAt = `${path}.${which}[${conditionIndex}]`}
 		{@render conditionRow(rows, which, condition, conditionAt)}
@@ -1731,7 +1718,7 @@
 	{@render problemList(shown(`${path}.${which}`))}
 {/snippet}
 
-{#snippet conditionRow(rows: RowsForm, which: 'where' | 'flagWhen', condition: ConditionForm, conditionAt: string)}
+{#snippet conditionRow(rows: RowsForm, which: 'where' | 'filter', condition: ConditionForm, conditionAt: string)}
 	<div class="pf-condition">
 		<ProfileColumnSelect
 			options={headingOptions}

@@ -25,9 +25,9 @@ import {
 
 /**
  * A spreadsheet read from its columns, end to end (006 S4.5, US10, FR-053 to
- * FR-057, FR-061 to FR-063): the routing in `processImportJob` that reads it
+ * FR-057, FR-062 to FR-063): the routing in `processImportJob` that reads it
  * by code with no AI provider, Auto-detect by the table's headings, the group
- * it leaves for review, and "Confirm all" leaving a flagged row behind.
+ * it leaves for review, and confirming imported withdrawals.
  *
  * The database is a file under `os.tmpdir()`, migrated from `drizzle/`, and
  * the job's storage folder is there too. No AI provider is set up unless a
@@ -272,7 +272,7 @@ function otherLayoutProfile(): ProfileInput {
     sections: [
       {
         ...orderSections()[0],
-        rows: { where: [], flagWhen: [], flagNote: "", feeTypeColumn: null },
+        rows: { where: [], feeTypeColumn: null },
       },
     ],
   };
@@ -425,16 +425,14 @@ describe("reading a spreadsheet from its columns", () => {
     );
   });
 
-  it("flags a withdrawal still processing, which Confirm all leaves behind (FR-061)", async () => {
+  it("imports both processing and completed withdrawals without profile review flags", async () => {
     const profileId = saveProfile(withdrawalsProfile());
     const row = await run(withProfile(profileId));
     const items = itemsOf(row.id);
     expect(items).toHaveLength(2);
     const [processing, completed] = items;
-    expect(processing.checkNote).toBe("Check that this withdrawal completed.");
-    expect(itemAttention(processing, "MYR")).toBe(
-      "Check that this withdrawal completed.",
-    );
+    expect(processing.checkNote).toBeNull();
+    expect(itemAttention(processing, "MYR")).toBeNull();
     expect(completed.checkNote).toBeNull();
 
     const outcomes = await confirmGroupItems(db, row.id, "all", {
@@ -444,7 +442,7 @@ describe("reading a spreadsheet from its columns", () => {
     expect(outcomes.ok).toBe(true);
     if (!outcomes.ok) return;
     expect(outcomes.value.map((outcome) => [outcome.id, outcome.ok])).toEqual([
-      [processing.id, false],
+      [processing.id, true],
       [completed.id, true],
     ]);
     const records = db
@@ -452,7 +450,7 @@ describe("reading a spreadsheet from its columns", () => {
       .from(ledgerRecords)
       .where(eq(ledgerRecords.kind, LedgerRecordKind.Transfer))
       .all();
-    expect(records).toHaveLength(1);
+    expect(records).toHaveLength(2);
   });
 
   it("reads a report the size of the real one: 10 withdrawals, 726 rows left out", async () => {
@@ -465,7 +463,7 @@ describe("reading a spreadsheet from its columns", () => {
     expect(
       items.every((i) => i.documentType === DocumentType.TransferOut),
     ).toBe(true);
-    expect(items.filter((item) => item.checkNote)).toHaveLength(1);
+    expect(items.filter((item) => item.checkNote)).toHaveLength(0);
     const notes = parseExtractionNotes(row.extractionNotes)!;
     expect(notes.statedTotal).toBeNull();
     expect(ignoredSummary(notes)).toBe("Ignored 726 lines (20 shown)");
@@ -641,6 +639,65 @@ describe("Auto-detect on a spreadsheet", () => {
     });
     expect(itemsOf(row.id)).toHaveLength(2);
     expect(parseExtractionNotes(row.extractionNotes)?.method).toBe("columns");
+  });
+
+  it("checks fixed phrases across AI profiles before selecting a unique table layout", async () => {
+    saveProfile(withdrawalsProfile());
+    const chosen = saveProfile({
+      ...aiProfile(),
+      phrases: ["Transaction Details", "Total Money Out"],
+    });
+    addProvider();
+    const model = serve([
+      {
+        text: JSON.stringify({
+          header: {
+            counterparty: "Marketplace",
+            date: "2026-03-31",
+            reference: null,
+            currency: "MYR",
+          },
+          stated_total: null,
+          sections: { withdrawals: [] },
+          ignored: [],
+        }),
+      },
+    ]);
+    const row = await run(auto());
+    expect(row.profileId).toBe(String(chosen));
+    expect(row.readHow).toBe(ImportReadHow.Detected);
+    // Only extraction uses AI: the fixed phrases decided the profile.
+    expect(model.doGenerateCalls).toHaveLength(1);
+    expect(JSON.stringify(model.doGenerateCalls[0].prompt)).not.toContain(
+      "saved import profiles",
+    );
+  });
+
+  it("does not let a unique layout bypass ambiguous fixed phrases", async () => {
+    saveProfile(withdrawalsProfile({ phrases: ["Total Money In"] }));
+    saveProfile({ ...aiProfile(), phrases: ["Total Money In"] });
+    const row = await run(auto());
+    expect(row.state).toBe(ImportState.Failed);
+    expect(row.error).toMatch(/fixed phrases of several import profiles/);
+    expect(itemsOf(row.id)).toEqual([]);
+  });
+
+  it("uses AI only among fixed-phrase matches when phrases are ambiguous", async () => {
+    const chosen = saveProfile(
+      withdrawalsProfile({ phrases: ["Total Money In"] }),
+    );
+    saveProfile({ ...aiProfile(), phrases: ["Total Money In"] });
+    saveProfile(fullProfile({ name: "Unrelated table profile" }));
+    addProvider();
+    const model = serve([
+      { text: JSON.stringify({ profile: String(chosen) }) },
+    ]);
+    const row = await run(auto());
+    expect(row.profileId).toBe(String(chosen));
+    expect(model.doGenerateCalls).toHaveLength(1);
+    const prompt = JSON.stringify(model.doGenerateCalls[0].prompt);
+    expect(prompt).toContain("Statement read by the AI");
+    expect(prompt).not.toContain("Unrelated table profile");
   });
 
   it("goes on to the recognition phrases when several profiles' headings match", async () => {
@@ -928,7 +985,7 @@ describe("the wallet report profiles", () => {
     ]);
   });
 
-  it("reads withdrawals only, with no AI: 10 transfers, one flagged, 726 left out", async () => {
+  it("reads withdrawals only, with no AI: 10 transfers, 726 left out", async () => {
     const report = walletWorkbook();
     const row = await run(
       withProfile(savedWallet("wallet_withdrawals"), report.xlsx),
@@ -944,7 +1001,7 @@ describe("the wallet report profiles", () => {
           item.counterAccountId === ids.bank,
       ),
     ).toBe(true);
-    expect(items.filter((item) => item.checkNote)).toHaveLength(1);
+    expect(items.filter((item) => item.checkNote)).toHaveLength(0);
     const notes = parseExtractionNotes(row.extractionNotes)!;
     expect(notes.statedTotal).toBeNull();
     expect(ignoredSummary(notes)).toBe("Ignored 726 lines (20 shown)");
@@ -964,9 +1021,7 @@ describe("the wallet report profiles", () => {
         .filter((item) => item.documentType === DocumentType.TransferOut)
         .map((item) => item.checkNote)
         .filter(Boolean),
-    ).toEqual([
-      "Check that this withdrawal completed: the report still showed it as not completed.",
-    ]);
+    ).toEqual([]);
   });
 
   describe("the overlap guard (FR-066)", () => {

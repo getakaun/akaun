@@ -352,19 +352,6 @@
       (dateFrom || dateTo ? 1 : 0) +
       (search.trim() ? 1 : 0),
   );
-  const allSelected = $derived(
-    filtered.length > 0 && filtered.every((r) => selected.has(r.id)),
-  );
-  const someSelected = $derived(
-    filtered.some((r) => selected.has(r.id)) && !allSelected,
-  );
-  const selectedList = $derived(filtered.filter((r) => selected.has(r.id)));
-  const selTotal = $derived(
-    selectedList.reduce((sum, r) => sum + r.amountMinor, 0),
-  );
-  // A record a settlement or a bank line still points at refuses deletion, so
-  // the bar says so up front rather than after the fact.
-  const lockedSelected = $derived(selectedList.filter((r) => r.locked).length);
 
   /**
    * One fixed set of four, in the Dashboard's vocabulary.
@@ -415,8 +402,8 @@
 
   // --- Selection ----------------------------------------------------------
   function toggleAll() {
-    if (allSelected) filtered.forEach((r) => selected.delete(r.id));
-    else filtered.forEach((r) => selected.add(r.id));
+    if (allSelected) selectableRecords.forEach((r) => selected.delete(r.id));
+    else selectableRecords.forEach((r) => selected.add(r.id));
   }
 
   function toggleOne(id: number) {
@@ -604,6 +591,8 @@
     | { type: "record-deleted"; id: number }
     | { type: "settlement-changed"; recordIds: number[] };
 
+  let statementRefresh = $state(0);
+
   // One list of every kind, so one connection and no kind filter — on the
   // stream or here. A record arriving from another tab is merged in whatever it
   // is; there is no longer a kind this screen would have to drop.
@@ -612,7 +601,11 @@
       records = mergeById(records, [msg.record]);
     } else if (msg.type === "record-deleted") {
       records = records.filter((r) => r.id !== msg.id);
+      selected.delete(msg.id);
     }
+    // Balances and lock state depend on the whole ledger, not just the rows
+    // in the initial batch. Ask the server for a fresh statement on each event.
+    statementRefresh += 1;
     // The record list is patched in place from the event, but what is still
     // owed is derived across records — including payments this screen does not
     // hold — so it is asked for again rather than guessed at.
@@ -665,6 +658,7 @@
   type Statement = {
     account: { id: number; name: string; role: number };
     entries: StatementEntry[];
+    selectionRecords: { id: number; amountMinor: number; locked: boolean }[];
     openingBalanceMinor: number;
     closingBalanceMinor: number;
     total: number;
@@ -673,12 +667,49 @@
 
   let statement = $state<Statement | null>(null);
   let statementLoading = $state(false);
+  let statementError = $state("");
+  // Statements can include older records and more than one movement per record.
+  // Bulk actions use the unique records actually displayed, with their own amounts.
+  const selectableRecords = $derived(
+    runningBalanceHolds && statement ? statement.selectionRecords : filtered,
+  );
+
+  const allSelected = $derived(
+    selectableRecords.length > 0 &&
+      selectableRecords.every((r) => selected.has(r.id)),
+  );
+  const someSelected = $derived(
+    selectableRecords.some((r) => selected.has(r.id)) && !allSelected,
+  );
+  const selectedList = $derived(
+    selectableRecords.filter((r) => selected.has(r.id)),
+  );
+  const selTotal = $derived(
+    selectedList.reduce((sum, r) => sum + r.amountMinor, 0),
+  );
+  // A record a settlement or a bank line still points at refuses deletion, so
+  // the bar says so up front rather than after the fact.
+  const lockedSelected = $derived(selectedList.filter((r) => r.locked).length);
 
   $effect(() => {
-    if (!statementMode || selectedAccountId === null) {
-      statement = null;
-      return;
-    }
+    // A selection belongs to the account and date range the user selected in.
+    // Do not carry IDs (or an open delete confirmation) into another statement.
+    void statementMode;
+    void selectedAccountId;
+    void dateFrom;
+    void dateTo;
+    clearSel();
+    deleteDialogOpen = false;
+  });
+
+  $effect(() => {
+    void statementRefresh;
+    // Drop the old rows before fetching: failures must never leave another
+    // account's statement or outdated balances available for bulk actions.
+    statement = null;
+    statementError = "";
+    statementLoading = false;
+    if (!statementMode || selectedAccountId === null) return;
     const accountId = selectedAccountId;
     const from = dateFrom;
     const to = dateTo;
@@ -686,20 +717,24 @@
     const query = new SvelteURLSearchParams({ accountId: String(accountId) });
     if (from) query.set("dateFrom", from);
     if (to) query.set("dateTo", to);
-    let cancelled = false;
+    const controller = new AbortController();
     void (async () => {
       try {
-        const res = await fetch(`/api/records/statement?${query}`);
-        if (!res.ok || cancelled) return;
-        const body = await res.json();
-        if (!cancelled) statement = body;
+        const res = await fetch(`/api/records/statement?${query}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error("Statement request failed");
+        const body: Statement = await res.json();
+        if (!controller.signal.aborted) statement = body;
+      } catch {
+        if (!controller.signal.aborted) {
+          statementError = "Could not load the statement. Please try again.";
+        }
       } finally {
-        if (!cancelled) statementLoading = false;
+        if (!controller.signal.aborted) statementLoading = false;
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   });
 
   /** The statement as a CSV, in the same signs and the same order as the screen. */
@@ -791,6 +826,53 @@
     void loadOwed();
   });
 </script>
+
+{#snippet selectAllCheckbox()}
+  <button
+    type="button"
+    style="width:17px; height:17px; border-radius:5px; border:1.5px solid {allSelected
+      ? 'var(--primary)'
+      : 'var(--border-strong)'}; background:{allSelected || someSelected
+      ? 'var(--primary)'
+      : 'var(--card)'}; display:grid; place-items:center; cursor:pointer; color:var(--primary-foreground); padding:0; flex-shrink:0;"
+    onclick={toggleAll}
+    aria-label="Select all"
+  >
+    {#if allSelected}<svg
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="white"
+        stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg
+      >{:else if someSelected}<span
+        style="width:8px; height:2px; border-radius:2px; background:white; display:block;"
+      ></span>{/if}
+  </button>
+{/snippet}
+
+{#snippet rowCheckbox(id: number, label: string)}
+  <button
+    type="button"
+    style="width:17px; height:17px; border-radius:5px; border:1.5px solid {selected.has(
+      id,
+    )
+      ? 'var(--primary)'
+      : 'var(--border-strong)'}; background:{selected.has(id)
+      ? 'var(--primary)'
+      : 'var(--card)'}; display:grid; place-items:center; cursor:pointer; color:var(--primary-foreground); padding:0; flex-shrink:0;"
+    aria-label="Select {label}"
+  >
+    {#if selected.has(id)}<svg
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="white"
+        stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg
+      >{/if}
+  </button>
+{/snippet}
 
 <div class="screen" style="position:relative;">
   <!-- Top bar -->
@@ -1175,7 +1257,10 @@
       {#if statementMode}
         <!-- The account's statement: the same rows, with a running balance
              (FR-040–FR-042). -->
-        <div class="statement">
+        <div
+          class="statement"
+          class:statement-active={runningBalanceHolds && statement}
+        >
           <div class="statement-head">
             <div>
               <h2 class="statement-title">
@@ -1216,6 +1301,7 @@
               <table class="exp-table statement-table">
                 <thead>
                   <tr>
+                    <th class="td-check">{@render selectAllCheckbox()}</th>
                     <th>Date</th>
                     <th>Description</th>
                     <th class="ta-right">Amount</th>
@@ -1228,6 +1314,7 @@
                          twice appears twice and the balance adds up (FR-042). -->
                     <tr
                       class="exp-row"
+                      class:selected={selected.has(entry.recordId)}
                       onclick={() =>
                         goto(
                           resolve("/(app)/records/[id]", {
@@ -1235,6 +1322,18 @@
                           }),
                         )}
                     >
+                      <td
+                        class="td-check"
+                        onclick={(ev) => {
+                          ev.stopPropagation();
+                          toggleOne(entry.recordId);
+                        }}
+                      >
+                        {@render rowCheckbox(
+                          entry.recordId,
+                          entry.recordNumber ?? entry.description,
+                        )}
+                      </td>
                       <td class="td-date">{formatDateShort(entry.date)}</td>
                       <td class="td-primary">
                         <span class="cell-itemname">{entry.description}</span>
@@ -1267,6 +1366,17 @@
             {/each}
           {:else if statementLoading}
             <p class="statement-note">Calculating balance…</p>
+          {:else if statementError}
+            <p class="statement-note">
+              {statementError}
+              <button
+                type="button"
+                class="link-btn"
+                onclick={() => (statementRefresh += 1)}
+              >
+                Retry
+              </button>
+            </p>
           {/if}
         </div>
       {/if}
@@ -1277,28 +1387,7 @@
           <thead>
             <tr>
               <th class="td-check">
-                <button
-                  type="button"
-                  style="width:17px; height:17px; border-radius:5px; border:1.5px solid {allSelected
-                    ? 'var(--primary)'
-                    : 'var(--border-strong)'}; background:{allSelected ||
-                  someSelected
-                    ? 'var(--primary)'
-                    : 'var(--card)'}; display:grid; place-items:center; cursor:pointer; color:var(--primary-foreground); padding:0; flex-shrink:0;"
-                  onclick={toggleAll}
-                  aria-label="Select all"
-                >
-                  {#if allSelected}<svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="white"
-                      stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg
-                    >{:else if someSelected}<span
-                      style="width:8px; height:2px; border-radius:2px; background:white; display:block;"
-                    ></span>{/if}
-                </button>
+                {@render selectAllCheckbox()}
               </th>
               <th
                 class={`sortable ${sort.key === "description" ? "sorted" : ""}`}
@@ -1365,26 +1454,7 @@
                     toggleOne(e.id);
                   }}
                 >
-                  <button
-                    type="button"
-                    style="width:17px; height:17px; border-radius:5px; border:1.5px solid {selected.has(
-                      e.id,
-                    )
-                      ? 'var(--primary)'
-                      : 'var(--border-strong)'}; background:{selected.has(e.id)
-                      ? 'var(--primary)'
-                      : 'var(--card)'}; display:grid; place-items:center; cursor:pointer; color:var(--primary-foreground); padding:0; flex-shrink:0;"
-                    aria-label="Select {e.recordNumber ?? e.description}"
-                  >
-                    {#if selected.has(e.id)}<svg
-                        width="10"
-                        height="10"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="white"
-                        stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg
-                      >{/if}
-                  </button>
+                  {@render rowCheckbox(e.id, e.recordNumber ?? e.description)}
                 </td>
                 <td class="td-primary">
                   <!-- A real link, not just a row click: the browser can then
@@ -1546,6 +1616,8 @@
       deleteDialogOpen = false;
       clearSel();
       await update();
+      // Also refresh when the form completes without receiving an SSE event.
+      statementRefresh += 1;
     }}
   style="display:none"
 >
@@ -1770,6 +1842,24 @@
      was always a filtered view of (D-05). */
   .statement {
     margin-bottom: 14px;
+  }
+  /* Constrain the statement so its table owns desktop scrolling, like the list. */
+  .statement-active {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .statement-active > :not(.table-card) {
+    flex-shrink: 0;
+  }
+  .statement-active > .table-card {
+    min-height: 0;
+  }
+  @media (max-width: 767px) {
+    .statement-active {
+      flex: none;
+    }
   }
   .statement-head {
     display: flex;

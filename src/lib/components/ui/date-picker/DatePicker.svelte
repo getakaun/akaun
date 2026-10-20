@@ -21,6 +21,7 @@
 		disabled = false,
 		clearable = false,
 		clearLabel = 'Clear date',
+		labelledBy = undefined,
 		min = undefined
 	}: {
 		name?: string;
@@ -33,6 +34,8 @@
 		clearable?: boolean;
 		/** The ×'s accessible name, saying what clearing means. */
 		clearLabel?: string;
+		/** ID of a visible label that names the calendar trigger. */
+		labelledBy?: string;
 		/** The earliest day that can be picked (YYYY-MM-DD). */
 		min?: string;
 	} = $props();
@@ -90,6 +93,7 @@
 	<Popover.Root bind:open>
 		<Popover.Trigger
 			{disabled}
+			aria-labelledby={labelledBy}
 			class={cn(
 				"border-input flex h-9 w-full items-center gap-2 rounded-md border bg-card px-3 text-[13.5px] outline-none transition-[color,box-shadow] disabled:cursor-not-allowed disabled:opacity-50",
 				focusRingClass,

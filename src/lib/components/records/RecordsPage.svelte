@@ -591,6 +591,8 @@
     | { type: "record-deleted"; id: number }
     | { type: "settlement-changed"; recordIds: number[] };
 
+  let statementRefresh = $state(0);
+
   // One list of every kind, so one connection and no kind filter — on the
   // stream or here. A record arriving from another tab is merged in whatever it
   // is; there is no longer a kind this screen would have to drop.
@@ -599,7 +601,11 @@
       records = mergeById(records, [msg.record]);
     } else if (msg.type === "record-deleted") {
       records = records.filter((r) => r.id !== msg.id);
+      selected.delete(msg.id);
     }
+    // Balances and lock state depend on the whole ledger, not just the rows
+    // in the initial batch. Ask the server for a fresh statement on each event.
+    statementRefresh += 1;
     // The record list is patched in place from the event, but what is still
     // owed is derived across records — including payments this screen does not
     // hold — so it is asked for again rather than guessed at.
@@ -661,6 +667,7 @@
 
   let statement = $state<Statement | null>(null);
   let statementLoading = $state(false);
+  let statementError = $state("");
   // Statements can include older records and more than one movement per record.
   // Bulk actions use the unique records actually displayed, with their own amounts.
   const selectableRecords = $derived(
@@ -684,12 +691,25 @@
   // the bar says so up front rather than after the fact.
   const lockedSelected = $derived(selectedList.filter((r) => r.locked).length);
 
+  $effect(() => {
+    // A selection belongs to the account and date range the user selected in.
+    // Do not carry IDs (or an open delete confirmation) into another statement.
+    void statementMode;
+    void selectedAccountId;
+    void dateFrom;
+    void dateTo;
+    clearSel();
+    deleteDialogOpen = false;
+  });
 
   $effect(() => {
-    if (!statementMode || selectedAccountId === null) {
-      statement = null;
-      return;
-    }
+    void statementRefresh;
+    // Drop the old rows before fetching: failures must never leave another
+    // account's statement or outdated balances available for bulk actions.
+    statement = null;
+    statementError = "";
+    statementLoading = false;
+    if (!statementMode || selectedAccountId === null) return;
     const accountId = selectedAccountId;
     const from = dateFrom;
     const to = dateTo;
@@ -697,20 +717,24 @@
     const query = new SvelteURLSearchParams({ accountId: String(accountId) });
     if (from) query.set("dateFrom", from);
     if (to) query.set("dateTo", to);
-    let cancelled = false;
+    const controller = new AbortController();
     void (async () => {
       try {
-        const res = await fetch(`/api/records/statement?${query}`);
-        if (!res.ok || cancelled) return;
-        const body = await res.json();
-        if (!cancelled) statement = body;
+        const res = await fetch(`/api/records/statement?${query}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error("Statement request failed");
+        const body: Statement = await res.json();
+        if (!controller.signal.aborted) statement = body;
+      } catch {
+        if (!controller.signal.aborted) {
+          statementError = "Could not load the statement. Please try again.";
+        }
       } finally {
-        if (!cancelled) statementLoading = false;
+        if (!controller.signal.aborted) statementLoading = false;
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   });
 
   /** The statement as a CSV, in the same signs and the same order as the screen. */
@@ -1342,6 +1366,17 @@
             {/each}
           {:else if statementLoading}
             <p class="statement-note">Calculating balance…</p>
+          {:else if statementError}
+            <p class="statement-note">
+              {statementError}
+              <button
+                type="button"
+                class="link-btn"
+                onclick={() => (statementRefresh += 1)}
+              >
+                Retry
+              </button>
+            </p>
           {/if}
         </div>
       {/if}
@@ -1581,6 +1616,8 @@
       deleteDialogOpen = false;
       clearSel();
       await update();
+      // Also refresh when the form completes without receiving an SSE event.
+      statementRefresh += 1;
     }}
   style="display:none"
 >

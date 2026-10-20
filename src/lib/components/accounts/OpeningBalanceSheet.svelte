@@ -3,6 +3,7 @@
 	import { X } from '@lucide/svelte';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
+	import DatePicker from '$lib/components/ui/date-picker/DatePicker.svelte';
 	import { useIsMobile } from '$lib/hooks/useIsMobile.svelte.js';
 	import { mainCurrencySymbol } from '$lib/currency-state.svelte.js';
 	import type { AccountView } from '$lib/server/ledger/types.js';
@@ -78,8 +79,10 @@
 					</p>
 
 					<div class="field">
-						<label class="field-label" for="ob-date">As at date *</label>
-						<Input id="ob-date" name="date" type="date" required value={startDate} class="w-full" />
+						<span class="field-label">As at date *</span>
+						{#key `${account?.id ?? ''}-${startDate}-${open}`}
+							<DatePicker name="date" value={startDate} />
+						{/key}
 					</div>
 
 					<div class="field">

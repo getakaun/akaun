@@ -79,9 +79,9 @@
 					</p>
 
 					<div class="field">
-						<span class="field-label">As at date *</span>
+						<span id="ob-date-label" class="field-label">As at date *</span>
 						{#key `${account?.id ?? ''}-${startDate}-${open}`}
-							<DatePicker name="date" value={startDate} />
+							<DatePicker name="date" value={startDate} labelledBy="ob-date-label" />
 						{/key}
 					</div>
 

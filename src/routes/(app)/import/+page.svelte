@@ -751,7 +751,9 @@
 				</Select.Content>
 			</Select.Root>
 			{#if profilesEnabled && readAs === ImportReadAs.Auto}
-				<span class="upload-option-hint">Uses a saved profile that fits the document, or else reads it the standard way.</span>
+				<span class="upload-option-hint">Checks fixed phrases first, then table headings, then AI if needed.</span>
+			{:else if readAs.startsWith('profile:')}
+				<span class="upload-option-hint">Uses this profile for every upload. Choose Auto-detect to match each document automatically.</span>
 			{/if}
 		</div>
 		{#if uploadError}

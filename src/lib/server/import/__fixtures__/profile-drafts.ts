@@ -280,9 +280,8 @@ function walletReportLayout(over: Partial<TableLayout> = {}): TableLayout {
 
 /**
  * Each withdrawal from the wallet to the bank, as a transfer (FR-058). One
- * still being paid out is imported, flagged for the reviewer, rather than
- * left out (FR-061): it is real money leaving the wallet, and leaving it out
- * would make the books disagree with the report.
+ * still being paid out is imported: it is real money leaving the wallet,
+ * and leaving it out would make the books disagree with the report.
  */
 const WITHDRAWALS: ProfileSection = {
   key: "withdrawals",
@@ -302,11 +301,7 @@ const WITHDRAWALS: ProfileSection = {
         values: ["Withdrawals", "Withdrawal"],
       },
     ],
-    flagWhen: [
-      { column: "Status", op: "is_not", value: "Transaction Completed" },
-    ],
-    flagNote:
-      "Check that this withdrawal completed: the report still showed it as not completed.",
+
     feeTypeColumn: null,
   },
 };
@@ -371,8 +366,7 @@ const WALLET_EVERY_TRANSACTION: ImportProfileDraft = {
         where: [
           { column: "Transaction Type", op: "is", value: "Order Income" },
         ],
-        flagWhen: [],
-        flagNote: "",
+
         feeTypeColumn: null,
       },
     },
@@ -387,8 +381,7 @@ const WALLET_EVERY_TRANSACTION: ImportProfileDraft = {
       extras: null,
       rows: {
         where: [{ column: "Transaction Type", op: "is", value: "Adjustment" }],
-        flagWhen: [],
-        flagNote: "",
+
         feeTypeColumn: null,
       },
     },

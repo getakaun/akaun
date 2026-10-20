@@ -84,6 +84,18 @@ Akaun does not keep the sample. **More options** has the less common settings, f
 
 The **Rows become** cards tell Akaun which rows become which records.
 
+Each table section, including **Every row**, has **Import rows only when**. Add conditions
+such as **Status is Completed** to keep only matching rows. Every condition must match;
+with no conditions, all rows assigned to the section are kept. Comparisons ignore case
+and extra spacing. Filters remain in place when you change the column used to split rows.
+
+Use **Test sample** to check the resulting section counts and ignored rows. Assignment
+counts are shown before filtering. Filtered rows count as ignored and are not read by AI
+in a mixed profile. A stated total still compares against the imported items, so filtering
+can cause a difference from a whole-document total. Running-balance checks still inspect
+the source table.
+
+
 - If all rows are of one kind, use one section. Give it a kind and a category.
 - If the rows are of different kinds, click **Split rows by a column**. Choose the **Column** that
   tells the type of each row. Then choose a section for each value, or **Ignore**.
@@ -98,8 +110,7 @@ Each section has these fields:
 | **Other account** | For a **Transfer** only. The account that the money goes to or comes from, for example your bank. |
 | **Line types** | Optional. Divides the section into types, for example commission and shipping. Each type can have its own category. |
 
-**More** in each section has more rules. **Rows for review** marks the rows that agree with your
-conditions, with a note for the reviewer.
+**More** in each section has additional row-selection and overlap rules.
 
 ## Sections that the AI reads
 
@@ -123,9 +134,15 @@ The **Auto-detect** card helps Akaun find this profile when you upload with **Au
 - **Fixed phrases**: text that is always on the document, for example its title. Type a phrase and
   click **Add**. You can add 10 phrases.
 
-If a document has all the phrases of exactly one profile, Akaun selects that profile without AI. If not,
-the AI compares the start of the document with the name and description of each enabled profile.
-A **Table rows** profile is found by its table headings.
+Auto-detect checks fixed phrases across all enabled profiles that can read the file first.
+If exactly one profile has all its phrases in the document, Akaun selects it without AI.
+For a spreadsheet with no phrase matches, a unique table-heading match is used next.
+If the choice is still unclear, AI chooses among the matching profiles, or reports that none fits.
+A table profile whose required headings are absent cannot read the file and is excluded.
+
+The upload page remembers your last **Read as** selection on this device. Choosing a
+specific profile uses that profile directly for every upload; choose **Auto-detect** to
+match each document automatically.
 
 ## AI instructions
 

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  profileSnapshotOf,
+  parseProfileSnapshot,
+} from "./server/import/profile-snapshot.js";
+import {
   draftFromFile,
   parseProfileFile,
   profileFile,
@@ -82,7 +86,7 @@ describe("profileFile", () => {
     );
     expect(lost).toEqual([]);
     expect(file.format).toBe("akaun.import-profile");
-    expect(file.version).toBe(2);
+    expect(file.version).toBe(3);
     expect(file.exportedAt).toBe("2026-10-05T00:00:00.000Z");
     const profile = file.profile as {
       accountId: unknown;
@@ -270,7 +274,7 @@ describe("the profile's sheet (FR-069)", () => {
   it("goes with the profile, and comes back on import", () => {
     const draft = { ...walletDraft(), sheet: "Transaction Report" };
     const { file } = profileFile(draft, here);
-    expect(file.version).toBe(2);
+    expect(file.version).toBe(3);
     expect(file.profile.sheet).toBe("Transaction Report");
     const back = draftFromFile(roundTrip(file), there, null);
     expect(back.ok && back.draft.sheet).toBe("Transaction Report");
@@ -307,7 +311,7 @@ describe("parseProfileFile", () => {
       /no version/,
     );
     expect(
-      error('{"format":"akaun.import-profile","version":3,"profile":{}}'),
+      error('{"format":"akaun.import-profile","version":4,"profile":{}}'),
     ).toMatch(/newer version/);
     expect(error('{"format":"akaun.import-profile","version":1}')).toMatch(
       /no profile/,
@@ -316,4 +320,35 @@ describe("parseProfileFile", () => {
       error('{"format":"akaun.import-profile","version":1,"profile":{}}'),
     ).toBeNull();
   });
+});
+
+it("preserves table filters through portable export and import", () => {
+  const draft = walletDraft();
+  draft.sections[0].rows!.filter = [
+    { column: "Status", op: "is", value: "Completed" },
+  ];
+  const result = draftFromFile(
+    roundTrip(profileFile(draft, here).file),
+    there,
+    null,
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.draft.sections[0].rows!.filter).toEqual(
+    draft.sections[0].rows!.filter,
+  );
+  const snapshot = parseProfileSnapshot(
+    JSON.stringify(profileSnapshotOf({ id: 7, ...draft })),
+  );
+  expect(snapshot?.profile.sections[0].rows!.filter).toEqual(
+    draft.sections[0].rows!.filter,
+  );
+});
+
+it("accepts version 2 profiles without filters", () => {
+  const draft = walletDraft();
+  const file = profileFile(draft, here).file;
+  file.version = 2;
+  const result = draftFromFile(roundTrip(file), here, null);
+  expect(result.ok && result.draft).toEqual(draft);
 });

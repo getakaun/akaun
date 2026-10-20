@@ -84,8 +84,7 @@ export interface ConditionForm {
 /** A section's row rules, as typed (FR-054). */
 export interface RowsForm {
   where: ConditionForm[];
-  flagWhen: ConditionForm[];
-  flagNote: string;
+  filter: ConditionForm[];
   /** The heading of the line type column, or "" for none. */
   feeTypeColumn: string;
 }
@@ -251,9 +250,9 @@ export function newCondition(column = ""): ConditionForm {
   return { uid: newUid(), column, op: "is", value: "", valuesText: "" };
 }
 
-/** Row rules that take every row, with nothing flagged. */
+/** Row rules that take every row. */
 export function newRows(): RowsForm {
-  return { where: [], flagWhen: [], flagNote: "", feeTypeColumn: "" };
+  return { where: [], filter: [], feeTypeColumn: "" };
 }
 
 /** An empty table layout. */
@@ -291,8 +290,7 @@ function conditionForm(condition: RowCondition): ConditionForm {
 function rowsForm(rows: SectionRows): RowsForm {
   return {
     where: rows.where.map(conditionForm),
-    flagWhen: rows.flagWhen.map(conditionForm),
-    flagNote: rows.flagNote,
+    filter: (rows.filter ?? []).map(conditionForm),
     feeTypeColumn: rows.feeTypeColumn ?? "",
   };
 }
@@ -339,8 +337,9 @@ function conditionPayload(condition: ConditionForm): Record<string, unknown> {
 function rowsPayload(rows: RowsForm): Record<string, unknown> {
   return {
     where: rows.where.map(conditionPayload),
-    flagWhen: rows.flagWhen.map(conditionPayload),
-    flagNote: rows.flagNote,
+    ...(rows.filter.length
+      ? { filter: rows.filter.map(conditionPayload) }
+      : {}),
     feeTypeColumn: rows.feeTypeColumn || null,
   };
 }
@@ -874,11 +873,11 @@ function sectionPlace(
     case "extras":
       return place("More › Extra fields", [`${at}-extras`], "section");
     case "rows":
+      if (key[2] === "filter") {
+        return place("Import rows only when", [`${at}-filter`]);
+      }
       if (key[2] === "feeTypeColumn") {
         return place("Line type column", [`${at}-fees`]);
-      }
-      if (key[2] === "flagWhen" || key[2] === "flagNote") {
-        return place("More › Rows for review", [`${at}-review`], "section");
       }
       return place(
         "More › Rows for this section",

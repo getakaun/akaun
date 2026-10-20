@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { applySorting, sortingOf } from "./import-profile-sample.js";
 import {
   blankForm,
   errorsAt,
@@ -297,8 +298,7 @@ describe("the form and the profile", () => {
     if (!result.ok) return;
     expect(result.profile.sections[0].rows).toEqual({
       where: [{ column: "Type", op: "is_one_of", values: ["Fee", "Charge"] }],
-      flagWhen: [],
-      flagNote: "",
+
       feeTypeColumn: null,
     });
     expect(result.profile.mode).toBe("every_transaction");
@@ -773,10 +773,6 @@ describe("problemPlace", () => {
     expect(more("sections[0].extras.properties.order").label).toBe(
       "Section “Fees” › More › Extra fields",
     );
-    expect(more("sections[0].rows.flagWhen[0].value")).toMatchObject({
-      label: "Section “Fees” › More › Rows for review",
-      inMore: "section",
-    });
     expect(more("sections[0].rows.where[1].column").targets).toEqual([
       `pf-s-${fees.uid}-where`,
       "pf-sorting",
@@ -817,4 +813,35 @@ describe("problemPlace", () => {
       targets: ["pf-sections"],
     });
   });
+});
+
+it("preserves filters through section assignment, reading-method changes and form round trips", () => {
+  const form = formFromDraft(
+    withAccounts(profileDraft("wallet_every_transaction")),
+  );
+  const section = form.sections[0];
+  section.rows!.filter = [{ ...newCondition("Status"), value: "Completed" }];
+  const sorting = sortingOf(form)!;
+  expect(sorting).not.toBeNull();
+  applySorting(form, sorting);
+  applySorting(form, { column: "Status", assignments: new Map() });
+  expect(section.rows!.filter[0].value).toBe("Completed");
+  applySorting(form, sorting);
+  const filter = section.rows!.filter;
+  setKind(form, "mixed");
+  section.readBy = "ai";
+  expect(section.rows!.filter).toEqual(filter);
+  setKind(form, "table");
+  const checked = checkProfile(payloadFromForm(form));
+  expect(checked.ok).toBe(true);
+  if (!checked.ok) return;
+  const reopened = formFromDraft(checked.profile);
+  expect(reopened.sections[0].rows!.filter[0]).toMatchObject({
+    column: "Status",
+    op: "is",
+    value: "Completed",
+  });
+  expect(
+    problemPlace("sections[0].rows.filter[0].value", form).targets,
+  ).toContain(`pf-s-${section.uid}-filter`);
 });

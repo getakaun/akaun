@@ -266,16 +266,14 @@ export interface RowCondition {
 /**
  * Which rows of the table a section takes, and what to do with them (FR-054).
  * A row belongs to the section when every condition of `where` holds; an
- * empty `where` takes every row. A row that also meets every condition of a
- * non-empty `flagWhen` is still imported, with `flagNote` for the reviewer
- * (FR-061). `feeTypeColumn` names the column whose value says the row's fee
- * type, matched against each line type's `values`.
+ * empty `where` takes every row. Every additional `filter` condition must
+ * also hold for the row to be imported. `feeTypeColumn` names the column whose value
+ * says the row's fee type, matched against each line type's `values`.
  */
 export interface SectionRows {
   where: RowCondition[];
-  flagWhen: RowCondition[];
-  /** What to check, for a row `flagWhen` matches. Empty when it is empty. */
-  flagNote: string;
+  /** Additional keep-matching conditions, independent of section assignment. */
+  filter?: RowCondition[];
   feeTypeColumn: string | null;
 }
 
@@ -1150,26 +1148,12 @@ function sectionRows(
     return undefined;
   }
   const where = rowConditions(raw.where, join(path, "where"), headings, errors);
-  const flagWhen = rowConditions(
-    raw.flagWhen,
-    join(path, "flagWhen"),
+  const filter = rowConditions(
+    raw.filter,
+    join(path, "filter"),
     headings,
     errors,
   );
-  const flagNote = text(
-    raw.flagNote,
-    join(path, "flagNote"),
-    "The note for a flagged row",
-    errors,
-    { max: SHORT_DESCRIPTION_MAX, required: flagWhen.length > 0 },
-  );
-  if (flagWhen.length === 0 && flagNote) {
-    errors.push({
-      path: join(path, "flagNote"),
-      message:
-        "A note is shown only on a row the flag conditions pick. Add the conditions, or remove the note.",
-    });
-  }
   const feeTypeColumn = columnRef(
     raw.feeTypeColumn,
     join(path, "feeTypeColumn"),
@@ -1179,8 +1163,7 @@ function sectionRows(
   );
   return {
     where,
-    flagWhen,
-    flagNote: flagWhen.length > 0 ? flagNote : "",
+    ...(filter.length ? { filter } : {}),
     feeTypeColumn,
   };
 }

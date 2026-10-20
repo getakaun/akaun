@@ -534,8 +534,10 @@ export function readTable(
   const dataRows = tableDataRows(sheet, table.headerAt);
 
   for (const row of dataRows) {
-    const taking = sections.filter((section) =>
-      meetsAll(row, section.rows!.where),
+    const taking = sections.filter(
+      (section) =>
+        meetsAll(row, section.rows!.where) &&
+        meetsAll(row, section.rows!.filter ?? []),
     );
     if (taking.length > 1) {
       const names = taking.map((section) => `"${section.name}"`).join(" and ");
@@ -595,9 +597,6 @@ export function readTable(
       source_line: lines.get(row.number) ?? null,
     };
     if (section.feeTypes.length > 0) item.fee_type = feeType;
-    if (rules.flagWhen.length > 0 && meetsAll(row, rules.flagWhen)) {
-      item.review_note = rules.flagNote;
-    }
     envelope.sections[section.key].push(item);
   }
 

@@ -234,10 +234,7 @@ export function withdrawalSection(bankId: number): ProfileSection {
           values: ["Withdrawals", "Withdrawal"],
         },
       ],
-      flagWhen: [
-        { column: "Status", op: "is_not", value: "Transaction Completed" },
-      ],
-      flagNote: "Check that this withdrawal completed.",
+
       feeTypeColumn: null,
     },
   };
@@ -260,8 +257,7 @@ export function orderSections(
         where: [
           { column: "Transaction Type", op: "is", value: "Order Income" },
         ],
-        flagWhen: [],
-        flagNote: "",
+
         feeTypeColumn: null,
       },
     },
@@ -275,8 +271,7 @@ export function orderSections(
       extras: null,
       rows: {
         where: [{ column: "Transaction Type", op: "is", value: "Adjustment" }],
-        flagWhen: [],
-        flagNote: "",
+
         feeTypeColumn: null,
       },
     },

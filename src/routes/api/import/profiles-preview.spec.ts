@@ -52,7 +52,8 @@ vi.mock("$lib/server/db/client.js", () => ({
 vi.mock("$lib/server/permissions.js", async () => {
   // The fake answers in the old grid's terms; each leaf is asked as the
   // (resource, action) it came from.
-  const { legacyPairOf } = await import("$lib/server/permissions/legacy-map.js");
+  const { legacyPairOf } =
+    await import("$lib/server/permissions/legacy-map.js");
   const allow = (resource: string, action: string) =>
     holder.allow(resource, action);
   return {
@@ -165,6 +166,27 @@ describe("POST /api/import/profiles/preview", { timeout: 30_000 }, () => {
     storedNothing();
   });
 
+  it("filters assigned rows in an unsaved profile and reports ignored rows", async () => {
+    const report = walletWorkbook();
+    const form = formFromDraft(profileDraft("wallet_withdrawals"));
+    form.sections[0].rows!.filter = [
+      {
+        uid: "status-filter",
+        column: "Status",
+        op: "is",
+        value: "Transaction Completed",
+        valuesText: "",
+      },
+    ];
+    const res = await preview(
+      { name: "wallet.xlsx", data: report.xlsx },
+      payloadFromForm(form),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ itemCount: 9, ignoredCount: 727 });
+    storedNothing();
+  });
+
   it("reads a sample with an unsaved profile, before its accounts are chosen, and stores nothing", async () => {
     const report = walletWorkbook();
     const res = await preview(
@@ -201,7 +223,7 @@ describe("POST /api/import/profiles/preview", { timeout: 30_000 }, () => {
     expect(body.items[0].row).toBeGreaterThan(report.headerRow);
     expect(
       body.items.filter((item: { note: string | null }) => item.note),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     storedNothing();
   });
 

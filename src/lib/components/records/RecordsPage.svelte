@@ -352,19 +352,6 @@
       (dateFrom || dateTo ? 1 : 0) +
       (search.trim() ? 1 : 0),
   );
-  const allSelected = $derived(
-    filtered.length > 0 && filtered.every((r) => selected.has(r.id)),
-  );
-  const someSelected = $derived(
-    filtered.some((r) => selected.has(r.id)) && !allSelected,
-  );
-  const selectedList = $derived(filtered.filter((r) => selected.has(r.id)));
-  const selTotal = $derived(
-    selectedList.reduce((sum, r) => sum + r.amountMinor, 0),
-  );
-  // A record a settlement or a bank line still points at refuses deletion, so
-  // the bar says so up front rather than after the fact.
-  const lockedSelected = $derived(selectedList.filter((r) => r.locked).length);
 
   /**
    * One fixed set of four, in the Dashboard's vocabulary.
@@ -415,8 +402,8 @@
 
   // --- Selection ----------------------------------------------------------
   function toggleAll() {
-    if (allSelected) filtered.forEach((r) => selected.delete(r.id));
-    else filtered.forEach((r) => selected.add(r.id));
+    if (allSelected) selectableRecords.forEach((r) => selected.delete(r.id));
+    else selectableRecords.forEach((r) => selected.add(r.id));
   }
 
   function toggleOne(id: number) {
@@ -665,6 +652,7 @@
   type Statement = {
     account: { id: number; name: string; role: number };
     entries: StatementEntry[];
+    selectionRecords: { id: number; amountMinor: number; locked: boolean }[];
     openingBalanceMinor: number;
     closingBalanceMinor: number;
     total: number;
@@ -673,6 +661,29 @@
 
   let statement = $state<Statement | null>(null);
   let statementLoading = $state(false);
+  // Statements can include older records and more than one movement per record.
+  // Bulk actions use the unique records actually displayed, with their own amounts.
+  const selectableRecords = $derived(
+    runningBalanceHolds && statement ? statement.selectionRecords : filtered,
+  );
+
+  const allSelected = $derived(
+    selectableRecords.length > 0 &&
+      selectableRecords.every((r) => selected.has(r.id)),
+  );
+  const someSelected = $derived(
+    selectableRecords.some((r) => selected.has(r.id)) && !allSelected,
+  );
+  const selectedList = $derived(
+    selectableRecords.filter((r) => selected.has(r.id)),
+  );
+  const selTotal = $derived(
+    selectedList.reduce((sum, r) => sum + r.amountMinor, 0),
+  );
+  // A record a settlement or a bank line still points at refuses deletion, so
+  // the bar says so up front rather than after the fact.
+  const lockedSelected = $derived(selectedList.filter((r) => r.locked).length);
+
 
   $effect(() => {
     if (!statementMode || selectedAccountId === null) {
@@ -791,6 +802,53 @@
     void loadOwed();
   });
 </script>
+
+{#snippet selectAllCheckbox()}
+  <button
+    type="button"
+    style="width:17px; height:17px; border-radius:5px; border:1.5px solid {allSelected
+      ? 'var(--primary)'
+      : 'var(--border-strong)'}; background:{allSelected || someSelected
+      ? 'var(--primary)'
+      : 'var(--card)'}; display:grid; place-items:center; cursor:pointer; color:var(--primary-foreground); padding:0; flex-shrink:0;"
+    onclick={toggleAll}
+    aria-label="Select all"
+  >
+    {#if allSelected}<svg
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="white"
+        stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg
+      >{:else if someSelected}<span
+        style="width:8px; height:2px; border-radius:2px; background:white; display:block;"
+      ></span>{/if}
+  </button>
+{/snippet}
+
+{#snippet rowCheckbox(id: number, label: string)}
+  <button
+    type="button"
+    style="width:17px; height:17px; border-radius:5px; border:1.5px solid {selected.has(
+      id,
+    )
+      ? 'var(--primary)'
+      : 'var(--border-strong)'}; background:{selected.has(id)
+      ? 'var(--primary)'
+      : 'var(--card)'}; display:grid; place-items:center; cursor:pointer; color:var(--primary-foreground); padding:0; flex-shrink:0;"
+    aria-label="Select {label}"
+  >
+    {#if selected.has(id)}<svg
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="white"
+        stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg
+      >{/if}
+  </button>
+{/snippet}
 
 <div class="screen" style="position:relative;">
   <!-- Top bar -->
@@ -1175,7 +1233,10 @@
       {#if statementMode}
         <!-- The account's statement: the same rows, with a running balance
              (FR-040–FR-042). -->
-        <div class="statement">
+        <div
+          class="statement"
+          class:statement-active={runningBalanceHolds && statement}
+        >
           <div class="statement-head">
             <div>
               <h2 class="statement-title">
@@ -1216,6 +1277,7 @@
               <table class="exp-table statement-table">
                 <thead>
                   <tr>
+                    <th class="td-check">{@render selectAllCheckbox()}</th>
                     <th>Date</th>
                     <th>Description</th>
                     <th class="ta-right">Amount</th>
@@ -1228,6 +1290,7 @@
                          twice appears twice and the balance adds up (FR-042). -->
                     <tr
                       class="exp-row"
+                      class:selected={selected.has(entry.recordId)}
                       onclick={() =>
                         goto(
                           resolve("/(app)/records/[id]", {
@@ -1235,6 +1298,18 @@
                           }),
                         )}
                     >
+                      <td
+                        class="td-check"
+                        onclick={(ev) => {
+                          ev.stopPropagation();
+                          toggleOne(entry.recordId);
+                        }}
+                      >
+                        {@render rowCheckbox(
+                          entry.recordId,
+                          entry.recordNumber ?? entry.description,
+                        )}
+                      </td>
                       <td class="td-date">{formatDateShort(entry.date)}</td>
                       <td class="td-primary">
                         <span class="cell-itemname">{entry.description}</span>
@@ -1277,28 +1352,7 @@
           <thead>
             <tr>
               <th class="td-check">
-                <button
-                  type="button"
-                  style="width:17px; height:17px; border-radius:5px; border:1.5px solid {allSelected
-                    ? 'var(--primary)'
-                    : 'var(--border-strong)'}; background:{allSelected ||
-                  someSelected
-                    ? 'var(--primary)'
-                    : 'var(--card)'}; display:grid; place-items:center; cursor:pointer; color:var(--primary-foreground); padding:0; flex-shrink:0;"
-                  onclick={toggleAll}
-                  aria-label="Select all"
-                >
-                  {#if allSelected}<svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="white"
-                      stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg
-                    >{:else if someSelected}<span
-                      style="width:8px; height:2px; border-radius:2px; background:white; display:block;"
-                    ></span>{/if}
-                </button>
+                {@render selectAllCheckbox()}
               </th>
               <th
                 class={`sortable ${sort.key === "description" ? "sorted" : ""}`}
@@ -1365,26 +1419,7 @@
                     toggleOne(e.id);
                   }}
                 >
-                  <button
-                    type="button"
-                    style="width:17px; height:17px; border-radius:5px; border:1.5px solid {selected.has(
-                      e.id,
-                    )
-                      ? 'var(--primary)'
-                      : 'var(--border-strong)'}; background:{selected.has(e.id)
-                      ? 'var(--primary)'
-                      : 'var(--card)'}; display:grid; place-items:center; cursor:pointer; color:var(--primary-foreground); padding:0; flex-shrink:0;"
-                    aria-label="Select {e.recordNumber ?? e.description}"
-                  >
-                    {#if selected.has(e.id)}<svg
-                        width="10"
-                        height="10"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="white"
-                        stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg
-                      >{/if}
-                  </button>
+                  {@render rowCheckbox(e.id, e.recordNumber ?? e.description)}
                 </td>
                 <td class="td-primary">
                   <!-- A real link, not just a row click: the browser can then
@@ -1770,6 +1805,24 @@
      was always a filtered view of (D-05). */
   .statement {
     margin-bottom: 14px;
+  }
+  /* Constrain the statement so its table owns desktop scrolling, like the list. */
+  .statement-active {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .statement-active > :not(.table-card) {
+    flex-shrink: 0;
+  }
+  .statement-active > .table-card {
+    min-height: 0;
+  }
+  @media (max-width: 767px) {
+    .statement-active {
+      flex: none;
+    }
   }
   .statement-head {
     display: flex;

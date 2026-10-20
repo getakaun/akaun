@@ -687,6 +687,26 @@ export function listRecords(
   };
 }
 
+/** Selection metadata for statement rows, including records outside the list's initial batch. */
+export function recordSelectionDetails(db: LedgerDb, recordIds: number[]) {
+  const ids = [...new Set(recordIds)];
+  if (!ids.length) return [];
+  const rows = db
+    .select()
+    .from(ledgerRecords)
+    .where(inArray(ledgerRecords.id, ids))
+    .all();
+  const derived = deriveFor(db, ids);
+  return rows.map((row) => {
+    const record = toRecordView(row, null, derived);
+    return {
+      id: record.id,
+      amountMinor: record.amountMinor,
+      locked: record.locked,
+    };
+  });
+}
+
 export function getRecord(db: LedgerDb, id: number): RecordView | null {
   const row = db
     .select({ record: ledgerRecords, contactName: contacts.legalName })

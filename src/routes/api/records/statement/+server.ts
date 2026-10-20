@@ -5,6 +5,7 @@ import { can } from "$lib/server/permissions.js";
 import { badRequest, forbidden, notFound } from "$lib/server/api-response.js";
 import { accountHistoryCsv } from "$lib/server/ledger/reports/csv.js";
 import { historyGapNotes } from "$lib/server/ledger/reports/notes.js";
+import { recordSelectionDetails } from "$lib/server/queries/ledger.js";
 import { accountHistory } from "$lib/server/queries/accounts.js";
 import { ledgerTrackingStartDate } from "$lib/server/queries/reports.js";
 import {
@@ -20,8 +21,8 @@ import {
  * This is the account-history report at a new address and under a new ability.
  * **Nothing about the arithmetic is rebuilt** — `accountHistory()`, the running
  * balance, the truncation note and the CSV writer are reused exactly as they
- * stand, and `AccountHistoryReport` is returned unchanged (FR-040–FR-046,
- * research.md R-07).
+ * stand (FR-040–FR-046, research.md R-07). JSON also carries per-record
+ * selection metadata for the list's bulk actions.
  *
  * What changes is who may read it. The old page shell was gated on
  * `accounts.view` while its data came from an endpoint gated on `reports.view`,
@@ -72,6 +73,13 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 
   const report = {
     ...history,
+    selectionRecords:
+      formatFrom(url) === "csv"
+        ? []
+        : recordSelectionDetails(
+            db,
+            history.entries.map((entry) => entry.recordId),
+          ),
     // `accountHistory` reads rows and says nothing about what is missing from
     // them, so the gap sentence is added here — same wording, same rule, as the
     // three period reports carry (FR-030).

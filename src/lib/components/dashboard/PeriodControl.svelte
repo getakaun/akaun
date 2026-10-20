@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
+  import * as Select from "$lib/components/ui/select/index.js";
   import type {
     CompareMode,
     DashboardPeriodId,
@@ -26,8 +27,7 @@
     return `${resolve("/(app)/dashboard")}?period=${id}&compare=${compare}`;
   }
 
-  function onCompare(event: Event) {
-    const compare = (event.currentTarget as HTMLSelectElement).value as CompareMode;
+  function onCompare(compare: string) {
     // eslint-disable-next-line svelte/no-navigation-without-resolve -- the href comes from resolve(); the rule cannot see through the helper call.
     goto(hrefFor(period.id, compare), {
       replaceState: true,
@@ -54,18 +54,23 @@
   </nav>
   <div class="compare">
     <span class="range">{period.label}</span>
-    <label>
-      <span>compared with</span>
+    <div class="compare-choice">
+      <span id="dashboard-compare-label">compared with</span>
       {#if period.canComparePrevious}
-        <select value={period.compare} onchange={onCompare}>
-          {#each compareOptions as option (option.id)}
-            <option value={option.id}>{option.label.toLowerCase()}</option>
-          {/each}
-        </select>
+        <Select.Root type="single" value={period.compare} onValueChange={(next) => next && onCompare(next)}>
+          <Select.Trigger aria-labelledby="dashboard-compare-label" size="sm" class="compare-trigger">
+            {compareOptions.find((option) => option.id === period.compare)?.label.toLowerCase() ?? period.compare}
+          </Select.Trigger>
+          <Select.Content>
+            {#each compareOptions as option (option.id)}
+              <Select.Item value={option.id} label={option.label.toLowerCase()} />
+            {/each}
+          </Select.Content>
+        </Select.Root>
       {:else}
         <span class="fixed">the same period last year</span>
       {/if}
-    </label>
+    </div>
     <span class="range muted">({period.comparisonLabel})</span>
   </div>
 </div>
@@ -98,18 +103,14 @@
     font-weight: 400;
     color: var(--muted-foreground);
   }
-  label {
+  .compare-choice {
     display: inline-flex;
     align-items: center;
     gap: 6px;
   }
-  select {
-    font: inherit;
+  :global(.compare-trigger) {
+    font-size: inherit;
     color: var(--foreground);
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    padding: 3px 6px;
   }
   .fixed {
     color: var(--foreground);

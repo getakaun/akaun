@@ -5,8 +5,9 @@ import {
   transferTargetIds,
   workspace,
 } from "$lib/server/services/reconciliation.js";
-import { suggestLinesForMovement } from "$lib/server/reconciliation/suggestions.js";
+import { suggestionsForMovements } from "$lib/server/reconciliation/suggestions.js";
 import { getAccount } from "$lib/server/queries/accounts.js";
+import { listMovementCandidates } from "$lib/server/queries/reconciliation.js";
 
 /**
  * What each of the two reconciliation surfaces loads.
@@ -16,10 +17,9 @@ import { getAccount } from "$lib/server/queries/accounts.js";
  * (FR-048, FR-052). Each surface loads only what it shows, rather than the
  * whole cross-account workspace the single page used to need.
  *
- * Nothing about reconciling's behaviour changes (FR-057). The candidate rule in
- * particular is untouched: only movements on the statement's own account are
- * ever offered, enforced in `listMovementCandidates` and again in
- * `suggestLinesForMovement`.
+ * Only movements on the statement's own account are offered. Automatic
+ * suggestions require equal dates and no competing movement; explicit manual
+ * allocations can still explain different bank posting dates.
  */
 
 function permissionsOf(locals: App.Locals) {
@@ -98,17 +98,15 @@ export function loadStatementMatch(
     lines.some((line) => line.id === allocation.lineId),
   );
 
-  const movements = result.movements.map((movement) => {
-    const savedLineIds = new Set(
-      allocations
-        .filter((allocation) => allocation.movementId === movement.movementId)
-        .map((allocation) => allocation.lineId),
-    );
-    return {
+  // Conflicts must include records hidden by date filters.
+  const allMovements = listMovementCandidates(db, [accountId]);
+  const suggestions = suggestionsForMovements(allMovements, lines);
+  const movements = result.movements
+    .filter((movement) => movement.accountId === accountId)
+    .map((movement) => ({
       ...movement,
-      suggestedLineIds: suggestLinesForMovement(movement, lines, savedLineIds),
-    };
-  });
+      ...suggestions.get(movement.movementId)!,
+    }));
 
   return {
     account,

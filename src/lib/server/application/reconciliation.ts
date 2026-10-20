@@ -95,8 +95,14 @@ export function setMovementMatches(
 }
 
 /** Matches each untouched movement to the bank lines that fit it exactly; never overwrites a match. */
-export function autoMatch(ctx: AppContext, movementIds: number[]) {
-  return run(() => autoMatchMovements(ctx.db, ctx.locals, movementIds));
+export function autoMatch(
+  ctx: AppContext,
+  movementIds: number[],
+  statementId?: number,
+) {
+  return run(() =>
+    autoMatchMovements(ctx.db, ctx.locals, movementIds, statementId),
+  );
 }
 
 /**

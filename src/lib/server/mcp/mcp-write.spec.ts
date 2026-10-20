@@ -789,19 +789,40 @@ for (const era of ["legacy", "modern"] as const) {
         expect(issued.invoice.owedMovementId).toBeGreaterThan(0);
 
         // Existing invoices retain their original receivable when the default changes.
-        const savedDefault = db.select().from(accountDefaults)
-          .where(eq(accountDefaults.purpose, DefaultAccountPurpose.Receivable)).get()!;
-        const original = db.select().from(accounts)
-          .where(eq(accounts.id, savedDefault.accountId)).get()!;
-        const replacement = db.insert(accounts).values({
-          ...original, id: undefined, code: 1199, name: "Replacement receivable",
-        }).returning({ id: accounts.id }).get()!;
-        db.update(accountDefaults).set({ accountId: replacement.id })
-          .where(eq(accountDefaults.purpose, DefaultAccountPurpose.Receivable)).run();
-        const reread = data(await call(client, "get_invoice", { invoiceId: draft.invoice.id }));
-        expect(reread.invoice.owedMovementId).toBe(issued.invoice.owedMovementId);
-        db.update(accountDefaults).set({ accountId: original.id })
-          .where(eq(accountDefaults.purpose, DefaultAccountPurpose.Receivable)).run();
+        const savedDefault = db
+          .select()
+          .from(accountDefaults)
+          .where(eq(accountDefaults.purpose, DefaultAccountPurpose.Receivable))
+          .get()!;
+        const original = db
+          .select()
+          .from(accounts)
+          .where(eq(accounts.id, savedDefault.accountId))
+          .get()!;
+        const replacement = db
+          .insert(accounts)
+          .values({
+            ...original,
+            id: undefined,
+            code: 1199,
+            name: "Replacement receivable",
+          })
+          .returning({ id: accounts.id })
+          .get()!;
+        db.update(accountDefaults)
+          .set({ accountId: replacement.id })
+          .where(eq(accountDefaults.purpose, DefaultAccountPurpose.Receivable))
+          .run();
+        const reread = data(
+          await call(client, "get_invoice", { invoiceId: draft.invoice.id }),
+        );
+        expect(reread.invoice.owedMovementId).toBe(
+          issued.invoice.owedMovementId,
+        );
+        db.update(accountDefaults)
+          .set({ accountId: original.id })
+          .where(eq(accountDefaults.purpose, DefaultAccountPurpose.Receivable))
+          .run();
 
         const sealed = errorOf(
           await call(client, "update_invoice", {
@@ -892,7 +913,9 @@ for (const era of ["legacy", "modern"] as const) {
         const tool = (await client.listTools()).tools.find(
           (tool) => tool.name === "set_quotation_status",
         )!;
-        const status = tool.inputSchema.properties?.status as { enum: string[] };
+        const status = tool.inputSchema.properties?.status as {
+          enum: string[];
+        };
         expect(status.enum).toEqual(["sent", "accepted", "declined"]);
         expect(tool.description).not.toContain("back to draft");
       });
@@ -1028,6 +1051,108 @@ for (const era of ["legacy", "modern"] as const) {
           }),
         );
         expect(transfer.record.id).toBeGreaterThan(0);
+      });
+
+      it("reports competing same-date suggestions and skips a requested subset", async () => {
+        const client = await connect();
+        const { statementId, spendLine } = statementWithLines();
+        const records: number[] = [];
+        for (let i = 0; i < 2; i++) {
+          records.push(
+            data(
+              await call(client, "create_record", {
+                ...expenseArgs,
+                fromAccountId: bank,
+                toAccountId: software,
+              }),
+            ).record.id,
+          );
+        }
+        const statement = data(
+          await call(client, "get_bank_statement", { statementId }),
+        );
+        const candidates = statement.candidates.filter(
+          (c: { recordId: number }) => records.includes(c.recordId),
+        );
+        expect(candidates).toHaveLength(2);
+        for (const candidate of candidates) {
+          expect(candidate.suggestionConflict).toBe(true);
+          expect(candidate.suggestedLineIds).toEqual([]);
+        }
+        const result = data(
+          await call(client, "auto_match", {
+            movementIds: [candidates[0].movementId],
+            statementId,
+          }),
+        );
+        expect(result).toMatchObject({ matched: 0, skipped: 1 });
+        // Explicit manual choice still works and removes the conflict.
+        data(
+          await call(client, "set_movement_matches", {
+            movementId: candidates[0].movementId,
+            expectedVersion: candidates[0].matchesVersion,
+            allocations: [{ lineId: spendLine, amount: 12.5 }],
+          }),
+        );
+        const refreshed = data(
+          await call(client, "get_bank_statement", { statementId }),
+        );
+        expect(
+          refreshed.candidates.every(
+            (c: { suggestionConflict: boolean }) => !c.suggestionConflict,
+          ),
+        ).toBe(true);
+      });
+
+      it("keeps same-date suggestions and automatic saves scoped to one statement", async () => {
+        const client = await connect();
+        const first = statementWithLines();
+        const second = statementWithLines();
+        const differentDate = data(
+          await call(client, "create_record", {
+            ...expenseArgs,
+            date: "2026-09-03",
+            fromAccountId: bank,
+            toAccountId: software,
+          }),
+        );
+        const created = data(
+          await call(client, "create_record", {
+            ...expenseArgs,
+            fromAccountId: bank,
+            toAccountId: software,
+          }),
+        );
+        const statement = data(
+          await call(client, "get_bank_statement", {
+            statementId: second.statementId,
+          }),
+        );
+        const candidate = statement.candidates.find(
+          (c: { recordId: number }) => c.recordId === created.record.id,
+        );
+        expect(candidate.suggestedLineIds).toEqual([second.spendLine]);
+        expect(
+          statement.candidates.find(
+            (c: { recordId: number }) => c.recordId === differentDate.record.id,
+          ).suggestedLineIds,
+        ).toEqual([]);
+        const matched = data(
+          await call(client, "auto_match", {
+            movementIds: [candidate.movementId],
+            statementId: second.statementId,
+          }),
+        );
+        expect(matched.matched).toBe(1);
+        const untouched = data(
+          await call(client, "get_bank_statement", {
+            statementId: first.statementId,
+          }),
+        );
+        expect(
+          untouched.lines.find((l: { id: number }) => l.id === first.spendLine)
+            .remainingAmount,
+        ).toBe(12.5);
       });
 
       it("refuses a transfer from a line into equity or a category without Adjustments", async () => {

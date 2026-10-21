@@ -6,11 +6,13 @@
 	import DetailPage from '$lib/components/ui/DetailPage.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 	import StatusBadge from '$lib/components/ui/StatusBadge.svelte';
-	import AttachmentManager, {
-		type Attachment
-	} from '$lib/components/ui/AttachmentManager.svelte';
+	import AttachmentManager, { type Attachment } from '$lib/components/ui/AttachmentManager.svelte';
 	import AuditTrail from '$lib/components/ui/AuditTrail.svelte';
 	import RecordForm from '$lib/components/ledger/RecordForm.svelte';
+	import ListExpand, { visibleItems } from '$lib/components/ui/ListExpand.svelte';
+	import ReimbursementReversalDialog from './ReimbursementReversalDialog.svelte';
+	import RecipientCorrectionDialog from './RecipientCorrectionDialog.svelte';
+	import AllocationCorrectionDialog from './AllocationCorrectionDialog.svelte';
 	import DateCorrectionDialog from './DateCorrectionDialog.svelte';
 	import SettlementList, {
 		type SettlementLink
@@ -18,7 +20,7 @@
 	import { statusLabelFor } from '$lib/components/ledger/record-status.js';
 	import { createResourceStream } from '$lib/sse.js';
 	import { formatDate, formatMinor } from '$lib/format.js';
-	import { LedgerRecordKind } from '$lib/enums.js';
+	import { LedgerRecordKind, AccountSubType } from '$lib/enums.js';
 	import type { loadRecordDetail } from '$lib/server/loaders/records.js';
 	import type { RecordView } from '$lib/server/ledger/types.js';
 
@@ -55,6 +57,10 @@
 	let error = $state('');
 	let deleteDialogOpen = $state(false);
 	let dateCorrectionOpen = $state(false);
+	let recipientCorrectionOpen = $state(false);
+	let reversalGroupId = $state<number | null>(null);
+	let reimbursementExpanded = $state(false);
+	let correctionSettlementId = $state<number | null>(null);
 	let auditTrailRef = $state<{ refresh: () => Promise<void> } | null>(null);
 
 	const KIND_TITLES: Record<number, string> = {
@@ -75,32 +81,45 @@
 	const fromInvoice = $derived(record.kind === LedgerRecordKind.InvoiceIssue);
 	const canCorrectDate = $derived(
 		data.perms.change &&
+			!data.reimbursement.generated &&
 			data.perms.correctDate &&
 			record.locked &&
 			!record.reconciled &&
 			(record.kind === LedgerRecordKind.Expense || record.kind === LedgerRecordKind.Income)
 	);
 	const deleteBlockedReason = $derived(
-		fromInvoice
-			? 'Cancel the invoice instead'
-			: record.locked
-				? (record.lockedReason ?? '')
-				: null
+		fromInvoice ? 'Cancel the invoice instead' : record.locked ? (record.lockedReason ?? '') : null
 	);
 	const isPayment = $derived(record.kind === LedgerRecordKind.Payment);
-	const settlementsLabel = $derived(isPayment ? 'Allocated to' : 'Payments applied');
-	const contact = $derived(
-		data.contacts.find((c) => c.id === record.contactId) ?? null
+	const paymentControl = $derived(
+		isPayment
+			? record.movements.find(
+					(m) =>
+						m.accountSubType === AccountSubType.AccountsPayable ||
+						m.accountSubType === AccountSubType.Receivable
+				)
+			: null
 	);
+	const creditAvailable = $derived(
+		!!paymentControl &&
+			record.contactId !== null &&
+			record.outstandingMinor > 0 &&
+			(paymentControl.accountSubType === AccountSubType.AccountsPayable
+				? paymentControl.amountMinor > 0
+				: paymentControl.amountMinor < 0)
+	);
+	const refundHref = $derived(
+		`${resolve('/(app)/records/new/payment')}?contactId=${record.contactId}&direction=${paymentControl?.accountSubType === AccountSubType.AccountsPayable ? 'refund-received' : 'refund-paid'}`
+	);
+	const settlementsLabel = $derived(isPayment ? 'Allocated to' : 'Payments applied');
+	const contact = $derived(data.contacts.find((c) => c.id === record.contactId) ?? null);
 	// A batch payment names no single contact of its own — each settlement it
 	// creates carries its own instead (CLAUDE.md's ledger notes, FR-008). Only
 	// meaningful for a payment; every other kind with no contact just has none.
 	const batchContactCount = $derived(
 		record.kind === LedgerRecordKind.Payment && record.contactId === null
 			? new Set(
-					settlementLinks
-						.map((l) => l.otherContactId)
-						.filter((id): id is number => id !== null)
+					settlementLinks.map((l) => l.otherContactId).filter((id): id is number => id !== null)
 				).size
 			: 0
 	);
@@ -130,16 +149,8 @@
 	 * read again rather than filtered, because taking back one part of a batch
 	 * payment (no contact) takes back all of it.
 	 */
-	async function undoPayment(link: SettlementLink) {
-		error = '';
-		const res = await fetch(`/api/settlements/${link.settlementId}`, { method: 'DELETE' });
-		if (!res.ok) {
-			const body = await res.json().catch(() => null);
-			error = body?.reason ?? body?.error ?? 'The allocation could not be reversed.';
-			return;
-		}
-		settlementLinks = settlementLinks.filter((l) => l.settlementId !== link.settlementId);
-		await refreshSettlements();
+	function undoPayment(link: SettlementLink) {
+		correctionSettlementId = link.settlementId;
 	}
 
 	async function refreshSettlements() {
@@ -169,6 +180,35 @@
 	});
 </script>
 
+{#if correctionSettlementId !== null}
+	<AllocationCorrectionDialog
+		settlementId={correctionSettlementId}
+		onclose={() => {
+			correctionSettlementId = null;
+		}}
+		oncorrected={() => {
+			void refreshSettlements();
+			void auditTrailRef?.refresh();
+		}}
+	/>
+{/if}
+
+{#if reversalGroupId !== null}<ReimbursementReversalDialog
+		groupId={reversalGroupId}
+		onclose={() => (reversalGroupId = null)}
+		onreversed={() => window.location.reload()}
+	/>{/if}
+{#if recipientCorrectionOpen}
+	<RecipientCorrectionDialog
+		recordId={record.id}
+		contacts={data.contacts}
+		onclose={() => (recipientCorrectionOpen = false)}
+		oncorrected={() => {
+			window.location.reload();
+		}}
+	/>
+{/if}
+
 <svelte:head><title>{record.description || kindLabel} - Akaun</title></svelte:head>
 
 <DetailPage
@@ -181,6 +221,13 @@
 	dirtyNote={formRef?.blockedBy() ?? 'Unsaved changes'}
 >
 	{#snippet actions()}
+		{#if record.kind === LedgerRecordKind.Payment && paymentControl?.amountMinor && paymentControl.amountMinor > 0 && paymentControl.accountSubType === AccountSubType.AccountsPayable && data.perms.change && data.perms.delete && data.perms.add}
+			<button
+				class="sheet-btn"
+				disabled={dirty || saving}
+				onclick={() => (recipientCorrectionOpen = true)}>Correct recipient</button
+			>
+		{/if}
 		{#if canCorrectDate}
 			<button
 				class="sheet-btn"
@@ -189,7 +236,7 @@
 				onclick={() => (dateCorrectionOpen = true)}>Correct date</button
 			>
 		{/if}
-		{#if data.perms.delete}
+		{#if data.perms.delete && !data.reimbursement.generated}
 			<button
 				class="sheet-btn sheet-btn-delete"
 				disabled={deleteBlockedReason !== null}
@@ -233,6 +280,48 @@
 				To correct only this settled date, use Correct date. A reason and review are required.
 			</p>
 		{/if}
+		{#if data.reimbursement.groups.length}
+			<section class="detail-card">
+				<div class="detail-card-head"><span class="detail-card-title">Reimbursement</span></div>
+				{#if data.reimbursement.generated}<p class="card-empty">
+						This transfer entry is read-only.
+					</p>{/if}
+				{#each data.reimbursement.groups as group (group.id)}
+					<p class="card-empty">Group #{group.id}{group.reversedAt ? ' · Reversed' : ''}</p>
+					{#if !group.reversedAt && data.perms.add && data.perms.delete}<button
+							class="sheet-btn"
+							disabled={dirty || saving}
+							onclick={() => (reversalGroupId = group.id)}>Reverse reimbursement</button
+						>{/if}
+					{#if group.paymentRecordId}<button
+							class="sheet-btn"
+							onclick={() =>
+								goto(resolve('/(app)/records/[id]', { id: String(group.paymentRecordId) }))}
+							>Payment #{group.paymentRecordId}</button
+						>{/if}
+					{#each group.entries as entry (entry.recordId)}
+						<button
+							class="sheet-btn"
+							onclick={() => goto(resolve('/(app)/records/[id]', { id: String(entry.recordId) }))}
+							>{entry.role === 'recipient'
+								? 'Recipient payable'
+								: entry.role === 'supplier'
+									? 'Supplier transfer'
+									: 'Reversal'} · {entry.contactName} · #{entry.recordId}</button
+						>
+					{/each}
+					{#each visibleItems(group.items, reimbursementExpanded) as item (item.id)}
+						<button
+							class="sheet-btn"
+							onclick={() => goto(resolve('/(app)/records/[id]', { id: String(item.recordId) }))}
+							>Expense #{item.recordId} · {formatMinor(item.amountMinor)}</button
+						>
+					{/each}
+					<ListExpand total={group.items.length} bind:expanded={reimbursementExpanded} />
+				{/each}
+			</section>
+		{/if}
+
 		<RecordForm
 			bind:this={formRef}
 			bind:dirty
@@ -245,7 +334,7 @@
 			defaultAccountId={data.defaultAccountId}
 			lastForeignCurrencyExpense={data.lastForeignCurrencyExpense}
 			lastForeignCurrencyIncome={data.lastForeignCurrencyIncome}
-			canChange={data.perms.change && !fromInvoice}
+			canChange={data.perms.change && !fromInvoice && !data.reimbursement.generated}
 			canAdjust={data.perms.adjustments}
 		/>
 	{/snippet}
@@ -256,8 +345,7 @@
 				<div class="detail-card-head"><span class="detail-card-title">Contact</span></div>
 				<button
 					class="related-link ob-card"
-					onclick={() =>
-						goto(resolve('/(app)/contacts/[id]', { id: String(contact.id) }))}
+					onclick={() => goto(resolve('/(app)/contacts/[id]', { id: String(contact.id) }))}
 				>
 					<span class="ob-icon"><Users size={15} /></span>
 					<span class="ob-main">
@@ -290,6 +378,15 @@
 				<div class="detail-card-head">
 					<span class="detail-card-title">{settlementsLabel}</span>
 				</div>
+				{#if creditAvailable}
+					<p class="text-muted-foreground mb-3 text-sm">
+						{formatMinor(record.outstandingMinor)} unallocated. Available for a future claim or refund.
+					</p>
+					{#if data.perms.add}
+						<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- built above with resolve and fixed query parameters. -->
+						<a class="sheet-btn mb-3" href={refundHref}>Record refund</a>
+					{/if}
+				{/if}
 				<SettlementList
 					links={settlementLinks}
 					onundo={data.perms.delete ? undoPayment : undefined}
@@ -304,7 +401,7 @@
 			<AttachmentManager
 				apiBase="/api/records/{record.id}"
 				bind:attachments
-				canDelete={data.perms.delete}
+				canDelete={data.perms.delete && !data.reimbursement.generated}
 			/>
 		</section>
 

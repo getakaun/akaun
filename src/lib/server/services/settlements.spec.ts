@@ -11,18 +11,38 @@ import {
 import * as schema from "../db/schema.js";
 import { accountDefaults, contacts, users } from "../db/schema.js";
 import { createAccount } from "./accounts.js";
-import { createRecord } from "./ledger.js";
+import { createRecord as postRecord } from "./ledger.js";
+import { eq } from "drizzle-orm";
+import { getRecord } from "../queries/ledger.js";
 import { createSettlements, undoSettlement } from "./settlements.js";
 import { settlementIdsForPayment } from "../queries/settlements.js";
 import type { LedgerDb } from "../ledger/types.js";
 
-/**
- * A payment naming one contact may only settle that contact's own items — the
- * existing rule. A payment naming none (a batch across several contacts, one
- * real bank transfer) is the new exception: it may settle items across
- * several contacts at once, provided every item still belongs to somebody and
- * the payment is spent in full.
- */
+/** Legacy batch fixtures remain readable and reversible, but new writes refuse them. */
+function createRecord(
+  ...args: Parameters<typeof postRecord>
+): ReturnType<typeof postRecord> {
+  const [database, user, input, ...rest] = args;
+  if (input.kind !== "payment" || input.contactId != null)
+    return postRecord(...args);
+  const owner =
+    database.select().from(contacts).get()?.id ?? contact("Legacy recipient");
+  const result = postRecord(
+    database,
+    user,
+    { ...input, contactId: owner },
+    ...rest,
+  );
+  if (result.ok) {
+    database
+      .update(schema.ledgerRecords)
+      .set({ contactId: null })
+      .where(eq(schema.ledgerRecords.id, result.value.id))
+      .run();
+    result.value = getRecord(database, result.value.id)!;
+  }
+  return result;
+}
 
 let sqlite: Database;
 let db: LedgerDb;

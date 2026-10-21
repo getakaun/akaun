@@ -39,7 +39,8 @@ vi.mock("$lib/server/env.js", () => ({
 vi.mock("$lib/server/permissions.js", async () => {
   // The fake answers in the old grid's terms; each leaf is asked as the
   // (resource, action) it came from.
-  const { legacyPairOf } = await import("$lib/server/permissions/legacy-map.js");
+  const { legacyPairOf } =
+    await import("$lib/server/permissions/legacy-map.js");
   const allow = (resource: string, action: string) =>
     holder.allow(resource, action);
   return {
@@ -126,16 +127,32 @@ function load(query: string) {
 }
 
 describe("recording a payment from an invoice", () => {
+  it("opens the general page as a reimbursement without an operation choice", () => {
+    expect(load("").direction).toBe("reimburse");
+    expect(load("?direction=reimburse").direction).toBe("reimburse");
+  });
+
+  it("preserves supplier payments and refunds opened from their own actions", () => {
+    expect(load("?contactId=7").direction).toBe("we-pay");
+    expect(load("?direction=we-pay").direction).toBe("we-pay");
+    expect(load("?direction=refund-received&contactId=7").direction).toBe(
+      "refund-received",
+    );
+    expect(load("?direction=refund-paid&contactId=7").direction).toBe(
+      "refund-paid",
+    );
+  });
+
   it("opens as a receipt from its customer, with its owed side to tick and the invoice to return to", () => {
     const invoice = sentInvoice();
     // Whatever else the address says, the invoice decides.
     const data = load(
-      `?invoice=${invoice.id}&direction=we-pay&batch=1&contactId=999`,
+      `?invoice=${invoice.id}&direction=reimburse&batch=1&contactId=999`,
     );
 
     expect(data.contactId).toBe(invoice.contactId);
     expect(data.direction).toBe("we-receive");
-    expect(data.batch).toBe(false);
+    expect(data).not.toHaveProperty("batch");
     expect(data.preselectMovementId).not.toBeNull();
     expect(data.preselectMovementId).toBe(invoice.owedMovementId);
     expect(data.returnTo).toEqual({
@@ -150,7 +167,7 @@ describe("recording a payment from an invoice", () => {
 
     const data = load(`?invoice=${invoice.id}`);
     expect(data.contactId).toBeNull();
-    expect(data.direction).toBe("we-pay");
+    expect(data.direction).toBe("reimburse");
     expect(data.preselectMovementId).toBeNull();
     expect(data.returnTo).toBeNull();
   });

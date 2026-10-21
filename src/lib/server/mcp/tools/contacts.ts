@@ -82,18 +82,24 @@ export function registerContacts(server: McpServer, context: McpContext) {
       const contact = getContact(context.db, input.contactId);
       if (!contact)
         throw new McpToolError("NOT_FOUND", "That contact does not exist.");
-      const owedToUsMinor =
-        contactBalances(context.db, "owed-to-us", contact.id)[0]
-          ?.outstandingMinor ?? 0;
-      const weOweMinor =
-        contactBalances(context.db, "we-owe", contact.id)[0]
-          ?.outstandingMinor ?? 0;
+      const receivable = contactBalances(
+        context.db,
+        "owed-to-us",
+        contact.id,
+      )[0];
+      const payable = contactBalances(context.db, "we-owe", contact.id)[0];
+      const owedToUsMinor = receivable?.outstandingMinor ?? 0;
+      const weOweMinor = payable?.outstandingMinor ?? 0;
       return {
         contactId: contact.id,
         contactName: contact.legalName,
         owedToUsMinor,
         weOweMinor,
         netMinor: owedToUsMinor - weOweMinor,
+        receivableObligationsMinor: receivable?.obligationsMinor ?? 0,
+        receivableCreditsMinor: receivable?.creditsMinor ?? 0,
+        payableObligationsMinor: payable?.obligationsMinor ?? 0,
+        payableCreditsMinor: payable?.creditsMinor ?? 0,
         balanceBasis: "Current outstanding settlements; not an as-at report.",
         path: `/contacts/${contact.id}`,
         recordsPath: `/records?contact=${contact.id}`,
@@ -105,7 +111,7 @@ export function registerContacts(server: McpServer, context: McpContext) {
     server,
     context,
     "list_outstanding",
-    "List CURRENT open receivable/payable lines and their remaining amounts. Includes unallocated payments under the app's existing outstanding rules. Full-filter totalOutstandingMinor is independent of paging. Ageing uses today (UTC); it does not reconstruct historical balances.",
+    "List CURRENT open receivable/payable obligations and unapplied payment credits. Item amounts remain positive: position distinguishes obligation from credit. Full-filter totalOutstandingMinor is obligations minus credits; totalObligationsMinor and totalCreditsMinor are gross totals independent of paging. Ageing uses today (UTC); it does not reconstruct historical balances.",
     {
       ...pageShape,
       direction: z.enum(["owed-to-us", "we-owe"]),
@@ -117,6 +123,8 @@ export function registerContacts(server: McpServer, context: McpContext) {
         direction: input.direction,
         asOf: result.asOf,
         totalOutstandingMinor: result.totalOutstandingMinor,
+        totalObligationsMinor: result.totalObligationsMinor,
+        totalCreditsMinor: result.totalCreditsMinor,
         items: result.items.map((item) => ({
           ...item,
           kind: LedgerRecordKindLabels[item.kind],

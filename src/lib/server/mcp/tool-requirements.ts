@@ -59,10 +59,27 @@ export const TOOL_REQUIREMENTS: Record<string, ToolRequirement> = {
 
   // Records and settlements
   create_record: write(["records:write"], ["records.create"]),
+  get_reimbursement_reversal: read(["records:read"]),
+  reverse_reimbursement: write(
+    ["records:write", "records:delete"],
+    ["records.create", "records.delete"],
+  ),
+  get_reimbursement_candidates: read(["records:read"]),
+  create_reimbursement: write(["records:write"], ["records.create"]),
+  get_payment_recipient_correction: read(["records:read"]),
+  correct_payment_recipient: write(
+    ["records:write", "records:delete"],
+    ["records.create", "records.update", "records.delete"],
+  ),
   record_payment: write(["records:write"], ["records.create"]),
   update_record: write(["records:write"], ["records.update"]),
   delete_record: write(["records:delete"], ["records.delete"]),
   settle_payment: write(["records:write"], ["records.create"]),
+  get_payment_allocations: read(["records:read"]),
+  correct_payment_allocations: write(
+    ["records:delete", "records:write"],
+    ["records.delete", "records.create"],
+  ),
   undo_settlement: write(["records:delete"], ["records.delete"]),
   attach_file: write(["records:write"], ["records.update"]),
 

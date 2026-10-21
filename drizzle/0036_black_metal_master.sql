@@ -1,0 +1,1 @@
+ALTER TABLE `reimbursements` ADD `reversed_at` text;

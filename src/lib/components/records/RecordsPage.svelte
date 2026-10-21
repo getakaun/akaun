@@ -38,7 +38,11 @@
   import { formatCurrencyAmount } from "$lib/currency.js";
   import { createResourceStream, mergeById } from "$lib/sse.js";
   import { SvelteSet, SvelteURLSearchParams } from "svelte/reactivity";
-  import { AccountType, LedgerRecordKindDisplayLabels } from "$lib/enums.js";
+  import {
+    AccountType,
+    LedgerRecordKind,
+    LedgerRecordKindDisplayLabels,
+  } from "$lib/enums.js";
   import { isCategorySide } from "$lib/components/ledger/account-sub-types.js";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
@@ -113,7 +117,9 @@
    */
   function categoriesOf(record: RecordView) {
     const sides = record.movements.filter(isCategorySide);
-    return sides.length ? sides : record.movements.filter((m) => m.amountMinor > 0);
+    return sides.length
+      ? sides
+      : record.movements.filter((m) => m.amountMinor > 0);
   }
 
   /**
@@ -283,7 +289,9 @@
     }
     if (selectedCats.length) {
       rows = rows.filter((r) =>
-        categoriesOf(r).some((category) => selectedCats.includes(category.accountId)),
+        categoriesOf(r).some((category) =>
+          selectedCats.includes(category.accountId),
+        ),
       );
     }
     if (selectedKinds.length) {
@@ -392,7 +400,14 @@
       inCount,
       outTotal,
       outCount,
-      owedTotal: unpaid.reduce((sum, r) => sum + r.outstandingMinor, 0),
+      owedTotal: unpaid.reduce(
+        (sum, r) =>
+          sum +
+          (r.kind === LedgerRecordKind.Payment
+            ? -r.outstandingMinor
+            : r.outstandingMinor),
+        0,
+      ),
       owedCount: unpaid.length,
     };
   });
@@ -468,9 +483,7 @@
       );
     }
     if (selectedAccountId !== null) {
-      const account = data.allAccounts.find(
-        (a) => a.id === selectedAccountId,
-      );
+      const account = data.allAccounts.find((a) => a.id === selectedAccountId);
       names.push(account ? `the account “${account.name}”` : "an account");
     }
     if (selectedCats.length) {
@@ -556,7 +569,10 @@
         totalMinor: 0,
         items: [],
       });
-      group.totalMinor += item.outstandingMinor;
+      group.totalMinor +=
+        item.position === "credit"
+          ? -item.outstandingMinor
+          : item.outstandingMinor;
       group.items.push(item);
     }
     return Object.values(byContact).sort((a, b) => b.totalMinor - a.totalMinor);
@@ -578,11 +594,9 @@
     return `${resolve("/(app)/records/new/payment")}?contactId=${group.contactId}`;
   }
 
-  /** One transfer settling every outstanding payable at once, across every
-   *  contact — the payment screen opens in batch mode with everything
-   *  ticked, so this is one action rather than one per contact. */
-  function payAllHref(): string {
-    return `${resolve("/(app)/records/new/payment")}?direction=we-pay&batch=1`;
+  /** One recipient claiming personally paid expenses from several suppliers. */
+  function reimburseHref(): string {
+    return `${resolve("/(app)/records/new/payment")}?direction=reimburse`;
   }
 
   // --- Live updates -------------------------------------------------------
@@ -988,14 +1002,15 @@
             <span class="owed-head-title">Outstanding payables</span>
             <span class="owed-head-sub">
               {owedGroups.length}
-              {owedGroups.length === 1 ? "contact" : "contacts"} · amounts due
-              to contacts
+              {owedGroups.length === 1 ? "contact" : "contacts"} · amounts due to
+              contacts
             </span>
           </div>
           <span class="owed-head-total num">{formatMinor(owedTotal)}</span>
           {#if data.perms.add && owedGroups.length > 1}
             <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the href comes from resolve(); the rule cannot see through the helper call. -->
-            <a class="owed-pay-btn" href={payAllHref()}>Pay all payables</a>
+            <a class="owed-pay-btn" href={reimburseHref()}>Reimburse expenses</a
+            >
           {/if}
           <button
             type="button"
@@ -1095,7 +1110,8 @@
                   class="fd-option"
                   class:selected={selectedContactId === c.id}
                   onclick={() =>
-                    (selectedContactId = selectedContactId === c.id ? null : c.id)}
+                    (selectedContactId =
+                      selectedContactId === c.id ? null : c.id)}
                 >
                   <span>{c.legalName}</span>
                 </button>
@@ -1118,9 +1134,8 @@
                   class="fd-option"
                   class:selected={selectedAccountId === a.id}
                   onclick={() =>
-                    (selectedAccountId = selectedAccountId === a.id
-                      ? null
-                      : a.id)}
+                    (selectedAccountId =
+                      selectedAccountId === a.id ? null : a.id)}
                 >
                   <span>{a.name}</span>
                 </button>
@@ -1265,18 +1280,25 @@
             <div>
               <h2 class="statement-title">
                 {statement?.account.name ??
-                  data.allAccounts.find((a) => a.id === selectedAccountId)?.name ??
+                  data.allAccounts.find((a) => a.id === selectedAccountId)
+                    ?.name ??
                   "This account"}
               </h2>
               <p class="statement-sub">
                 {#if runningBalanceHolds && statement}
-                  {statement.total} transactions{dateFrom || dateTo ? " in this date range" : ""}
+                  {statement.total} transactions{dateFrom || dateTo
+                    ? " in this date range"
+                    : ""}
                 {:else}
                   All transactions on this account
                 {/if}
               </p>
             </div>
-            <button type="button" class="btn-outline btn-sm" onclick={exportStatementCsv}>
+            <button
+              type="button"
+              class="btn-outline btn-sm"
+              onclick={exportStatementCsv}
+            >
               Export CSV
             </button>
           </div>
@@ -1290,9 +1312,9 @@
             <!-- Said out loud, because a figure that simply vanished would read
                  as a fault rather than as a consequence of the sort (FR-043). -->
             <p class="statement-note">
-              The running balance shows only when the transactions are in date order
-              and no other filter applies. Sort by date and clear the other filters to
-              see it again.
+              The running balance shows only when the transactions are in date
+              order and no other filter applies. Sort by date and clear the
+              other filters to see it again.
             </p>
           {/if}
 
@@ -1342,13 +1364,20 @@
                           >{/if}
                       </td>
                       <td class="td-amount">
-                        <span class="amount-num" class:amount-in={entry.amountMinor > 0}>
-                          {entry.amountMinor > 0 ? "+" : "−"}{mainCurrencySymbol()}
+                        <span
+                          class="amount-num"
+                          class:amount-in={entry.amountMinor > 0}
+                        >
+                          {entry.amountMinor > 0
+                            ? "+"
+                            : "−"}{mainCurrencySymbol()}
                           {formatMinorAmount(Math.abs(entry.amountMinor))}
                         </span>
                       </td>
                       <td class="td-amount">
-                        <span class="num">{formatMinor(entry.runningBalanceMinor)}</span>
+                        <span class="num"
+                          >{formatMinor(entry.runningBalanceMinor)}</span
+                        >
                       </td>
                     </tr>
                   {/each}
@@ -1382,7 +1411,10 @@
       {/if}
 
       <!-- Table -->
-      <div class="table-card" class:table-card-hidden={runningBalanceHolds && statement}>
+      <div
+        class="table-card"
+        class:table-card-hidden={runningBalanceHolds && statement}
+      >
         <table class="exp-table">
           <thead>
             <tr>
@@ -1465,8 +1497,9 @@
                   <a class="cell-item row-link" href={recordHref(e.id)}>
                     <span class="cell-itemname">
                       {e.description}
-                      {#if e.locked}<span class="row-lock" title={e.lockedReason}
-                          ><Lock size={11} /></span
+                      {#if e.locked}<span
+                          class="row-lock"
+                          title={e.lockedReason}><Lock size={11} /></span
                         >{/if}
                     </span>
                     <span class="cell-itemnum">{e.recordNumber ?? ""}</span>
@@ -1496,7 +1529,9 @@
                 <td class="td-status">
                   <StatusBadge status={statusLabelFor(e)} />
                   {#if !e.cleared}
-                    <span class="row-uncleared" title="Not reconciled to a bank statement."
+                    <span
+                      class="row-uncleared"
+                      title="Not reconciled to a bank statement."
                       >Unreconciled</span
                     >
                   {/if}
@@ -1646,7 +1681,8 @@
         {#if data.perms.add && owedGroups.length > 1}
           <div class="owed-all-row">
             <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the href comes from resolve(); the rule cannot see through the helper call. -->
-            <a class="owed-pay-btn" href={payAllHref()}>Pay all payables</a>
+            <a class="owed-pay-btn" href={reimburseHref()}>Reimburse expenses</a
+            >
           </div>
         {/if}
         {#each owedGroups as group (group.contactId)}
@@ -1682,7 +1718,10 @@
                   </span>
                 </span>
                 <span class="owed-row-amt num"
-                  >{formatMinor(item.outstandingMinor)}</span
+                  >{formatMinor(item.outstandingMinor)}{item.position ===
+                  "credit"
+                    ? " credit"
+                    : ""}</span
                 >
                 <ChevronRight size={13} color="var(--muted-foreground)" />
               </button>
@@ -1696,102 +1735,100 @@
 
 <!-- Mobile filter sheet -->
 <Sheet.Root bind:open={mobileFilterOpen}>
-    <Sheet.Content
-      side="bottom"
-      style="border-radius:16px 16px 0 0; max-height:85vh; overflow-y:auto; padding:20px 20px calc(20px + var(--safe-bottom));"
+  <Sheet.Content
+    side="bottom"
+    style="border-radius:16px 16px 0 0; max-height:85vh; overflow-y:auto; padding:20px 20px calc(20px + var(--safe-bottom));"
+  >
+    <div
+      style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;"
     >
+      <div style="font-size:15px; font-weight:600;">Filters</div>
+      <Sheet.Close class="sheet-close"><X size={16} /></Sheet.Close>
+    </div>
+    <div style="margin-bottom:16px;">
       <div
-        style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;"
+        style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted-foreground); margin-bottom:10px; display:flex; align-items:center; justify-content:space-between;"
       >
-        <div style="font-size:15px; font-weight:600;">Filters</div>
-        <Sheet.Close class="sheet-close"><X size={16} /></Sheet.Close>
+        <span>Category</span>
+        {#if selectedCats.length}<button
+            onclick={() => (selectedCats = [])}
+            style="border:none; background:none; color:var(--primary); cursor:pointer; font-size:11px; font-weight:600;"
+            >Clear</button
+          >{/if}
       </div>
-      <div style="margin-bottom:16px;">
-        <div
-          style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted-foreground); margin-bottom:10px; display:flex; align-items:center; justify-content:space-between;"
-        >
-          <span>Category</span>
-          {#if selectedCats.length}<button
-              onclick={() => (selectedCats = [])}
-              style="border:none; background:none; color:var(--primary); cursor:pointer; font-size:11px; font-weight:600;"
-              >Clear</button
-            >{/if}
-        </div>
-        <div style="display:flex; flex-wrap:wrap; gap:7px;">
-          {#each data.categories as cat (cat.id)}
-            <button
-              onclick={() => toggleCat(cat.id)}
-              style="border:1px solid {selectedCats.includes(cat.id)
-                ? 'var(--primary)'
-                : 'var(--border)'}; background:{selectedCats.includes(cat.id)
-                ? 'var(--primary-soft)'
-                : 'var(--card)'}; color:{selectedCats.includes(cat.id)
-                ? 'var(--primary)'
-                : 'var(--foreground)'}; font-family:inherit; font-size:13px; padding:5px 12px; border-radius:999px; cursor:pointer;"
-              >{cat.name}</button
-            >
-          {/each}
-        </div>
-      </div>
-      <div style="margin-bottom:16px;">
-        <div
-          style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted-foreground); margin-bottom:10px; display:flex; align-items:center; justify-content:space-between;"
-        >
-          <span>Date range</span>
-          {#if dateFrom || dateTo}<button
-              onclick={() => {
-                dateFrom = "";
-                dateTo = "";
-              }}
-              style="border:none; background:none; color:var(--primary); cursor:pointer; font-size:11px; font-weight:600;"
-              >Clear</button
-            >{/if}
-        </div>
-        <div style="display:flex; flex-direction:column; gap:8px;">
-          <span style="font-size:11.5px; color:var(--muted-foreground);"
-            >From</span
+      <div style="display:flex; flex-wrap:wrap; gap:7px;">
+        {#each data.categories as cat (cat.id)}
+          <button
+            onclick={() => toggleCat(cat.id)}
+            style="border:1px solid {selectedCats.includes(cat.id)
+              ? 'var(--primary)'
+              : 'var(--border)'}; background:{selectedCats.includes(cat.id)
+              ? 'var(--primary-soft)'
+              : 'var(--card)'}; color:{selectedCats.includes(cat.id)
+              ? 'var(--primary)'
+              : 'var(--foreground)'}; font-family:inherit; font-size:13px; padding:5px 12px; border-radius:999px; cursor:pointer;"
+            >{cat.name}</button
           >
-          <DatePicker bind:value={dateFrom} placeholder="From date" />
-          <span style="font-size:11.5px; color:var(--muted-foreground);"
-            >To</span
-          >
-          <DatePicker bind:value={dateTo} placeholder="To date" />
-        </div>
+        {/each}
       </div>
-      <div style="margin-bottom:20px;">
-        <div
-          style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted-foreground); margin-bottom:10px; display:flex; align-items:center; justify-content:space-between;"
+    </div>
+    <div style="margin-bottom:16px;">
+      <div
+        style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted-foreground); margin-bottom:10px; display:flex; align-items:center; justify-content:space-between;"
+      >
+        <span>Date range</span>
+        {#if dateFrom || dateTo}<button
+            onclick={() => {
+              dateFrom = "";
+              dateTo = "";
+            }}
+            style="border:none; background:none; color:var(--primary); cursor:pointer; font-size:11px; font-weight:600;"
+            >Clear</button
+          >{/if}
+      </div>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <span style="font-size:11.5px; color:var(--muted-foreground);"
+          >From</span
         >
-          <span>Amount range</span>
-          {#if amountMin || amountMax}<button
-              onclick={() => {
-                amountMin = "";
-                amountMax = "";
-              }}
-              style="border:none; background:none; color:var(--primary); cursor:pointer; font-size:11px; font-weight:600;"
-              >Clear</button
-            >{/if}
-        </div>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <AmountInput
-            wrapperStyle="flex:1;"
-            placeholder="Min"
-            bind:value={amountMin}
-            style="flex:1;"
-          />
-          <span style="color:var(--muted-foreground);">–</span>
-          <AmountInput
-            wrapperStyle="flex:1;"
-            placeholder="Max"
-            bind:value={amountMax}
-            style="flex:1;"
-          />
-        </div>
+        <DatePicker bind:value={dateFrom} placeholder="From date" />
+        <span style="font-size:11.5px; color:var(--muted-foreground);">To</span>
+        <DatePicker bind:value={dateTo} placeholder="To date" />
       </div>
-      <Button class="w-full" onclick={() => (mobileFilterOpen = false)}>
-        Show results
-      </Button>
-    </Sheet.Content>
+    </div>
+    <div style="margin-bottom:20px;">
+      <div
+        style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted-foreground); margin-bottom:10px; display:flex; align-items:center; justify-content:space-between;"
+      >
+        <span>Amount range</span>
+        {#if amountMin || amountMax}<button
+            onclick={() => {
+              amountMin = "";
+              amountMax = "";
+            }}
+            style="border:none; background:none; color:var(--primary); cursor:pointer; font-size:11px; font-weight:600;"
+            >Clear</button
+          >{/if}
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <AmountInput
+          wrapperStyle="flex:1;"
+          placeholder="Min"
+          bind:value={amountMin}
+          style="flex:1;"
+        />
+        <span style="color:var(--muted-foreground);">–</span>
+        <AmountInput
+          wrapperStyle="flex:1;"
+          placeholder="Max"
+          bind:value={amountMax}
+          style="flex:1;"
+        />
+      </div>
+    </div>
+    <Button class="w-full" onclick={() => (mobileFilterOpen = false)}
+      >Show results</Button
+    >
+  </Sheet.Content>
 </Sheet.Root>
 
 <style>

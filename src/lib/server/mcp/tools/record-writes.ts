@@ -1,3 +1,18 @@
+import {
+  prepareReimbursementReversal,
+  reverseReimbursement,
+  reimbursementReversalShape,
+} from "../../application/reimbursement-reversal.js";
+import {
+  reimbursementShape,
+  createReimbursement,
+  reimbursementCandidates,
+} from "../../application/reimbursements.js";
+import {
+  recipientCorrectionShape,
+  prepareRecipientCorrection,
+  correctPaymentRecipient,
+} from "../../application/payment-recipient.js";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import {
@@ -6,12 +21,18 @@ import {
   deleteRecord,
   patchShape,
   paymentShape,
-  removeSettlement,
   settlePayment,
   settleShape,
   updateRecord,
   type RecordWritten,
 } from "../../application/records.js";
+import {
+  correctPaymentAllocations,
+  correctionShape,
+  preparePaymentCorrection,
+} from "../../application/payment-corrections.js";
+import { getSettlement } from "../../queries/settlements.js";
+import { fail } from "../../application/result.js";
 import type { AppResult } from "../../application/result.js";
 import { attachFile, attachFileShape } from "../../application/attachments.js";
 import {
@@ -64,6 +85,70 @@ function written(result: AppResult<RecordWritten>, dryRun = false) {
 }
 
 export function registerRecordWrites(server: McpServer, context: McpContext) {
+  registerRead(
+    server,
+    context,
+    "get_reimbursement_reversal",
+    "Preview the complete reimbursement group before reversing it. Returns the current version.",
+    { groupId: id },
+    ({ groupId }) => {
+      const r = prepareReimbursementReversal(context, groupId);
+      if (!r.ok) throw new McpToolError(r.code, r.reason);
+      return r.value;
+    },
+  );
+  registerWrite(
+    server,
+    context,
+    "reverse_reimbursement",
+    "Reverse all transfers in one reimbursement with dated contra entries and a reason. Reopens original supplier expenses and restores cash/credits to their original payments. Preserves bank transactions and matches. Confirm the reviewed reversal with the user.",
+    reimbursementReversalShape,
+    (input) => reverseReimbursement(context, input),
+    { destructive: true },
+  );
+
+  registerRead(
+    server,
+    context,
+    "get_reimbursement_candidates",
+    "List outstanding supplier expenses and the selected recipient's available credit for a reimbursement. Original suppliers stay on the expenses.",
+    { contactId: id },
+    ({ contactId }) => {
+      const r = reimbursementCandidates(context, contactId);
+      if (!r.ok) throw new McpToolError(r.code, r.reason);
+      return r.value;
+    },
+  );
+  registerWrite(
+    server,
+    context,
+    "create_reimbursement",
+    "Reimburse one person for selected expenses they personally paid. Transfers supplier obligations through balanced clearing entries, applies only this recipient's chosen credits, and optionally records cash. Partial and credit-only claims are supported. All amounts are main-currency minor units. personallyPaid must be true.",
+    reimbursementShape,
+    (input) => createReimbursement(context, input),
+  );
+  registerRead(
+    server,
+    context,
+    "get_payment_recipient_correction",
+    "Preview the current recipient and dependent allocations before correcting an outgoing payment. Returns the required version.",
+    { recordId: id },
+    ({ recordId }) => {
+      const r = prepareRecipientCorrection(context, recordId);
+      if (!r.ok) throw new McpToolError(r.code, r.reason);
+      return r.value;
+    },
+  );
+  registerWrite(
+    server,
+    context,
+    "correct_payment_recipient",
+    "Correct the actual recipient of an outgoing payment with a reason and fresh preview version. Preserves cash, bank matches, source suppliers, attachments and payment number. Refuses dependent credits/refunds until their allocations are reversed.",
+    recipientCorrectionShape,
+    (input) => correctPaymentRecipient(context, input),
+    { ids: (input) => ({ recordId: input.recordId }) },
+  );
+
   registerWrite(
     server,
     context,
@@ -87,7 +172,7 @@ export function registerRecordWrites(server: McpServer, context: McpContext) {
     server,
     context,
     "record_payment",
-    "Record a payment that settles open receivables or payables, in the main currency. `direction` we-pay settles Accounts Payable (a bill), we-receive settles Accounts Receivable (an invoice). `paidFromAccountId` is the bank or cash account. `settlements` lists `owedMovementId` (from list_outstanding or get_invoice) and the minor amount applied; the payment and its settlements are saved together or not at all. `contactId` null is a batch payment across several contacts and must be fully allocated.",
+    "Record a payment or an overpayment refund in the main currency. refund-received debits bank and credits payable; refund-paid debits receivable and credits bank. Refunds must fully allocate to an existing credit. Optional creditApplications explicitly applies prior payments before cash settlements; amount 0 applies credit only, with no new bank posting. Record a payment that settles open receivables or payables, in the main currency. `direction` we-pay settles Accounts Payable (a bill), we-receive settles Accounts Receivable (an invoice). `paidFromAccountId` is the bank or cash account. `settlements` lists `owedMovementId` (from list_outstanding or get_invoice) and the minor amount applied; the payment and its settlements are saved together or not at all. Every payment requires one actual payer/payee in `contactId`; use create_reimbursement for personally paid expenses across suppliers.",
     {
       ...paymentShape,
       dryRun: z.boolean().default(false),
@@ -150,12 +235,51 @@ export function registerRecordWrites(server: McpServer, context: McpContext) {
     server,
     context,
     "undo_settlement",
-    "Reverse one settlement allocation (from get_record with includeSettlements). Both lines return to outstanding and become editable again. On a payment that names no contact (a batch), every settlement of that payment is reversed together; `undoneIds` lists them. Confirm with the user before calling.",
-    { settlementId: id },
-    ({ settlementId }) => removeSettlement(context, settlementId),
+    "Reverse one settlement allocation (from get_record with includeSettlements). Both lines return to outstanding and become editable again. On a payment that names no contact (a batch), every settlement of that payment is reversed together; `undoneIds` lists them. Requires a reason and the version from get_payment_allocations. Confirm with the user before calling.",
+    { settlementId: id, reason: correctionShape.reason, expectedVersion },
+    ({ settlementId, reason, expectedVersion }) => {
+      const row = getSettlement(context.db, settlementId);
+      return row
+        ? correctPaymentAllocations(context, {
+            paymentMovementId: row.paymentMovementId,
+            removeSettlementIds: [settlementId],
+            allocations: [],
+            reason,
+            expectedVersion,
+          })
+        : fail("NOT_FOUND", "That allocation no longer exists.");
+    },
     {
       destructive: true,
       ids: (input) => ({ settlementId: input.settlementId }),
+    },
+  );
+
+  registerRead(
+    server,
+    context,
+    "get_payment_allocations",
+    "Read a control-account movement's allocations, affected records, current remainder and correction version. Use before correcting or undoing allocations; a contactless batch reverses all its allocations together.",
+    { paymentMovementId: id },
+    ({ paymentMovementId }) => {
+      const result = preparePaymentCorrection(context, paymentMovementId);
+      if (!result.ok) throw new McpToolError(result.code, result.reason);
+      return result.value;
+    },
+  );
+  registerWrite(
+    server,
+    context,
+    "correct_payment_allocations",
+    "Atomically remove selected allocations and optionally add replacements, preserving cash movements and untouched allocations. Requires the version from get_payment_allocations and a reason. A contactless batch removal undoes every allocation. Confirm the reviewed correction with the user before calling.",
+    correctionShape,
+    (input) => correctPaymentAllocations(context, input),
+    {
+      destructive: true,
+      ids: (input) => ({
+        paymentMovementId: input.paymentMovementId,
+        settlementIds: input.removeSettlementIds,
+      }),
     },
   );
 

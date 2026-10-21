@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Dialog } from 'bits-ui';
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import DatePicker from '$lib/components/ui/date-picker/DatePicker.svelte';
 	import { formatDate, formatMinor } from '$lib/format.js';
@@ -113,7 +115,7 @@
 	<Dialog.Portal>
 		<Dialog.Overlay class="fixed inset-0 z-[60] bg-black/35" />
 		<Dialog.Content
-			class="bg-popover text-popover-foreground fixed top-1/2 left-1/2 z-[60] max-h-[90vh] w-[min(92vw,500px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg p-5 outline-none"
+			class="bg-popover text-popover-foreground fixed top-1/2 left-1/2 z-[60] max-h-[90vh] w-[min(92vw,500px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto overscroll-contain rounded-lg p-5 outline-none"
 			style="box-shadow: 0 0 32px 6px var(--red-soft), 0 20px 50px rgb(0 0 0 / 0.2);"
 		>
 			<Dialog.Title class="text-base font-semibold">Correct settled record date</Dialog.Title>
@@ -156,9 +158,13 @@
 									? ', across calendar years'
 									: ''}.
 							</p>
-							<label class="mt-3 flex items-start gap-2"
-								><input type="checkbox" bind:checked={acknowledged} disabled={sending} /> I understand
-								this changes reports for these periods.</label
+							<label for="date-period-acknowledgement" class="mt-3 flex items-start gap-2"
+								><Checkbox
+									id="date-period-acknowledgement"
+									class="mt-0.5"
+									bind:checked={acknowledged}
+									disabled={sending}
+								/> I understand this changes reports for these periods.</label
 							>
 						</div>
 					{/if}
@@ -175,20 +181,25 @@
 								popoverClass="z-[70]"
 							/>
 						</div>
-						<label class="block text-sm"
-							>Reason for correction<textarea
-								class="border-input bg-card mt-1 block w-full rounded border p-2 outline-none focus-visible:border-[var(--red)] focus-visible:shadow-[0_0_0_3px_var(--red-soft)]"
-								rows="3"
+						<div>
+							<label for="date-correction-reason" class="block text-sm">Reason for correction</label
+							>
+							<Textarea
+								id="date-correction-reason"
+								name="reason"
+								class="mt-1"
+								rows={3}
 								required
-								minlength="10"
-								maxlength="500"
+								minlength={10}
+								maxlength={500}
 								bind:value={reason}
-							></textarea></label
-						>
-						<p class="text-muted-foreground text-xs">
-							Enter 10–500 characters. Your reason and both dates will be saved in the record
-							history.
-						</p>
+								aria-describedby="date-correction-reason-help"
+							/>
+							<p id="date-correction-reason-help" class="text-muted-foreground mt-1 text-xs">
+								Enter 10–500 characters. Your reason and both dates will be saved in the record
+								history.
+							</p>
+						</div>
 					</form>
 				{/if}
 			{/if}

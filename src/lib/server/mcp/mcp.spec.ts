@@ -44,11 +44,7 @@ import {
   MAX_ATTACHMENT_BYTES,
 } from "./tools/records.js";
 import { createServer } from "./server.js";
-import {
-  MAX_RESPONSE_BYTES,
-  registerRead,
-  type McpContext,
-} from "./common.js";
+import { MAX_RESPONSE_BYTES, registerRead, type McpContext } from "./common.js";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { McpServer } from "@modelcontextprotocol/server";
 
@@ -124,7 +120,11 @@ beforeEach(() => {
     "import.read",
   ];
   grantGroup(db, { name: "readers", userIds: [1], grants: fullReads });
-  grantGroup(db, { name: "directory", userIds: [2], grants: ["contacts.read"] });
+  grantGroup(db, {
+    name: "directory",
+    userIds: [2],
+    grants: ["contacts.read"],
+  });
   grantGroup(db, { name: "import", userIds: [3], grants: ["import.read"] });
   fullToken = issueTestToken(db, 1, fullReads);
   directoryToken = issueTestToken(db, 2, ["contacts.read"]);
@@ -502,7 +502,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
             checkSchema(child);
         }
       };
-      expect(tools).toHaveLength(12);
+      expect(tools).toHaveLength(16);
       // get_attachment returns file content blocks, not structured data, so it
       // is the one tool with no output schema.
       for (const tool of tools)
@@ -521,7 +521,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
     });
 
     // A personal access token with reads only sees reads only.
-    it("connects with the official HTTP client and exposes only the twelve read tools", async () => {
+    it("connects with the official HTTP client and exposes only the granted read tools", async () => {
       const client = await connect();
       expect(client.getServerVersion()?.name).toBe("akaun");
       const { tools } = await client.listTools();
@@ -532,7 +532,11 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         "get_contact_balance",
         "get_financial_report",
         "get_import_job",
+        "get_payment_allocations",
+        "get_payment_recipient_correction",
         "get_record",
+        "get_reimbursement_candidates",
+        "get_reimbursement_reversal",
         "list_accounts",
         "list_contacts",
         "list_import_jobs",
@@ -676,7 +680,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         "list_contacts",
         "get_audit_history",
       ]);
-      expect(fullTools.tools).toHaveLength(12);
+      expect(fullTools.tools).toHaveLength(16);
       expect(importTools.tools.map((tool) => tool.name)).toEqual([
         "list_import_jobs",
         "get_import_job",
@@ -716,7 +720,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
 
     it("honors a changed permission on the next HTTP request", async () => {
       const client = await connect();
-      expect((await client.listTools()).tools).toHaveLength(12);
+      expect((await client.listTools()).tools).toHaveLength(16);
       sqlite.exec("PRAGMA query_only = OFF");
       db.delete(groupGrants)
         .where(eq(groupGrants.permission, "records.read"))

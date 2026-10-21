@@ -1,3 +1,5 @@
+import { eq } from "drizzle-orm";
+import { reimbursementEntries } from "../db/schema.js";
 import { recordAudit } from "../audit.js";
 import {
   checkAllocations,
@@ -214,12 +216,33 @@ export function undoSettlement(
   db: LedgerDb,
   id: number,
   actingUserId: number,
+  deferredEmits?: DeferredEmits,
+  reason?: string,
+  reimbursementReversal = false,
 ): Refusable<number[]> {
   const existing = getSettlement(db, id);
   if (!existing) {
     return { ok: false, reason: "That settlement has already been undone." };
   }
 
+  const sourceId = recordIdsForSettlement(
+    db,
+    existing.paymentMovementId,
+    existing.paymentMovementId,
+  )[0];
+  if (
+    !reimbursementReversal &&
+    db
+      .select()
+      .from(reimbursementEntries)
+      .where(eq(reimbursementEntries.recordId, sourceId))
+      .get()
+  )
+    return {
+      ok: false,
+      reason:
+        "This allocation is part of a reimbursement transfer and cannot be reversed separately.",
+    };
   const payment = getSide(db, existing.paymentMovementId);
   const ids =
     payment && payment.contactId === null
@@ -244,6 +267,10 @@ export function undoSettlement(
         recordId: settlementId,
         userId: actingUserId,
         action: "delete",
+        changes: [
+          { field: "allocation", before: row, after: null },
+          ...(reason ? [{ field: "reason", before: null, after: reason }] : []),
+        ],
       });
       done.push(settlementId);
     }
@@ -254,6 +281,8 @@ export function undoSettlement(
     return { ok: false, reason: "That settlement has already been undone." };
   }
 
-  emitSettlementChanged(db, [...touched]);
+  if (deferredEmits)
+    deferredEmits.push(() => emitSettlementChanged(db, [...touched]));
+  else emitSettlementChanged(db, [...touched]);
   return { ok: true, value: undone };
 }

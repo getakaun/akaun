@@ -3,6 +3,7 @@ import { DefaultAccountPurpose } from "$lib/enums.js";
 import { can } from "../permissions.js";
 import { isValidDate } from "../date.js";
 import { getRecord } from "../queries/ledger.js";
+import { getSide, recordIdsForSettlement } from "../queries/settlements.js";
 import {
   needsAdjustments,
   sidesFromAccounts,
@@ -17,7 +18,7 @@ import {
   removeRecord,
   type DeferredEmits,
 } from "../services/ledger.js";
-import { createSettlements, undoSettlement } from "../services/settlements.js";
+import { createSettlements } from "../services/settlements.js";
 import { requireAccountDefault } from "../services/account-defaults.js";
 import { loadSidesContext } from "../services/sides-context.js";
 import { mainCurrencyCode } from "../currency/form.js";
@@ -99,17 +100,17 @@ export const allocationShape = z.object({
   amountMinor: z.number().int().positive(),
 });
 
-/**
- * A payment that settles what is owed. Null `contactId` names no single
- * contact — a batch payment whose settlements carry that attribution instead
- * (FR-008); `entry-builder.ts`'s `validate()` refuses one with no settlements.
- */
+/** One actual payer or payee is required on every new payment. */
+export const creditApplicationShape = allocationShape.extend({
+  paymentMovementId: positiveId,
+});
 export const paymentShape = {
   ...recordFieldsShape,
   paidFromAccountId: positiveId,
-  contactId: positiveId.nullable(),
-  direction: z.enum(["we-pay", "we-receive"]),
+  contactId: positiveId,
+  direction: z.enum(["we-pay", "we-receive", "refund-received", "refund-paid"]),
   settlements: z.array(allocationShape).default([]),
+  creditApplications: z.array(creditApplicationShape).default([]),
 };
 
 export const patchShape = {
@@ -236,7 +237,11 @@ function resolveCreate(
     }
     // Never through this door: the opening balance is set on its account, and
     // an invoice posting exists only by issuing its invoice (FR-013).
-    if (input.kind === "opening-balance" || input.kind === "invoice-issue") {
+    if (
+      input.kind === "opening-balance" ||
+      input.kind === "invoice-issue" ||
+      input.kind === "reimbursement-transfer"
+    ) {
       return fail("REFUSED", "That kind of record cannot be created here.");
     }
     if (input.kind !== "journal") {
@@ -333,15 +338,66 @@ export function createRecord(
   const refused = requirePermissions(ctx, ["records.create"]);
   if (refused) return refused;
 
+  if ("kind" in input && input.kind === "reimbursement-transfer")
+    return fail(
+      "REFUSED",
+      "Use the reimbursement operation to transfer a claim.",
+    );
   const body = resolveCreate(ctx, input);
   if (!body.ok) return body;
   const data = body.value;
+  if (data.kind === "reimbursement-transfer")
+    return fail(
+      "REFUSED",
+      "Use the reimbursement operation to transfer a claim.",
+    );
+  if (data.kind === "payment" && data.contactId == null)
+    return fail("REFUSED", "Select the payer or payee for this payment.");
+  if (
+    data.kind === "payment" &&
+    (data.amount < 0 ||
+      data.currency !== mainCurrencyCode(ctx.db) ||
+      data.exchangeRate !== 1)
+  )
+    return fail(
+      "REFUSED",
+      "Payments and refunds must use a non-negative amount in the main currency at rate 1.",
+    );
+  if (
+    data.kind === "payment" &&
+    ["refund-received", "refund-paid"].includes(data.direction) &&
+    (data.contactId == null ||
+      (data.settlements ?? []).reduce((n, a) => n + a.amountMinor, 0) !==
+        toMinor(data.amount, data.exchangeRate))
+  ) {
+    return fail(
+      "REFUSED",
+      "A refund must name one contact and be fully applied to their overpayment.",
+    );
+  }
   const userId = actor(ctx);
   const emits: DeferredEmits = [];
 
   let written: RecordWritten;
   try {
     written = ctx.db.transaction(() => {
+      if (data.kind === "payment") {
+        const applied = applyCarryForward(ctx, data, emits);
+        if (!applied.ok) throw new Rollback(applied);
+        if (data.amount === 0 && applied.value !== null) {
+          if ((data.settlements?.length ?? 0) > 0)
+            throw new Rollback(
+              fail(
+                "REFUSED",
+                "A credit-only settlement cannot include cash allocations.",
+              ),
+            );
+          const record = getRecord(ctx.db, applied.value)!;
+          const result = { record, version: recordVersion(ctx.db, record.id) };
+          if (opts.dryRun) throw new DryRun(result);
+          return result;
+        }
+      }
       const created = createRecordService(ctx.db, userId, data, emits);
       if (!created.ok) throw new Rollback(fail("REFUSED", created.reason));
 
@@ -350,7 +406,7 @@ export function createRecord(
         // that clears the debt, whichever direction the money went.
         const owed = requireAccountDefault(
           ctx.db,
-          data.direction === "we-pay"
+          ["we-pay", "refund-received"].includes(data.direction)
             ? DefaultAccountPurpose.Payable
             : DefaultAccountPurpose.Receivable,
         );
@@ -592,19 +648,72 @@ export function settlePayment(
   return result.ok ? ok({ settlementIds: result.value }) : result;
 }
 
-/**
- * Takes one allocation back. Both sides return to outstanding (FR-017). On a
- * payment naming no contact every allocation goes together, so `undoneIds`
- * may name more than the one asked for.
- */
-export function removeSettlement(
+/** Apply only credits the user selected, in the same transaction as any cash payment. */
+function applyCarryForward(
   ctx: AppContext,
-  id: number,
-): AppResult<{ id: number; undoneIds: number[] }> {
-  const refused = requirePermissions(ctx, ["records.delete"]);
-  if (refused) return refused;
-  const result = undoSettlement(ctx.db, id, actor(ctx));
-  return result.ok
-    ? ok({ id, undoneIds: result.value })
-    : fail("REFUSED", result.reason);
+  data: Extract<RecordCreate, { kind: "payment" }>,
+  emits: DeferredEmits,
+): AppResult<number | null> {
+  const credits = data.creditApplications ?? [];
+  if (!credits.length) return ok(null);
+  if (
+    data.contactId == null ||
+    !["we-pay", "we-receive"].includes(data.direction)
+  )
+    return fail(
+      "REFUSED",
+      "Apply credit for one contact on an ordinary payment or receipt.",
+    );
+  const control = requireAccountDefault(
+    ctx.db,
+    data.direction === "we-pay"
+      ? DefaultAccountPurpose.Payable
+      : DefaultAccountPurpose.Receivable,
+  );
+  if (!control.ok) return fail("REFUSED", control.reason);
+  const grouped = new Map<
+    number,
+    { owedMovementId: number; amountMinor: number }[]
+  >();
+  let targetRecordId: number | null = null;
+  for (const credit of credits) {
+    if (!Number.isSafeInteger(credit.amountMinor) || credit.amountMinor <= 0)
+      return fail("INVALID_INPUT", "Apply a positive whole number of cents.");
+    const side = getSide(ctx.db, credit.paymentMovementId);
+    if (
+      !side ||
+      side.accountId !== control.value ||
+      side.contactId !== data.contactId ||
+      (data.direction === "we-pay"
+        ? side.amountMinor <= 0
+        : side.amountMinor >= 0)
+    )
+      return fail(
+        "REFUSED",
+        "That credit is not available for this contact and payment direction.",
+      );
+    const list = grouped.get(credit.paymentMovementId) ?? [];
+    list.push({
+      owedMovementId: credit.owedMovementId,
+      amountMinor: credit.amountMinor,
+    });
+    grouped.set(credit.paymentMovementId, list);
+    targetRecordId ??=
+      recordIdsForSettlement(
+        ctx.db,
+        credit.owedMovementId,
+        credit.owedMovementId,
+      )[0] ?? null;
+  }
+  for (const [id, allocations] of grouped) {
+    const applied = createSettlements(
+      ctx.db,
+      actor(ctx),
+      id,
+      allocations,
+      emits,
+    );
+    if (!applied.ok) return fail("REFUSED", applied.reason);
+  }
+  return ok(targetRecordId);
 }

@@ -267,6 +267,21 @@ export type RecordCreateSides =
       /** we-pay settles Money we owe; we-receive settles Money owed to us. */
       direction: PaymentDirection;
       settlements?: AllocationRequest[];
+      /** Explicit application of earlier payments; never inferred or auto-applied. */
+      creditApplications?: {
+        paymentMovementId: number;
+        owedMovementId: number;
+        amountMinor: Minor;
+      }[];
+    }
+  | {
+      kind: "reimbursement-transfer";
+      clearingAccountId: number;
+      leg:
+        | "supplier"
+        | "recipient"
+        | "supplier-reversal"
+        | "recipient-reversal";
     }
   | { kind: "opening-balance"; accountId: number }
   | { kind: "invoice-issue"; incomeAccountId: number }
@@ -294,7 +309,11 @@ export type RecordCreateSides =
       storedKind?: LedgerRecordKindCode;
     };
 
-export type PaymentDirection = "we-pay" | "we-receive";
+export type PaymentDirection =
+  | "we-pay"
+  | "we-receive"
+  | "refund-received"
+  | "refund-paid";
 
 /**
  * What the one form sends. The kind is derived, never stated (D-01, research.md
@@ -461,6 +480,9 @@ export type OutstandingItem = {
   settledMinor: Minor;
   outstandingMinor: Minor;
   daysOverdue: number;
+  /** Original signed control-account movement; magnitudes above remain unsigned. */
+  signedAmountMinor?: Minor;
+  position?: "obligation" | "credit";
 };
 
 export type OutstandingDirection = "owed-to-us" | "we-owe";
@@ -468,6 +490,8 @@ export type OutstandingDirection = "owed-to-us" | "we-owe";
 export type OutstandingResult = {
   items: OutstandingItem[];
   totalOutstandingMinor: Minor;
+  totalObligationsMinor?: Minor;
+  totalCreditsMinor?: Minor;
 };
 
 /** A record's paid state, computed from its shared-owed movements (FR-012). */

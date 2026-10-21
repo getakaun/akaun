@@ -60,7 +60,6 @@ function validate(
   movements: MovementDraft[],
   contactId: number | null,
   ctx: BuildContext,
-  input: BuildInput,
 ): Refusable<MovementDraft[]> {
   if (movements.length < 2) {
     return refuse(
@@ -92,14 +91,7 @@ function validate(
       m.accountId === ctx.receivableAccountId ||
       m.accountId === ctx.payableAccountId,
   );
-  // A payment that ticks off items across several contacts at once (one real
-  // bank transfer, several suppliers) names no single contact of its own —
-  // each settlement it creates already points at the contact its own bill
-  // belongs to, so the attribution is not lost, just not on this record. Every
-  // other kind that touches the shared owed account still must name one.
-  const isBatchPayment =
-    input.kind === "payment" && (input.settlements?.length ?? 0) > 0;
-  if (touchesSharedOwed && contactId === null && !isBatchPayment) {
+  if (touchesSharedOwed && contactId === null) {
     return refuse("Select the contact for this receivable or payable.");
   }
 
@@ -112,7 +104,7 @@ export function buildMovements(
 ): Refusable<MovementDraft[]> {
   const built = buildFor(input, ctx);
   if (!built.ok) return built;
-  return validate(built.value, input.contactId, ctx, input);
+  return validate(built.value, input.contactId, ctx);
 }
 
 function buildFor(
@@ -130,6 +122,13 @@ function buildFor(
   switch (input.kind) {
     // The category (or equipment account) gains the value; the account that
     // paid loses it. When nobody's account paid, it is owed instead (FR-008).
+    case "reimbursement-transfer":
+      return accept(
+        input.leg === "supplier" || input.leg === "recipient-reversal"
+          ? twoSided(ctx.payableAccountId, input.clearingAccountId, amount)
+          : twoSided(input.clearingAccountId, ctx.payableAccountId, amount),
+      );
+
     case "expense":
       return accept(
         twoSided(
@@ -161,7 +160,15 @@ function buildFor(
       return accept(
         input.direction === "we-pay"
           ? twoSided(ctx.payableAccountId, input.paidFromAccountId, amount)
-          : twoSided(input.paidFromAccountId, ctx.receivableAccountId, amount),
+          : input.direction === "we-receive"
+            ? twoSided(input.paidFromAccountId, ctx.receivableAccountId, amount)
+            : input.direction === "refund-received"
+              ? twoSided(input.paidFromAccountId, ctx.payableAccountId, amount)
+              : twoSided(
+                  ctx.receivableAccountId,
+                  input.paidFromAccountId,
+                  amount,
+                ),
       );
 
     // The customer now owes us what the invoice says, earned into its income

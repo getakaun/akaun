@@ -1288,3 +1288,40 @@ export const recordSearchText = sqliteTable("record_search_text", {
     .references(() => ledgerRecords.id, { onDelete: "cascade" }),
   text: text("text").notNull(),
 });
+
+/** Linked, read-only postings transfer supplier obligations to one recipient. */
+export const reimbursements = sqliteTable("reimbursements", {
+  reversedAt: text("reversed_at"),
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  payableRecordId: integer("payable_record_id")
+    .notNull()
+    .references(() => ledgerRecords.id, { onDelete: "restrict" }),
+  paymentRecordId: integer("payment_record_id").references(
+    () => ledgerRecords.id,
+    { onDelete: "restrict" },
+  ),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
+export const reimbursementEntries = sqliteTable("reimbursement_entries", {
+  recordId: integer("record_id")
+    .primaryKey()
+    .references(() => ledgerRecords.id, { onDelete: "restrict" }),
+  groupId: integer("group_id")
+    .notNull()
+    .references(() => reimbursements.id, { onDelete: "restrict" }),
+  role: text("role", {
+    enum: ["supplier", "recipient", "supplier-reversal", "recipient-reversal"],
+  }).notNull(),
+});
+export const reimbursementItems = sqliteTable("reimbursement_items", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  groupId: integer("group_id")
+    .notNull()
+    .references(() => reimbursements.id, { onDelete: "restrict" }),
+  sourceMovementId: integer("source_movement_id")
+    .notNull()
+    .references(() => ledgerMovements.id, { onDelete: "restrict" }),
+  amountMinor: integer("amount_minor").notNull(),
+});

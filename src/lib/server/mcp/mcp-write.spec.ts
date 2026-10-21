@@ -529,6 +529,89 @@ for (const era of ["legacy", "modern"] as const) {
         expect(fromList.record.description).toBe("Software licence (annual)");
       });
 
+      it("reimburses one recipient across suppliers and corrects the recipient through the shared operation", async () => {
+        const client = await connect();
+        const employee = db
+          .insert(contacts)
+          .values({ entityType: 2, legalName: "Employee" })
+          .returning()
+          .get()!.id;
+        const correctedRecipient = db
+          .insert(contacts)
+          .values({ entityType: 2, legalName: "Correct employee" })
+          .returning()
+          .get()!.id;
+        const bill = data(
+          await call(client, "create_record", {
+            ...expenseArgs,
+            fromAccountId: payable,
+            toAccountId: software,
+            contactId: supplier,
+          }),
+        );
+        const owed = bill.record.movements.find(
+          (m: { accountId: number }) => m.accountId === payable,
+        );
+        const candidates = data(
+          await call(client, "get_reimbursement_candidates", {
+            contactId: employee,
+          }),
+        );
+        expect(
+          candidates.items.some(
+            (i: { movementId: number }) => i.movementId === owed.id,
+          ),
+        ).toBe(true);
+        const claim = data(
+          await call(client, "create_reimbursement", {
+            contactId: employee,
+            personallyPaid: true,
+            date: "2026-09-03",
+            description: "Employee reimbursement",
+            items: [{ owedMovementId: owed.id, amountMinor: 1250 }],
+            cashMinor: 1250,
+            paidFromAccountId: bank,
+          }),
+        );
+        expect(claim.payment.contactId).toBe(employee);
+        expect(
+          db
+            .select()
+            .from(ledgerRecords)
+            .where(eq(ledgerRecords.id, bill.record.id))
+            .get()!.contactId,
+        ).toBe(supplier);
+        const preview = data(
+          await call(client, "get_payment_recipient_correction", {
+            recordId: claim.payment.id,
+          }),
+        );
+        const corrected = data(
+          await call(client, "correct_payment_recipient", {
+            recordId: claim.payment.id,
+            contactId: correctedRecipient,
+            reason: "Receipt confirms the actual employee",
+            expectedVersion: preview.version,
+          }),
+        );
+        expect(corrected.record.contactId).toBe(correctedRecipient);
+        const reversal = data(
+          await call(client, "get_reimbursement_reversal", {
+            groupId: claim.groupId,
+          }),
+        );
+        expect(
+          data(
+            await call(client, "reverse_reimbursement", {
+              groupId: claim.groupId,
+              date: "2026-09-04",
+              reason: "Company paid the expense originally",
+              expectedVersion: reversal.version,
+            }),
+          ).groupId,
+        ).toBe(claim.groupId);
+      });
+
       it("records a payment with its settlement, and keeps the settled amount locked", async () => {
         const client = await connect();
         const bill = data(
@@ -576,6 +659,128 @@ for (const era of ["legacy", "modern"] as const) {
           }),
         );
         expect(described.record.description).toBe("Software (settled)");
+      });
+
+      it("previews and corrects an allocation with a reason and fresh version", async () => {
+        const client = await connect();
+        const bill = data(
+          await call(client, "create_record", {
+            ...expenseArgs,
+            fromAccountId: payable,
+            toAccountId: software,
+            contactId: supplier,
+          }),
+        );
+        const owedMovementId = bill.record.movements.find(
+          (m: { accountId: number }) => m.accountId === payable,
+        ).id;
+        const payment = data(
+          await call(client, "record_payment", {
+            date: "2026-09-03",
+            amount: 28,
+            currency: "MYR",
+            paidFromAccountId: bank,
+            contactId: supplier,
+            direction: "we-pay",
+            settlements: [{ owedMovementId, amountMinor: 1250 }],
+          }),
+        );
+        const paymentMovementId = payment.record.movements.find(
+          (m: { accountId: number }) => m.accountId === payable,
+        ).id;
+        const preview = data(
+          await call(client, "get_payment_allocations", { paymentMovementId }),
+        );
+        expect(preview.payment.settledMinor).toBe(1250);
+        const corrected = data(
+          await call(client, "correct_payment_allocations", {
+            paymentMovementId,
+            removeSettlementIds: [preview.allocations[0].id],
+            reason: "Company had paid the supplier directly.",
+            expectedVersion: preview.version,
+          }),
+        );
+        expect(corrected.undoneIds).toEqual([preview.allocations[0].id]);
+        const balance = data(
+          await call(client, "get_contact_balance", { contactId: supplier }),
+        );
+        expect(balance).toMatchObject({
+          payableObligationsMinor: 1250,
+          payableCreditsMinor: 2800,
+          weOweMinor: -1550,
+          netMinor: 1550,
+        });
+        const stale = errorOf(
+          await call(client, "correct_payment_allocations", {
+            paymentMovementId,
+            removeSettlementIds: [preview.allocations[0].id],
+            reason: "Company had paid the supplier directly.",
+            expectedVersion: preview.version,
+          }),
+        );
+        expect(stale.code).toBe("CONFLICT");
+        data(
+          await call(client, "settle_payment", {
+            paymentMovementId,
+            allocations: [{ owedMovementId, amountMinor: 1250 }],
+          }),
+        );
+        const again = data(
+          await call(client, "get_payment_allocations", { paymentMovementId }),
+        );
+        const undone = data(
+          await call(client, "undo_settlement", {
+            settlementId: again.allocations[0].id,
+            reason: "Remove the allocation after checking the receipt.",
+            expectedVersion: again.version,
+          }),
+        );
+        expect(undone.undoneIds).toEqual([again.allocations[0].id]);
+      });
+
+      it("applies prior payment credit through MCP without a zero cash record", async () => {
+        const client = await connect();
+        const bill = data(
+          await call(client, "create_record", {
+            ...expenseArgs,
+            fromAccountId: payable,
+            toAccountId: software,
+            contactId: supplier,
+          }),
+        );
+        const owedMovementId = bill.record.movements.find(
+          (m: { accountId: number }) => m.accountId === payable,
+        ).id;
+        const credit = data(
+          await call(client, "record_payment", {
+            date: "2026-09-03",
+            amount: 28,
+            currency: "MYR",
+            paidFromAccountId: bank,
+            contactId: supplier,
+            direction: "we-pay",
+          }),
+        );
+        const paymentMovementId = credit.record.movements.find(
+          (m: { accountId: number }) => m.accountId === payable,
+        ).id;
+        const before = db.select().from(ledgerRecords).all().length;
+        const covered = data(
+          await call(client, "record_payment", {
+            date: "2026-09-04",
+            amount: 0,
+            currency: "MYR",
+            paidFromAccountId: bank,
+            contactId: supplier,
+            direction: "we-pay",
+            creditApplications: [
+              { paymentMovementId, owedMovementId, amountMinor: 1250 },
+            ],
+          }),
+        );
+        expect(covered.record.id).toBe(bill.record.id);
+        expect(covered.record.paid).toBe(true);
+        expect(db.select().from(ledgerRecords).all()).toHaveLength(before);
       });
 
       it("saves neither the payment nor its settlement when one is refused", async () => {

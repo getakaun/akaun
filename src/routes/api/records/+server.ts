@@ -7,6 +7,7 @@ import { listRecords } from "$lib/server/queries/ledger.js";
 import type { LedgerRecordKindCode } from "$lib/enums.js";
 import {
   allocationShape,
+  creditApplicationShape,
   createFromSidesSchema,
   positiveId as accountId,
   recordFieldsShape as common,
@@ -48,15 +49,15 @@ const createSchema = z.discriminatedUnion("kind", [
     ...common,
     kind: z.literal("payment"),
     paidFromAccountId: accountId,
-    // Null names no single contact — a payment that settles items across
-    // several contacts at once (one bank transfer, several suppliers) is
-    // allowed only when its settlements carry that attribution instead.
-    // `entry-builder.ts`'s `validate()` is what actually refuses a null
-    // contact with no settlements (FR-008); this is just what lets the shape
-    // through to it.
-    contactId: accountId.nullable(),
-    direction: z.enum(["we-pay", "we-receive"]),
+    contactId: accountId,
+    direction: z.enum([
+      "we-pay",
+      "we-receive",
+      "refund-received",
+      "refund-paid",
+    ]),
     settlements: z.array(allocationShape).default([]),
+    creditApplications: z.array(creditApplicationShape).default([]),
   }),
   z.object({
     ...common,
@@ -183,7 +184,11 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   // operation the MCP tools call too (`application/records.ts`).
   return toResponse(
     createRecord({ db, locals }, parsed.data as CreateInput),
-    201,
+    "kind" in parsed.data &&
+      parsed.data.kind === "payment" &&
+      parsed.data.amount === 0
+      ? 200
+      : 201,
     (written) => written.record,
   );
 };

@@ -1,3 +1,4 @@
+import { reimbursementsForRecord } from "../queries/reimbursements.js";
 import { fail, redirect, type Actions } from "@sveltejs/kit";
 import { z } from "zod";
 import { db } from "$lib/server/db/client.js";
@@ -86,6 +87,7 @@ export function loadRecordDetail(locals: App.Locals, id: number) {
 
   return {
     record,
+    reimbursement: reimbursementsForRecord(db, id),
     attachments: listAttachments(db, id),
     settlements: settlementsForRecord(db, id),
     // The invoice an issue posting belongs to, for the link back to it. Kept
@@ -136,13 +138,16 @@ export function loadPaymentNew(locals: App.Locals, url: URL) {
   if (!can(locals, "records.create")) throw redirect(302, LIST_PATH);
 
   let contactId = positiveIdParam(url, "contactId");
-  let direction: "we-pay" | "we-receive" =
-    url.searchParams.get("direction") === "we-receive"
-      ? "we-receive"
-      : "we-pay";
-  // Lands the form open to every contact's outstanding items at once, ticked
-  // by default — the "pay all outstanding" entry point on the Records screen.
-  let batch = url.searchParams.get("batch") === "1";
+  const requestedDirection = url.searchParams.get("direction");
+  let direction: import("../ledger/types.js").PaymentDirection | "reimburse" =
+    requestedDirection === "reimburse" ||
+    requestedDirection === "we-receive" ||
+    requestedDirection === "refund-received" ||
+    requestedDirection === "refund-paid"
+      ? requestedDirection
+      : requestedDirection === "we-pay" || contactId !== null
+        ? "we-pay"
+        : "reimburse";
   /** The owed movement to tick once the contact's items have loaded. */
   let preselectMovementId: number | null = null;
   let returnTo: { href: string; label: string } | null = null;
@@ -155,7 +160,6 @@ export function loadPaymentNew(locals: App.Locals, url: URL) {
   if (invoice) {
     contactId = invoice.contactId;
     direction = "we-receive";
-    batch = false;
     preselectMovementId = invoice.owedMovementId;
     returnTo = {
       href: `/invoices/${invoice.id}`,
@@ -166,7 +170,6 @@ export function loadPaymentNew(locals: App.Locals, url: URL) {
   return {
     contactId,
     direction,
-    batch,
     preselectMovementId,
     returnTo,
     ...recordFormOptions(locals),

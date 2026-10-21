@@ -102,6 +102,7 @@ const KIND_BY_NAME: Record<RecordCreate["kind"], LedgerRecordKindCode> = {
   "opening-balance": LedgerRecordKind.OpeningBalance,
   "invoice-issue": LedgerRecordKind.InvoiceIssue,
   journal: LedgerRecordKind.Journal,
+  "reimbursement-transfer": LedgerRecordKind.Journal,
 };
 
 export function kindCodeFor(kind: RecordCreate["kind"]): LedgerRecordKindCode {
@@ -535,7 +536,9 @@ const owedMovementsForContact = alias(
 const owedRecordsForContact = alias(ledgerRecords, "owed_records_for_contact");
 
 function recordConditions(filters: RecordListFilters): SQL[] {
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [
+    sql`not exists (select 1 from reimbursement_entries re where re.record_id = ${ledgerRecords.id})`,
+  ];
 
   if (filters.kind !== undefined) {
     conditions.push(

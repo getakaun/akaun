@@ -1,3 +1,5 @@
+import { eq } from "drizzle-orm";
+import { reimbursementEntries } from "../db/schema.js";
 import { z } from "zod";
 import { LedgerRecordKind } from "$lib/enums.js";
 import { recordAudit } from "../audit.js";
@@ -49,6 +51,14 @@ export function prepareRecordDateCorrection(
 ): AppResult<RecordWritten> {
   const denied = authorization(ctx);
   if (denied) return denied;
+  if (
+    ctx.db
+      .select()
+      .from(reimbursementEntries)
+      .where(eq(reimbursementEntries.recordId, id))
+      .get()
+  )
+    return fail("REFUSED", "Reimbursement transfer dates are read-only.");
   const record = getRecord(ctx.db, id);
   if (!record) return missing("That record no longer exists.");
   if (
@@ -87,6 +97,14 @@ export function correctRecordDate(
 ): AppResult<RecordWritten> {
   const denied = authorization(ctx);
   if (denied) return denied;
+  if (
+    ctx.db
+      .select()
+      .from(reimbursementEntries)
+      .where(eq(reimbursementEntries.recordId, id))
+      .get()
+  )
+    return fail("REFUSED", "Reimbursement transfer dates are read-only.");
   const parsed = dateCorrectionSchema.safeParse(input);
   if (!parsed.success) return invalid(parsed.error);
   const { date, reason, expectedVersion, acknowledgePeriodChange } =

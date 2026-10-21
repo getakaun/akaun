@@ -1,4 +1,14 @@
-import { and, asc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNull,
+  lte,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import {
   accounts,
   accountDefaults,
@@ -128,6 +138,8 @@ function collectOutstanding(
   items: AgeingItem[];
   totalOutstandingMinor: Minor;
   total: number;
+  totalObligationsMinor: Minor;
+  totalCreditsMinor: Minor;
 } {
   const asOf = filters.asOf ?? new Date().toISOString().slice(0, 10);
   const openOnly = filters.openOnly ?? true;
@@ -150,11 +162,18 @@ function collectOutstanding(
        OR ${settlements.paymentMovementId} = ${ledgerMovements.id}
   ), 0))`;
   if (openOnly) conditions.push(sql`${remaining} > 0`);
+  const isObligation =
+    filters.direction === "we-owe"
+      ? sql`${ledgerMovements.amountMinor} < 0`
+      : sql`${ledgerMovements.amountMinor} > 0`;
+  const signedRemaining = sql<number>`CASE WHEN ${isObligation} THEN ${remaining} ELSE -${remaining} END`;
   const totals = page
     ? db
         .select({
           total: sql<number>`count(*)`,
-          totalOutstandingMinor: sql<number>`coalesce(sum(${remaining}), 0)`,
+          totalOutstandingMinor: sql<number>`coalesce(sum(${signedRemaining}), 0)`,
+          totalObligationsMinor: sql<number>`coalesce(sum(CASE WHEN ${isObligation} THEN ${remaining} ELSE 0 END), 0)`,
+          totalCreditsMinor: sql<number>`coalesce(sum(CASE WHEN ${isObligation} THEN 0 ELSE ${remaining} END), 0)`,
         })
         .from(ledgerMovements)
         .innerJoin(
@@ -210,9 +229,17 @@ function collectOutstanding(
     if (openOnly && outstandingMinor === 0) continue;
 
     const dueDate = row.dueDate ?? row.date;
-    const daysOverdue = Math.max(0, daysBetween(dueDate, asOf));
+    const position = (
+      filters.direction === "we-owe" ? row.amountMinor < 0 : row.amountMinor > 0
+    )
+      ? "obligation"
+      : "credit";
+    const daysOverdue =
+      position === "credit" ? 0 : Math.max(0, daysBetween(dueDate, asOf));
     items.push({
       movementId: row.movementId,
+      signedAmountMinor: row.amountMinor,
+      position,
       recordId: row.recordId,
       recordNumber: row.recordNumber,
       kind: row.kind as LedgerRecordKindCode,
@@ -236,7 +263,17 @@ function collectOutstanding(
     total: totals?.total ?? items.length,
     totalOutstandingMinor:
       totals?.totalOutstandingMinor ??
-      items.reduce((sum, i) => sum + i.outstandingMinor, 0),
+      items.reduce((sum, i) => sum + outstandingNetMinor(i), 0),
+    totalObligationsMinor:
+      totals?.totalObligationsMinor ??
+      items
+        .filter((i) => i.position !== "credit")
+        .reduce((n, i) => n + i.outstandingMinor, 0),
+    totalCreditsMinor:
+      totals?.totalCreditsMinor ??
+      items
+        .filter((i) => i.position === "credit")
+        .reduce((n, i) => n + i.outstandingMinor, 0),
   };
 }
 
@@ -244,11 +281,8 @@ export function listOutstanding(
   db: LedgerDb,
   filters: OutstandingFilters,
 ): OutstandingResult {
-  const { asOf, items, totalOutstandingMinor } = collectOutstanding(
-    db,
-    filters,
-  );
-  const result = { asOf, items, totalOutstandingMinor };
+  const { total: _total, ...result } = collectOutstanding(db, filters);
+  void _total;
   return result;
 }
 
@@ -331,7 +365,16 @@ export type ContactBalance = {
   contactId: number;
   contactName: string;
   outstandingMinor: Minor;
+  obligationsMinor?: Minor;
+  creditsMinor?: Minor;
 };
+
+/** Signed in the normal direction of this control account. */
+export function outstandingNetMinor(item: OutstandingItem): Minor {
+  return item.position === "credit"
+    ? -item.outstandingMinor
+    : item.outstandingMinor;
+}
 
 /** What each contact is still owed, or still owes, in one query per direction. */
 export function contactBalances(
@@ -358,12 +401,21 @@ export function balancesByContact(items: OutstandingItem[]): ContactBalance[] {
     if (item.contactId === null) continue;
     const existing = byContact.get(item.contactId);
     if (existing) {
-      existing.outstandingMinor += item.outstandingMinor;
+      existing.outstandingMinor += outstandingNetMinor(item);
+      existing.obligationsMinor =
+        (existing.obligationsMinor ?? 0) +
+        (item.position === "credit" ? 0 : item.outstandingMinor);
+      existing.creditsMinor =
+        (existing.creditsMinor ?? 0) +
+        (item.position === "credit" ? item.outstandingMinor : 0);
     } else {
       byContact.set(item.contactId, {
         contactId: item.contactId,
         contactName: item.contactName ?? "",
-        outstandingMinor: item.outstandingMinor,
+        outstandingMinor: outstandingNetMinor(item),
+        obligationsMinor:
+          item.position === "credit" ? 0 : item.outstandingMinor,
+        creditsMinor: item.position === "credit" ? item.outstandingMinor : 0,
       });
     }
   }
@@ -590,6 +642,8 @@ export type OutstandingAgeing = {
   asOf: string;
   items: AgeingItem[];
   totalOutstandingMinor: Minor;
+  totalObligationsMinor: Minor;
+  totalCreditsMinor: Minor;
   bands: AgeingBand[];
 };
 
@@ -607,7 +661,10 @@ export function groupIntoBands(items: AgeingItem[]): AgeingBand[] {
     return {
       label: band.label,
       count: inBand.length,
-      totalMinor: inBand.reduce((sum, item) => sum + item.outstandingMinor, 0),
+      totalMinor: inBand.reduce(
+        (sum, item) => sum + outstandingNetMinor(item),
+        0,
+      ),
       items: inBand,
     };
   }).filter((band) => band.count > 0);
@@ -623,15 +680,13 @@ export function outstandingAgeing(
   db: LedgerDb,
   filters: OutstandingFilters,
 ): OutstandingAgeing {
-  const { asOf, items, totalOutstandingMinor } = collectOutstanding(
-    db,
-    filters,
-  );
+  const { total: _total, ...result } = collectOutstanding(db, filters);
+  void _total;
   return {
     direction: filters.direction,
-    asOf,
-    items,
-    totalOutstandingMinor,
-    bands: groupIntoBands(items),
+    ...result,
+    bands: groupIntoBands(
+      result.items.filter((item) => item.position !== "credit"),
+    ),
   };
 }

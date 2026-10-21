@@ -1,3 +1,5 @@
+import { eq } from "drizzle-orm";
+import { reimbursementEntries } from "../db/schema.js";
 import { DefaultAccountPurpose, LedgerRecordKind } from "$lib/enums.js";
 import { diffRecords, recordAudit } from "../audit.js";
 import { buildMovements } from "../ledger/entry-builder.js";
@@ -45,6 +47,8 @@ import { requireAccountDefault } from "./account-defaults.js";
 /** Which accounts an input names, so the builder can check their roles. */
 function accountIdsIn(sides: RecordCreate | BuildInput): number[] {
   switch (sides.kind) {
+    case "reimbursement-transfer":
+      return [sides.clearingAccountId];
     case "expense":
       return [sides.categoryAccountId, sides.paidFromAccountId ?? -1];
     case "income":
@@ -69,10 +73,13 @@ function contextFor(
 ): Refusable<BuildContext> {
   const needsReceivable =
     sides.kind === "invoice-issue" ||
-    (sides.kind === "payment" && sides.direction === "we-receive");
+    (sides.kind === "payment" &&
+      ["we-receive", "refund-paid"].includes(sides.direction));
   const needsPayable =
+    sides.kind === "reimbursement-transfer" ||
     (sides.kind === "expense" && sides.paidFromAccountId == null) ||
-    (sides.kind === "payment" && sides.direction === "we-pay");
+    (sides.kind === "payment" &&
+      ["we-pay", "refund-received"].includes(sides.direction));
   const needsOpening = sides.kind === "opening-balance";
 
   const resolve = (
@@ -111,7 +118,14 @@ function contextFor(
 function emitRecord(db: LedgerDb, id: number): RecordView | null {
   const record = getRecord(db, id);
   if (record) {
-    ledgerEvents.emit("record-update", { record });
+    if (
+      !db
+        .select()
+        .from(reimbursementEntries)
+        .where(eq(reimbursementEntries.recordId, id))
+        .get()
+    )
+      ledgerEvents.emit("record-update", { record });
     // An account's balance is the sum of its movements, so a record write moves
     // every account it touched — the accounts screen has to hear about it too.
     touchAccounts(
@@ -177,6 +191,9 @@ export function createRecord(
         "Only expense, income and invoice records can be recorded in another currency.",
     };
   }
+
+  if (data.kind === "payment" && data.contactId == null)
+    return { ok: false, reason: "Select the payer or payee for this payment." };
 
   const amountMinor = toMinor(data.amount, data.exchangeRate);
 
@@ -246,6 +263,18 @@ export function patchRecord(
   actingUserId: number,
   patch: RecordPatch,
 ): Refusable<RecordView> {
+  if (
+    db
+      .select()
+      .from(reimbursementEntries)
+      .where(eq(reimbursementEntries.recordId, id))
+      .get()
+  )
+    return {
+      ok: false,
+      reason:
+        "Reimbursement transfer entries are read-only. Correct the reimbursement payment instead.",
+    };
   const existing = getRecord(db, id);
   if (!existing) return { ok: false, reason: "That record no longer exists." };
 
@@ -269,6 +298,17 @@ export function patchRecord(
   }
 
   const lock = lockStateFor(db, id);
+  if (
+    lock.settled &&
+    patch.contactId !== undefined &&
+    patch.contactId !== existing.contactId
+  ) {
+    return {
+      ok: false,
+      reason:
+        "Reverse the active allocations before changing this record's contact.",
+    };
+  }
   for (const field of Object.keys(patch) as (keyof RecordPatch)[]) {
     if (patch[field] === undefined) continue;
     if (!canEditField(field, lock)) {
@@ -635,6 +675,18 @@ export function removeRecord(
   actingUserId: number,
   opts: { allowReadOnlyKind?: boolean; deferredEmits?: DeferredEmits } = {},
 ): Refusable<null> {
+  if (
+    db
+      .select()
+      .from(reimbursementEntries)
+      .where(eq(reimbursementEntries.recordId, id))
+      .get()
+  )
+    return {
+      ok: false,
+      reason:
+        "Reimbursement transfer entries are read-only. Correct the reimbursement payment instead.",
+    };
   const existing = getRecord(db, id);
   if (!existing) return { ok: false, reason: "That record no longer exists." };
 

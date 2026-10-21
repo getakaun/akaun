@@ -120,8 +120,7 @@ export function loadDashboardPage(locals: App.Locals, url: URL) {
     cash,
     position,
     owed,
-    pipeline:
-      pipeline.quotations || pipeline.invoices ? pipeline : null,
+    pipeline: pipeline.quotations || pipeline.invoices ? pipeline : null,
     attention: loadAttention(locals, today, position, pipeline),
     recent: canRecords ? loadRecent(db) : null,
   };
@@ -211,7 +210,11 @@ function owedSide(
   direction: OutstandingDirection,
   today: string,
 ): OwedSide {
-  const ageing = outstandingAgeing(db, { direction, asOf: today, dateTo: today });
+  const ageing = outstandingAgeing(db, {
+    direction,
+    asOf: today,
+    dateTo: today,
+  });
   const notYetDue = AGEING_BANDS[0].label;
   const bands = AGEING_BANDS.map((band) => {
     const found = ageing.bands.find((b) => b.label === band.label);
@@ -224,6 +227,8 @@ function owedSide(
   const overdue = bands.filter((b) => b.label !== notYetDue);
   return {
     totalMinor: ageing.totalOutstandingMinor,
+    obligationsMinor: ageing.totalObligationsMinor,
+    creditsMinor: ageing.totalCreditsMinor,
     overdueMinor: overdue.reduce((sum, b) => sum + b.totalMinor, 0),
     overdueCount: overdue.reduce((sum, b) => sum + b.count, 0),
     bands,
@@ -278,7 +283,11 @@ function loadAttention(
     if (waiting > 0) {
       items.push({
         key: "imports",
-        label: plural(waiting, "imported document to review", "imported documents to review"),
+        label: plural(
+          waiting,
+          "imported document to review",
+          "imported documents to review",
+        ),
         detail: "Auto Import read these documents. Review and confirm them.",
         target: { screen: "import" },
         tone: "amber",
@@ -289,7 +298,11 @@ function loadAttention(
   if (pipeline.invoices && pipeline.invoices.overdueCount > 0) {
     items.push({
       key: "overdue-invoices",
-      label: plural(pipeline.invoices.overdueCount, "overdue invoice", "overdue invoices"),
+      label: plural(
+        pipeline.invoices.overdueCount,
+        "overdue invoice",
+        "overdue invoices",
+      ),
       detail: "The due date is past and payment is not complete",
       target: { screen: "invoices" },
       tone: "red",
@@ -319,7 +332,11 @@ function loadAttention(
     if (lines > 0) {
       items.push({
         key: "unmatched",
-        label: plural(lines, "unreconciled bank line", "unreconciled bank lines"),
+        label: plural(
+          lines,
+          "unreconciled bank line",
+          "unreconciled bank lines",
+        ),
         detail:
           byAccount.length === 1
             ? "On the bank statements of one account"
@@ -333,11 +350,20 @@ function loadAttention(
     }
   }
 
-  if (can(locals, "accounts.read") && position && position.needsReviewCount > 0) {
+  if (
+    can(locals, "accounts.read") &&
+    position &&
+    position.needsReviewCount > 0
+  ) {
     items.push({
       key: "needs-review",
-      label: plural(position.needsReviewCount, "account without a sub-type", "accounts without a sub-type"),
-      detail: "Set a sub-type (Bank, Cash, Receivable, Loan) so that the reports classify these accounts",
+      label: plural(
+        position.needsReviewCount,
+        "account without a sub-type",
+        "accounts without a sub-type",
+      ),
+      detail:
+        "Set a sub-type (Bank, Cash, Receivable, Loan) so that the reports classify these accounts",
       target: { screen: "accounts" },
       tone: "neutral",
     });

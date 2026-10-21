@@ -7,5 +7,8 @@ export const GET: RequestHandler = ({ locals, url }) =>
     reimbursementCandidates(
       { db, locals },
       Number(url.searchParams.get("contactId")),
+      url.searchParams.has("accountId")
+        ? Number(url.searchParams.get("accountId"))
+        : undefined,
     ),
   );

@@ -98,6 +98,7 @@ function daysBetween(date: string, today: string): number {
 
 export type OutstandingFilters = {
   direction: OutstandingDirection;
+  accountId?: number;
   contactId?: number;
   /** Drop items nothing is left on. Defaults to true — a payment screen only
    *  offers what can still be paid. */
@@ -144,8 +145,19 @@ function collectOutstanding(
   const asOf = filters.asOf ?? new Date().toISOString().slice(0, 10);
   const openOnly = filters.openOnly ?? true;
 
-  const defaultId = savedAccountId(db, PURPOSE_FOR[filters.direction]);
-  const conditions: SQL[] = [eq(ledgerMovements.accountId, defaultId ?? -1)];
+  const owedIds = [
+    savedAccountId(db, PURPOSE_FOR[filters.direction]),
+    ...(filters.direction === "we-owe"
+      ? [savedAccountId(db, DefaultAccountPurpose.ReimbursementsPayable)]
+      : []),
+  ].filter((id): id is number => id !== null);
+  const selectedIds =
+    filters.accountId === undefined
+      ? owedIds
+      : owedIds.filter((id) => id === filters.accountId);
+  const conditions: SQL[] = [
+    inArray(ledgerMovements.accountId, selectedIds.length ? selectedIds : [-1]),
+  ];
   if (filters.contactId !== undefined) {
     conditions.push(eq(ledgerRecords.contactId, filters.contactId));
   }
@@ -193,8 +205,12 @@ function collectOutstanding(
       kind: ledgerRecords.kind,
       date: ledgerRecords.date,
       description: ledgerRecords.description,
+      expensePaymentSource: ledgerRecords.expensePaymentSource,
       contactId: ledgerRecords.contactId,
       contactName: contacts.legalName,
+      supplierContactName: sql<
+        string | null
+      >`(SELECT supplier.legal_name FROM contacts supplier WHERE supplier.id = ${ledgerRecords.supplierContactId})`,
       dueDate: invoices.dueDate,
       invoiceId: invoices.id,
     })
@@ -237,6 +253,9 @@ function collectOutstanding(
     const daysOverdue =
       position === "credit" ? 0 : Math.max(0, daysBetween(dueDate, asOf));
     items.push({
+      ...(row.expensePaymentSource
+        ? { expensePaymentSource: row.expensePaymentSource }
+        : {}),
       movementId: row.movementId,
       signedAmountMinor: row.amountMinor,
       position,
@@ -249,6 +268,7 @@ function collectOutstanding(
       description: row.description,
       contactId: row.contactId,
       contactName: row.contactName ?? null,
+      supplierContactName: row.supplierContactName ?? null,
       amountMinor: Math.abs(row.amountMinor),
       settledMinor: side.settledMinor,
       outstandingMinor,
@@ -439,6 +459,7 @@ export type SettlementLink = {
    *  with no contact of its own. */
   otherContactId: number | null;
   otherContactName: string | null;
+  otherSupplierContactName?: string | null;
 };
 
 export function settlementsForRecord(
@@ -486,6 +507,9 @@ export function settlementsForRecord(
       kind: ledgerRecords.kind,
       contactId: ledgerRecords.contactId,
       contactName: contacts.legalName,
+      supplierContactName: sql<
+        string | null
+      >`(SELECT supplier.legal_name FROM contacts supplier WHERE supplier.id = ${ledgerRecords.supplierContactId})`,
     })
     .from(ledgerMovements)
     .innerJoin(ledgerRecords, eq(ledgerRecords.id, ledgerMovements.recordId))
@@ -512,6 +536,9 @@ export function settlementsForRecord(
       otherKind: other.kind,
       otherContactId: other.contactId,
       otherContactName: other.contactName ?? null,
+      ...(other.supplierContactName
+        ? { otherSupplierContactName: other.supplierContactName }
+        : {}),
     });
   }
   return links;
@@ -586,6 +613,7 @@ export function owedWithNoContact(db: LedgerDb): number[] {
   const owedAccountIds = [
     savedAccountId(db, DefaultAccountPurpose.Receivable),
     savedAccountId(db, DefaultAccountPurpose.Payable),
+    savedAccountId(db, DefaultAccountPurpose.ReimbursementsPayable),
   ].filter((id): id is number => id !== null);
   if (owedAccountIds.length === 0) return [];
   return db

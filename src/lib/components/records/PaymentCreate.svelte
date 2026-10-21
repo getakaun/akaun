@@ -71,6 +71,7 @@
 			accounts={data.accounts}
 			contacts={data.contacts}
 			defaultAccountId={data.defaultAccountId}
+			settlementAccountId={data.settlementAccountId}
 			contactId={data.contactId}
 			preselectMovementId={data.preselectMovementId}
 		/>

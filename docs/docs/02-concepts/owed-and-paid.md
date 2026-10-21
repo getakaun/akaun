@@ -56,32 +56,34 @@ A payment cannot put more against a record than the amount that is outstanding o
 One payment can settle many records. For example, a supplier sends three bills in one month. You
 pay all three with one bank transfer.
 
-Every payment has one actual payee; every receipt has one actual payer. **Pay supplier**
-lists that supplier's bills. Invoice **Record payment** opens a receipt for that customer.
-The page follows the action you opened; there is no operation dropdown.
+For company-paid expenses, **Auto import** or **+ Add record** records the expense
+and bank payment together, with the supplier as its contact. There is no additional payment step.
 
-For expenses someone personally paid across suppliers, open **Record a payment** (or
-**Reimburse expenses** on Records). The general page opens as a reimbursement. Select the recipient once, choose the expense amounts,
-and confirm that this person paid them. The original suppliers stay on the expenses.
-A linked reimbursement transfers what the business owes from those suppliers to the recipient
-through balanced clearing entries. It records the expense only once.
+For expenses someone personally paid, select **Accounts payable** as the source account
+when recording the expense or reviewing an import. Keep the supplier as the contact.
+Accounts payable expenses are treated as personally paid; no additional payment-source field is needed.
 
-Review the claim total, recipient credit, cash and remaining amount owed before saving.
-You can reimburse part now, use only available credit, or leave part payable to the recipient.
-Generated transfer entries are read-only and linked under the reimbursement.
+Use **Reimburse expenses** on Records, select the person receiving the reimbursement,
+and choose outstanding expenses across suppliers. **Default reimbursement payee** in Settings
+prefills that recipient. Available credit belongs to the selected recipient.
 
-Use **Correct recipient** on a completed payment if the person was selected incorrectly.
-Enter a reason and review the change. Cash, bank matches and source suppliers stay recorded.
-If its credit was later used or refunded, the preview identifies allocations to reverse first.
+The bank payment is allocated directly to the selected expenses. No summary, clearing or
+supplier-transfer records are created. You can pay part now, apply selected available credit,
+or settle using credit alone. Credit-only settlement creates no new bank payment.
 
-On the page of a record, the rail shows **Payments applied**: each payment that settles the
-record. On the page of a payment, the rail shows **Allocated to**: each record that the payment
-settles.
+The payment's original amount stays visible with the amount applied and current available credit.
+On each expense, **Payments applied** links to its payments. On a payment, **Allocated to**
+links to the covered expenses, including their suppliers.
+
+Previously recorded reimbursements retain their original accounts and helper entries.
+Those entries remain read-only under **Accounting details**, with their existing correction
+and full-reversal safeguards. They are not converted automatically. Credits stay on their
+original payable account; they are not silently transferred between supplier and reimbursement balances.
 
 ## Reverse an allocation
 
 If a payment is on the wrong record, reverse the allocation. On the record page or the payment
-page, click the undo icon (**Reverse allocation**) beside the allocation. Review the selected
+page, click **Correct allocation** beside the allocation. Review the selected
 allocations and the amount that will remain unallocated, enter a reason, and confirm. You can
 also choose replacement allocations in the same correction. The record is then
 **Outstanding** or **Partially paid** again. To do this, you must have the permission to delete
@@ -118,17 +120,20 @@ The form opens in the appropriate direction automatically.
 Refunds reduce the original credit balance. They do not create income or reverse the expense.
 Partial refunds leave the remaining credit available.
 
-## A company-paid expense reimbursed by mistake
+## Correcting a reimbursement allocation
 
-1. For a linked reimbursement, choose **Reverse reimbursement**, enter its reversal date and
-   a reason, then review and confirm. This creates contra entries, reopens the supplier expenses
-   and releases funding as recipient credit. The real payment and bank matches stay recorded.
-   For an older direct allocation, reverse that allocation instead.
-2. Record the company's original supplier payment against the mistaken bill and reconcile it.
-3. Rebuild any remaining legitimate reimbursement using the released recipient credit.
-4. Carry the excess credit forward to a later claim, or record its repayment as an overpayment refund.
+Choose **Correct allocation** beside an expense on the payment. Review the affected amounts,
+remove or replace only the mistaken allocations, enter a reason, and confirm. The real bank payment
+and its bank matches stay recorded. Removed allocations become available credit for that person;
+the expense stays recorded under its original supplier and becomes outstanding again.
 
-Legacy contactless batches remain readable and reversible. New payments always name one person.
+If the original expense itself was entered incorrectly, correct that separately after removing
+its allocations. A new reimbursement does not need a whole-group reversal or replacement
+helper entries merely to correct payment coverage.
+
+Older reimbursements that contain linked transfer entries still use **Reverse entire reimbursement…**.
+The preview shows every affected expense and credit before and after; their reversal history
+remains visible. No replacement reimbursement is created automatically.
 
 ## Paid and reconciled are different
 

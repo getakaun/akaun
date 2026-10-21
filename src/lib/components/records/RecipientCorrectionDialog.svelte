@@ -32,7 +32,7 @@
 		void fetch(`/api/payments/${recordId}/recipient`)
 			.then(async (res) => {
 				const body = await res.json();
-				if (!res.ok) throw new Error(body.error);
+				if (!res.ok) throw new Error(body.error ?? 'The payee could not be loaded.');
 				if (alive) {
 					preview = body;
 					recipient = body.record.contactId ? String(body.record.contactId) : '';
@@ -60,14 +60,14 @@
 			});
 			const body = await res.json();
 			if (!res.ok) {
-				error = body.error;
+				error = body.error ?? 'The payee correction could not be saved.';
 				stale = body.code === 'CONFLICT';
 				return;
 			}
 			oncorrected();
 			onclose();
 		} catch {
-			error = 'The result could not be confirmed. Reload before trying again.';
+			error = 'The payee correction result could not be confirmed. Reload before trying again.';
 			stale = true;
 		} finally {
 			sending = false;
@@ -84,16 +84,17 @@
 	<Dialog.Portal>
 		<Dialog.Overlay class="fixed inset-0 z-[60] bg-black/35" />
 		<Dialog.Content
-			class="bg-popover text-popover-foreground fixed top-1/2 left-1/2 z-[60] max-h-[90vh] w-[min(92vw,560px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border p-5 shadow-lg"
+			class="bg-popover text-popover-foreground fixed top-1/2 left-1/2 z-[60] max-h-[90vh] w-[min(92vw,560px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto overscroll-contain rounded-lg p-5 outline-none"
+			style="box-shadow: 0 0 32px 6px var(--red-soft), 0 20px 50px rgb(0 0 0 / 0.2);"
 		>
-			<Dialog.Title class="text-base font-semibold">Correct recipient</Dialog.Title>
+			<Dialog.Title class="text-base font-semibold">Correct payee</Dialog.Title>
 			<Dialog.Description class="text-muted-foreground mt-2 text-sm"
 				>Correct who received this payment. The bank transaction, payment amount and original
 				expense suppliers stay recorded.</Dialog.Description
 			>
 			{#if preview}
 				<p class="mt-4 text-sm">
-					Current recipient: {preview.record.contactName ?? 'Unassigned'} · {formatMinor(
+					Current payee: {preview.record.contactName ?? 'Unassigned'} · {formatMinor(
 						preview.record.amountMinor
 					)}
 				</p>
@@ -103,11 +104,11 @@
 							Settlement #{d.settlementId}, record #{d.recordId}: {d.reason}
 						</p>{/each}
 				{:else}
-					<label class="mt-4 block text-sm" for="correct-recipient">Recipient</label>
+					<label class="mt-4 block text-sm" for="correct-recipient">Payee</label>
 					<Select.Root type="single" bind:value={recipient} disabled={reviewing || sending}>
 						<Select.Trigger id="correct-recipient" class="mt-2 w-full"
 							>{contacts.find((c) => String(c.id) === recipient)?.legalName ??
-								'Select recipient'}</Select.Trigger
+								'Select payee'}</Select.Trigger
 						>
 						<Select.Content
 							>{#each contacts as contact (contact.id)}<Select.Item
@@ -128,11 +129,11 @@
 					{#if reviewing}<p class="mt-4 text-sm">
 							Change {preview.record.contactName ?? 'Unassigned'} to {contacts.find(
 								(c) => String(c.id) === recipient
-							)?.legalName}. Related reimbursement payables will follow this recipient; cash and
-							bank matches stay the same.
+							)?.legalName}. Available payment credit will belong to this payee; expense suppliers,
+							cash and bank matches stay the same.
 						</p>{/if}
 				{/if}
-			{:else if !error}<p class="mt-4" role="status">Loading recipient…</p>{/if}
+			{:else if !error}<p class="mt-4" role="status">Loading payee…</p>{/if}
 			{#if error}<p class="mt-4 text-sm text-red-600" role="alert">{error}</p>{/if}
 			<div class="mt-5 flex justify-end gap-2">
 				{#if reviewing}<Button

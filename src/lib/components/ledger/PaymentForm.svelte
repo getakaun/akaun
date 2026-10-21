@@ -37,6 +37,7 @@
 		accounts,
 		contacts = [],
 		defaultAccountId = null,
+		settlementAccountId = null,
 		contactId: initialContactId = null,
 		preselectMovementId = null,
 		// Write-only out-parameters: the frame around this form reads them to
@@ -53,6 +54,7 @@
 		accounts: AccountView[];
 		contacts?: { id: number; legalName: string }[];
 		defaultAccountId?: number | null;
+		settlementAccountId?: number | null;
 		/** Opens with this person already chosen, from a row that names them. */
 		contactId?: number | null;
 		/**
@@ -76,7 +78,6 @@
 	// Until the user types an amount of their own, the payment is worth exactly
 	// what it covers — which is the ordinary case and saves a keystroke.
 	let amountEdited = $state(false);
-	let personallyPaid = $state(false);
 	/**
 	 * movement id → how much of this payment goes against it, exactly as typed.
 	 * Held as the typed text rather than as cents so that reformatting never
@@ -85,6 +86,9 @@
 	 */
 	let picked = $state<Record<number, string>>({});
 	let items = $state<OutstandingItem[]>([]);
+	// Only shown for compatibility when an older separate payable account has items.
+	let reimbursementAccounts = $state<{ id: number; name: string }[]>([]);
+	let reimbursementAccountId = $state<number | null>(null);
 	let loading = $state(false);
 	let availableCredits = $state<OutstandingItem[]>([]);
 	let creditPicked = $state<Record<number, string>>({});
@@ -106,8 +110,7 @@
 			amountInput,
 			picked,
 			creditPicked,
-			direction,
-			personallyPaid
+			direction
 		]);
 	}
 	function seed() {
@@ -116,7 +119,6 @@
 		reference = '';
 		remark = '';
 		contactId = initialContactId;
-		personallyPaid = false;
 		moneyAccountId = null;
 		amountInput = '0.00';
 		amountEdited = false;
@@ -207,8 +209,8 @@
 			}
 			loading = true;
 			const endpoint = isReimbursement
-				? `/api/reimbursements/candidates?contactId=${person}`
-				: `/api/settlements?direction=${dir}&contactId=${person}`;
+				? `/api/reimbursements/candidates?contactId=${person}${reimbursementAccountId !== null ? `&accountId=${reimbursementAccountId}` : ''}`
+				: `/api/settlements?direction=${dir}&contactId=${person}${settlementAccountId !== null ? `&settlementAccountId=${settlementAccountId}` : ''}`;
 			fetch(endpoint)
 				.then((res) => {
 					if (!res.ok) throw new Error('load');
@@ -216,6 +218,7 @@
 				})
 				.then((body) => {
 					if (token !== loadToken) return;
+					if (isReimbursement) reimbursementAccounts = body.accounts ?? [];
 					acceptItems(body);
 					loading = false;
 					applyPreselect(person);
@@ -231,13 +234,18 @@
 		}
 	});
 
+	$effect(() => {
+		void contactId;
+		reimbursementAccountId = null;
+	});
+
 	// Changing the recipient invalidates the previous selections.
 	$effect(() => {
 		void contactId;
 		void direction;
+		void reimbursementAccountId;
 		picked = {};
 		creditPicked = {};
-		personallyPaid = false;
 	});
 
 	// A box left empty is the same as not having ticked the item, so it is
@@ -295,8 +303,7 @@
 		if (loading || loadError) return loadError || 'Wait for open items to load.';
 		if (moneyAccountId === null && amountMinor !== 0) return 'Choose an account.';
 		if (isReimbursement && !description.trim()) return 'Enter a reimbursement description.';
-		if (isReimbursement && (!personallyPaid || !allocations.length))
-			return 'Select expenses and confirm that this recipient personally paid them.';
+		if (isReimbursement && !allocations.length) return 'Select the expenses to reimburse.';
 		if (isRefund && (allocations.length === 0 || amountMinor !== allocatedMinor))
 			return 'Apply the full refund to an existing overpayment.';
 		if (
@@ -316,8 +323,6 @@
 			)
 				return 'Review the credit amounts before saving.';
 		}
-		if (isReimbursement && unallocatedMinor > 0)
-			return 'Cash and credit cannot exceed the claim total.';
 		if (
 			amountMinor < 0 ||
 			(!isReimbursement && amountMinor === 0 && creditPlan.creditAppliedMinor === 0)
@@ -343,7 +348,7 @@
 								description,
 								reference,
 								remark,
-								personallyPaid,
+								personallyPaid: true,
 								items: allocations,
 								cashMinor: amountMinor,
 								paidFromAccountId: moneyAccountId ?? defaultAccountId ?? accounts[0]?.id ?? null,
@@ -354,6 +359,7 @@
 							}
 						: {
 								kind: 'payment',
+								...(settlementAccountId !== null ? { settlementAccountId } : {}),
 								date,
 								description,
 								amount: amountMinor / 100,
@@ -500,8 +506,28 @@
 		<span class="detail-card-title">Allocation</span>
 	</div>
 
+	{#if isReimbursement && reimbursementAccounts.length > 1}
+		<div class="field">
+			<label class="field-label" for="reimbursement-account">Expenses account</label>
+			<select
+				id="reimbursement-account"
+				class="form-input"
+				value={reimbursementAccountId ?? reimbursementAccounts[0]?.id}
+				onchange={(event) => (reimbursementAccountId = Number(event.currentTarget.value))}
+			>
+				{#each reimbursementAccounts as account (account.id)}
+					<option value={account.id}>{account.name}</option>
+				{/each}
+			</select>
+		</div>
+	{/if}
+
 	{#if contactId === null}
-		<p class="covers-note">Select a contact to see the open items.</p>
+		<p class="covers-note">
+			{isReimbursement
+				? 'Select the reimbursement recipient to see outstanding expenses and their available credit.'
+				: 'Select a contact to see the open items.'}
+		</p>
 	{:else if loading}
 		<p class="covers-note">Looking…</p>
 	{:else if items.length === 0}
@@ -518,8 +544,9 @@
 						/>
 						<span class="covers-main">
 							<span class="covers-name"
-								>{isReimbursement ? `${item.contactName ?? 'Supplier'} · ` : ''}{item.description ||
-									'Record'}</span
+								>{isReimbursement
+									? `${item.supplierContactName ?? item.contactName ?? 'Supplier'} · `
+									: ''}{item.description || 'Record'}</span
 							>
 							<span class="covers-sub">
 								{formatDate(item.date)}{item.recordNumber ? ` · ${item.recordNumber}` : ''} · {formatMinor(
@@ -562,10 +589,6 @@
 				amountMinor
 			)} · Still owed: {formatMinor(Math.max(0, -unallocatedMinor))}
 		</p>
-		<label class="covers-tick" for="personally-paid"
-			><Checkbox id="personally-paid" bind:checked={personallyPaid} />I confirm this recipient
-			personally paid the selected expenses.</label
-		>
 	</section>
 {/if}
 

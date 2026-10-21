@@ -1,10 +1,11 @@
+import { createSettlements } from "../services/settlements.js";
 import { repairPaymentRecipients } from "./repair-payment-recipients.js";
 import {
   prepareReimbursementReversal,
   reverseReimbursement,
 } from "./reimbursement-reversal.js";
 import { listRecords } from "../queries/ledger.js";
-import { createReimbursement } from "./reimbursements.js";
+import { createLegacyReimbursement as createReimbursement } from "./__fixtures__/legacy-reimbursement.js";
 import {
   prepareRecipientCorrection,
   correctPaymentRecipient,
@@ -1530,6 +1531,18 @@ describe("single-recipient reimbursements", () => {
     expect(result.value.remainingMinor).toBe(1800);
     expect(result.value.payable.outstandingMinor).toBe(1800);
     const entries = db.select().from(schema.reimbursementEntries).all();
+    expect(
+      getRecord(
+        db,
+        entries.find((entry) => entry.role === "recipient")!.recordId,
+      )!.description,
+    ).toBe("Reimbursement summary: Employee reimbursement");
+    expect(
+      getRecord(
+        db,
+        entries.find((entry) => entry.role === "supplier")!.recordId,
+      )!.description,
+    ).toBe("Included expenses: Employee reimbursement");
     const sides = db
       .select()
       .from(ledgerMovements)
@@ -1654,6 +1667,132 @@ describe("single-recipient reimbursements", () => {
     ).toBe(false);
   });
 
+  for (const scenario of [
+    { label: "full cash", cash: 2800, credit: 0 },
+    { label: "partial cash", cash: 1000, credit: 0 },
+    { label: "mixed funding", cash: 1800, credit: 1000 },
+    { label: "credit only", cash: 0, credit: 2800 },
+  ]) {
+    it(`previews all expenses and actual credit released for ${scenario.label}`, () => {
+      const bill = expense();
+      const recipient = person();
+      const advance = createRecord(ctx(), {
+        ...base,
+        kind: "payment",
+        direction: "we-pay",
+        amount: 50,
+        contactId: recipient,
+        paidFromAccountId: bank,
+      });
+      if (!advance.ok) throw new Error(advance.reason);
+      const advanceSide = advance.value.record.movements.find(
+        (m) => m.accountId === payable,
+      )!;
+      const result = createReimbursement(ctx(), {
+        ...claim(recipient, bill, scenario.cash),
+        credits: scenario.credit
+          ? [
+              {
+                paymentMovementId: advanceSide.id,
+                amountMinor: scenario.credit,
+              },
+            ]
+          : [],
+      });
+      if (!result.ok) throw new Error(result.reason);
+      const preview = prepareReimbursementReversal(ctx(), result.value.groupId);
+      if (!preview.ok) throw new Error(preview.reason);
+      expect(preview.value.summary.amountMinor).toBe(2800);
+      expect(preview.value.summary.items).toEqual([
+        { recordId: bill.id, description: bill.description, amountMinor: 2800 },
+      ]);
+      expect(preview.value.summary.unfundedMinor).toBe(
+        2800 - scenario.cash - scenario.credit,
+      );
+      expect(
+        preview.value.summary.funding.reduce(
+          (sum, p) => sum + p.releasedMinor,
+          0,
+        ),
+      ).toBe(scenario.cash + scenario.credit);
+      if (scenario.credit)
+        expect(
+          preview.value.summary.funding.find(
+            (p) => p.recordId === advance.value.record.id,
+          ),
+        ).toMatchObject({
+          releasedMinor: scenario.credit,
+          availableCreditBeforeMinor: 5000 - scenario.credit,
+          availableCreditAfterMinor: 5000,
+        });
+      const reversed = reverseReimbursement(ctx(), {
+        groupId: result.value.groupId,
+        date: base.date,
+        reason: "Correct the whole reimbursement",
+        expectedVersion: preview.value.version,
+      });
+      expect(reversed.ok).toBe(true);
+      for (const payment of preview.value.summary.funding) {
+        expect(getRecord(db, payment.recordId)!.outstandingMinor).toBe(
+          payment.availableCreditAfterMinor,
+        );
+      }
+      expect(getRecord(db, bill.id)!.outstandingMinor).toBe(2800);
+    });
+  }
+
+  it("rejects a reversal preview after its funding credit is used elsewhere", () => {
+    const recipient = person();
+    const advance = createRecord(ctx(), {
+      ...base,
+      kind: "payment",
+      direction: "we-pay",
+      amount: 50,
+      contactId: recipient,
+      paidFromAccountId: bank,
+    });
+    if (!advance.ok) throw new Error(advance.reason);
+    const advanceSide = advance.value.record.movements.find(
+      (m) => m.accountId === payable,
+    )!;
+    const result = createReimbursement(ctx(), {
+      ...claim(recipient, expense(), 1800),
+      credits: [{ paymentMovementId: advanceSide.id, amountMinor: 1000 }],
+    });
+    if (!result.ok) throw new Error(result.reason);
+    const preview = prepareReimbursementReversal(ctx(), result.value.groupId);
+    if (!preview.ok) throw new Error(preview.reason);
+    const otherBill = createRecord(ctx(), {
+      ...base,
+      kind: "expense",
+      amount: 5,
+      contactId: recipient,
+      categoryAccountId: fuel,
+      paidFromAccountId: null,
+    });
+    if (!otherBill.ok) throw new Error(otherBill.reason);
+    const allocated = createSettlements(db, userId, advanceSide.id, [
+      {
+        owedMovementId: otherBill.value.record.movements.find(
+          (m) => m.accountId === payable,
+        )!.id,
+        amountMinor: 500,
+      },
+    ]);
+    expect(allocated.ok).toBe(true);
+    const reversed = reverseReimbursement(ctx(), {
+      groupId: result.value.groupId,
+      date: base.date,
+      reason: "Correct the whole reimbursement",
+      expectedVersion: preview.value.version,
+    });
+    expect(reversed.ok).toBe(false);
+    if (!reversed.ok) expect(reversed.code).toBe("CONFLICT");
+    expect(
+      db.select().from(schema.reimbursements).get()!.reversedAt,
+    ).toBeNull();
+  });
+
   it("reverses the complete reimbursement with contra entries while retaining cash", () => {
     const bill = expense();
     const recipient = person();
@@ -1669,6 +1808,12 @@ describe("single-recipient reimbursements", () => {
       expectedVersion: preview.value.version,
     });
     expect(reversed.ok).toBe(true);
+    if (reversed.ok) {
+      for (const id of reversed.value.reversalIds)
+        expect(getRecord(db, id)!.description).toBe(
+          "Full reimbursement reversal: Employee reimbursement",
+        );
+    }
     expect(getRecord(db, bill.id)!.outstandingMinor).toBe(2800);
     expect(getRecord(db, payment.id)!.movements).toEqual(payment.movements);
     expect(getRecord(db, payment.id)!.outstandingMinor).toBe(2800);

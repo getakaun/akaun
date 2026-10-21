@@ -1,5 +1,6 @@
+import { isMoneyPotAccount } from "../ledger/account-type.js";
 import { eq } from "drizzle-orm";
-import { reimbursementEntries } from "../db/schema.js";
+import { contacts, reimbursementEntries } from "../db/schema.js";
 import { DefaultAccountPurpose, LedgerRecordKind } from "$lib/enums.js";
 import { diffRecords, recordAudit } from "../audit.js";
 import { buildMovements } from "../ledger/entry-builder.js";
@@ -32,7 +33,7 @@ import {
 import { getInvoice, invoiceIdsForLedgerRecords } from "../queries/invoices.js";
 import { invoiceEvents } from "../finance/events.js";
 import { touchAccounts } from "./accounts.js";
-import { requireAccountDefault } from "./account-defaults.js";
+import { accountDefaultId, requireAccountDefault } from "./account-defaults.js";
 
 /**
  * Creating, changing and removing a record.
@@ -81,6 +82,36 @@ function contextFor(
     (sides.kind === "payment" &&
       ["we-pay", "refund-received"].includes(sides.direction));
   const needsOpening = sides.kind === "opening-balance";
+  const personal =
+    sides.kind === "expense" && sides.expensePaymentSource === "personal";
+  const reimbursements = personal
+    ? requireAccountDefault(db, DefaultAccountPurpose.ReimbursementsPayable)
+    : ({
+        ok: true,
+        value:
+          accountDefaultId(db, DefaultAccountPurpose.ReimbursementsPayable) ??
+          0,
+      } as const);
+  if (!reimbursements.ok) return reimbursements;
+  if (sides.kind === "payment" && sides.settlementAccountId !== undefined) {
+    const allowed = ["we-pay", "refund-received"].includes(sides.direction)
+      ? [
+          accountDefaultId(db, DefaultAccountPurpose.Payable),
+          accountDefaultId(db, DefaultAccountPurpose.ReimbursementsPayable),
+        ]
+      : [accountDefaultId(db, DefaultAccountPurpose.Receivable)];
+    if (!allowed.includes(sides.settlementAccountId))
+      return {
+        ok: false,
+        reason: "Choose the saved payable account for this payment direction.",
+      };
+    const selected = getAccount(db, sides.settlementAccountId);
+    if (!selected || selected.archivedAt !== null)
+      return {
+        ok: false,
+        reason: "The selected settlement account is no longer active.",
+      };
+  }
 
   const resolve = (
     needed: boolean,
@@ -104,12 +135,17 @@ function contextFor(
     value: {
       accounts: accountRefs(db, [
         ...accountIdsIn(sides),
+        ...(reimbursements.value ? [reimbursements.value] : []),
+        ...(sides.kind === "payment" && sides.settlementAccountId
+          ? [sides.settlementAccountId]
+          : []),
         ...(needsReceivable ? [receivable.value] : []),
         ...(needsPayable ? [payable.value] : []),
         ...(needsOpening ? [openingBalances.value] : []),
       ]),
       receivableAccountId: receivable.value,
       payableAccountId: payable.value,
+      reimbursementPayableAccountId: reimbursements.value || undefined,
       openingBalancesAccountId: openingBalances.value,
     },
   };
@@ -165,6 +201,75 @@ export function createRecord(
    */
   auditUserId?: number,
 ): Refusable<RecordView> {
+  const expenseLike =
+    data.kind === "expense" ||
+    (data.kind === "journal" && data.storedKind === LedgerRecordKind.Expense);
+  if (
+    data.paidByContactId !== undefined &&
+    data.expensePaymentSource !== "personal"
+  )
+    return {
+      ok: false,
+      reason: "Paid personally by applies only to personally paid expenses.",
+    };
+  if (data.expensePaymentSource && !expenseLike)
+    return {
+      ok: false,
+      reason: "Payment source is only available for expenses.",
+    };
+  if (expenseLike && data.expensePaymentSource === "personal") {
+    const payer = data.paidByContactId ?? data.contactId;
+    if (
+      !payer ||
+      !db.select().from(contacts).where(eq(contacts.id, payer)).get()
+    )
+      return {
+        ok: false,
+        reason: "Select who paid personally before saving this expense.",
+      };
+    data = { ...data, contactId: payer };
+    if (data.kind === "expense" && data.paidFromAccountId !== null)
+      return {
+        ok: false,
+        reason:
+          "A personally paid expense cannot also use a company payment account.",
+      };
+  }
+  if (
+    expenseLike &&
+    (data.expensePaymentSource === "company" ||
+      data.expensePaymentSource === "unpaid") &&
+    data.supplierContactId
+  )
+    data = { ...data, contactId: data.supplierContactId };
+  if (
+    data.supplierContactId &&
+    !db
+      .select()
+      .from(contacts)
+      .where(eq(contacts.id, data.supplierContactId))
+      .get()
+  )
+    return { ok: false, reason: "Select an existing supplier." };
+  if (
+    data.kind === "expense" &&
+    data.expensePaymentSource === "company" &&
+    (!data.paidFromAccountId ||
+      !isMoneyPotAccountFor(db, data.paidFromAccountId))
+  )
+    return {
+      ok: false,
+      reason: "Select the company account that paid this expense.",
+    };
+  if (
+    data.kind === "expense" &&
+    data.expensePaymentSource === "unpaid" &&
+    data.paidFromAccountId !== null
+  )
+    return {
+      ok: false,
+      reason: "An unpaid supplier bill cannot use a company payment account.",
+    };
   // A foreign currency is offered on an expense or income only — see
   // `RecordForm.svelte`'s `looksLikeExpenseOrIncome` — and on an invoice, whose
   // issue posting carries the invoice's own currency and rate so the amount
@@ -222,6 +327,8 @@ export function createRecord(
       currency: data.currency,
       exchangeRate: data.exchangeRate,
       contactId: data.contactId ?? null,
+      supplierContactId: data.supplierContactId ?? null,
+      expensePaymentSource: data.expensePaymentSource ?? null,
       reference: data.reference,
       remark: data.remark,
       extractedText: data.extractedText,
@@ -277,6 +384,26 @@ export function patchRecord(
     };
   const existing = getRecord(db, id);
   if (!existing) return { ok: false, reason: "That record no longer exists." };
+  const effectiveSource =
+    patch.expensePaymentSource !== undefined
+      ? patch.expensePaymentSource
+      : existing.expensePaymentSource;
+  if (existing.expensePaymentSource && patch.expensePaymentSource === null)
+    return {
+      ok: false,
+      reason:
+        "Choose how this expense was paid instead of clearing its payment source.",
+    };
+  if (patch.paidByContactId !== undefined && effectiveSource !== "personal")
+    return {
+      ok: false,
+      reason: "Paid personally by applies only to personally paid expenses.",
+    };
+  if (
+    patch.supplierContactId &&
+    (effectiveSource === "company" || effectiveSource === "unpaid")
+  )
+    patch = { ...patch, contactId: patch.supplierContactId };
 
   // Who a payment names — one contact, or none because its settlements each
   // point at their own — is decided once, at creation. `contactId` is not a
@@ -297,6 +424,22 @@ export function patchRecord(
     };
   }
 
+  if (patch.paidByContactId !== undefined)
+    patch = { ...patch, contactId: patch.paidByContactId };
+  if (patch.expensePaymentSource && existing.kind !== LedgerRecordKind.Expense)
+    return {
+      ok: false,
+      reason: "Payment source is only available for expenses.",
+    };
+  if (
+    patch.supplierContactId &&
+    !db
+      .select()
+      .from(contacts)
+      .where(eq(contacts.id, patch.supplierContactId))
+      .get()
+  )
+    return { ok: false, reason: "Select an existing supplier." };
   const lock = lockStateFor(db, id);
   if (
     lock.settled &&
@@ -311,6 +454,16 @@ export function patchRecord(
   }
   for (const field of Object.keys(patch) as (keyof RecordPatch)[]) {
     if (patch[field] === undefined) continue;
+    if (
+      field === "expensePaymentSource" &&
+      patch.expensePaymentSource === existing.expensePaymentSource
+    )
+      continue;
+    if (
+      field === "paidByContactId" &&
+      patch.paidByContactId === existing.contactId
+    )
+      continue;
     if (!canEditField(field, lock)) {
       return {
         ok: false,
@@ -319,12 +472,27 @@ export function patchRecord(
     }
   }
 
+  if (effectiveSource === "personal") {
+    const payer =
+      patch.contactId !== undefined ? patch.contactId : existing.contactId;
+    if (
+      !payer ||
+      !db.select().from(contacts).where(eq(contacts.id, payer)).get()
+    )
+      return { ok: false, reason: "Select the person who paid personally." };
+  }
   const before = snapshotForAudit(db, id);
 
   // Any change to what the money did means rebuilding the sides from scratch —
   // there is no partial edit of a movement, because the balance rule is a
   // property of the whole set.
-  const rebuild = touchesMoney(patch);
+  const rebuild = touchesMoney({
+    ...patch,
+    expensePaymentSource:
+      patch.expensePaymentSource === existing.expensePaymentSource
+        ? undefined
+        : patch.expensePaymentSource,
+  });
   let movements: MovementDraft[] | undefined;
 
   if (rebuild) {
@@ -348,6 +516,24 @@ export function patchRecord(
           "Only expense and income records can be recorded in another currency.",
       };
     }
+    if (
+      sides.value.kind === "expense" &&
+      ["personal", "unpaid"].includes(effectiveSource ?? "") &&
+      sides.value.paidFromAccountId !== null
+    )
+      return {
+        ok: false,
+        reason: "Change the payment source before choosing a company account.",
+      };
+    if (
+      sides.value.kind === "expense" &&
+      effectiveSource === "company" &&
+      sides.value.paidFromAccountId === null
+    )
+      return {
+        ok: false,
+        reason: "Select the company account that paid this expense.",
+      };
     const context = contextFor(db, sides.value);
     if (!context.ok) return context;
     const built = buildMovements(
@@ -385,6 +571,8 @@ export function patchRecord(
       currency: patch.currency,
       exchangeRate: patch.exchangeRate,
       contactId: patch.contactId,
+      supplierContactId: patch.supplierContactId,
+      expensePaymentSource: patch.expensePaymentSource,
       reference: patch.reference,
       remark: patch.remark,
     },
@@ -410,6 +598,7 @@ export function patchRecord(
 
 const MONEY_FIELDS: (keyof RecordPatch)[] = [
   "amount",
+  "expensePaymentSource",
   "exchangeRate",
   "categoryAccountId",
   "paidFromAccountId",
@@ -442,6 +631,10 @@ function sidesFor(
     amount: patch.amount ?? existing.amount,
     currency: patch.currency ?? existing.currency,
     exchangeRate: patch.exchangeRate ?? existing.exchangeRate,
+    expensePaymentSource:
+      patch.expensePaymentSource !== undefined
+        ? patch.expensePaymentSource
+        : existing.expensePaymentSource,
   };
 
   // Both accounts named means the user re-answered the two questions the form
@@ -491,11 +684,21 @@ function sidesFor(
         canAdjust: true,
         receivableAccountId: receivable.value,
         payableAccountId: payable.value,
+        reimbursementPayableAccountId:
+          accountDefaultId(db, DefaultAccountPurpose.ReimbursementsPayable) ??
+          undefined,
         openingBalancesAccountId: opening.value,
       },
     );
     if (!derived.ok) return derived;
-    return { ok: true, value: { ...base, ...derived.value } };
+    return {
+      ok: true,
+      value: {
+        ...base,
+        ...derived.value,
+        expensePaymentSource: base.expensePaymentSource,
+      },
+    };
   }
 
   const into = existing.movements.find((m) => m.amountMinor > 0);
@@ -625,8 +828,11 @@ function sidesFor(
           ...base,
           kind: "expense",
           categoryAccountId: patch.categoryAccountId ?? into.accountId,
-          paidFromAccountId:
-            patch.paidFromAccountId !== undefined
+          paidFromAccountId: ["personal", "unpaid"].includes(
+            patch.expensePaymentSource ?? existing.expensePaymentSource ?? "",
+          )
+            ? null
+            : patch.paidFromAccountId !== undefined
               ? patch.paidFromAccountId
               : outOf.accountId,
         },
@@ -750,3 +956,8 @@ export function emitRecordUpdate(db: LedgerDb, id: number): void {
 }
 
 export { getRecordRow };
+
+function isMoneyPotAccountFor(db: LedgerDb, id: number) {
+  const account = getAccount(db, id);
+  return !!account && account.archivedAt === null && isMoneyPotAccount(account);
+}

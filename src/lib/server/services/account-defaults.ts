@@ -1,5 +1,7 @@
+import { createAccount } from "./accounts.js";
+import { AccountType } from "$lib/enums.js";
 import { isContraRevenueAccount } from "$lib/account-classification.js";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import {
   AccountSubType,
   DefaultAccountPurpose,
@@ -51,6 +53,7 @@ function matchesPurpose(
     case DefaultAccountPurpose.UncategorisedIncome:
       return !isContraRevenueAccount(account);
     case DefaultAccountPurpose.Payable:
+    case DefaultAccountPurpose.ReimbursementsPayable:
       return account.subType === AccountSubType.AccountsPayable;
     case DefaultAccountPurpose.Receivable:
       return account.subType === AccountSubType.Receivable;
@@ -119,7 +122,7 @@ function validateReplacement(
   ) {
     return {
       ok: false,
-      reason: "Save one account for each of the six purposes.",
+      reason: "Save one account for each required purpose.",
     };
   }
 
@@ -155,7 +158,9 @@ export function replaceAccountDefaults(
     ]),
   );
   db.transaction((tx) => {
-    tx.delete(accountDefaults).run();
+    tx.delete(accountDefaults)
+      .where(inArray(accountDefaults.purpose, [...ACCOUNT_DEFAULT_PURPOSES]))
+      .run();
     tx.insert(accountDefaults)
       .values(
         checked.value.map((value) => ({
@@ -192,6 +197,17 @@ export function requireAccountDefault(
   db: LedgerDb,
   purpose: DefaultAccountPurposeCode,
 ): Refusable<number> {
+  // Optional compatibility default for records created by the earlier redesign.
+  // It is no longer required or created for the ordinary Accounts payable flow.
+  if (purpose === DefaultAccountPurpose.ReimbursementsPayable) {
+    const id = accountDefaultId(db, purpose);
+    const account = accountViews(db).find((account) => account.id === id);
+    return account &&
+      matchesPurpose(purpose, account) &&
+      account.postingEligible
+      ? { ok: true, value: account.id }
+      : { ok: false, reason: invalidReason(purpose) };
+  }
   const value = getAccountDefaults(db).find((item) => item.purpose === purpose);
   if (!value?.valid || !value.account) {
     return { ok: false, reason: invalidReason(purpose) };
@@ -210,4 +226,43 @@ export function accountDefaultId(
       .where(eq(accountDefaults.purpose, purpose))
       .get()?.accountId ?? null
   );
+}
+
+/** Seed configuration only; never reclassifies existing records or balances. */
+export function ensureReimbursementsPayableAccount(
+  db: LedgerDb,
+  actingUserId: number | null = null,
+): Refusable<number> {
+  const existing = db
+    .select()
+    .from(accountDefaults)
+    .where(
+      eq(accountDefaults.purpose, DefaultAccountPurpose.ReimbursementsPayable),
+    )
+    .get();
+  if (existing)
+    return requireAccountDefault(
+      db,
+      DefaultAccountPurpose.ReimbursementsPayable,
+    );
+  return db.transaction(() => {
+    const created = createAccount(
+      db,
+      actingUserId,
+      {
+        name: "Reimbursements payable",
+        type: AccountType.Liability,
+        subType: AccountSubType.AccountsPayable,
+      },
+      [],
+    );
+    if (!created.ok) return created;
+    db.insert(accountDefaults)
+      .values({
+        purpose: DefaultAccountPurpose.ReimbursementsPayable,
+        accountId: created.value.id,
+      })
+      .run();
+    return { ok: true, value: created.value.id } as const;
+  });
 }

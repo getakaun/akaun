@@ -165,6 +165,7 @@ export function redactChanges(changes: FieldChange[]): FieldChange[] {
 
 const SETTINGS_SECTION_LABELS: Record<string, string> = {
   general: "General settings",
+  ledger: "Ledger settings",
   company: "Company details",
   pdf: "Document layout",
   numbering: "Numbering",

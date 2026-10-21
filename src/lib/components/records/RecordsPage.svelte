@@ -544,7 +544,20 @@
     items: OutstandingItem[];
   };
 
-  let owedItems = $state<OutstandingItem[]>([]);
+  let owedItems = $state<(OutstandingItem & { kind?: number })[]>([]);
+  const hasReimbursableExpenses = $derived(
+    owedItems.some(
+      (item) =>
+        item.kind === LedgerRecordKind.Expense &&
+        item.position === "obligation" &&
+        item.outstandingMinor > 0,
+    ) ||
+      records.some(
+        (record) =>
+          record.kind === LedgerRecordKind.Expense &&
+          record.outstandingMinor > 0,
+      ),
+  );
   let owedSheetOpen = $state(false);
   const owedScreen = useIsMobile();
   const owedIsMobile = $derived(owedScreen.current);
@@ -585,13 +598,6 @@
   function openOwedItem(item: OutstandingItem) {
     // eslint-disable-next-line svelte/no-navigation-without-resolve -- the href comes from resolve(); the rule cannot see through the helper call.
     void goto(recordHref(item.recordId));
-  }
-
-  // A payment opens scoped to this contact, the way the drawer it replaced
-  // always did — carried as a query param since it's prefilled context for a
-  // create form, not a link to another feature's record.
-  function payHref(group: OwedGroup): string {
-    return `${resolve("/(app)/records/new/payment")}?contactId=${group.contactId}`;
   }
 
   /** One recipient claiming personally paid expenses from several suppliers. */
@@ -1007,7 +1013,7 @@
             </span>
           </div>
           <span class="owed-head-total num">{formatMinor(owedTotal)}</span>
-          {#if data.perms.add && owedGroups.length > 1}
+          {#if data.perms.add && hasReimbursableExpenses}
             <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the href comes from resolve(); the rule cannot see through the helper call. -->
             <a class="owed-pay-btn" href={reimburseHref()}>Reimburse expenses</a
             >
@@ -1507,8 +1513,11 @@
                 </td>
                 <td class="td-supplier" data-label="Kind">
                   <span class="kind-chip">{kindLabel(e.kind)}</span>
-                  {#if e.contactName}<span class="cell-contact"
-                      >{e.contactName}</span
+                  {#if e.supplierContactName || e.contactName}<span
+                      class="cell-contact"
+                      >{e.supplierContactName ??
+                        e.contactName}{#if e.expensePaymentSource === "personal"}
+                        · {e.contactName} (paid personally){/if}</span
                     >{/if}
                 </td>
                 <td data-label="Accounts">
@@ -1678,7 +1687,7 @@
     </div>
     <div style="flex:1; overflow-y:auto; padding:20px 22px;">
       <div class="owed-body">
-        {#if data.perms.add && owedGroups.length > 1}
+        {#if data.perms.add && hasReimbursableExpenses}
           <div class="owed-all-row">
             <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the href comes from resolve(); the rule cannot see through the helper call. -->
             <a class="owed-pay-btn" href={reimburseHref()}>Reimburse expenses</a
@@ -1692,12 +1701,6 @@
               <span class="owed-group-total num"
                 >{formatMinor(group.totalMinor)}</span
               >
-              {#if data.perms.add}
-                <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the href comes from resolve(); the rule cannot see through the helper call. -->
-                <a class="owed-pay-btn" href={payHref(group)}>
-                  Record a payment
-                </a>
-              {/if}
             </div>
             {#each group.items as item (item.movementId)}
               <button

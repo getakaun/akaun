@@ -1,4 +1,4 @@
-import { reimbursementsForRecord } from "../queries/reimbursements.js";
+import { recordRelations } from "../queries/reimbursements.js";
 import { fail, redirect, type Actions } from "@sveltejs/kit";
 import { z } from "zod";
 import { db } from "$lib/server/db/client.js";
@@ -7,13 +7,13 @@ import {
   defaultAccountId,
   listAccounts,
 } from "$lib/server/queries/accounts.js";
-import { listContacts } from "$lib/server/queries/contacts.js";
+import { defaultReimbursementPayeeId } from "$lib/server/settings.js";
+import { getContact, listContacts } from "$lib/server/queries/contacts.js";
 import {
   getRecord,
   listAttachments,
   listRecords,
 } from "$lib/server/queries/ledger.js";
-import { settlementsForRecord } from "$lib/server/queries/settlements.js";
 import {
   getInvoice,
   invoiceIdsForLedgerRecords,
@@ -87,16 +87,16 @@ export function loadRecordDetail(locals: App.Locals, id: number) {
 
   return {
     record,
-    reimbursement: reimbursementsForRecord(db, id),
+    ...recordRelations(db, id),
     attachments: listAttachments(db, id),
-    settlements: settlementsForRecord(db, id),
+
     // The invoice an issue posting belongs to, for the link back to it. Kept
     // beside the record rather than on `RecordView`, which is frozen.
     invoiceId:
       record.kind === LedgerRecordKind.InvoiceIssue
         ? (invoiceIdsForLedgerRecords(db, [id])[0] ?? null)
         : null,
-    ...recordFormOptions(locals),
+    ...recordFormOptions(locals, [record.contactId, record.supplierContactId]),
   };
 }
 
@@ -167,12 +167,24 @@ export function loadPaymentNew(locals: App.Locals, url: URL) {
     };
   }
 
+  if (direction === "reimburse" && contactId === null) {
+    contactId = defaultReimbursementPayeeId(db);
+  }
+  const options = recordFormOptions(locals);
+  // Keep an explicitly selected/default contact available beyond the first page.
+  if (contactId !== null && !options.contacts.some((c) => c.id === contactId)) {
+    const contact = getContact(db, contactId);
+    if (contact)
+      options.contacts.push({ id: contact.id, legalName: contact.legalName });
+  }
+
   return {
     contactId,
     direction,
     preselectMovementId,
     returnTo,
-    ...recordFormOptions(locals),
+    settlementAccountId: positiveIdParam(url, "settlementAccountId"),
+    ...options,
   };
 }
 
@@ -183,9 +195,22 @@ export function loadPaymentNew(locals: App.Locals, url: URL) {
  * read their accounts from two places, they can offer two different charts and
  * nothing would say so.
  */
-function recordFormOptions(locals: App.Locals) {
+function recordFormOptions(
+  locals: App.Locals,
+  selectedContacts: (number | null | undefined)[] = [],
+) {
   const allAccounts = listAccounts(db, {});
-
+  const contacts = listContacts(db, { limit: 500 }).map((c) => ({
+    id: c.id,
+    legalName: c.legalName,
+  }));
+  const defaultPayee = defaultReimbursementPayeeId(db);
+  for (const id of [...selectedContacts, defaultPayee]) {
+    if (!id || contacts.some((contact) => contact.id === id)) continue;
+    const contact = getContact(db, id);
+    if (contact)
+      contacts.push({ id: contact.id, legalName: contact.legalName });
+  }
   return {
     // One read, split three ways. The split is `isMoneyPotAccount` /
     // `isCategoryAccount` rather than a type list, because equipment is an asset
@@ -195,10 +220,7 @@ function recordFormOptions(locals: App.Locals) {
     // Every account, for the full list a user with `adjustments` can reach in
     // one step from either side of the form (FR-008a, FR-031).
     allAccounts,
-    contacts: listContacts(db, { limit: 500 }).map((c) => ({
-      id: c.id,
-      legalName: c.legalName,
-    })),
+    contacts,
     defaultAccountId: defaultAccountId(db),
     mainCurrency: mainCurrencyCode(db),
     // Both remembered currencies travel to one screen now. Which one the form

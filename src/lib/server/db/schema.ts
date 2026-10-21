@@ -425,6 +425,17 @@ export const llmProviders = sqliteTable("llm_providers", {
  */
 function reviewColumns() {
   return {
+    expensePaymentSource: text("expense_payment_source", {
+      enum: ["company", "personal", "unpaid"],
+    }),
+    supplierContactId: integer("supplier_contact_id").references(
+      () => contacts.id,
+      { onDelete: "set null" },
+    ),
+    paidByContactId: integer("paid_by_contact_id").references(
+      () => contacts.id,
+      { onDelete: "set null" },
+    ),
     // DocumentType code (1 = expense, 2 = income, 3 and 4 = a transfer out of
     // or into the account the document is about). See enums.ts. On an item it
     // is the item's kind: set by its section, or by the sign of its amount.
@@ -1118,6 +1129,13 @@ export const ledgerRecords = sqliteTable(
     // journal entries (D-13). No reference number is ever regenerated.
     recordNumber: text("record_number").unique(),
     description: text("description").notNull().default(""),
+    expensePaymentSource: text("expense_payment_source", {
+      enum: ["company", "personal", "unpaid"],
+    }),
+    supplierContactId: integer("supplier_contact_id").references(
+      () => contacts.id,
+      { onDelete: "set null" },
+    ),
     // Required when any movement touches a shared owed account (FR-008).
     contactId: integer("contact_id").references(() => contacts.id, {
       onDelete: "set null",

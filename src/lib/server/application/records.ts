@@ -74,6 +74,12 @@ export const recordFieldsShape = {
   reference: z.string().trim().max(200).optional(),
   remark: z.string().trim().max(2000).optional(),
   contactId: positiveId.nullable().optional(),
+  supplierContactId: positiveId.nullable().optional(),
+  paidByContactId: positiveId.nullable().optional(),
+  expensePaymentSource: z
+    .enum(["company", "personal", "unpaid"])
+    .nullable()
+    .optional(),
 };
 
 /**
@@ -107,6 +113,7 @@ export const creditApplicationShape = allocationShape.extend({
 export const paymentShape = {
   ...recordFieldsShape,
   paidFromAccountId: positiveId,
+  settlementAccountId: positiveId.optional(),
   contactId: positiveId,
   direction: z.enum(["we-pay", "we-receive", "refund-received", "refund-paid"]),
   settlements: z.array(allocationShape).default([]),
@@ -122,6 +129,12 @@ export const patchShape = {
   reference: z.string().trim().max(200).optional(),
   remark: z.string().trim().max(2000).optional(),
   contactId: positiveId.nullable().optional(),
+  supplierContactId: positiveId.nullable().optional(),
+  paidByContactId: positiveId.nullable().optional(),
+  expensePaymentSource: z
+    .enum(["company", "personal", "unpaid"])
+    .nullable()
+    .optional(),
   categoryAccountId: positiveId.optional(),
   paidFromAccountId: positiveId.nullable().optional(),
   receivedIntoAccountId: positiveId.optional(),
@@ -317,7 +330,13 @@ function resolveCreate(
   // movements are constructed (FR-009).
   // The two accounts and the extra lines stay on the body as the route always
   // sent them; the builder reads only the fields its kind names.
-  return ok({ ...input, ...sides.value } as RecordCreate);
+  return ok({
+    ...input,
+    ...sides.value,
+    ...(input.expensePaymentSource !== undefined
+      ? { expensePaymentSource: input.expensePaymentSource }
+      : {}),
+  } as RecordCreate);
 }
 
 /**
@@ -343,6 +362,8 @@ export function createRecord(
       "REFUSED",
       "Use the reimbursement operation to transfer a claim.",
     );
+  if (input.expensePaymentSource === "personal" && input.paidByContactId)
+    input = { ...input, contactId: input.paidByContactId };
   const body = resolveCreate(ctx, input);
   if (!body.ok) return body;
   const data = body.value;
@@ -411,7 +432,9 @@ export function createRecord(
             : DefaultAccountPurpose.Receivable,
         );
         const paymentMovement = owed.ok
-          ? created.value.movements.find((m) => m.accountId === owed.value)
+          ? created.value.movements.find(
+              (m) => m.accountId === (data.settlementAccountId ?? owed.value),
+            )
           : undefined;
         if (!paymentMovement) {
           throw new Rollback(
@@ -483,6 +506,8 @@ export function updateRecord(
 ): AppResult<RecordWritten> {
   const refused = requirePermissions(ctx, ["records.update"]);
   if (refused) return refused;
+  if (patch.paidByContactId !== undefined)
+    patch = { ...patch, contactId: patch.paidByContactId };
   const existing = getRecord(ctx.db, id);
   if (!existing) return missing(NOT_FOUND);
   if (isReadOnlyKind(existing.kind)) {
@@ -671,6 +696,20 @@ function applyCarryForward(
       : DefaultAccountPurpose.Receivable,
   );
   if (!control.ok) return fail("REFUSED", control.reason);
+  if (data.settlementAccountId !== undefined) {
+    const allowed = [control.value];
+    const reimbursement = requireAccountDefault(
+      ctx.db,
+      DefaultAccountPurpose.ReimbursementsPayable,
+    );
+    if (data.direction === "we-pay" && reimbursement.ok)
+      allowed.push(reimbursement.value);
+    if (!allowed.includes(data.settlementAccountId))
+      return fail(
+        "REFUSED",
+        "Choose the saved settlement account for this payment direction.",
+      );
+  }
   const grouped = new Map<
     number,
     { owedMovementId: number; amountMinor: number }[]
@@ -682,7 +721,7 @@ function applyCarryForward(
     const side = getSide(ctx.db, credit.paymentMovementId);
     if (
       !side ||
-      side.accountId !== control.value ||
+      side.accountId !== (data.settlementAccountId ?? control.value) ||
       side.contactId !== data.contactId ||
       (data.direction === "we-pay"
         ? side.amountMinor <= 0

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { DefaultAccountPurpose } from "$lib/enums.js";
+import { DefaultAccountPurpose, LedgerRecordKind } from "$lib/enums.js";
 import { requireAccountDefault } from "../services/account-defaults.js";
 import { recordAudit } from "../audit.js";
 import { getRecord } from "../queries/ledger.js";
@@ -47,8 +47,14 @@ export function paymentAllocationSnapshot(
     ctx.db,
     DefaultAccountPurpose.Receivable,
   );
+  const reimbursementPayable = requireAccountDefault(
+    ctx.db,
+    DefaultAccountPurpose.ReimbursementsPayable,
+  );
   const direction =
-    payable.ok && payment.accountId === payable.value
+    (payable.ok && payment.accountId === payable.value) ||
+    (reimbursementPayable.ok &&
+      payment.accountId === reimbursementPayable.value)
       ? ("we-owe" as const)
       : receivable.ok && payment.accountId === receivable.value
         ? ("owed-to-us" as const)
@@ -83,6 +89,12 @@ export function paymentAllocationSnapshot(
     links: settlementsForRecord(ctx.db, record.id),
     version,
     batch: payment.contactId === null,
+    reimbursement:
+      payable.ok &&
+      payment.accountId === payable.value &&
+      payment.amountMinor > 0 &&
+      record.kind === LedgerRecordKind.Payment &&
+      payment.contactId !== null,
   };
 }
 

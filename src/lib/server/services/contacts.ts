@@ -27,7 +27,7 @@ import {
   quotations,
 } from "$lib/server/db/schema.js";
 import type { LedgerDb } from "$lib/server/ledger/types.js";
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -85,7 +85,12 @@ function reindexContactDocuments(db: Db, contactId: number) {
     for (const { id } of tx
       .select({ id: ledgerRecords.id })
       .from(ledgerRecords)
-      .where(eq(ledgerRecords.contactId, contactId))
+      .where(
+        or(
+          eq(ledgerRecords.contactId, contactId),
+          eq(ledgerRecords.supplierContactId, contactId),
+        ),
+      )
       .all())
       reindexRecord(tx, id);
     for (const { id } of tx

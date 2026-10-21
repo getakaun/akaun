@@ -111,10 +111,17 @@ export function registerRecordWrites(server: McpServer, context: McpContext) {
     server,
     context,
     "get_reimbursement_candidates",
-    "List outstanding supplier expenses and the selected recipient's available credit for a reimbursement. Original suppliers stay on the expenses.",
-    { contactId: id },
-    ({ contactId }) => {
-      const r = reimbursementCandidates(context, contactId);
+    "List outstanding Accounts payable expenses across suppliers and the selected recipient's available credit. Accounts payable expenses are treated as paid personally; no payment-source field is needed.",
+    {
+      contactId: id,
+      accountId: id
+        .optional()
+        .describe(
+          "Optional existing legacy payable account from the candidates response; omit for Accounts payable.",
+        ),
+    },
+    ({ contactId, accountId }) => {
+      const r = reimbursementCandidates(context, contactId, accountId);
       if (!r.ok) throw new McpToolError(r.code, r.reason);
       return r.value;
     },
@@ -123,7 +130,7 @@ export function registerRecordWrites(server: McpServer, context: McpContext) {
     server,
     context,
     "create_reimbursement",
-    "Reimburse one person for selected expenses they personally paid. Transfers supplier obligations through balanced clearing entries, applies only this recipient's chosen credits, and optionally records cash. Partial and credit-only claims are supported. All amounts are main-currency minor units. personallyPaid must be true.",
+    "Reimburse one person directly for selected expenses they personally paid. Applies only this recipient's chosen reimbursement credits and optionally records an actual cash payment, with no helper entries. Partial, overpayment and credit-only settlements are supported. All amounts are main-currency minor units. personallyPaid must be true.",
     reimbursementShape,
     (input) => createReimbursement(context, input),
   );

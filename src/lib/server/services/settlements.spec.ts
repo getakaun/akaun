@@ -170,7 +170,7 @@ describe("a single-contact payment", () => {
     expect(result.ok, result.ok ? "" : result.reason).toBe(true);
   });
 
-  it("refuses to settle a different contact's item", () => {
+  it("reimburses an Accounts payable expense while retaining its supplier", () => {
     const category = categoryAccount("Office Supplies");
     payableAccount();
     receivableAccount();
@@ -199,8 +199,8 @@ describe("a single-contact payment", () => {
     const result = createSettlements(db, userId, paymentMovement.id, [
       { owedMovementId: bobsMovement.id, amountMinor: 5000 },
     ]);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toMatch(/different people/i);
+    expect(result.ok).toBe(true);
+    expect(getRecord(db, bobsExpense.id)?.contactId).toBe(bob);
   });
 });
 

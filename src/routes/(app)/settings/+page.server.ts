@@ -12,6 +12,7 @@ import {
   setSetting,
   SETTING_KEYS,
   hasAnyDocuments,
+  defaultReimbursementPayeeId,
 } from "$lib/server/settings.js";
 import {
   LAYOUT_CATALOG,
@@ -65,6 +66,11 @@ import {
 } from "$lib/server/llm/chatgpt-sign-in.js";
 import type { ProviderType } from "$lib/server/import/providers/index.js";
 import { fail, redirect, type ActionFailure } from "@sveltejs/kit";
+import {
+  countContacts,
+  getContact,
+  listContacts,
+} from "$lib/server/queries/contacts.js";
 import { getAccountDefaults } from "$lib/server/services/account-defaults.js";
 import {
   applyProfileSwitches,
@@ -288,6 +294,10 @@ export const load: PageServerLoad = async ({ locals }) => {
     canManageAccounts,
     moneyAccounts,
     ledgerDefaultAccountId,
+    reimbursementDefaultPayeeContactId: defaultReimbursementPayeeId(db),
+    reimbursementPayees: listContacts(db, { limit: countContacts(db) }).map(
+      (c) => ({ id: c.id, legalName: c.legalName }),
+    ),
     accountDefaults,
     defaultAccountOptions,
     canSeeBooks,
@@ -346,6 +356,24 @@ const INTELLIGENCE_KEYS = [
 ];
 
 export const actions: Actions = {
+  saveReimbursements: async ({ locals, request }) => {
+    if (!can(locals, "settings.manage"))
+      return fail(403, { error: SETTINGS_FORBIDDEN });
+    const data = await request.formData();
+    const raw = String(data.get("defaultPayeeContactId") ?? "").trim();
+    const parsed = z.coerce.number().int().positive().safeParse(raw);
+    if (raw && (!parsed.success || !getContact(db, parsed.data)))
+      return fail(400, {
+        error: "Choose an existing reimbursement payee, or None.",
+      });
+    const key = SETTING_KEYS.reimbursementDefaultPayeeContactId;
+    db.transaction(() => {
+      const before = readSettings(db, [key]);
+      setSetting(db, key, raw && parsed.success ? String(parsed.data) : "");
+      auditSettings(db, locals.user!.id, before, readSettings(db, [key]));
+    });
+    return { success: true, action: "saveReimbursements" };
+  },
   saveGeneral: async ({ locals, request }) => {
     if (!can(locals, "settings.manage"))
       return fail(403, { error: SETTINGS_FORBIDDEN });

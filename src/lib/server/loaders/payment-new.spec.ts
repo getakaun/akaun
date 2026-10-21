@@ -1,3 +1,5 @@
+import { eq } from "drizzle-orm";
+import { setSetting, SETTING_KEYS } from "../settings.js";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
@@ -188,5 +190,84 @@ describe("recording a payment from an invoice", () => {
     holder.allow = (resource, action) =>
       !(resource === "records" && action === "add");
     expect(() => load(`?invoice=${invoice.id}`)).toThrow();
+  });
+});
+
+function payee(name = "Employee") {
+  return db
+    .insert(contacts)
+    .values({ entityType: EntityType.Individual, legalName: name })
+    .returning()
+    .get().id as number;
+}
+
+function setDefault(id: number | string) {
+  setSetting(db, SETTING_KEYS.reimbursementDefaultPayeeContactId, String(id));
+}
+
+describe("default reimbursement payee", () => {
+  it("prefills reimbursements and permits an explicit recipient override", () => {
+    const recipient = payee();
+    const other = payee("Other employee");
+    setDefault(recipient);
+    expect(load("")).toMatchObject({
+      direction: "reimburse",
+      contactId: recipient,
+    });
+    expect(load("?direction=reimburse").contactId).toBe(recipient);
+    expect(load(`?direction=reimburse&contactId=${other}`).contactId).toBe(
+      other,
+    );
+    expect(load("").contactId).toBe(recipient);
+  });
+
+  it("leaves an unset, cleared, invalid or deleted default blank", () => {
+    expect(load("").contactId).toBeNull();
+    for (const raw of ["", "999", "abc", "-1", "1.5"]) {
+      setDefault(raw);
+      expect(load("").contactId).toBeNull();
+    }
+    const recipient = payee();
+    setDefault(recipient);
+    db.delete(contacts).where(eq(contacts.id, recipient)).run();
+    expect(load("").contactId).toBeNull();
+  });
+
+  it("does not apply the default to direct payments, receipts or refunds", () => {
+    const recipient = payee();
+    setDefault(recipient);
+    for (const direction of [
+      "we-pay",
+      "we-receive",
+      "refund-paid",
+      "refund-received",
+    ]) {
+      expect(load(`?direction=${direction}`).contactId).toBeNull();
+      expect(load(`?direction=${direction}&contactId=999`).contactId).toBe(999);
+    }
+    const invoice = sentInvoice();
+    expect(load(`?invoice=${invoice.id}`)).toMatchObject({
+      direction: "we-receive",
+      contactId: invoice.contactId,
+    });
+  });
+
+  it("includes a default beyond the initial contact list in the form choices", () => {
+    db.insert(contacts)
+      .values(
+        Array.from({ length: 501 }, (_, i) => ({
+          entityType: EntityType.Business,
+          legalName: `A supplier ${i}`,
+        })),
+      )
+      .run();
+    const recipient = payee("ZZ employee");
+    setDefault(recipient);
+    const data = load("");
+    expect(data.contactId).toBe(recipient);
+    expect(data.contacts).toContainEqual({
+      id: recipient,
+      legalName: "ZZ employee",
+    });
   });
 });

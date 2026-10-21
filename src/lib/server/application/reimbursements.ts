@@ -1,3 +1,4 @@
+import { reimbursementEntryDescription } from "$lib/reimbursement-labels.js";
 import { z } from "zod";
 import { eq, inArray } from "drizzle-orm";
 import {
@@ -8,6 +9,7 @@ import {
 } from "$lib/enums.js";
 import {
   accounts,
+  ledgerRecords,
   contacts,
   ledgerMovements,
   reimbursementEntries,
@@ -177,6 +179,10 @@ export function transferClaim(
         ...common,
         kind: "reimbursement-transfer",
         leg: "recipient",
+        description: reimbursementEntryDescription(
+          "recipient",
+          input.description,
+        ),
         clearingAccountId: clearingId,
         contactId: input.contactId,
         amount: total / 100,
@@ -202,6 +208,10 @@ export function transferClaim(
           ...common,
           kind: "reimbursement-transfer",
           leg: "supplier",
+          description: reimbursementEntryDescription(
+            "supplier",
+            input.description,
+          ),
           clearingAccountId: clearingId,
           contactId: supplierId,
           amount: items.reduce((n, i) => n + i.amountMinor, 0) / 100,
@@ -269,20 +279,91 @@ export function createReimbursement(ctx: AppContext, raw: ReimbursementInput) {
   const emits: DeferredEmits = [];
   try {
     const value = ctx.db.transaction(() => {
-      const creditTotal = input.credits.reduce((n, c) => n + c.amountMinor, 0);
-      const total = input.items.reduce((n, i) => n + i.amountMinor, 0);
+      const accountsPayable = must(
+        requireAccountDefault(ctx.db, DefaultAccountPurpose.Payable),
+      );
+      const legacyPayable = requireAccountDefault(
+        ctx.db,
+        DefaultAccountPurpose.ReimbursementsPayable,
+      );
+      // Use the existing control account without reclassifying historical records.
+      const payable = getSide(
+        ctx.db,
+        input.items[0]?.owedMovementId,
+      )?.accountId;
       if (
-        !Number.isSafeInteger(creditTotal) ||
-        creditTotal + input.cashMinor > total
+        payable !== accountsPayable &&
+        (!legacyPayable.ok || payable !== legacyPayable.value)
       )
         throw new Rollback(
-          fail("REFUSED", "Cash and credit cannot exceed the claim total."),
+          fail("REFUSED", "Select outstanding Accounts payable expenses."),
+        );
+      const creditTotal = input.credits.reduce((n, c) => n + c.amountMinor, 0);
+      const total = input.items.reduce((n, i) => n + i.amountMinor, 0);
+      const funded = creditTotal + input.cashMinor;
+      if (
+        !Number.isSafeInteger(total) ||
+        !Number.isSafeInteger(funded) ||
+        !Number.isSafeInteger(input.cashMinor) ||
+        funded <= 0 ||
+        creditTotal > total
+      )
+        throw new Rollback(
+          fail(
+            "REFUSED",
+            "Choose a valid cash payment or available credit; credit cannot exceed the selected expenses.",
+          ),
         );
       if (
+        new Set(input.items.map((i) => i.owedMovementId)).size !==
+          input.items.length ||
         new Set(input.credits.map((c) => c.paymentMovementId)).size !==
-        input.credits.length
+          input.credits.length
       )
-        throw new Rollback(fail("REFUSED", "Select each credit once."));
+        throw new Rollback(
+          fail("REFUSED", "Select each expense and credit once."),
+        );
+      if (
+        !ctx.db
+          .select()
+          .from(contacts)
+          .where(eq(contacts.id, input.contactId))
+          .get()
+      )
+        throw new Rollback(
+          fail("REFUSED", "Select an existing reimbursement recipient."),
+        );
+      for (const item of input.items) {
+        const side = getSide(ctx.db, item.owedMovementId);
+        const recordId = recordIdsForSettlement(
+          ctx.db,
+          item.owedMovementId,
+          item.owedMovementId,
+        )[0];
+        const source = ctx.db
+          .select()
+          .from(ledgerRecords)
+          .where(eq(ledgerRecords.id, recordId ?? -1))
+          .get();
+        if (
+          !Number.isSafeInteger(item.amountMinor) ||
+          item.amountMinor <= 0 ||
+          !side ||
+          !source ||
+          source.kind !== LedgerRecordKind.Expense ||
+          !side.contactId ||
+          (payable !== accountsPayable && side.contactId !== input.contactId) ||
+          side.accountId !== payable ||
+          side.amountMinor >= 0 ||
+          item.amountMinor > -side.amountMinor - side.settledMinor
+        )
+          throw new Rollback(
+            fail(
+              "REFUSED",
+              "Select available expenses on the same payable account. Reload and review the amounts.",
+            ),
+          );
+      }
       if (input.cashMinor > 0) {
         const bank = input.paidFromAccountId
           ? getAccount(ctx.db, input.paidFromAccountId)
@@ -292,43 +373,56 @@ export function createReimbursement(ctx: AppContext, raw: ReimbursementInput) {
             fail("REFUSED", "Choose an active payment account."),
           );
       }
-      const claim = transferClaim(ctx, input, emits);
-      const payable = must(
-        requireAccountDefault(ctx.db, DefaultAccountPurpose.Payable),
-      );
+      const remaining = input.items.map((i) => ({ ...i }));
+      const allocate = (movementId: number, amountMinor: number) => {
+        let available = amountMinor;
+        const allocations: AllocationRequest[] = [];
+        for (const item of remaining) {
+          const use = Math.min(available, item.amountMinor);
+          if (use > 0)
+            allocations.push({
+              owedMovementId: item.owedMovementId,
+              amountMinor: use,
+            });
+          available -= use;
+          item.amountMinor -= use;
+        }
+        return allocations.length
+          ? must(
+              createSettlements(
+                ctx.db,
+                actor(ctx),
+                movementId,
+                allocations,
+                emits,
+              ),
+            )
+          : [];
+      };
       const creditSettlementIds: number[] = [];
       for (const credit of input.credits) {
         const side = getSide(ctx.db, credit.paymentMovementId);
         if (
+          !Number.isSafeInteger(credit.amountMinor) ||
+          credit.amountMinor <= 0 ||
           !side ||
           side.contactId !== input.contactId ||
           side.accountId !== payable ||
-          side.amountMinor <= 0
+          side.amountMinor <= 0 ||
+          credit.amountMinor > side.amountMinor - side.settledMinor
         )
           throw new Rollback(
             fail(
               "REFUSED",
-              "Only this recipient's available credit can fund the claim.",
+              "Only this recipient's available reimbursement credit can fund these expenses.",
             ),
           );
         creditSettlementIds.push(
-          ...must(
-            createSettlements(
-              ctx.db,
-              actor(ctx),
-              credit.paymentMovementId,
-              [
-                {
-                  owedMovementId: claim.owedMovementId,
-                  amountMinor: credit.amountMinor,
-                },
-              ],
-              emits,
-            ),
-          ),
+          ...allocate(credit.paymentMovementId, credit.amountMinor),
         );
       }
       let payment: RecordView | null = null;
+      const settlementIds: number[] = [];
       if (input.cashMinor > 0) {
         payment = must(
           post(
@@ -337,6 +431,7 @@ export function createReimbursement(ctx: AppContext, raw: ReimbursementInput) {
             {
               kind: "payment",
               direction: "we-pay",
+              settlementAccountId: payable,
               contactId: input.contactId,
               date: input.date,
               description: input.description,
@@ -350,33 +445,25 @@ export function createReimbursement(ctx: AppContext, raw: ReimbursementInput) {
             emits,
           ),
         );
-        must(
-          createSettlements(
-            ctx.db,
-            actor(ctx),
+        settlementIds.push(
+          ...allocate(
             payment.movements.find((m) => m.accountId === payable)!.id,
-            [
-              {
-                owedMovementId: claim.owedMovementId,
-                amountMinor: input.cashMinor,
-              },
-            ],
-            emits,
+            input.cashMinor,
           ),
         );
-        ctx.db
-          .update(reimbursements)
-          .set({ paymentRecordId: payment.id })
-          .where(eq(reimbursements.id, claim.groupId))
-          .run();
       }
+      const firstSource = recordIdsForSettlement(
+        ctx.db,
+        input.items[0].owedMovementId,
+        input.items[0].owedMovementId,
+      )[0];
       return {
-        ...claim,
-        payable: getRecord(ctx.db, claim.payable.id)!,
         payment: payment ? getRecord(ctx.db, payment.id)! : null,
+        totalMinor: total,
+        remainingMinor: Math.max(0, total - funded),
         creditSettlementIds,
-        remainingMinor: total - creditTotal - input.cashMinor,
-        record: getRecord(ctx.db, payment?.id ?? claim.payable.id)!,
+        settlementIds,
+        record: getRecord(ctx.db, payment?.id ?? firstSource)!,
       };
     });
     emits.forEach((emit) => emit());
@@ -387,16 +474,49 @@ export function createReimbursement(ctx: AppContext, raw: ReimbursementInput) {
   }
 }
 
-export function reimbursementCandidates(ctx: AppContext, contactId: number) {
+export function reimbursementCandidates(
+  ctx: AppContext,
+  contactId: number,
+  accountId?: number,
+) {
   const denied = requirePermissions(ctx, ["records.read"]);
   if (denied) return denied;
   if (!Number.isSafeInteger(contactId) || contactId <= 0)
     return fail("INVALID_INPUT", "Select a recipient.");
-  const all = listOutstanding(ctx.db, { direction: "we-owe", openOnly: true });
-  const items = all.items.filter((item) =>
-    item.position === "credit"
-      ? item.contactId === contactId
-      : getRecord(ctx.db, item.recordId)?.kind === LedgerRecordKind.Expense,
+  const payable = requireAccountDefault(ctx.db, DefaultAccountPurpose.Payable);
+  if (!payable.ok) return ok({ items: [], accounts: [] });
+  const legacy = requireAccountDefault(
+    ctx.db,
+    DefaultAccountPurpose.ReimbursementsPayable,
   );
-  return ok({ items });
+  const accounts = [
+    { id: payable.value, name: getAccount(ctx.db, payable.value)!.name },
+  ];
+  if (
+    legacy.ok &&
+    listOutstanding(ctx.db, {
+      direction: "we-owe",
+      accountId: legacy.value,
+      contactId,
+    }).items.length
+  )
+    accounts.push({
+      id: legacy.value,
+      name: getAccount(ctx.db, legacy.value)!.name,
+    });
+  const selected = accountId ?? payable.value;
+  if (!accounts.some((account) => account.id === selected))
+    return fail("REFUSED", "Select an available payable account.");
+  const all = listOutstanding(ctx.db, {
+    direction: "we-owe",
+    accountId: selected,
+    ...(selected !== payable.value ? { contactId } : {}),
+    openOnly: true,
+  });
+  const items = all.items.filter((item) => {
+    if (item.position === "credit") return item.contactId === contactId;
+    const source = getRecord(ctx.db, item.recordId);
+    return source?.kind === LedgerRecordKind.Expense;
+  });
+  return ok({ items, accounts });
 }

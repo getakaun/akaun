@@ -31,8 +31,16 @@ export const recipientCorrectionShape = {
 function snapshot(ctx: AppContext, id: number) {
   const record = getRecord(ctx.db, id);
   const payable = requireAccountDefault(ctx.db, DefaultAccountPurpose.Payable);
+  const reimbursementPayable = requireAccountDefault(
+    ctx.db,
+    DefaultAccountPurpose.ReimbursementsPayable,
+  );
   const side = record?.movements.find(
-    (m) => payable.ok && m.accountId === payable.value && m.amountMinor > 0,
+    (m) =>
+      ((payable.ok && m.accountId === payable.value) ||
+        (reimbursementPayable.ok &&
+          m.accountId === reimbursementPayable.value)) &&
+      m.amountMinor > 0,
   );
   if (!record || record.kind !== LedgerRecordKind.Payment || !side) return null;
   const payment = paymentAllocationSnapshot(ctx, side.id)!;
@@ -190,7 +198,19 @@ export function correctPaymentRecipient(
       )
         throw new Rollback(fail("REFUSED", "Select an existing recipient."));
       const ownPayableIds = before.groups.map((g) => g.payableRecordId);
+      const accountsPayable = requireAccountDefault(
+        ctx.db,
+        DefaultAccountPurpose.Payable,
+      );
       const cross = before.payment.allocations.filter((a) => {
+        // Direct reimbursements retain supplier identity when the payee changes.
+        if (
+          !before.groups.length &&
+          before.record.contactId !== null &&
+          accountsPayable.ok &&
+          before.payment.payment.accountId === accountsPayable.value
+        )
+          return false;
         const side = getSide(ctx.db, a.owedMovementId)!;
         const target = recordIdsForSettlement(
           ctx.db,
@@ -201,6 +221,21 @@ export function correctPaymentRecipient(
           side.contactId !== input.contactId && !ownPayableIds.includes(target)
         );
       });
+      const reimbursementPayable = requireAccountDefault(
+        ctx.db,
+        DefaultAccountPurpose.ReimbursementsPayable,
+      );
+      if (
+        cross.length &&
+        reimbursementPayable.ok &&
+        before.payment.payment.accountId === reimbursementPayable.value
+      )
+        throw new Rollback(
+          fail(
+            "REFUSED",
+            "Remove this payment's expense allocations before changing its recipient. The original expenses remain owed to the person who paid personally.",
+          ),
+        );
       // A legacy contactless payment must be attributed before undoing individual
       // rows; otherwise its old batch reversal rule would remove unaffected rows.
       updateRecord(ctx.db, before.record.id, actor(ctx), {

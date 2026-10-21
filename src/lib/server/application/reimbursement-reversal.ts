@@ -1,20 +1,28 @@
+import {
+  reimbursementEntryDescription,
+  originalReimbursementDescription,
+} from "$lib/reimbursement-labels.js";
 import { createHash } from "node:crypto";
 import { eq, inArray, or } from "drizzle-orm";
 import { z } from "zod";
 import { DefaultAccountPurpose } from "$lib/enums.js";
 import {
   reimbursementEntries,
+  reimbursementItems,
   reimbursements,
+  ledgerMovements,
+  ledgerRecords,
   settlements,
 } from "../db/schema.js";
 import { getRecord } from "../queries/ledger.js";
+import { getSide } from "../queries/settlements.js";
 import { createRecord, type DeferredEmits } from "../services/ledger.js";
 import { createSettlements, undoSettlement } from "../services/settlements.js";
 import { requireAccountDefault } from "../services/account-defaults.js";
 import { recordAudit } from "../audit.js";
 import { actor, requirePermissions, type AppContext } from "./context.js";
 import { isoDate, positiveId } from "./records.js";
-import { checkVersion } from "./version.js";
+import { checkVersion, recordVersion } from "./version.js";
 import { fail, ok, Rollback } from "./result.js";
 import type { Refusable } from "../ledger/types.js";
 
@@ -24,6 +32,20 @@ export const reimbursementReversalShape = {
   reason: z.string().trim().min(10).max(2000),
   expectedVersion: z.string().min(1),
 };
+
+export interface ReimbursementReversalSummary {
+  amountMinor: number;
+  items: { recordId: number; description: string; amountMinor: number }[];
+  funding: {
+    recordId: number;
+    description: string;
+    amountMinor: number;
+    releasedMinor: number;
+    availableCreditBeforeMinor: number;
+    availableCreditAfterMinor: number;
+  }[];
+  unfundedMinor: number;
+}
 
 function must<T>(result: Refusable<T>) {
   if (!result.ok) throw new Rollback(fail("REFUSED", result.reason));
@@ -61,11 +83,86 @@ function snapshot(ctx: AppContext, id: number) {
         )
         .all()
     : [];
+  const items = ctx.db
+    .select({
+      recordId: ledgerRecords.id,
+      description: ledgerRecords.description,
+      amountMinor: reimbursementItems.amountMinor,
+    })
+    .from(reimbursementItems)
+    .innerJoin(
+      ledgerMovements,
+      eq(ledgerMovements.id, reimbursementItems.sourceMovementId),
+    )
+    .innerJoin(ledgerRecords, eq(ledgerRecords.id, ledgerMovements.recordId))
+    .where(eq(reimbursementItems.groupId, id))
+    .all();
+  const recipient = records.find((entry) => entry.role === "recipient");
+  const recipientMovementIds = new Set(
+    recipient?.record.movements.map((m) => m.id) ?? [],
+  );
+  const fundingAllocations = allocations.filter((a) =>
+    recipientMovementIds.has(a.owedMovementId),
+  );
+  const funding = new Map<
+    number,
+    ReimbursementReversalSummary["funding"][number]
+  >();
+  const fundingState: unknown[] = [];
+  for (const allocation of fundingAllocations) {
+    const movement = ctx.db
+      .select()
+      .from(ledgerMovements)
+      .where(eq(ledgerMovements.id, allocation.paymentMovementId))
+      .get();
+    if (
+      !movement ||
+      ctx.db
+        .select()
+        .from(reimbursementEntries)
+        .where(eq(reimbursementEntries.recordId, movement.recordId))
+        .get()
+    )
+      continue;
+    const record = getRecord(ctx.db, movement.recordId);
+    const side = getSide(ctx.db, movement.id);
+    if (!record || !side || side.amountMinor <= 0) continue;
+    const beforeMinor = Math.max(0, side.amountMinor - side.settledMinor);
+    const existing = funding.get(record.id);
+    if (existing) {
+      existing.releasedMinor += allocation.amountMinor;
+      existing.availableCreditAfterMinor += allocation.amountMinor;
+    } else {
+      funding.set(record.id, {
+        recordId: record.id,
+        description: record.description,
+        amountMinor: side.amountMinor,
+        releasedMinor: allocation.amountMinor,
+        availableCreditBeforeMinor: beforeMinor,
+        availableCreditAfterMinor: beforeMinor + allocation.amountMinor,
+      });
+    }
+    fundingState.push([recordVersion(ctx.db, record.id), side]);
+  }
+  const amountMinor = items.reduce((sum, item) => sum + item.amountMinor, 0);
+  const summary: ReimbursementReversalSummary = {
+    amountMinor,
+    items,
+    funding: [...funding.values()],
+    unfundedMinor: Math.max(
+      0,
+      amountMinor -
+        fundingAllocations.reduce(
+          (sum, allocation) => sum + allocation.amountMinor,
+          0,
+        ),
+    ),
+  };
   const version = createHash("sha256")
-    .update(JSON.stringify([group, records, allocations]))
+    .update(JSON.stringify([group, records, allocations, items, fundingState]))
     .digest("hex")
     .slice(0, 16);
-  return { group, entries: records, allocations, version };
+  return { group, entries: records, allocations, summary, version };
 }
 export function prepareReimbursementReversal(ctx: AppContext, id: number) {
   const denied = requirePermissions(ctx, ["records.read"]);
@@ -119,6 +216,10 @@ export function reverseReimbursement(
           ),
         );
       }
+      const originalDescription = originalReimbursementDescription(
+        before.entries.find((entry) => entry.role === "recipient")!.record
+          .description,
+      );
       const reversalIds: number[] = [];
       for (const entry of before.entries) {
         const owed = entry.record.movements.find(
@@ -139,7 +240,10 @@ export function reverseReimbursement(
                   : "recipient-reversal",
               clearingAccountId: clearing.accountId,
               date: input.date,
-              description: `Reversal: ${entry.record.description}`,
+              description: reimbursementEntryDescription(
+                "recipient-reversal",
+                originalDescription,
+              ),
               amount: Math.abs(owed.amountMinor) / 100,
               currency: entry.record.currency,
               exchangeRate: 1,

@@ -40,7 +40,8 @@
 			const link = snapshot?.links.find((l) => l.settlementId === allocation.id);
 			if (
 				!link ||
-				(snapshot?.payment.contactId !== null &&
+				(!snapshot?.reimbursement &&
+					snapshot?.payment.contactId !== null &&
 					link.otherContactId !== snapshot?.payment.contactId)
 			)
 				continue;
@@ -96,7 +97,9 @@
 				selected = body.batch ? body.allocations.map((a: { id: number }) => a.id) : [settlementId];
 				const direction = body.direction;
 				const res = await fetch(
-					`/api/settlements?direction=${direction}${body.payment.contactId === null ? '' : `&contactId=${body.payment.contactId}`}`
+					body.reimbursement
+						? `/api/reimbursements/candidates?contactId=${body.payment.contactId}`
+						: `/api/settlements?direction=${direction}&settlementAccountId=${body.payment.accountId}${body.payment.contactId === null ? '' : `&contactId=${body.payment.contactId}`}`
 				);
 				if (!res.ok) throw new Error('Replacement items could not be loaded. Reopen this dialog.');
 				const open = await res.json();

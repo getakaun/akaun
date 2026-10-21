@@ -3,7 +3,7 @@ import { db } from "$lib/server/db/client.js";
 import { can } from "$lib/server/permissions.js";
 import { forbidden, notFound } from "$lib/server/api-response.js";
 import { getRecord } from "$lib/server/queries/ledger.js";
-import { settlementsForRecord } from "$lib/server/queries/settlements.js";
+import { recordRelations } from "$lib/server/queries/reimbursements.js";
 import { permissionForKind } from "$lib/server/ledger/record-permissions.js";
 
 /**
@@ -28,5 +28,5 @@ export const GET: RequestHandler = async ({ locals, params }) => {
     return forbidden();
   }
 
-  return Response.json({ links: settlementsForRecord(db, id) });
+  return Response.json({ record, ...recordRelations(db, id) });
 };

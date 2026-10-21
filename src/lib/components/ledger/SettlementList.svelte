@@ -20,6 +20,9 @@
 	 *  hand — the fields are the ones that endpoint returns. */
 	export type SettlementLink = {
 		settlementId: number;
+		/** Presentation rows may explain a protected reimbursement relationship. */
+		canUndo?: boolean;
+		presentationKey?: string;
 		amountMinor: number;
 		createdAt: string;
 		otherRecordId: number;
@@ -29,6 +32,7 @@
 		otherKind: number;
 		otherContactId: number | null;
 		otherContactName: string | null;
+		otherSupplierContactName?: string | null;
 	};
 
 	let {
@@ -88,7 +92,8 @@
 		// Named only when it differs from the row it is already attached to — a
 		// batch payment's own rail is the one place several contacts show up
 		// side by side, so that is the one place worth naming whose item this is.
-		return link.otherContactName ? `${link.otherContactName} · ${withNumber}` : withNumber;
+		const contactName = link.otherSupplierContactName ?? link.otherContactName;
+		return contactName ? `${contactName} · ${withNumber}` : withNumber;
 	}
 </script>
 
@@ -105,8 +110,8 @@
 
 {#if links.length > 0}
 	<div class="settle-list">
-		{#each shown as link (link.settlementId)}
-			{#if onundo}
+		{#each shown as link (link.presentationKey ?? `${link.settlementId}-${link.otherRecordId}`)}
+			{#if onundo && link.canUndo !== false}
 				<!-- Two independent actions on one row — open it, or take it back — so
 				     the row carries the shared hover and each action is its own target. -->
 				<div class="settle-row" class:related-link={canOpen(link.otherKind)}>
@@ -120,19 +125,25 @@
 					<button
 						type="button"
 						class="settle-undo"
-						title="Reverse allocation"
-						aria-label="Reverse allocation of {formatMinor(link.amountMinor)} to {titleOf(link)}"
+						title="Correct allocation"
+						aria-label="Correct allocation of {formatMinor(link.amountMinor)} to {titleOf(link)}"
 						onclick={() => onundo?.(link)}
 					>
 						<Undo2 size={14} />
 					</button>
 				</div>
 			{:else if canOpen(link.otherKind)}
-				<button type="button" class="settle-row settle-open related-link" onclick={() => open(link)}>
+				<button
+					type="button"
+					class="settle-row settle-open related-link"
+					onclick={() => open(link)}
+				>
 					{@render body(link)}
 				</button>
 			{:else}
-				<div class="settle-row settle-open settle-static">{@render body(link)}</div>
+				<div class="settle-row settle-open settle-static">
+					{@render body(link)}
+				</div>
 			{/if}
 		{/each}
 	</div>

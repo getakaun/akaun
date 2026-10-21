@@ -89,7 +89,8 @@ function validate(
   const touchesSharedOwed = movements.some(
     (m) =>
       m.accountId === ctx.receivableAccountId ||
-      m.accountId === ctx.payableAccountId,
+      m.accountId === ctx.payableAccountId ||
+      m.accountId === ctx.reimbursementPayableAccountId,
   );
   if (touchesSharedOwed && contactId === null) {
     return refuse("Select the contact for this receivable or payable.");
@@ -130,10 +131,19 @@ function buildFor(
       );
 
     case "expense":
+      if (
+        input.expensePaymentSource === "personal" &&
+        !ctx.reimbursementPayableAccountId
+      )
+        return refuse(
+          "Configure the reimbursements payable account before recording a personally paid expense.",
+        );
       return accept(
         twoSided(
           input.categoryAccountId,
-          input.paidFromAccountId ?? ctx.payableAccountId,
+          input.expensePaymentSource === "personal"
+            ? ctx.reimbursementPayableAccountId!
+            : (input.paidFromAccountId ?? ctx.payableAccountId),
           amount,
         ),
       );
@@ -159,11 +169,19 @@ function buildFor(
     case "payment":
       return accept(
         input.direction === "we-pay"
-          ? twoSided(ctx.payableAccountId, input.paidFromAccountId, amount)
+          ? twoSided(
+              input.settlementAccountId ?? ctx.payableAccountId,
+              input.paidFromAccountId,
+              amount,
+            )
           : input.direction === "we-receive"
             ? twoSided(input.paidFromAccountId, ctx.receivableAccountId, amount)
             : input.direction === "refund-received"
-              ? twoSided(input.paidFromAccountId, ctx.payableAccountId, amount)
+              ? twoSided(
+                  input.paidFromAccountId,
+                  input.settlementAccountId ?? ctx.payableAccountId,
+                  amount,
+                )
               : twoSided(
                   ctx.receivableAccountId,
                   input.paidFromAccountId,

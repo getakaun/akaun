@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import * as schema from "../db/schema.js";
 import {
@@ -259,9 +259,27 @@ export function isContactReferenced(db: Db, id: number): boolean {
   const record = db
     .select({ id: ledgerRecords.id })
     .from(ledgerRecords)
-    .where(eq(ledgerRecords.contactId, id))
+    .where(
+      or(
+        eq(ledgerRecords.contactId, id),
+        eq(ledgerRecords.supplierContactId, id),
+      ),
+    )
     .get();
   if (record) return true;
+
+  for (const table of [importQueue, importItems]) {
+    if (
+      db
+        .select({ id: table.id })
+        .from(table)
+        .where(
+          or(eq(table.supplierContactId, id), eq(table.paidByContactId, id)),
+        )
+        .get()
+    )
+      return true;
+  }
 
   const quotationRef = db
     .select({ id: quotations.id })
@@ -334,22 +352,28 @@ export function getContactUsageCounts(
       invoices: 0,
     };
 
+  // Count a record once per contact even when supplier and payer coincide.
   const recordRows = db
     .select({
       contactId: ledgerRecords.contactId,
+      supplierContactId: ledgerRecords.supplierContactId,
       kind: ledgerRecords.kind,
-      n: sql<number>`count(*)`,
     })
     .from(ledgerRecords)
-    .where(inArray(ledgerRecords.contactId, ids))
-    .groupBy(ledgerRecords.contactId, ledgerRecords.kind)
+    .where(
+      or(
+        inArray(ledgerRecords.contactId, ids),
+        inArray(ledgerRecords.supplierContactId, ids),
+      ),
+    )
     .all();
   for (const r of recordRows) {
-    if (r.contactId == null) continue;
-    const n = Number(r.n);
-    out[r.contactId].records += n;
-    if (r.kind === LedgerRecordKind.Expense) out[r.contactId].expenses += n;
-    else if (r.kind === LedgerRecordKind.Income) out[r.contactId].incomes += n;
+    for (const id of new Set([r.contactId, r.supplierContactId])) {
+      if (id == null || !out[id]) continue;
+      out[id].records++;
+      if (r.kind === LedgerRecordKind.Expense) out[id].expenses++;
+      else if (r.kind === LedgerRecordKind.Income) out[id].incomes++;
+    }
   }
 
   const quotationRows = db
@@ -527,6 +551,20 @@ export function mergeContacts(
       .set({ contactId: survivorId })
       .where(inArray(ledgerRecords.contactId, losers))
       .run();
+    tx.update(ledgerRecords)
+      .set({ supplierContactId: survivorId })
+      .where(inArray(ledgerRecords.supplierContactId, losers))
+      .run();
+    for (const table of [importQueue, importItems]) {
+      tx.update(table)
+        .set({ supplierContactId: survivorId })
+        .where(inArray(table.supplierContactId, losers))
+        .run();
+      tx.update(table)
+        .set({ paidByContactId: survivorId })
+        .where(inArray(table.paidByContactId, losers))
+        .run();
+    }
     tx.update(importQueue)
       .set({ matchedContactId: survivorId })
       .where(inArray(importQueue.matchedContactId, losers))

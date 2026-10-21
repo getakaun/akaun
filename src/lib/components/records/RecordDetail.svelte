@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { ChevronRight, FileText, Scale, Trash2, Users } from '@lucide/svelte';
+	import { ChevronRight, FileText, Scale, Users } from '@lucide/svelte';
 	import { toast } from 'svelte-sonner';
 	import DetailPage from '$lib/components/ui/DetailPage.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
@@ -9,14 +9,16 @@
 	import AttachmentManager, { type Attachment } from '$lib/components/ui/AttachmentManager.svelte';
 	import AuditTrail from '$lib/components/ui/AuditTrail.svelte';
 	import RecordForm from '$lib/components/ledger/RecordForm.svelte';
-	import ListExpand, { visibleItems } from '$lib/components/ui/ListExpand.svelte';
+	import ReimbursementDetails from './ReimbursementDetails.svelte';
 	import ReimbursementReversalDialog from './ReimbursementReversalDialog.svelte';
 	import RecipientCorrectionDialog from './RecipientCorrectionDialog.svelte';
+	import RecordActions from './RecordActions.svelte';
 	import AllocationCorrectionDialog from './AllocationCorrectionDialog.svelte';
 	import DateCorrectionDialog from './DateCorrectionDialog.svelte';
 	import SettlementList, {
 		type SettlementLink
 	} from '$lib/components/ledger/SettlementList.svelte';
+	import { reimbursementEntryLabel } from '$lib/reimbursement-labels.js';
 	import { statusLabelFor } from '$lib/components/ledger/record-status.js';
 	import { createResourceStream } from '$lib/sse.js';
 	import { formatDate, formatMinor } from '$lib/format.js';
@@ -37,14 +39,11 @@
 	// Writable-derived: a fresh server load replaces it, and a stream event can
 	// still patch it in place.
 	let record = $derived<RecordView>(data.record);
-	let attachments = $state<Attachment[]>([]);
-	let settlementLinks = $state<SettlementLink[]>([]);
-
-	// Server-rendered, so nothing above the fold waits on a round trip.
-	$effect(() => {
-		attachments = data.attachments as Attachment[];
-		settlementLinks = data.settlements as SettlementLink[];
-	});
+	let attachments = $derived<Attachment[]>(data.attachments as Attachment[]);
+	let settlementLinks = $derived<SettlementLink[]>(data.displayLinks);
+	let reimbursement = $derived(data.reimbursement);
+	let refreshVersion = 0;
+	let relationsError = $state('');
 
 	// Structural types, the house convention for `bind:this` on a component.
 	let formRef = $state<{
@@ -59,7 +58,6 @@
 	let dateCorrectionOpen = $state(false);
 	let recipientCorrectionOpen = $state(false);
 	let reversalGroupId = $state<number | null>(null);
-	let reimbursementExpanded = $state(false);
 	let correctionSettlementId = $state<number | null>(null);
 	let auditTrailRef = $state<{ refresh: () => Promise<void> } | null>(null);
 
@@ -73,7 +71,18 @@
 		[LedgerRecordKind.Journal]: 'Journal entry'
 	};
 
-	const kindLabel = $derived(KIND_TITLES[record.kind] ?? 'Record');
+	const kindLabel = $derived(
+		reimbursement.generatedRole
+			? reimbursementEntryLabel(reimbursement.generatedRole)
+			: (KIND_TITLES[record.kind] ?? 'Record')
+	);
+	const recordDescription = $derived(
+		reimbursement.generated
+			? (reimbursement.groups
+					.flatMap((group) => group.entries)
+					.find((entry) => entry.recordId === record.id)?.description ?? record.description)
+			: record.description
+	);
 	/**
 	 * An invoice's issue posting belongs to the invoice: it is changed there and
 	 * removed by cancelling it. The server refuses both here too.
@@ -81,7 +90,7 @@
 	const fromInvoice = $derived(record.kind === LedgerRecordKind.InvoiceIssue);
 	const canCorrectDate = $derived(
 		data.perms.change &&
-			!data.reimbursement.generated &&
+			!reimbursement.generated &&
 			data.perms.correctDate &&
 			record.locked &&
 			!record.reconciled &&
@@ -100,16 +109,25 @@
 				)
 			: null
 	);
-	const creditAvailable = $derived(
+	const canCorrectPayee = $derived(
+		isPayment &&
+			!!paymentControl &&
+			paymentControl.amountMinor > 0 &&
+			paymentControl.accountSubType === AccountSubType.AccountsPayable &&
+			data.perms.change &&
+			data.perms.delete &&
+			data.perms.add
+	);
+	const creditPayment = $derived(
 		!!paymentControl &&
 			record.contactId !== null &&
-			record.outstandingMinor > 0 &&
 			(paymentControl.accountSubType === AccountSubType.AccountsPayable
 				? paymentControl.amountMinor > 0
 				: paymentControl.amountMinor < 0)
 	);
+	const creditAvailable = $derived(creditPayment && record.outstandingMinor > 0);
 	const refundHref = $derived(
-		`${resolve('/(app)/records/new/payment')}?contactId=${record.contactId}&direction=${paymentControl?.accountSubType === AccountSubType.AccountsPayable ? 'refund-received' : 'refund-paid'}`
+		`${resolve('/(app)/records/new/payment')}?contactId=${record.contactId}&settlementAccountId=${paymentControl?.accountId}&direction=${paymentControl?.accountSubType === AccountSubType.AccountsPayable ? 'refund-received' : 'refund-paid'}`
 	);
 	const settlementsLabel = $derived(isPayment ? 'Allocated to' : 'Payments applied');
 	const contact = $derived(data.contacts.find((c) => c.id === record.contactId) ?? null);
@@ -154,8 +172,25 @@
 	}
 
 	async function refreshSettlements() {
-		const res = await fetch(`/api/records/${record.id}/settlements`);
-		if (res.ok) settlementLinks = (await res.json()).links ?? [];
+		const requestedId = record.id;
+		const version = ++refreshVersion;
+		try {
+			const res = await fetch(`/api/records/${requestedId}/settlements`);
+			if (!res.ok)
+				throw new Error(
+					'Could not refresh reimbursement details. Reload this page to see the latest amounts.'
+				);
+			const body = await res.json();
+			if (version !== refreshVersion || record.id !== requestedId) return;
+			record = body.record;
+			settlementLinks = body.displayLinks;
+			reimbursement = body.reimbursement;
+			relationsError = '';
+		} catch (cause) {
+			if (version === refreshVersion && record.id === requestedId)
+				relationsError =
+					cause instanceof Error ? cause.message : 'Could not refresh reimbursement details.';
+		}
 	}
 
 	// The shared registry, so list → record → back reuses one connection instead
@@ -169,12 +204,21 @@
 	}>('/api/records/stream', (m) => {
 		if (m.type === 'record-update' && m.record?.id === record.id) {
 			record = m.record;
+			void refreshSettlements();
 		} else if (m.type === 'record-deleted' && m.id === record.id) {
 			// Staying on the page of a record that is gone is worse than a drawer
 			// closing. `replaceState` so the back button cannot land here either.
 			toast('That record was deleted.');
 			void goto(resolve('/(app)/records'), { replaceState: true });
-		} else if (m.type === 'settlement-changed' && m.recordIds?.includes(record.id)) {
+		} else if (
+			(m.type === 'settlement-changed' &&
+				m.recordIds?.some(
+					(id) => id === record.id || reimbursement.relatedRecordIds.includes(id)
+				)) ||
+			(m.type === 'record-update' &&
+				m.record &&
+				reimbursement.relatedRecordIds.includes(m.record.id))
+		) {
 			void refreshSettlements();
 		}
 	});
@@ -196,7 +240,10 @@
 {#if reversalGroupId !== null}<ReimbursementReversalDialog
 		groupId={reversalGroupId}
 		onclose={() => (reversalGroupId = null)}
-		onreversed={() => window.location.reload()}
+		onreversed={() => {
+			void refreshSettlements();
+			void auditTrailRef?.refresh();
+		}}
 	/>{/if}
 {#if recipientCorrectionOpen}
 	<RecipientCorrectionDialog
@@ -209,7 +256,25 @@
 	/>
 {/if}
 
-<svelte:head><title>{record.description || kindLabel} - Akaun</title></svelte:head>
+<svelte:head><title>{recordDescription || kindLabel} - Akaun</title></svelte:head>
+
+{#snippet recordFields()}
+	<RecordForm
+		bind:this={formRef}
+		bind:dirty
+		bind:saving
+		record={reimbursement.generated ? { ...record, description: recordDescription } : record}
+		accounts={data.accounts}
+		categories={data.categories}
+		allAccounts={data.allAccounts}
+		contacts={data.contacts}
+		defaultAccountId={data.defaultAccountId}
+		lastForeignCurrencyExpense={data.lastForeignCurrencyExpense}
+		lastForeignCurrencyIncome={data.lastForeignCurrencyIncome}
+		canChange={data.perms.change && !fromInvoice && !reimbursement.generated}
+		canAdjust={data.perms.adjustments}
+	/>
+{/snippet}
 
 <DetailPage
 	backHref="/records"
@@ -221,31 +286,20 @@
 	dirtyNote={formRef?.blockedBy() ?? 'Unsaved changes'}
 >
 	{#snippet actions()}
-		{#if record.kind === LedgerRecordKind.Payment && paymentControl?.amountMinor && paymentControl.amountMinor > 0 && paymentControl.accountSubType === AccountSubType.AccountsPayable && data.perms.change && data.perms.delete && data.perms.add}
-			<button
-				class="sheet-btn"
-				disabled={dirty || saving}
-				onclick={() => (recipientCorrectionOpen = true)}>Correct recipient</button
-			>
-		{/if}
-		{#if canCorrectDate}
-			<button
-				class="sheet-btn"
-				disabled={dirty || saving}
-				title={dirty ? 'Save or discard your changes before correcting the date.' : undefined}
-				onclick={() => (dateCorrectionOpen = true)}>Correct date</button
-			>
-		{/if}
-		{#if data.perms.delete && !data.reimbursement.generated}
-			<button
-				class="sheet-btn sheet-btn-delete"
-				disabled={deleteBlockedReason !== null}
-				title={deleteBlockedReason ?? undefined}
-				onclick={() => (deleteDialogOpen = true)}
-			>
-				<Trash2 size={14} /> Delete
-			</button>
-		{/if}
+		<RecordActions
+			{canCorrectPayee}
+			{canCorrectDate}
+			canDelete={data.perms.delete && !reimbursement.generated}
+			{deleteBlockedReason}
+			{dirty}
+			{saving}
+			dialogOpen={recipientCorrectionOpen || dateCorrectionOpen || deleteDialogOpen}
+			onaction={(action) => {
+				if (action === 'payee') recipientCorrectionOpen = true;
+				else if (action === 'date') dateCorrectionOpen = true;
+				else deleteDialogOpen = true;
+			}}
+		/>
 	{/snippet}
 
 	{#snippet hero()}
@@ -257,7 +311,7 @@
 				<span>·</span><span>{record.recordNumber}</span>
 			{/if}
 		</div>
-		<h1 class="detail-hero-title">{record.description || kindLabel}</h1>
+		<h1 class="detail-hero-title">{recordDescription || kindLabel}</h1>
 		<div class="detail-hero-figure">
 			<span class="detail-hero-amount">{formatMinor(record.amountMinor)}</span>
 			<!-- Moving money between two accounts you hold owes nobody anything, so
@@ -266,11 +320,24 @@
 				<StatusBadge status={statusLabelFor(record)} />
 				{#if record.outstandingMinor > 0}
 					<span class="detail-hero-note">
-						{formatMinor(record.outstandingMinor)} outstanding
+						{formatMinor(record.outstandingMinor)}
+						{creditAvailable ? 'available credit' : 'outstanding'}
 					</span>
 				{/if}
 			{/if}
 		</div>
+		{#if isPayment && paymentControl}
+			<p class="text-muted-foreground mt-2 text-sm">
+				Applied {formatMinor(
+					Math.max(0, Math.abs(paymentControl.amountMinor) - record.outstandingMinor)
+				)}
+				{#if creditPayment}
+					· Available credit {formatMinor(record.outstandingMinor)}{/if}
+			</p>
+		{/if}
+		{#if reimbursement.groups.some((group) => group.reversedAt)}
+			<p class="mt-2 text-sm font-semibold">Reimbursement reversed · see details below</p>
+		{/if}
 		{#if error}<p class="hero-error">{error}</p>{/if}
 	{/snippet}
 
@@ -280,69 +347,37 @@
 				To correct only this settled date, use Correct date. A reason and review are required.
 			</p>
 		{/if}
-		{#if data.reimbursement.groups.length}
-			<section class="detail-card">
-				<div class="detail-card-head"><span class="detail-card-title">Reimbursement</span></div>
-				{#if data.reimbursement.generated}<p class="card-empty">
-						This transfer entry is read-only.
-					</p>{/if}
-				{#each data.reimbursement.groups as group (group.id)}
-					<p class="card-empty">Group #{group.id}{group.reversedAt ? ' · Reversed' : ''}</p>
-					{#if !group.reversedAt && data.perms.add && data.perms.delete}<button
-							class="sheet-btn"
-							disabled={dirty || saving}
-							onclick={() => (reversalGroupId = group.id)}>Reverse reimbursement</button
-						>{/if}
-					{#if group.paymentRecordId}<button
-							class="sheet-btn"
-							onclick={() =>
-								goto(resolve('/(app)/records/[id]', { id: String(group.paymentRecordId) }))}
-							>Payment #{group.paymentRecordId}</button
-						>{/if}
-					{#each group.entries as entry (entry.recordId)}
-						<button
-							class="sheet-btn"
-							onclick={() => goto(resolve('/(app)/records/[id]', { id: String(entry.recordId) }))}
-							>{entry.role === 'recipient'
-								? 'Recipient payable'
-								: entry.role === 'supplier'
-									? 'Supplier transfer'
-									: 'Reversal'} · {entry.contactName} · #{entry.recordId}</button
-						>
-					{/each}
-					{#each visibleItems(group.items, reimbursementExpanded) as item (item.id)}
-						<button
-							class="sheet-btn"
-							onclick={() => goto(resolve('/(app)/records/[id]', { id: String(item.recordId) }))}
-							>Expense #{item.recordId} · {formatMinor(item.amountMinor)}</button
-						>
-					{/each}
-					<ListExpand total={group.items.length} bind:expanded={reimbursementExpanded} />
-				{/each}
-			</section>
+		{#if reimbursement.generated}
+			<p class="text-muted-foreground mb-3 text-sm">
+				This entry links the expenses to the person being reimbursed. It does not represent another
+				bank payment. The accounting entry is read-only.
+			</p>
+			{#each reimbursement.groups as group (group.id)}
+				{#if group.paymentRecordId}
+					<a
+						class="sheet-btn mb-3"
+						href={resolve('/(app)/records/[id]', {
+							id: String(group.paymentRecordId)
+						})}>View original payment #{group.paymentRecordId}</a
+					>
+				{/if}
+			{/each}
 		{/if}
 
-		<RecordForm
-			bind:this={formRef}
-			bind:dirty
-			bind:saving
-			{record}
-			accounts={data.accounts}
-			categories={data.categories}
-			allAccounts={data.allAccounts}
-			contacts={data.contacts}
-			defaultAccountId={data.defaultAccountId}
-			lastForeignCurrencyExpense={data.lastForeignCurrencyExpense}
-			lastForeignCurrencyIncome={data.lastForeignCurrencyIncome}
-			canChange={data.perms.change && !fromInvoice && !data.reimbursement.generated}
-			canAdjust={data.perms.adjustments}
-		/>
+		{#if reimbursement.generated}<details class="detail-card">
+				<summary>Accounting entry fields</summary>
+				{@render recordFields()}
+			</details>{:else}{@render recordFields()}{/if}
 	{/snippet}
 
 	{#snippet rail()}
 		{#if contact}
 			<section class="detail-card">
-				<div class="detail-card-head"><span class="detail-card-title">Contact</span></div>
+				<div class="detail-card-head">
+					<span class="detail-card-title"
+						>{record.expensePaymentSource === 'personal' ? 'Paid personally by' : 'Contact'}</span
+					>
+				</div>
 				<button
 					class="related-link ob-card"
 					onclick={() => goto(resolve('/(app)/contacts/[id]', { id: String(contact.id) }))}
@@ -357,7 +392,9 @@
 			</section>
 		{:else if batchContactCount > 0}
 			<section class="detail-card">
-				<div class="detail-card-head"><span class="detail-card-title">Contact</span></div>
+				<div class="detail-card-head">
+					<span class="detail-card-title">Contact</span>
+				</div>
 				<div class="ob-card ob-card-static">
 					<span class="ob-icon"><Users size={15} /></span>
 					<span class="ob-main">
@@ -368,11 +405,31 @@
 			</section>
 		{/if}
 
+		{#if record.supplierContactId && record.supplierContactName}
+			<section class="detail-card">
+				<div class="detail-card-head"><span class="detail-card-title">Supplier</span></div>
+				<a
+					class="related-link ob-card"
+					href={resolve('/(app)/contacts/[id]', { id: String(record.supplierContactId) })}
+				>
+					<span class="ob-main"
+						><span class="ob-title">{record.supplierContactName}</span><span class="ob-sub"
+							>Where this purchase was made</span
+						></span
+					>
+					<ChevronRight size={14} />
+				</a>
+			</section>
+		{/if}
+
 		<!--
 			Shown wherever settling applies, empty or not: a payment can always be
 			allocated, and a record that is still owed can always be paid. A record paid
 			straight from an account reads paid with nothing to settle, so it has no card.
 		-->
+		{#if relationsError}<p role="alert" class="text-destructive text-sm">
+				{relationsError}
+			</p>{/if}
 		{#if settlementLinks.length > 0 || isPayment || !record.paid}
 			<section class="detail-card">
 				<div class="detail-card-head">
@@ -397,11 +454,19 @@
 			</section>
 		{/if}
 
+		<ReimbursementDetails
+			{reimbursement}
+			recordId={record.id}
+			canReverse={data.perms.add && data.perms.delete}
+			disabled={dirty || saving}
+			onreverse={(groupId) => (reversalGroupId = groupId)}
+		/>
+
 		<section class="detail-card">
 			<AttachmentManager
 				apiBase="/api/records/{record.id}"
 				bind:attachments
-				canDelete={data.perms.delete && !data.reimbursement.generated}
+				canDelete={data.perms.delete && !reimbursement.generated}
 			/>
 		</section>
 
@@ -412,7 +477,9 @@
 			reader to (FR-048, D-06).
 		-->
 		<section class="detail-card">
-			<div class="detail-card-head"><span class="detail-card-title">Bank</span></div>
+			<div class="detail-card-head">
+				<span class="detail-card-title">Bank</span>
+			</div>
 			<div class="ob-card ob-card-static">
 				<span class="ob-icon" class:cleared={record.reconciled}><Scale size={15} /></span>
 				<span class="ob-main">
@@ -431,7 +498,9 @@
 		{#if fromInvoice && data.invoiceId !== null}
 			{@const invoiceId = data.invoiceId}
 			<section class="detail-card">
-				<div class="detail-card-head"><span class="detail-card-title">Invoice</span></div>
+				<div class="detail-card-head">
+					<span class="detail-card-title">Invoice</span>
+				</div>
 				<button
 					type="button"
 					class="related-link ob-card"
@@ -448,7 +517,9 @@
 		{/if}
 
 		<section class="detail-card">
-			<div class="detail-card-head"><span class="detail-card-title">History</span></div>
+			<div class="detail-card-head">
+				<span class="detail-card-title">History</span>
+			</div>
 			<AuditTrail bind:this={auditTrailRef} recordType="record" recordId={record.id} />
 		</section>
 	{/snippet}

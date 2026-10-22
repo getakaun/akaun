@@ -79,10 +79,16 @@ export type PositionSection = {
   needsReviewCount: number;
 };
 
-export type AgeingBandView = { label: string; count: number; totalMinor: number };
+export type AgeingBandView = {
+  label: string;
+  count: number;
+  totalMinor: number;
+};
 
 export type OwedSide = {
   totalMinor: number;
+  obligationsMinor?: number;
+  creditsMinor?: number;
   overdueMinor: number;
   overdueCount: number;
   /** Every band, empty ones included, freshest first. */

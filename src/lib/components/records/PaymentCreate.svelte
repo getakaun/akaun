@@ -18,7 +18,15 @@
 	let saving = $state(false);
 	let error = $state('');
 
-	const title = $derived(data.direction === 'we-pay' ? 'Record a payment' : 'Record a receipt');
+	const title = $derived(
+		{
+			reimburse: 'Record a reimbursement',
+			'we-pay': 'Record a payment',
+			'we-receive': 'Record a receipt',
+			'refund-received': 'Record a refund received',
+			'refund-paid': 'Record a refund paid'
+		}[data.direction]
+	);
 
 	async function save() {
 		const saved = await formRef?.submit();
@@ -63,8 +71,8 @@
 			accounts={data.accounts}
 			contacts={data.contacts}
 			defaultAccountId={data.defaultAccountId}
+			settlementAccountId={data.settlementAccountId}
 			contactId={data.contactId}
-			batch={data.batch}
 			preselectMovementId={data.preselectMovementId}
 		/>
 	{/snippet}

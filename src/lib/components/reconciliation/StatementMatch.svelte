@@ -664,8 +664,13 @@
       navigation.cancel();
       if (navigation.to?.url) {
         const destination = navigation.to.url;
-        // eslint-disable-next-line svelte/no-navigation-without-resolve -- destination already comes from SvelteKit's resolved navigation target.
-        deferredAction = () => void goto(destination);
+        deferredAction = () => {
+          // Initial drafts can include unsaved suggestions. Restore the saved
+          // allocations so the retried navigation does not hit this guard again.
+          drafts = [...savedDrafts];
+          // eslint-disable-next-line svelte/no-navigation-without-resolve -- destination already comes from SvelteKit's resolved navigation target.
+          void goto(destination);
+        };
       }
       discardOpen = true;
     }

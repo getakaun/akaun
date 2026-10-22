@@ -5,10 +5,7 @@ import { can } from "$lib/server/permissions.js";
 import { badRequest, forbidden } from "$lib/server/api-response.js";
 import { outstandingAgeing } from "$lib/server/queries/settlements.js";
 import { isValidDate } from "$lib/server/date.js";
-import {
-  settlePayment,
-  settleShape,
-} from "$lib/server/application/records.js";
+import { settlePayment, settleShape } from "$lib/server/application/records.js";
 import { toResponse } from "$lib/server/application/http.js";
 
 const createSchema = z.object(settleShape).strict();
@@ -36,6 +33,11 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   return Response.json(
     outstandingAgeing(db, {
       direction,
+      accountId:
+        Number.isSafeInteger(Number(p.get("settlementAccountId"))) &&
+        Number(p.get("settlementAccountId")) > 0
+          ? Number(p.get("settlementAccountId"))
+          : undefined,
       contactId: Number.isInteger(contactId) ? contactId : undefined,
       openOnly: p.get("openOnly") !== "false",
       asOf: isValidDate(asOf) ? asOf : undefined,

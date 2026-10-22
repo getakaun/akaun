@@ -1,4 +1,8 @@
 <script lang="ts">
+	import { createResourceStream } from '$lib/sse.js';
+	import { planCreditApplication } from './credit-application.js';
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+	import DatePicker from '$lib/components/ui/date-picker/DatePicker.svelte';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
@@ -19,15 +23,22 @@
 	 * its allocations together and takes the payment back if the allocations are
 	 * refused, rather than leaving money recorded against nothing (FR-015).
 	 */
-	type Direction = 'we-pay' | 'we-receive';
+	type Direction = 'we-pay' | 'we-receive' | 'refund-received' | 'refund-paid' | 'reimburse';
+	const formTitles: Record<Direction, string> = {
+		'we-pay': 'Payment',
+		reimburse: 'Reimbursement',
+		'we-receive': 'Receipt',
+		'refund-received': 'Refund received',
+		'refund-paid': 'Refund paid'
+	};
 
 	let {
-		direction = 'we-pay',
+		direction = 'reimburse',
 		accounts,
 		contacts = [],
 		defaultAccountId = null,
+		settlementAccountId = null,
 		contactId: initialContactId = null,
-		batch: initialBatch = false,
 		preselectMovementId = null,
 		// Write-only out-parameters: the frame around this form reads them to
 		// decide whether to show a save bar and what to put on it.
@@ -43,10 +54,9 @@
 		accounts: AccountView[];
 		contacts?: { id: number; legalName: string }[];
 		defaultAccountId?: number | null;
+		settlementAccountId?: number | null;
 		/** Opens with this person already chosen, from a row that names them. */
 		contactId?: number | null;
-		/** Opens in batch mode, every contact's outstanding items already ticked. */
-		batch?: boolean;
 		/**
 		 * One owed item to tick on arrival — the invoice "Record payment" came
 		 * from. Ticked once, when the opening contact's items first load.
@@ -56,14 +66,6 @@
 		saving?: boolean;
 		error?: string;
 	} = $props();
-
-	/**
-	 * One contact, chosen up front — or several at once, one real bank transfer
-	 * settling items across all of them, with no single contact of its own
-	 * (the payment's settlements carry that attribution instead, see FR-008's
-	 * exception for a batch payment).
-	 */
-	let mode = $state<'single' | 'batch'>('single');
 
 	// --- Form state ---------------------------------------------------------
 	let date = $state('');
@@ -84,11 +86,32 @@
 	 */
 	let picked = $state<Record<number, string>>({});
 	let items = $state<OutstandingItem[]>([]);
+	// Only shown for compatibility when an older separate payable account has items.
+	let reimbursementAccounts = $state<{ id: number; name: string }[]>([]);
+	let reimbursementAccountId = $state<number | null>(null);
 	let loading = $state(false);
+	let availableCredits = $state<OutstandingItem[]>([]);
+	let creditPicked = $state<Record<number, string>>({});
+	let loadError = $state('');
+	let revision = $state(0);
+	createResourceStream('/api/records/stream', () => {
+		revision += 1;
+	});
 
 	let snapshot = $state('');
 	function fingerprint(): string {
-		return JSON.stringify([date, description, reference, remark, contactId, moneyAccountId, amountInput, picked]);
+		return JSON.stringify([
+			date,
+			description,
+			reference,
+			remark,
+			contactId,
+			moneyAccountId,
+			amountInput,
+			picked,
+			creditPicked,
+			direction
+		]);
 	}
 	function seed() {
 		date = new Date().toISOString().slice(0, 10);
@@ -96,11 +119,11 @@
 		reference = '';
 		remark = '';
 		contactId = initialContactId;
-		mode = initialBatch ? 'batch' : 'single';
 		moneyAccountId = null;
 		amountInput = '0.00';
 		amountEdited = false;
 		picked = {};
+		creditPicked = {};
 		error = '';
 		snapshot = fingerprint();
 	}
@@ -116,7 +139,21 @@
 
 	// Paying what we owe clears the money-we-owe side; being paid clears the
 	// money-owed-to-us side. The list of what can be covered follows from that.
-	const listDirection = $derived(direction === 'we-pay' ? 'we-owe' : 'owed-to-us');
+	const isReimbursement = $derived(direction === 'reimburse');
+	const isRefund = $derived(direction === 'refund-received' || direction === 'refund-paid');
+	const outgoing = $derived(
+		direction === 'we-pay' || direction === 'reimburse' || direction === 'refund-paid'
+	);
+	const listDirection = $derived(
+		direction === 'we-pay' || direction === 'reimburse' || direction === 'refund-received'
+			? 'we-owe'
+			: 'owed-to-us'
+	);
+	function acceptItems(body: { items?: OutstandingItem[] } | null) {
+		const list = body?.items ?? [];
+		items = list.filter((i) => (isRefund ? i.position === 'credit' : i.position !== 'credit'));
+		availableCredits = isRefund ? [] : list.filter((i) => i.position === 'credit');
+	}
 
 	/** Every item ticked, at its full outstanding amount — the ordinary "pay it all" case. */
 	function tickAll(list: OutstandingItem[]): Record<number, string> {
@@ -156,78 +193,59 @@
 		if (item) picked = { [item.movementId]: (item.outstandingMinor / 100).toFixed(2) };
 	}
 	$effect(() => {
-		const currentMode = mode;
+		void revision;
+		void direction;
+		loadError = '';
 		const person = contactId;
 		const dir = listDirection;
 		const token = ++loadToken;
 
-		if (currentMode === 'single') {
+		{
 			if (person === null) {
 				items = [];
+				availableCredits = [];
 				loading = false;
 				return;
 			}
 			loading = true;
-			fetch(`/api/settlements?direction=${dir}&contactId=${person}`)
-				.then((res) => (res.ok ? res.json() : null))
+			const endpoint = isReimbursement
+				? `/api/reimbursements/candidates?contactId=${person}${reimbursementAccountId !== null ? `&accountId=${reimbursementAccountId}` : ''}`
+				: `/api/settlements?direction=${dir}&contactId=${person}${settlementAccountId !== null ? `&settlementAccountId=${settlementAccountId}` : ''}`;
+			fetch(endpoint)
+				.then((res) => {
+					if (!res.ok) throw new Error('load');
+					return res.json();
+				})
 				.then((body) => {
 					if (token !== loadToken) return;
-					items = body?.items ?? [];
+					if (isReimbursement) reimbursementAccounts = body.accounts ?? [];
+					acceptItems(body);
 					loading = false;
 					applyPreselect(person);
 				})
 				.catch(() => {
 					if (token !== loadToken) return;
 					items = [];
+					availableCredits = [];
+					loadError = 'Open items could not be loaded. Reload before saving.';
 					loading = false;
 				});
 			return;
 		}
-
-		// Batch mode: every contact's outstanding items at once, ticked by
-		// default — the user asked to pay it all, and deselects what should
-		// wait rather than hunting down and ticking each item by hand.
-		loading = true;
-		fetch(`/api/settlements?direction=${dir}`)
-			.then((res) => (res.ok ? res.json() : null))
-			.then((body) => {
-				if (token !== loadToken) return;
-				items = body?.items ?? [];
-				picked = tickAll(items);
-				loading = false;
-			})
-			.catch(() => {
-				if (token !== loadToken) return;
-				items = [];
-				loading = false;
-			});
 	});
 
-	// Changing who the payment is with invalidates every tick against the old
-	// person's items — those movements are not theirs to pay off. Irrelevant in
-	// batch mode, where no single contact is chosen at all.
 	$effect(() => {
-		if (mode !== 'single') return;
 		void contactId;
-		picked = {};
+		reimbursementAccountId = null;
 	});
 
-	/** Every ticked item, grouped by who it belongs to (batch mode only). */
-	const groupedItems = $derived.by(() => {
-		const byContact = new Map<
-			number,
-			{ contactId: number; contactName: string; items: OutstandingItem[] }
-		>();
-		for (const item of items) {
-			if (item.contactId === null) continue;
-			let group = byContact.get(item.contactId);
-			if (!group) {
-				group = { contactId: item.contactId, contactName: item.contactName ?? '', items: [] };
-				byContact.set(item.contactId, group);
-			}
-			group.items.push(item);
-		}
-		return [...byContact.values()].sort((a, b) => a.contactName.localeCompare(b.contactName));
+	// Changing the recipient invalidates the previous selections.
+	$effect(() => {
+		void contactId;
+		void direction;
+		void reimbursementAccountId;
+		picked = {};
+		creditPicked = {};
 	});
 
 	// A box left empty is the same as not having ticked the item, so it is
@@ -243,17 +261,26 @@
 
 	const allocatedMinor = $derived(allocations.reduce((sum, a) => sum + a.amountMinor, 0));
 
+	const creditPlan = $derived(
+		planCreditApplication(
+			allocations,
+			Object.entries(creditPicked).map(([id, raw]) => ({
+				paymentMovementId: Number(id),
+				amountMinor: Math.round(Number(raw) * 100) || 0
+			}))
+		)
+	);
 	$effect(() => {
-		const total = allocatedMinor;
+		const total = allocatedMinor - creditPlan.creditAppliedMinor;
 		if (amountEdited) return;
 		amountInput = (total / 100).toFixed(2);
 	});
 
 	const amountMinor = $derived(Math.round(parseFloat(String(amountInput ?? '')) * 100) || 0);
-	const unallocatedMinor = $derived(amountMinor - allocatedMinor);
+	const unallocatedMinor = $derived(amountMinor - allocatedMinor + creditPlan.creditAppliedMinor);
 
-	const contactLabel = $derived(direction === 'we-pay' ? 'Payee *' : 'Payer *');
-	const moneyLabel = $derived(direction === 'we-pay' ? 'Payment account' : 'Receipt account');
+	const contactLabel = $derived(outgoing ? 'Payee *' : 'Payer *');
+	const moneyLabel = $derived(outgoing ? 'Payment account' : 'Receipt account');
 
 	function isPicked(item: OutstandingItem): boolean {
 		return item.movementId in picked;
@@ -270,12 +297,37 @@
 	}
 
 	export function blockedBy(): string | null {
-		if (mode === 'single' && contactId === null) {
-			return direction === 'we-pay' ? 'Select the payee.' : 'Select the payer.';
+		if (contactId === null) {
+			return outgoing ? 'Select the payee.' : 'Select the payer.';
 		}
-		if (moneyAccountId === null) return 'Choose an account.';
-		if (mode === 'batch' && allocations.length === 0) return 'Select at least one open item to allocate.';
-		if (amountMinor <= 0) return 'Enter an amount.';
+		if (loading || loadError) return loadError || 'Wait for open items to load.';
+		if (moneyAccountId === null && amountMinor !== 0) return 'Choose an account.';
+		if (isReimbursement && !description.trim()) return 'Enter a reimbursement description.';
+		if (isReimbursement && !allocations.length) return 'Select the expenses to reimburse.';
+		if (isRefund && (allocations.length === 0 || amountMinor !== allocatedMinor))
+			return 'Apply the full refund to an existing overpayment.';
+		if (
+			Object.values(creditPicked).reduce((n, raw) => n + Math.round(Number(raw) * 100), 0) >
+			allocatedMinor
+		)
+			return 'The credit amount exceeds the selected claims. Reduce the credit amount.';
+		if (!isReimbursement && unallocatedMinor < 0)
+			return 'The cash amount and applied credit do not cover the selected items.';
+		for (const [id, raw] of Object.entries(creditPicked)) {
+			const available = availableCredits.find((i) => i.movementId === Number(id));
+			if (
+				!available ||
+				!Number.isFinite(Number(raw)) ||
+				Number(raw) <= 0 ||
+				Math.round(Number(raw) * 100) > available.outstandingMinor
+			)
+				return 'Review the credit amounts before saving.';
+		}
+		if (
+			amountMinor < 0 ||
+			(!isReimbursement && amountMinor === 0 && creditPlan.creditAppliedMinor === 0)
+		)
+			return 'Enter an amount or apply available credit.';
 		return null;
 	}
 
@@ -284,98 +336,94 @@
 		saving = true;
 		error = '';
 
-		const res = await fetch('/api/records', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				kind: 'payment',
-				date,
-				description,
-				amount: amountMinor / 100,
-				currency: mainCurrency(),
-				exchangeRate: 1,
-				reference,
-				remark,
-				// A batch payment names no single contact — each settlement it
-				// creates already points at the contact its own item belongs to.
-				contactId: mode === 'batch' ? null : contactId,
-				paidFromAccountId: moneyAccountId,
-				direction,
-				settlements: allocations
-			})
-		});
+		try {
+			const res = await fetch(isReimbursement ? '/api/reimbursements' : '/api/records', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(
+					isReimbursement
+						? {
+								contactId,
+								date,
+								description,
+								reference,
+								remark,
+								personallyPaid: true,
+								items: allocations,
+								cashMinor: amountMinor,
+								paidFromAccountId: moneyAccountId ?? defaultAccountId ?? accounts[0]?.id ?? null,
+								credits: Object.entries(creditPicked).map(([id, raw]) => ({
+									paymentMovementId: Number(id),
+									amountMinor: Math.round(Number(raw) * 100)
+								}))
+							}
+						: {
+								kind: 'payment',
+								...(settlementAccountId !== null ? { settlementAccountId } : {}),
+								date,
+								description,
+								amount: amountMinor / 100,
+								currency: mainCurrency(),
+								exchangeRate: 1,
+								reference,
+								remark,
+								contactId,
+								paidFromAccountId: moneyAccountId ?? defaultAccountId ?? accounts[0]?.id,
+								direction,
+								settlements: creditPlan.cashAllocations,
+								creditApplications: creditPlan.creditApplications
+							}
+				)
+			});
 
-		saving = false;
-		if (!res.ok) {
-			const body = await res.json().catch(() => null);
-			// The rule's own sentence, never a rewrite of it (FR-016).
-			error = body?.reason ?? body?.error ?? 'That payment could not be saved.';
+			saving = false;
+			if (!res.ok) {
+				const body = await res.json().catch(() => null);
+				// The rule's own sentence, never a rewrite of it (FR-016).
+				error = body?.reason ?? body?.error ?? 'That payment could not be saved.';
+				return null;
+			}
+			const saved = await res.json();
+			snapshot = fingerprint();
+			return isReimbursement ? saved.record : saved;
+		} catch {
+			error =
+				'The payment result could not be confirmed. Reload and check the records before trying again.';
 			return null;
+		} finally {
+			saving = false;
 		}
-		const saved = await res.json();
-		snapshot = fingerprint();
-		return saved;
 	}
 </script>
 
 {#if error}
-	<div class="form-error">{error}</div>
+	<div class="form-error" role="alert">{error}</div>
 {/if}
 
 <section class="detail-card">
-	<div class="detail-card-head"><span class="detail-card-title">Payment</span></div>
+	<div class="detail-card-head"><span class="detail-card-title">{formTitles[direction]}</span></div>
 
 	<div class="field">
-		<span class="field-label">Contacts</span>
-		<div class="mode-toggle" role="radiogroup" aria-label="One contact or several">
-			<button
-				type="button"
-				class="mode-btn"
-				class:active={mode === 'single'}
-				onclick={() => (mode = 'single')}
-			>
-				One contact
-			</button>
-			<button
-				type="button"
-				class="mode-btn"
-				class:active={mode === 'batch'}
-				onclick={() => (mode = 'batch')}
-			>
-				Batch (several contacts)
-			</button>
-		</div>
+		<label class="field-label" for="pay-contact">{contactLabel}</label>
+		<Select.Root
+			type="single"
+			value={contactId === null ? '' : String(contactId)}
+			onValueChange={(next) => (contactId = next ? Number(next) : null)}
+		>
+			<Select.Trigger id="pay-contact" class="w-full justify-between">
+				{#if contactId === null}
+					Select contact
+				{:else}
+					{contacts.find((contact) => contact.id === contactId)?.legalName ?? 'Select contact'}
+				{/if}
+			</Select.Trigger>
+			<Select.Content>
+				{#each contacts as contact (contact.id)}
+					<Select.Item value={String(contact.id)} label={contact.legalName} />
+				{/each}
+			</Select.Content>
+		</Select.Root>
 	</div>
-
-	{#if mode === 'single'}
-		<div class="field">
-			<label class="field-label" for="pay-contact">{contactLabel}</label>
-			<Select.Root
-				type="single"
-				value={contactId === null ? '' : String(contactId)}
-				onValueChange={(next) => (contactId = next ? Number(next) : null)}
-			>
-				<Select.Trigger id="pay-contact" class="w-full justify-between">
-					{#if contactId === null}
-						Select contact
-					{:else}
-						{contacts.find((contact) => contact.id === contactId)?.legalName ?? 'Select contact'}
-					{/if}
-				</Select.Trigger>
-				<Select.Content>
-					{#each contacts as contact (contact.id)}
-						<Select.Item value={String(contact.id)} label={contact.legalName} />
-					{/each}
-				</Select.Content>
-			</Select.Root>
-		</div>
-	{:else}
-		<p class="covers-note" style="margin-bottom:0;">
-			One payment allocated across the open items below. Clear the items that it does not
-			settle.
-		</p>
-	{/if}
-
 	<div class="field">
 		<label class="field-label" for="pay-description">Description *</label>
 		<Input id="pay-description" bind:value={description} required maxlength={500} class="w-full" />
@@ -389,128 +437,160 @@
 			step="0.01"
 			bind:value={amountInput}
 			oninput={() => (amountEdited = true)}
-			disabled={mode === 'batch'}
 			required
 			class="w-full"
 		/>
-		{#if mode === 'batch'}
-			<p class="field-hint">
-				Total of the selected allocations. A batch payment cannot have an unallocated amount.
-			</p>
-		{/if}
 	</div>
 
 	<div class="field">
-		<label class="field-label" for="pay-date">Date *</label>
-		<Input id="pay-date" type="date" bind:value={date} required class="w-full" />
+		<span id="pay-date-label" class="field-label">Date *</span>
+		<DatePicker name="date" bind:value={date} labelledBy="pay-date-label" />
 	</div>
 
-	<AccountSelect {accounts} bind:value={moneyAccountId} name="paymentAccount" label={moneyLabel} {defaultAccountId} />
+	<AccountSelect
+		{accounts}
+		bind:value={moneyAccountId}
+		name="paymentAccount"
+		label={moneyLabel}
+		{defaultAccountId}
+	/>
 </section>
 
+{#if loadError}<p class="form-error" role="alert">{loadError}</p>{/if}
+{#if availableCredits.length > 0}
+	<section class="detail-card">
+		<div class="detail-card-head"><span class="detail-card-title">Available credit</span></div>
+		<p class="covers-note">
+			Choose Apply to use an earlier payment against the items selected below.
+		</p>
+		{#each availableCredits as credit (credit.movementId)}
+			<div class="covers-row">
+				<label for={`apply-credit-${credit.movementId}`} class="covers-tick"
+					><Checkbox
+						id={`apply-credit-${credit.movementId}`}
+						checked={credit.movementId in creditPicked}
+						onCheckedChange={(checked) => {
+							if (!checked) delete creditPicked[credit.movementId];
+							else
+								creditPicked[credit.movementId] = (
+									Math.min(credit.outstandingMinor, allocatedMinor || credit.outstandingMinor) / 100
+								).toFixed(2);
+						}}
+					/>
+					Apply {credit.recordNumber ?? credit.description} · {formatMinor(credit.outstandingMinor)} available
+				</label>
+				{#if credit.movementId in creditPicked}<Input
+						class="h-8 w-[92px] shrink-0 text-right tabular-nums"
+						inputmode="decimal"
+						name={`creditAmount-${credit.movementId}`}
+						type="number"
+						min="0.01"
+						step="0.01"
+						max={credit.outstandingMinor / 100}
+						aria-label="Credit amount to apply"
+						bind:value={creditPicked[credit.movementId]}
+					/>{/if}
+			</div>
+		{/each}
+		<p class="covers-note">
+			Claim total: {formatMinor(allocatedMinor)} · Credit applied: {formatMinor(
+				creditPlan.creditAppliedMinor
+			)} · Cash remaining: {formatMinor(
+				Math.max(0, allocatedMinor - creditPlan.creditAppliedMinor)
+			)}
+		</p>
+	</section>
+{/if}
 <section class="detail-card">
 	<div class="detail-card-head">
 		<span class="detail-card-title">Allocation</span>
-		{#if mode === 'batch' && items.length > 0}
-			<div class="covers-bulk">
-				<button type="button" class="covers-bulk-btn" onclick={selectAll}>Select all</button>
-				<button type="button" class="covers-bulk-btn" onclick={selectNone}>Select none</button>
-			</div>
-		{/if}
 	</div>
 
-	{#if mode === 'single'}
-		{#if contactId === null}
-			<p class="covers-note">Select a contact to see the open items.</p>
-		{:else if loading}
-			<p class="covers-note">Looking…</p>
-		{:else if items.length === 0}
-			<p class="covers-note">This contact has no open items.</p>
-		{:else}
-			<div class="covers-list">
-				{#each items as item (item.movementId)}
-					<div class="covers-row" class:on={isPicked(item)}>
-						<label class="covers-tick">
-							<input type="checkbox" checked={isPicked(item)} onchange={() => toggle(item)} />
-							<span class="covers-main">
-								<span class="covers-name">{item.description || 'Record'}</span>
-								<span class="covers-sub">
-									{formatDate(item.date)}{item.recordNumber ? ` · ${item.recordNumber}` : ''} · {formatMinor(
-										item.outstandingMinor
-									)} outstanding
-									{#if item.daysOverdue > 0}
-										· {item.daysOverdue} days overdue
-									{/if}
-								</span>
-							</span>
-						</label>
-						{#if isPicked(item)}
-							<input
-								class="covers-amount"
-								type="number"
-								step="0.01"
-								aria-label="Amount allocated to {item.description || 'this record'}"
-								bind:value={picked[item.movementId]}
-							/>
-						{/if}
-					</div>
+	{#if isReimbursement && reimbursementAccounts.length > 1}
+		<div class="field">
+			<label class="field-label" for="reimbursement-account">Expenses account</label>
+			<select
+				id="reimbursement-account"
+				class="form-input"
+				value={reimbursementAccountId ?? reimbursementAccounts[0]?.id}
+				onchange={(event) => (reimbursementAccountId = Number(event.currentTarget.value))}
+			>
+				{#each reimbursementAccounts as account (account.id)}
+					<option value={account.id}>{account.name}</option>
 				{/each}
-			</div>
-		{/if}
-	{:else if loading}
-		<p class="covers-note">Looking…</p>
-	{:else if groupedItems.length === 0}
-		<p class="covers-note">No open items.</p>
-	{:else}
-		{#each groupedItems as group (group.contactId)}
-			<div class="covers-group">
-				<span class="covers-group-title">{group.contactName}</span>
-				<div class="covers-list">
-					{#each group.items as item (item.movementId)}
-						<div class="covers-row" class:on={isPicked(item)}>
-							<label class="covers-tick">
-								<input type="checkbox" checked={isPicked(item)} onchange={() => toggle(item)} />
-								<span class="covers-main">
-									<span class="covers-name">{item.description || 'Record'}</span>
-									<span class="covers-sub">
-										{formatDate(item.date)}{item.recordNumber
-											? ` · ${item.recordNumber}`
-											: ''} · {formatMinor(item.outstandingMinor)} outstanding
-										{#if item.daysOverdue > 0}
-											· {item.daysOverdue} days overdue
-										{/if}
-									</span>
-								</span>
-							</label>
-							{#if isPicked(item)}
-								<input
-									class="covers-amount"
-									type="number"
-									step="0.01"
-									aria-label="Amount allocated to {item.description || 'this record'}"
-									bind:value={picked[item.movementId]}
-								/>
-							{/if}
-						</div>
-					{/each}
-				</div>
-			</div>
-		{/each}
+			</select>
+		</div>
 	{/if}
 
-	{#if mode === 'single'}
-		{#if allocatedMinor > 0 && unallocatedMinor > 0}
-			<p class="covers-note">{formatMinor(unallocatedMinor)} unallocated.</p>
-		{:else if allocatedMinor > 0}
-			<p class="covers-note">Allocated: {formatMinor(allocatedMinor)}.</p>
-		{/if}
-	{:else if allocations.length > 0}
+	{#if contactId === null}
 		<p class="covers-note">
-			Allocated: {formatMinor(allocatedMinor)} across {allocations.length}
-			{allocations.length === 1 ? 'item' : 'items'}.
+			{isReimbursement
+				? 'Select the reimbursement recipient to see outstanding expenses and their available credit.'
+				: 'Select a contact to see the open items.'}
 		</p>
+	{:else if loading}
+		<p class="covers-note">Looking…</p>
+	{:else if items.length === 0}
+		<p class="covers-note">This contact has no open items.</p>
+	{:else}
+		<div class="covers-list">
+			{#each items as item (item.movementId)}
+				<div class="covers-row" class:on={isPicked(item)}>
+					<label for={`allocate-item-${item.movementId}`} class="covers-tick">
+						<Checkbox
+							id={`allocate-item-${item.movementId}`}
+							checked={isPicked(item)}
+							onCheckedChange={() => toggle(item)}
+						/>
+						<span class="covers-main">
+							<span class="covers-name"
+								>{isReimbursement
+									? `${item.supplierContactName ?? item.contactName ?? 'Supplier'} · `
+									: ''}{item.description || 'Record'}</span
+							>
+							<span class="covers-sub">
+								{formatDate(item.date)}{item.recordNumber ? ` · ${item.recordNumber}` : ''} · {formatMinor(
+									item.outstandingMinor
+								)} outstanding
+								{#if item.daysOverdue > 0}
+									· {item.daysOverdue} days overdue
+								{/if}
+							</span>
+						</span>
+					</label>
+					{#if isPicked(item)}
+						<Input
+							class="h-8 w-[92px] shrink-0 text-right tabular-nums"
+							name={`allocationAmount-${item.movementId}`}
+							inputmode="decimal"
+							type="number"
+							step="0.01"
+							aria-label="Amount allocated to {item.description || 'this record'}"
+							bind:value={picked[item.movementId]}
+						/>
+					{/if}
+				</div>
+			{/each}
+		</div>
+	{/if}
+	{#if allocatedMinor > 0 && unallocatedMinor > 0}
+		<p class="covers-note">{formatMinor(unallocatedMinor)} unallocated.</p>
+	{:else if allocatedMinor > 0}
+		<p class="covers-note">Allocated: {formatMinor(allocatedMinor)}.</p>
 	{/if}
 </section>
+
+{#if isReimbursement}
+	<section class="detail-card">
+		<div class="detail-card-head"><span class="detail-card-title">Reimbursement review</span></div>
+		<p class="covers-note">
+			Recipient: {contacts.find((c) => c.id === contactId)?.legalName ?? 'Select a recipient'} · Claim:
+			{formatMinor(allocatedMinor)} · Credit: {formatMinor(creditPlan.creditAppliedMinor)} · Cash: {formatMinor(
+				amountMinor
+			)} · Still owed: {formatMinor(Math.max(0, -unallocatedMinor))}
+		</p>
+	</section>
+{/if}
 
 <section class="detail-card">
 	<div class="detail-card-head"><span class="detail-card-title">Details</span></div>
@@ -587,66 +667,5 @@
 	.covers-sub {
 		font-size: 11.5px;
 		color: var(--muted-foreground);
-	}
-	.mode-toggle {
-		display: flex;
-		gap: 6px;
-	}
-	.mode-btn {
-		flex: 1;
-		padding: 7px 10px;
-		border: 1px solid var(--border);
-		border-radius: 7px;
-		background: var(--card);
-		color: var(--muted-foreground);
-		font-family: inherit;
-		font-size: 12.5px;
-		font-weight: 500;
-		cursor: pointer;
-	}
-	.mode-btn.active {
-		border-color: var(--primary);
-		background: var(--accent);
-		color: var(--foreground);
-	}
-	.covers-bulk {
-		display: flex;
-		gap: 8px;
-	}
-	.covers-bulk-btn {
-		border: none;
-		background: none;
-		color: var(--primary);
-		font-family: inherit;
-		font-size: 12px;
-		font-weight: 500;
-		cursor: pointer;
-		padding: 0;
-	}
-	.covers-group {
-		margin-bottom: 14px;
-	}
-	.covers-group:last-child {
-		margin-bottom: 0;
-	}
-	.covers-group-title {
-		display: block;
-		font-size: 12px;
-		font-weight: 600;
-		color: var(--muted-foreground);
-		margin-bottom: 6px;
-	}
-	.covers-amount {
-		width: 92px;
-		height: 30px;
-		padding: 0 8px;
-		border: 1px solid var(--border);
-		border-radius: 7px;
-		background: var(--card);
-		color: var(--foreground);
-		font-family: inherit;
-		font-size: 13px;
-		text-align: right;
-		flex-shrink: 0;
 	}
 </style>

@@ -2,7 +2,7 @@ import { DefaultAccountPurpose } from "$lib/enums.js";
 import { getAccount } from "../queries/accounts.js";
 import type { SidesContext } from "../ledger/sides-from-accounts.js";
 import type { LedgerDb, Refusable } from "../ledger/types.js";
-import { requireAccountDefault } from "./account-defaults.js";
+import { accountDefaultId, requireAccountDefault } from "./account-defaults.js";
 
 /**
  * The three saved accounts every derivation needs, and the account lookup.
@@ -44,6 +44,9 @@ export function loadSidesContext(
       canAdjust,
       receivableAccountId: receivable.value,
       payableAccountId: payable.value,
+      reimbursementPayableAccountId:
+        accountDefaultId(db, DefaultAccountPurpose.ReimbursementsPayable) ??
+        undefined,
       openingBalancesAccountId: opening.value,
     },
   };

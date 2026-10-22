@@ -43,7 +43,7 @@ function emitAccount(db: LedgerDb, id: number): AccountView | null {
   return account;
 }
 
-export function createAccount(db: LedgerDb, actingUserId: number, data: AccountCreate): Refusable<AccountView> {
+export function createAccount(db: LedgerDb, actingUserId: number | null, data: AccountCreate, deferredEmits?: (() => void)[]): Refusable<AccountView> {
   const name = data.name.trim();
   if (!name) return { ok: false, reason: "Give the account a name." };
 
@@ -117,7 +117,8 @@ export function createAccount(db: LedgerDb, actingUserId: number, data: AccountC
     throw error;
   }
 
-  const account = emitAccount(db, row.id)!;
+  if (deferredEmits) deferredEmits.push(() => { emitAccount(db, row.id); });
+  const account = deferredEmits ? getAccount(db, row.id)! : emitAccount(db, row.id)!;
   return { ok: true, value: account };
 }
 

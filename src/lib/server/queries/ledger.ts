@@ -1,4 +1,9 @@
 import {
+  activeAllocation,
+  hasAllocationHistory,
+  ALLOCATION_HISTORY_EDIT_REASON,
+} from "./allocation-state.js";
+import {
   and,
   asc,
   desc,
@@ -102,6 +107,7 @@ const KIND_BY_NAME: Record<RecordCreate["kind"], LedgerRecordKindCode> = {
   "opening-balance": LedgerRecordKind.OpeningBalance,
   "invoice-issue": LedgerRecordKind.InvoiceIssue,
   journal: LedgerRecordKind.Journal,
+  "reimbursement-transfer": LedgerRecordKind.Journal,
 };
 
 export function kindCodeFor(kind: RecordCreate["kind"]): LedgerRecordKindCode {
@@ -116,6 +122,8 @@ function toRecordRow(row: typeof ledgerRecords.$inferSelect): LedgerRecordRow {
     recordNumber: row.recordNumber,
     description: row.description,
     contactId: row.contactId,
+    supplierContactId: row.supplierContactId,
+    expensePaymentSource: row.expensePaymentSource,
     reference: row.reference,
     remark: row.remark,
     currency: row.currency,
@@ -144,6 +152,7 @@ export function buildRecordSearchText(parts: {
   reference: string;
   remark: string;
   contactName: string | null;
+  supplierContactName?: string | null;
   accountNames: string[];
   extractedText: string | null;
 }): string {
@@ -151,6 +160,7 @@ export function buildRecordSearchText(parts: {
     parts.recordNumber,
     parts.description,
     parts.contactName,
+    parts.supplierContactName,
     parts.reference,
     parts.remark,
     ...parts.accountNames,
@@ -189,6 +199,13 @@ export function reindexRecord(db: LedgerDb, recordId: number): void {
     reference: row.reference,
     remark: row.remark,
     contactName,
+    supplierContactName: row.supplierContactId
+      ? (db
+          .select()
+          .from(contacts)
+          .where(eq(contacts.id, row.supplierContactId))
+          .get()?.legalName ?? null)
+      : null,
     accountNames,
     extractedText: row.extractedText,
   });
@@ -255,6 +272,7 @@ type DerivedState = {
   /** How much bank lines cover, per record, before the coverage rule runs. */
   allocatedMinor: Map<number, Minor>;
   attachmentCount: Map<number, number>;
+  supplierNames?: Map<number, string>;
 };
 
 /**
@@ -279,9 +297,12 @@ function settledByMovement(
     })
     .from(settlements)
     .where(
-      or(
-        inArray(settlements.paymentMovementId, movementIds),
-        inArray(settlements.owedMovementId, movementIds),
+      and(
+        activeAllocation(),
+        or(
+          inArray(settlements.paymentMovementId, movementIds),
+          inArray(settlements.owedMovementId, movementIds),
+        ),
       ),
     )
     .all();
@@ -386,6 +407,7 @@ function deriveFor(db: LedgerDb, recordIds: number[]): DerivedState {
         inArray(accountDefaults.purpose, [
           DefaultAccountPurpose.Receivable,
           DefaultAccountPurpose.Payable,
+          DefaultAccountPurpose.ReimbursementsPayable,
         ]),
       )
       .all()
@@ -466,6 +488,25 @@ function deriveFor(db: LedgerDb, recordIds: number[]): DerivedState {
     .all();
 
   return {
+    supplierNames: new Map(
+      db
+        .select({ id: contacts.id, name: contacts.legalName })
+        .from(contacts)
+        .where(
+          inArray(
+            contacts.id,
+            db
+              .select()
+              .from(ledgerRecords)
+              .where(inArray(ledgerRecords.id, recordIds))
+              .all()
+              .map((row) => row.supplierContactId)
+              .filter((id): id is number => id !== null),
+          ),
+        )
+        .all()
+        .map((c) => [c.id, c.name]),
+    ),
     movements,
     paidState,
     lockState,
@@ -493,6 +534,9 @@ function toRecordView(
   return {
     ...base,
     contactName,
+    supplierContactName: row.supplierContactId
+      ? (derived.supplierNames?.get(row.supplierContactId) ?? null)
+      : null,
     amountMinor: toMinor(base.amount, base.exchangeRate),
     movements,
     paid: paidState.paid,
@@ -535,7 +579,9 @@ const owedMovementsForContact = alias(
 const owedRecordsForContact = alias(ledgerRecords, "owed_records_for_contact");
 
 function recordConditions(filters: RecordListFilters): SQL[] {
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [
+    sql`not exists (select 1 from reimbursement_entries re where re.record_id = ${ledgerRecords.id})`,
+  ];
 
   if (filters.kind !== undefined) {
     conditions.push(
@@ -550,9 +596,9 @@ function recordConditions(filters: RecordListFilters): SQL[] {
     // exception for a payment covering several contacts at once) — that
     // attribution lives in `settlements`, not on the payment's own row.
     conditions.push(
-      sql`(${eq(ledgerRecords.contactId, filters.contactId)} OR EXISTS (
+      sql`(${eq(ledgerRecords.contactId, filters.contactId)} OR ${eq(ledgerRecords.supplierContactId, filters.contactId)} OR EXISTS (
         SELECT 1 FROM ${ledgerMovements} AS "payment_movements_for_contact"
-        INNER JOIN ${settlements} ON ${settlements.paymentMovementId} = ${paymentMovementsForContact.id}
+        INNER JOIN ${settlements} ON ${settlements.paymentMovementId} = ${paymentMovementsForContact.id} AND ${activeAllocation()}
         INNER JOIN ${ledgerMovements} AS "owed_movements_for_contact" ON ${owedMovementsForContact.id} = ${settlements.owedMovementId}
         INNER JOIN ${ledgerRecords} AS "owed_records_for_contact" ON ${owedRecordsForContact.id} = ${owedMovementsForContact.recordId}
         WHERE ${paymentMovementsForContact.recordId} = ${ledgerRecords.id}
@@ -622,13 +668,13 @@ function recordConditions(filters: RecordListFilters): SQL[] {
           SELECT ${accountDefaults.accountId} FROM ${accountDefaults}
           WHERE ${accountDefaults.purpose} IN (
             ${DefaultAccountPurpose.Receivable},
-            ${DefaultAccountPurpose.Payable}
+            ${DefaultAccountPurpose.Payable}, ${DefaultAccountPurpose.ReimbursementsPayable}
           )
         )
         AND abs(${ledgerMovements.amountMinor}) > coalesce((
           SELECT sum(${settlements.amountMinor}) FROM ${settlements}
-          WHERE ${settlements.owedMovementId} = ${ledgerMovements.id}
-             OR ${settlements.paymentMovementId} = ${ledgerMovements.id}
+          WHERE ${activeAllocation()} AND (${settlements.owedMovementId} = ${ledgerMovements.id}
+             OR ${settlements.paymentMovementId} = ${ledgerMovements.id})
         ), 0)
     )`;
     conditions.push(filters.paid ? sql`NOT ${stillOwed}` : stillOwed);
@@ -768,6 +814,8 @@ function replaceMovements(
   recordId: number,
   movements: MovementDraft[],
 ): void {
+  if (wouldRemoveAllocationHistory(db, recordId, movements))
+    throw new Error(ALLOCATION_HISTORY_EDIT_REASON);
   const existingRows = db
     .select({ id: ledgerMovements.id, sortOrder: ledgerMovements.sortOrder })
     .from(ledgerMovements)
@@ -818,6 +866,23 @@ function replaceMovements(
   }
 }
 
+/** Check before record writes, since rebuilding can remove a historical parent. */
+export function wouldRemoveAllocationHistory(
+  db: LedgerDb,
+  recordId: number,
+  movements: MovementDraft[],
+): boolean {
+  const next = new Set(movements.map((m) => m.sortOrder));
+  const removed = db
+    .select({ id: ledgerMovements.id, sortOrder: ledgerMovements.sortOrder })
+    .from(ledgerMovements)
+    .where(eq(ledgerMovements.recordId, recordId))
+    .all()
+    .filter((m) => !next.has(m.sortOrder))
+    .map((m) => m.id);
+  return hasAllocationHistory(db, removed);
+}
+
 export function insertRecord(
   db: LedgerDb,
   actingUserId: number | null,
@@ -829,6 +894,8 @@ export function insertRecord(
     currency: string;
     exchangeRate: number;
     contactId?: number | null;
+    supplierContactId?: number | null;
+    expensePaymentSource?: "company" | "personal" | "unpaid" | null;
     reference?: string;
     remark?: string;
     extractedText?: string | null;
@@ -858,6 +925,8 @@ export function insertRecord(
       recordNumber,
       description: data.description,
       contactId: data.contactId ?? null,
+      supplierContactId: data.supplierContactId ?? null,
+      expensePaymentSource: data.expensePaymentSource ?? null,
       reference: data.reference ?? "",
       remark: data.remark ?? "",
       currency: data.currency,
@@ -888,12 +957,16 @@ export function updateRecord(
     currency: string;
     exchangeRate: number;
     contactId: number | null;
+    supplierContactId: number | null;
+    expensePaymentSource: "company" | "personal" | "unpaid" | null;
     reference: string;
     remark: string;
     extractedText: string | null;
   }>,
   movements?: MovementDraft[],
 ): LedgerRecordRow | null {
+  if (movements && wouldRemoveAllocationHistory(db, id, movements))
+    throw new Error(ALLOCATION_HISTORY_EDIT_REASON);
   const existing = db
     .select()
     .from(ledgerRecords)
@@ -977,7 +1050,7 @@ export function integrityInputs(db: LedgerDb): {
         select ${accountDefaults.accountId} from ${accountDefaults}
         where ${accountDefaults.purpose} in (
           ${DefaultAccountPurpose.Receivable},
-          ${DefaultAccountPurpose.Payable}
+          ${DefaultAccountPurpose.Payable}, ${DefaultAccountPurpose.ReimbursementsPayable}
         )
       ) then 1 else 0 end), 0)`,
     })

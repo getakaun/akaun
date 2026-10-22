@@ -57,7 +57,7 @@ settlement before changing its amount, date or the account it moved through."
 ### Correct only a settled date
 
 Trusted users with both **Edit records** and the separately granted **Correct settled dates**
-permission can use **Correct date** on a settled expense or income record. This action is
+permission can use **Actions → Correct date** on a settled expense or income record. This action is
 available only in the browser, and only when the record has no bank statement matches.
 Payment records and records created by issuing an invoice cannot use it.
 

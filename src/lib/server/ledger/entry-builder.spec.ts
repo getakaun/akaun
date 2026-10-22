@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { AccountType } from "$lib/enums.js";
 import { buildMovements } from "./entry-builder.js";
-import type { AccountRef, BuildContext, BuildInput, MovementDraft } from "./types.js";
+import type {
+  AccountRef,
+  BuildContext,
+  BuildInput,
+  MovementDraft,
+} from "./types.js";
 
 // A small chart of accounts to build against. Special-purpose accounts are
 // identified by the saved IDs in CTX, not by retired account roles.
@@ -417,7 +422,7 @@ describe("what the builder refuses", () => {
 });
 
 describe("a batch payment — several contacts settled by one payment", () => {
-  it("allows a payment naming no contact when it carries settlements", () => {
+  it("refuses a payment naming no contact even when it carries settlements", () => {
     const result = build({
       kind: "payment",
       amountMinor: 15000,
@@ -429,7 +434,7 @@ describe("a batch payment — several contacts settled by one payment", () => {
         { owedMovementId: 102, amountMinor: 5000 },
       ],
     });
-    expect(result.ok, result.ok ? "" : result.reason).toBe(true);
+    expect(result.ok).toBe(false);
   });
 
   it("still clears what we owe and empties the payer, same as any payment", () => {
@@ -437,7 +442,7 @@ describe("a batch payment — several contacts settled by one payment", () => {
       build({
         kind: "payment",
         amountMinor: 15000,
-        contactId: null,
+        contactId: 99,
         paidFromAccountId: BANK,
         direction: "we-pay",
         settlements: [{ owedMovementId: 101, amountMinor: 15000 }],

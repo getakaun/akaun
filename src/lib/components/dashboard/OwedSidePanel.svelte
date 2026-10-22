@@ -38,21 +38,28 @@
     {/if}
   </header>
 
-  {#if side.totalMinor === 0}
+  {#if side.totalMinor === 0 && !side.obligationsMinor && !side.creditsMinor}
     <p class="dash-empty">{emptyText}</p>
   {:else}
     <div class="figures">
       <div>
         <div class="num big">{formatMinor(side.totalMinor)}</div>
-        <div class="caption">outstanding balance</div>
+        <div class="caption">net outstanding balance</div>
       </div>
       <div class="overdue" class:has={side.overdueMinor > 0}>
         <div class="num">{formatMinor(side.overdueMinor)}</div>
         <div class="caption">
-          overdue{#if side.overdueCount > 0}&nbsp;· {side.overdueCount} item{side.overdueCount === 1 ? "" : "s"}{/if}
+          overdue{#if side.overdueCount > 0}&nbsp;· {side.overdueCount} item{side.overdueCount ===
+            1
+              ? ""
+              : "s"}{/if}
         </div>
       </div>
     </div>
+    {#if side.creditsMinor}<p class="dash-panel-sub">
+        Obligations: {formatMinor(side.obligationsMinor ?? 0)} · Unapplied credits:
+        {formatMinor(side.creditsMinor)}
+      </p>{/if}
     <AgeingBar bands={side.bands} />
     {#if side.top.length > 0}
       <ul class="contacts">

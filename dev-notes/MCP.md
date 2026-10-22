@@ -48,15 +48,15 @@ Use HTTPS for remote connections. For a desktop sidecar, use its actual local se
 
 Phase two adds these reads:
 
-| Tool                   | Inputs                                                         | Permission                          |
-| ---------------------- | -------------------------------------------------------------- | ----------------------------------- |
-| `list_invoices`        | Status, contact, dates, overdue toggle, search, limit/offset   | Invoices View                       |
-| `get_invoice`          | `invoiceId` — includes `owedMovementId` for `record_payment`   | Invoices View                       |
-| `list_quotations`      | Status, contact, dates, search, limit/offset                   | Quotations View                     |
-| `get_quotation`        | `quotationId`                                                  | Quotations View                     |
-| `list_bank_statements` | Optional `accountId`                                           | Reconciliation View                 |
-| `get_bank_statement`   | `statementId`, `includeCandidates` (movements + suggestions)   | Reconciliation **and** Records View |
-| `get_audit_history`    | `recordType`, `recordId`, `limit`                              | View on the item's own resource     |
+| Tool                   | Inputs                                                       | Permission                          |
+| ---------------------- | ------------------------------------------------------------ | ----------------------------------- |
+| `list_invoices`        | Status, contact, dates, overdue toggle, search, limit/offset | Invoices View                       |
+| `get_invoice`          | `invoiceId` — includes `owedMovementId` for `record_payment` | Invoices View                       |
+| `list_quotations`      | Status, contact, dates, search, limit/offset                 | Quotations View                     |
+| `get_quotation`        | `quotationId`                                                | Quotations View                     |
+| `list_bank_statements` | Optional `accountId`                                         | Reconciliation View                 |
+| `get_bank_statement`   | `statementId`, `includeCandidates` (movements + suggestions) | Reconciliation **and** Records View |
+| `get_audit_history`    | `recordType`, `recordId`, `limit`                            | View on the item's own resource     |
 
 Every `get_*` (and `list_accounts`, `list_contacts`) returns a `version` for each item: the token a write must send back as `expectedVersion`.
 
@@ -101,17 +101,17 @@ One tool per action; a lifecycle step gets its own tool wherever its MCP annotat
 
 **Deliberately not offered over MCP**, though the app does them: merging contacts and deleting an attachment (neither can be undone, and an agent rarely needs either), and editing or deleting a bank statement line (an agent that could rewrite the bank's evidence could also make it agree with the books). Their scopes went with them: `contacts:delete` no longer carries `contacts.merge`, and there is no `reconciliation:delete`. Scope is the OAuth scope a token must hold; RBAC is the app ability the user must have. Both are listed in one table, `src/lib/server/mcp/tool-requirements.ts`.
 
-| Area | Tools | Scope (RBAC) |
-| --- | --- | --- |
-| Records | `create_record` (from/to accounts, optional `extraSides`, `dryRun`), `record_payment` (with settlements, atomic), `update_record`, `settle_payment`, `attach_file` | `records:write` (records add/change) |
-|  | `delete_record`, `undo_settlement` (on a batch payment, takes back every allocation) | `records:delete` |
-|  | journals, any-to-any `create_record`, re-derived `update_record` | `records:adjust` (the explicit `records.adjust` leaf), checked when the derivation needs it |
-| Accounts | `create_account`, `update_account` (archive with `active: false`), `set_opening_balance`, `delete_account` | `accounts:write`/`:delete`; the opening balance also `records:write`, and setting it to zero needs records delete |
-| Contacts | `create_contact`, `update_contact` (incl. roles), `delete_contact` | `contacts:write`/`:delete` |
-| Invoices | `create_invoice`, `update_invoice`, `issue_invoice`, `void_invoice` (`reissue`), `delete_invoice` | `invoices:write`/`:delete`; issue and void also `records:write` (records add / change) |
-| Quotations | `create_quotation`, `update_quotation`, `set_quotation_status`, `revise_quotation`, `convert_quotation_to_invoice`, `delete_quotation` | `quotations:write`/`:delete`; convert also `invoices:write` |
-| Reconciliation | `set_movement_matches`, `auto_match`, `record_transfer_from_line` | `reconciliation:write`; the transfer also `records:write` (records add), and an account other than a place money sits needs records adjust |
-| Auto Import | `update_import_item`, `confirm_import`, `skip_import` (destructive: deletes the source file), `discard_import_job` | `import:write`/`:delete` (import change/delete only — confirm deliberately needs no records ability, 006 FR-045) |
+| Area           | Tools                                                                                                                                                              | Scope (RBAC)                                                                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Records        | `create_record` (from/to accounts, optional `extraSides`, `dryRun`), `record_payment` (with settlements, atomic), `update_record`, `settle_payment`, `attach_file` | `records:write` (records add/change)                                                                                                       |
+|                | `delete_record`, `undo_settlement` (on a batch payment, takes back every allocation)                                                                               | `records:delete`                                                                                                                           |
+|                | journals, any-to-any `create_record`, re-derived `update_record`                                                                                                   | `records:adjust` (the explicit `records.adjust` leaf), checked when the derivation needs it                                                |
+| Accounts       | `create_account`, `update_account` (archive with `active: false`), `set_opening_balance`, `delete_account`                                                         | `accounts:write`/`:delete`; the opening balance also `records:write`, and setting it to zero needs records delete                          |
+| Contacts       | `create_contact`, `update_contact` (incl. roles), `delete_contact`                                                                                                 | `contacts:write`/`:delete`                                                                                                                 |
+| Invoices       | `create_invoice`, `update_invoice`, `issue_invoice`, `void_invoice` (`reissue`), `delete_invoice`                                                                  | `invoices:write`/`:delete`; issue and void also `records:write` (records add / change)                                                     |
+| Quotations     | `create_quotation`, `update_quotation`, `set_quotation_status`, `revise_quotation`, `convert_quotation_to_invoice`, `delete_quotation`                             | `quotations:write`/`:delete`; convert also `invoices:write`                                                                                |
+| Reconciliation | `set_movement_matches`, `auto_match`, `record_transfer_from_line`                                                                                                  | `reconciliation:write`; the transfer also `records:write` (records add), and an account other than a place money sits needs records adjust |
+| Auto Import    | `update_import_item`, `confirm_import`, `skip_import` (destructive: deletes the source file), `discard_import_job`                                                 | `import:write`/`:delete` (import change/delete only — confirm deliberately needs no records ability, 006 FR-045)                           |
 
 Semantics every write tool shares:
 
@@ -242,3 +242,60 @@ bun run test:oauth
 `test:mcp` runs the MCP integration specs and relevant bookkeeping regressions directly with Bun. A small preload maps the shared Vitest assertion/hook imports to Bun's native test API, avoiding the current Vitest 4/Bun worker-startup failure. It also stands in for `$env/dynamic/private` with a temp folder (so `file-storage.ts` can load without ever pointing at `data/`) and makes any import of `db/client.ts` throw. The specs also remain usable by the normal Vitest runner when its workers are compatible. The adapter supports only the APIs these selected fixtures use; it is not a replacement for the repository's full test suite.
 
 Not yet built: `aggregate_records`, description-candidate worklists, contact duplicate preview, and uploads of new import documents or bank statements.
+
+### Payment corrections and carry-forward
+
+`get_payment_allocations({paymentMovementId})` returns the allocation snapshot, linked records,
+remaining control-account amount and opaque correction `version`. It needs `records:read`.
+`correct_payment_allocations` takes that movement id, `removeSettlementIds`, optional replacement
+`allocations`, a 10–2000 character `reason`, and `expectedVersion`. It requires `records:delete`
+and `records:write`; the application also checks the corresponding delete/create abilities.
+It changes selected allocations atomically, preserves untouched legacy allocations and cash/bank
+matches, and records before/after allocation snapshots plus the reason in the payment audit trail.
+
+`undo_settlement` now requires `reason` and `expectedVersion` from `get_payment_allocations`.
+The REST reverse action uses the same correction operation. Contactless batch reversal removes all
+of that payment's allocations, and the snapshot exposes this before confirmation. A stale version
+returns `CONFLICT`; reload and review rather than retrying with the returned version automatically.
+
+`record_payment` also accepts `refund-received` (bank debit / payable credit) and `refund-paid`
+(receivable debit / bank credit). Refunds name one contact and allocate their full amount against
+existing credit. Ordinary payments accept explicit `creditApplications`, each with
+`paymentMovementId`, `owedMovementId`, and `amountMinor`. These are applied before the new cash
+allocations in one transaction. `amount: 0` with credit applications settles without a new cash
+record; the returned record is the first covered obligation. Dry runs roll all applications back.
+
+Outstanding items retain unsigned `amountMinor` and `outstandingMinor` for allocation inputs and
+add `signedAmountMinor` and `position` (`obligation` or `credit`). `totalOutstandingMinor` is now
+normal-direction obligations minus credits; `totalObligationsMinor` and `totalCreditsMinor` expose
+the gross figures across the full filter, independently of pagination. Contact balance responses
+also expose gross payable/receivable obligations and credits. Ageing bands contain obligations;
+credits remain separate and are never overdue. No stored balance/status or migration is needed.
+
+
+### Single-recipient reimbursements
+
+New `record_payment` calls require a positive `contactId` for the actual payer/payee.
+Contactless batches are legacy data only.
+
+- `get_reimbursement_candidates(contactId)` lists source expense obligations and that person's credits.
+- `create_reimbursement` accepts one recipient, `personallyPaid: true`, source `items`,
+  `cashMinor`, optional bank account and explicit `credits`. All amounts are main-currency cents.
+  It atomically posts supplier transfers and a recipient payable through shared reimbursement
+  clearing, then applies credits and optional cash. It returns the group ID, recipient payable,
+  optional payment, credit allocation IDs and remaining payable. Source supplier contacts stay put.
+- `get_payment_recipient_correction(recordId)` supplies a fresh version and dependencies;
+  `correct_payment_recipient` requires that version, new recipient and reason. It preserves
+  cash movements, matches, attachments and valid same-contact allocations. Dependent credits
+  and refunds must be reversed first.
+- `get_reimbursement_reversal(groupId)` previews the group and version.
+  `reverse_reimbursement` takes that version, a date and reason, posts balanced contra entries,
+  reopens supplier expenses and releases the existing funding as credit.
+
+REST and MCP use the same application operations. Generated records are read-only, omitted
+from the default record list and linked on record detail. Reimbursement transfer entries are
+a fixed builder variant, not an arbitrary journal operation requiring Adjustments.
+
+The approved 51-payment repair is an explicit operator command in
+`scripts/repair-approved-payment-recipients.ts`. It requires the exact allowlist, a version
+manifest, matching original snapshot and an existing backup; it never runs on startup.

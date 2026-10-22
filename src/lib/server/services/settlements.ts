@@ -1,3 +1,9 @@
+import { eq } from "drizzle-orm";
+import {
+  ledgerRecords,
+  reimbursementEntries,
+  settlements,
+} from "../db/schema.js";
 import { recordAudit } from "../audit.js";
 import {
   checkAllocations,
@@ -5,7 +11,7 @@ import {
   outstandingOf,
   settlementDirectionForAccount,
 } from "../ledger/settlement-rules.js";
-import { DefaultAccountPurpose } from "$lib/enums.js";
+import { DefaultAccountPurpose, LedgerRecordKind } from "$lib/enums.js";
 import { requireAccountDefault } from "./account-defaults.js";
 import type {
   AllocationRequest,
@@ -14,7 +20,7 @@ import type {
   SettlementSide,
 } from "../ledger/types.js";
 import {
-  deleteSettlement,
+  reverseSettlement,
   getSettlement,
   settlementIdsForPayment,
   getSide,
@@ -48,6 +54,21 @@ export function createSettlements(
     };
   }
 
+  const total = allocations.reduce((sum, a) => sum + a.amountMinor, 0);
+  if (
+    !Number.isSafeInteger(paymentMovementId) ||
+    !Number.isSafeInteger(total) ||
+    allocations.some(
+      (a) =>
+        !Number.isSafeInteger(a.owedMovementId) ||
+        !Number.isSafeInteger(a.amountMinor) ||
+        a.amountMinor <= 0,
+    )
+  )
+    return {
+      ok: false,
+      reason: "Allocation amounts must be positive safe whole minor units.",
+    };
   const payment = getSide(db, paymentMovementId);
   if (!payment) {
     return {
@@ -63,11 +84,17 @@ export function createSettlements(
   if (!receivable.ok) return receivable;
   const payable = requireAccountDefault(db, DefaultAccountPurpose.Payable);
   if (!payable.ok) return payable;
+  const reimbursementPayable = requireAccountDefault(
+    db,
+    DefaultAccountPurpose.ReimbursementsPayable,
+  );
   if (
     settlementDirectionForAccount(payment.accountId, {
       receivableAccountId: receivable.value,
       payableAccountId: payable.value,
-    }) === null
+    }) === null &&
+    (!reimbursementPayable.ok ||
+      payment.accountId !== reimbursementPayable.value)
   ) {
     return {
       ok: false,
@@ -81,9 +108,9 @@ export function createSettlements(
     allocations.map((a) => a.owedMovementId),
   );
 
-  // Both sides of a settlement must be on the same shared owed account, and
-  // must belong to the same person — otherwise one contact's payment would be
-  // ticking off another contact's debt, and both balances would be wrong.
+  // Accounts payable expenses represent purchases paid personally. Their contact
+  // stays the supplier; the reimbursement payment names the person receiving cash.
+  // Other settlement kinds continue to require matching contacts.
   for (const allocation of allocations) {
     const owed = owedSides.get(allocation.owedMovementId);
     if (!owed) {
@@ -100,12 +127,28 @@ export function createSettlements(
           "A payment can only cover items of the same kind — money we owe, or money owed to us, not both.",
       };
     }
-    // A payment naming one contact can only cover that contact's own items.
-    // A payment naming none (a batch across several contacts) instead trusts
+    // Payable credit can reimburse personally paid expenses across suppliers.
+    // Other named payments cover their own contact's items. Contactless batches trust
     // each settlement to carry its own attribution — but every item it covers
     // must still belong to someone; nothing here settles an unowned side.
     if (payment.contactId !== null) {
-      if (owed.contactId !== payment.contactId) {
+      const owedRecordId = recordIdsForSettlement(
+        db,
+        allocation.owedMovementId,
+        allocation.owedMovementId,
+      )[0];
+      const owedRecord = db
+        .select()
+        .from(ledgerRecords)
+        .where(eq(ledgerRecords.id, owedRecordId))
+        .get();
+      const reimbursement =
+        payment.accountId === payable.value &&
+        payment.amountMinor > 0 &&
+        owed.amountMinor < 0 &&
+        owedRecord?.kind === LedgerRecordKind.Expense &&
+        owed.contactId !== null;
+      if (owed.contactId !== payment.contactId && !reimbursement) {
         return {
           ok: false,
           reason:
@@ -214,20 +257,49 @@ export function undoSettlement(
   db: LedgerDb,
   id: number,
   actingUserId: number,
+  deferredEmits?: DeferredEmits,
+  reason?: string,
+  reimbursementReversal = false,
 ): Refusable<number[]> {
+  const trimmedReason = reason?.trim() ?? "";
+  if (trimmedReason.length < 10 || trimmedReason.length > 2000)
+    return {
+      ok: false,
+      reason: "Explain the correction in 10 to 2000 characters.",
+    };
   const existing = getSettlement(db, id);
   if (!existing) {
     return { ok: false, reason: "That settlement has already been undone." };
   }
 
-  const payment = getSide(db, existing.paymentMovementId);
-  const ids =
-    payment && payment.contactId === null
-      ? settlementIdsForPayment(db, existing.paymentMovementId)
-      : [id];
-
+  const sourceId = recordIdsForSettlement(
+    db,
+    existing.paymentMovementId,
+    existing.paymentMovementId,
+  )[0];
+  if (
+    !reimbursementReversal &&
+    db
+      .select()
+      .from(reimbursementEntries)
+      .where(eq(reimbursementEntries.recordId, sourceId))
+      .get()
+  )
+    return {
+      ok: false,
+      reason:
+        "This allocation is part of a reimbursement transfer and cannot be reversed separately.",
+    };
   const touched = new Set<number>();
   const undone = db.transaction(() => {
+    // Recheck under the same transaction as the writes. A legacy batch must
+    // include every currently active allocation, even if its preview changed.
+    if (!getSettlement(db, id)) return [];
+    const payment = getSide(db, existing.paymentMovementId);
+    const ids =
+      payment && payment.contactId === null
+        ? settlementIdsForPayment(db, existing.paymentMovementId)
+        : [id];
     const done: number[] = [];
     for (const settlementId of ids) {
       const row = getSettlement(db, settlementId);
@@ -238,12 +310,25 @@ export function undoSettlement(
         row.owedMovementId,
       ))
         touched.add(recordId);
-      if (!deleteSettlement(db, settlementId)) continue;
+      if (!reverseSettlement(db, settlementId, actingUserId, trimmedReason))
+        continue;
       recordAudit(db, {
         recordType: "settlement",
         recordId: settlementId,
         userId: actingUserId,
-        action: "delete",
+        action: "update",
+        changes: [
+          {
+            field: "allocation",
+            before: row,
+            after: db
+              .select()
+              .from(settlements)
+              .where(eq(settlements.id, settlementId))
+              .get(),
+          },
+          { field: "reason", before: null, after: trimmedReason },
+        ],
       });
       done.push(settlementId);
     }
@@ -254,6 +339,8 @@ export function undoSettlement(
     return { ok: false, reason: "That settlement has already been undone." };
   }
 
-  emitSettlementChanged(db, [...touched]);
+  if (deferredEmits)
+    deferredEmits.push(() => emitSettlementChanged(db, [...touched]));
+  else emitSettlementChanged(db, [...touched]);
   return { ok: true, value: undone };
 }

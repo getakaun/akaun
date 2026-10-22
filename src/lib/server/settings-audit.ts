@@ -17,6 +17,7 @@ type Db = BunSQLiteDatabase<any>;
  * change.
  */
 export type SettingsSection =
+  | "ledger"
   | "general"
   | "company"
   | "pdf"
@@ -25,6 +26,7 @@ export type SettingsSection =
 
 /** The Settings tab a key is changed on, by its prefix. */
 export function settingsSectionOf(key: string): SettingsSection {
+  if (key.startsWith("reimbursements.")) return "ledger";
   if (key.startsWith("company.")) return "company";
   if (key.startsWith("pdf.") || key.startsWith("documents.")) return "pdf";
   if (key.startsWith("documentNumbers.")) return "numbering";

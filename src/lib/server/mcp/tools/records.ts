@@ -17,6 +17,7 @@ import { readXlsx } from "../../extraction/spreadsheet/xlsx.js";
 import { renderWorkbook } from "../../extraction/spreadsheet/render.js";
 import { storedFileType } from "../../storage/file-type.js";
 import { settlementsForRecord } from "../../queries/settlements.js";
+import { reversedAllocationsForRecord } from "../../queries/reimbursements.js";
 import type { RecordView } from "../../ledger/types.js";
 import { recordVersion, recordVersions } from "../../application/version.js";
 import {
@@ -58,6 +59,9 @@ export function recordSummary(record: RecordView) {
     description: record.description,
     contactId: record.contactId,
     contactName: record.contactName,
+    supplierContactId: record.supplierContactId ?? null,
+    supplierContactName: record.supplierContactName ?? null,
+    expensePaymentSource: record.expensePaymentSource ?? null,
     amount: record.amount,
     currency: record.currency,
     exchangeRate: record.exchangeRate,
@@ -136,7 +140,7 @@ export function registerRecords(server: McpServer, context: McpContext) {
     server,
     context,
     "get_record",
-    "Read one record, its signed ledger movements, derived payment/reconciliation state and attachment metadata. Optionally include settlements and bounded stored source evidence. To read an attached file itself, call get_attachment with its id. Returns no internal file paths and performs no OCR or writes.",
+    "Read one record, its signed ledger movements, derived payment/reconciliation state and attachment metadata. Optionally include active settlements, separately labelled reversedSettlements with reversal metadata, and bounded stored source evidence. To read an attached file itself, call get_attachment with its id. Returns no internal file paths and performs no OCR or writes.",
     {
       recordId: id,
       includeSettlements: z.boolean().default(false),
@@ -149,6 +153,9 @@ export function registerRecords(server: McpServer, context: McpContext) {
       const attachments = listAttachments(context.db, record.id);
       const links = input.includeSettlements
         ? settlementsForRecord(context.db, record.id)
+        : [];
+      const reversedLinks = input.includeSettlements
+        ? reversedAllocationsForRecord(context.db, record.id)
         : [];
       return {
         record: {
@@ -176,6 +183,12 @@ export function registerRecords(server: McpServer, context: McpContext) {
                 path: `/records/${link.otherRecordId}`,
               })),
               settlementsTruncated: links.length > 200,
+              reversedSettlements: reversedLinks.slice(0, 200).map((link) => ({
+                ...link,
+                otherKind: LedgerRecordKindLabels[link.otherKind],
+                path: `/records/${link.otherRecordId}`,
+              })),
+              reversedSettlementsTruncated: reversedLinks.length > 200,
             }
           : {}),
         ...(input.includeEvidence

@@ -155,6 +155,19 @@
 					{/if}
 				</span>
 			</div>
+			<p class="text-muted-foreground mt-2 text-sm">
+				Unpaid invoices: {formatMinor(data.obligationsToUsMinor)} · Unpaid bills: {formatMinor(
+					data.obligationsWeOweMinor
+				)}
+			</p>
+			{#if data.creditsPaidMinor > 0}<p class="mt-2 text-sm">
+					Overpayments to this contact: {formatMinor(data.creditsPaidMinor)} available for future bills
+					or refund.
+				</p>{/if}
+			{#if data.creditsReceivedMinor > 0}<p class="mt-2 text-sm">
+					Credits received: {formatMinor(data.creditsReceivedMinor)} available for future invoices or
+					refund.
+				</p>{/if}
 		{/if}
 		{#if form?.error}<p class="hero-error">{form.error}</p>{/if}
 	{/snippet}
@@ -226,15 +239,17 @@
 					</div>
 					{#if roles.includes(Role.Partner)}
 						<p class="field-hint">
-							Capital contributions and drawings of a partner are posted to equity accounts.
-							The partner statement shows these accounts by name.
+							Capital contributions and drawings of a partner are posted to equity accounts. The
+							partner statement shows these accounts by name.
 						</p>
 					{/if}
 				</div>
 			</section>
 
 			<section class="detail-card" style="margin-top:16px;">
-				<div class="detail-card-head"><span class="detail-card-title">Contact information</span></div>
+				<div class="detail-card-head">
+					<span class="detail-card-title">Contact information</span>
+				</div>
 
 				<div class="field-grid">
 					<div class="field">

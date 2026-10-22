@@ -1,4 +1,15 @@
-import { and, asc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { activeAllocation } from "./allocation-state.js";
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNull,
+  lte,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import {
   accounts,
   accountDefaults,
@@ -62,9 +73,12 @@ export function settledMinorFor(
     })
     .from(settlements)
     .where(
-      or(
-        inArray(settlements.paymentMovementId, movementIds),
-        inArray(settlements.owedMovementId, movementIds),
+      and(
+        activeAllocation(),
+        or(
+          inArray(settlements.paymentMovementId, movementIds),
+          inArray(settlements.owedMovementId, movementIds),
+        ),
       ),
     )
     .all();
@@ -88,6 +102,7 @@ function daysBetween(date: string, today: string): number {
 
 export type OutstandingFilters = {
   direction: OutstandingDirection;
+  accountId?: number;
   contactId?: number;
   /** Drop items nothing is left on. Defaults to true — a payment screen only
    *  offers what can still be paid. */
@@ -128,12 +143,25 @@ function collectOutstanding(
   items: AgeingItem[];
   totalOutstandingMinor: Minor;
   total: number;
+  totalObligationsMinor: Minor;
+  totalCreditsMinor: Minor;
 } {
   const asOf = filters.asOf ?? new Date().toISOString().slice(0, 10);
   const openOnly = filters.openOnly ?? true;
 
-  const defaultId = savedAccountId(db, PURPOSE_FOR[filters.direction]);
-  const conditions: SQL[] = [eq(ledgerMovements.accountId, defaultId ?? -1)];
+  const owedIds = [
+    savedAccountId(db, PURPOSE_FOR[filters.direction]),
+    ...(filters.direction === "we-owe"
+      ? [savedAccountId(db, DefaultAccountPurpose.ReimbursementsPayable)]
+      : []),
+  ].filter((id): id is number => id !== null);
+  const selectedIds =
+    filters.accountId === undefined
+      ? owedIds
+      : owedIds.filter((id) => id === filters.accountId);
+  const conditions: SQL[] = [
+    inArray(ledgerMovements.accountId, selectedIds.length ? selectedIds : [-1]),
+  ];
   if (filters.contactId !== undefined) {
     conditions.push(eq(ledgerRecords.contactId, filters.contactId));
   }
@@ -146,15 +174,22 @@ function collectOutstanding(
   // zero. Apply before LIMIT so fully paid items do not consume a page.
   const remaining = sql<number>`max(0, abs(${ledgerMovements.amountMinor}) - coalesce((
     SELECT sum(${settlements.amountMinor}) FROM ${settlements}
-    WHERE ${settlements.owedMovementId} = ${ledgerMovements.id}
-       OR ${settlements.paymentMovementId} = ${ledgerMovements.id}
+    WHERE ${activeAllocation()} AND (${settlements.owedMovementId} = ${ledgerMovements.id}
+       OR ${settlements.paymentMovementId} = ${ledgerMovements.id})
   ), 0))`;
   if (openOnly) conditions.push(sql`${remaining} > 0`);
+  const isObligation =
+    filters.direction === "we-owe"
+      ? sql`${ledgerMovements.amountMinor} < 0`
+      : sql`${ledgerMovements.amountMinor} > 0`;
+  const signedRemaining = sql<number>`CASE WHEN ${isObligation} THEN ${remaining} ELSE -${remaining} END`;
   const totals = page
     ? db
         .select({
           total: sql<number>`count(*)`,
-          totalOutstandingMinor: sql<number>`coalesce(sum(${remaining}), 0)`,
+          totalOutstandingMinor: sql<number>`coalesce(sum(${signedRemaining}), 0)`,
+          totalObligationsMinor: sql<number>`coalesce(sum(CASE WHEN ${isObligation} THEN ${remaining} ELSE 0 END), 0)`,
+          totalCreditsMinor: sql<number>`coalesce(sum(CASE WHEN ${isObligation} THEN 0 ELSE ${remaining} END), 0)`,
         })
         .from(ledgerMovements)
         .innerJoin(
@@ -174,8 +209,12 @@ function collectOutstanding(
       kind: ledgerRecords.kind,
       date: ledgerRecords.date,
       description: ledgerRecords.description,
+      expensePaymentSource: ledgerRecords.expensePaymentSource,
       contactId: ledgerRecords.contactId,
       contactName: contacts.legalName,
+      supplierContactName: sql<
+        string | null
+      >`(SELECT supplier.legal_name FROM contacts supplier WHERE supplier.id = ${ledgerRecords.supplierContactId})`,
       dueDate: invoices.dueDate,
       invoiceId: invoices.id,
     })
@@ -210,9 +249,20 @@ function collectOutstanding(
     if (openOnly && outstandingMinor === 0) continue;
 
     const dueDate = row.dueDate ?? row.date;
-    const daysOverdue = Math.max(0, daysBetween(dueDate, asOf));
+    const position = (
+      filters.direction === "we-owe" ? row.amountMinor < 0 : row.amountMinor > 0
+    )
+      ? "obligation"
+      : "credit";
+    const daysOverdue =
+      position === "credit" ? 0 : Math.max(0, daysBetween(dueDate, asOf));
     items.push({
+      ...(row.expensePaymentSource
+        ? { expensePaymentSource: row.expensePaymentSource }
+        : {}),
       movementId: row.movementId,
+      signedAmountMinor: row.amountMinor,
+      position,
       recordId: row.recordId,
       recordNumber: row.recordNumber,
       kind: row.kind as LedgerRecordKindCode,
@@ -222,6 +272,7 @@ function collectOutstanding(
       description: row.description,
       contactId: row.contactId,
       contactName: row.contactName ?? null,
+      supplierContactName: row.supplierContactName ?? null,
       amountMinor: Math.abs(row.amountMinor),
       settledMinor: side.settledMinor,
       outstandingMinor,
@@ -236,7 +287,17 @@ function collectOutstanding(
     total: totals?.total ?? items.length,
     totalOutstandingMinor:
       totals?.totalOutstandingMinor ??
-      items.reduce((sum, i) => sum + i.outstandingMinor, 0),
+      items.reduce((sum, i) => sum + outstandingNetMinor(i), 0),
+    totalObligationsMinor:
+      totals?.totalObligationsMinor ??
+      items
+        .filter((i) => i.position !== "credit")
+        .reduce((n, i) => n + i.outstandingMinor, 0),
+    totalCreditsMinor:
+      totals?.totalCreditsMinor ??
+      items
+        .filter((i) => i.position === "credit")
+        .reduce((n, i) => n + i.outstandingMinor, 0),
   };
 }
 
@@ -244,11 +305,8 @@ export function listOutstanding(
   db: LedgerDb,
   filters: OutstandingFilters,
 ): OutstandingResult {
-  const { asOf, items, totalOutstandingMinor } = collectOutstanding(
-    db,
-    filters,
-  );
-  const result = { asOf, items, totalOutstandingMinor };
+  const { total: _total, ...result } = collectOutstanding(db, filters);
+  void _total;
   return result;
 }
 
@@ -331,7 +389,16 @@ export type ContactBalance = {
   contactId: number;
   contactName: string;
   outstandingMinor: Minor;
+  obligationsMinor?: Minor;
+  creditsMinor?: Minor;
 };
+
+/** Signed in the normal direction of this control account. */
+export function outstandingNetMinor(item: OutstandingItem): Minor {
+  return item.position === "credit"
+    ? -item.outstandingMinor
+    : item.outstandingMinor;
+}
 
 /** What each contact is still owed, or still owes, in one query per direction. */
 export function contactBalances(
@@ -358,12 +425,21 @@ export function balancesByContact(items: OutstandingItem[]): ContactBalance[] {
     if (item.contactId === null) continue;
     const existing = byContact.get(item.contactId);
     if (existing) {
-      existing.outstandingMinor += item.outstandingMinor;
+      existing.outstandingMinor += outstandingNetMinor(item);
+      existing.obligationsMinor =
+        (existing.obligationsMinor ?? 0) +
+        (item.position === "credit" ? 0 : item.outstandingMinor);
+      existing.creditsMinor =
+        (existing.creditsMinor ?? 0) +
+        (item.position === "credit" ? item.outstandingMinor : 0);
     } else {
       byContact.set(item.contactId, {
         contactId: item.contactId,
         contactName: item.contactName ?? "",
-        outstandingMinor: item.outstandingMinor,
+        outstandingMinor: outstandingNetMinor(item),
+        obligationsMinor:
+          item.position === "credit" ? 0 : item.outstandingMinor,
+        creditsMinor: item.position === "credit" ? item.outstandingMinor : 0,
       });
     }
   }
@@ -387,6 +463,7 @@ export type SettlementLink = {
    *  with no contact of its own. */
   otherContactId: number | null;
   otherContactName: string | null;
+  otherSupplierContactName?: string | null;
 };
 
 export function settlementsForRecord(
@@ -411,9 +488,12 @@ export function settlementsForRecord(
     })
     .from(settlements)
     .where(
-      or(
-        inArray(settlements.paymentMovementId, ourMovements),
-        inArray(settlements.owedMovementId, ourMovements),
+      and(
+        activeAllocation(),
+        or(
+          inArray(settlements.paymentMovementId, ourMovements),
+          inArray(settlements.owedMovementId, ourMovements),
+        ),
       ),
     )
     .all();
@@ -434,6 +514,9 @@ export function settlementsForRecord(
       kind: ledgerRecords.kind,
       contactId: ledgerRecords.contactId,
       contactName: contacts.legalName,
+      supplierContactName: sql<
+        string | null
+      >`(SELECT supplier.legal_name FROM contacts supplier WHERE supplier.id = ${ledgerRecords.supplierContactId})`,
     })
     .from(ledgerMovements)
     .innerJoin(ledgerRecords, eq(ledgerRecords.id, ledgerMovements.recordId))
@@ -460,6 +543,9 @@ export function settlementsForRecord(
       otherKind: other.kind,
       otherContactId: other.contactId,
       otherContactName: other.contactName ?? null,
+      ...(other.supplierContactName
+        ? { otherSupplierContactName: other.supplierContactName }
+        : {}),
     });
   }
   return links;
@@ -467,7 +553,11 @@ export function settlementsForRecord(
 
 export function getSettlement(db: LedgerDb, id: number) {
   return (
-    db.select().from(settlements).where(eq(settlements.id, id)).get() ?? null
+    db
+      .select()
+      .from(settlements)
+      .where(and(activeAllocation(), eq(settlements.id, id)))
+      .get() ?? null
   );
 }
 
@@ -501,15 +591,30 @@ export function settlementIdsForPayment(
   return db
     .select({ id: settlements.id })
     .from(settlements)
-    .where(eq(settlements.paymentMovementId, paymentMovementId))
+    .where(
+      and(
+        activeAllocation(),
+        eq(settlements.paymentMovementId, paymentMovementId),
+      ),
+    )
     .all()
     .map((row) => row.id);
 }
 
-export function deleteSettlement(db: LedgerDb, id: number): boolean {
+export function reverseSettlement(
+  db: LedgerDb,
+  id: number,
+  actingUserId: number,
+  reason: string,
+): boolean {
   const row = db
-    .delete(settlements)
-    .where(eq(settlements.id, id))
+    .update(settlements)
+    .set({
+      reversedAt: new Date().toISOString(),
+      reversedBy: actingUserId,
+      reversalReason: reason,
+    })
+    .where(and(eq(settlements.id, id), activeAllocation()))
     .returning({ id: settlements.id })
     .get();
   return row !== undefined;
@@ -534,6 +639,7 @@ export function owedWithNoContact(db: LedgerDb): number[] {
   const owedAccountIds = [
     savedAccountId(db, DefaultAccountPurpose.Receivable),
     savedAccountId(db, DefaultAccountPurpose.Payable),
+    savedAccountId(db, DefaultAccountPurpose.ReimbursementsPayable),
   ].filter((id): id is number => id !== null);
   if (owedAccountIds.length === 0) return [];
   return db
@@ -590,6 +696,8 @@ export type OutstandingAgeing = {
   asOf: string;
   items: AgeingItem[];
   totalOutstandingMinor: Minor;
+  totalObligationsMinor: Minor;
+  totalCreditsMinor: Minor;
   bands: AgeingBand[];
 };
 
@@ -607,7 +715,10 @@ export function groupIntoBands(items: AgeingItem[]): AgeingBand[] {
     return {
       label: band.label,
       count: inBand.length,
-      totalMinor: inBand.reduce((sum, item) => sum + item.outstandingMinor, 0),
+      totalMinor: inBand.reduce(
+        (sum, item) => sum + outstandingNetMinor(item),
+        0,
+      ),
       items: inBand,
     };
   }).filter((band) => band.count > 0);
@@ -623,15 +734,13 @@ export function outstandingAgeing(
   db: LedgerDb,
   filters: OutstandingFilters,
 ): OutstandingAgeing {
-  const { asOf, items, totalOutstandingMinor } = collectOutstanding(
-    db,
-    filters,
-  );
+  const { total: _total, ...result } = collectOutstanding(db, filters);
+  void _total;
   return {
     direction: filters.direction,
-    asOf,
-    items,
-    totalOutstandingMinor,
-    bands: groupIntoBands(items),
+    ...result,
+    bands: groupIntoBands(
+      result.items.filter((item) => item.position !== "credit"),
+    ),
   };
 }

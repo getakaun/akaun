@@ -41,7 +41,7 @@
 	function tabFromUrl(): Tab {
 		const asked = page.url.searchParams.get('tab') as Tab | null;
 		if (!asked || !TAB_IDS.includes(asked)) return 'general';
-		if (asked === 'books' && !data.canSeeBooks) return 'general';
+		if (asked === 'books' && !data.canSeeBooks && !data.canManageSettings) return 'general';
 		return asked;
 	}
 	let activeTab = $state<Tab>(tabFromUrl());
@@ -86,6 +86,9 @@
 	// about when there is more than one account to choose between.
 	// svelte-ignore state_referenced_locally
 	let defaultAccount = $state(String(data.ledgerDefaultAccountId ?? ''));
+	// svelte-ignore state_referenced_locally
+	let reimbursementPayee = $state(String(data.reimbursementDefaultPayeeContactId ?? ''));
+	const reimbursementPayeeName = $derived(data.reimbursementPayees.find((c) => String(c.id) === reimbursementPayee)?.legalName ?? 'None');
 	const defaultAccountName = $derived(
 		data.moneyAccounts.find((a) => String(a.id) === defaultAccount)?.name ?? 'Choose an account'
 	);
@@ -1119,6 +1122,9 @@
 				aiRateLimitSec = Math.round(data.autoImportRateLimitMs / 1000);
 				aiCustomInstructions = data.autoImportCustomInstructions;
 			}
+			if (action === 'saveReimbursements') {
+				reimbursementPayee = String(data.reimbursementDefaultPayeeContactId ?? '');
+			}
 			if (action === 'saveGeneral') {
 				mainCur = data.currency;
 				defaultAccount = String(data.ledgerDefaultAccountId ?? '');
@@ -1167,6 +1173,7 @@
 	const isDirty = $derived(
 		mainCur !== data.currency ||
 		defaultAccount !== String(data.ledgerDefaultAccountId ?? '') ||
+		reimbursementPayee !== String(data.reimbursementDefaultPayeeContactId ?? '') ||
 		seqTemplate !== data.sequenceTemplate ||
 		companyName !== data.companyName ||
 		companyAddress !== data.companyAddress ||
@@ -1186,6 +1193,7 @@
 	);
 
 	function resetAllUnsaved() {
+		reimbursementPayee = String(data.reimbursementDefaultPayeeContactId ?? '');
 		mainCur = data.currency;
 		defaultAccount = String(data.ledgerDefaultAccountId ?? '');
 		seqTemplate = data.sequenceTemplate;
@@ -1255,7 +1263,7 @@
 	const TABS: { id: Tab; label: string }[] = $derived([
 		{ id: 'general', label: 'General' },
 		{ id: 'company', label: 'Company' },
-		...(data.canSeeBooks ? [{ id: 'books' as Tab, label: 'Ledger' }] : []),
+		...((data.canSeeBooks || data.canManageSettings) ? [{ id: 'books' as Tab, label: 'Ledger' }] : []),
 		{ id: 'intelligence', label: 'Intelligence' },
 		{ id: 'templates', label: 'Templates' },
 		{ id: 'advanced', label: 'Advanced' }
@@ -1539,6 +1547,37 @@
 				/>
 				<div class="set-section">
 					<div class="set-section-head">
+						<h2 class="set-section-title">Reimbursements</h2>
+						<p class="set-section-sub">Choose who new reimbursements are paid to by default.</p>
+					</div>
+					<form method="POST" action="?/saveReimbursements" use:enhance={() => ({ update }) => update({ reset: false })}>
+						{#if form?.error}
+							<p role="alert" class="set-hint" style="color:var(--red);">{form.error}</p>
+						{/if}
+						<input type="hidden" name="defaultPayeeContactId" value={reimbursementPayee} />
+						<div class="set-rows">
+							<div class="set-row">
+								<div>
+									<div class="set-row-label" id="reimbursement-payee-label">Default reimbursement payee</div>
+									<p class="set-hint">Shared across this ledger. You can change the payee on each reimbursement.</p>
+								</div>
+								<Select.Root type="single" bind:value={reimbursementPayee} disabled={!data.canManageSettings}>
+									<Select.Trigger class="set-input-right set-input-wide" aria-labelledby="reimbursement-payee-label">{reimbursementPayeeName}</Select.Trigger>
+									<Select.Content>
+										<Select.Item value="">None</Select.Item>
+										{#each data.reimbursementPayees as contact (contact.id)}
+											<Select.Item value={String(contact.id)}>{contact.legalName}</Select.Item>
+										{/each}
+									</Select.Content>
+								</Select.Root>
+							</div>
+						</div>
+						<Button type="submit" class="mt-4" disabled={!data.canManageSettings}>Save</Button>
+					</form>
+				</div>
+				{#if data.canSeeBooks}
+				<div class="set-section">
+					<div class="set-section-head">
 						<h2 class="set-section-title">Ledger integrity check</h2>
 						<p class="set-section-sub">
 							The debits of each record must equal its credits. This check examines all ledger entries.
@@ -1710,6 +1749,7 @@
 					</div>
 				{/if}
 
+				{/if}
 			{:else if activeTab === 'intelligence'}
 				<div class="set-section">
 					<div class="set-section-head">

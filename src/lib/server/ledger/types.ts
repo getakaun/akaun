@@ -115,7 +115,11 @@ export type SystemAccountIds = {
 // Records and movements
 // ---------------------------------------------------------------------------
 
+export type ExpensePaymentSource = "company" | "personal" | "unpaid";
+
 export type LedgerRecordRow = {
+  expensePaymentSource?: ExpensePaymentSource | null;
+  supplierContactId?: number | null;
   id: number;
   kind: LedgerRecordKindCode;
   date: string;
@@ -188,6 +192,7 @@ export type MovementView = {
 
 /** What `GET /api/records` returns for one record. */
 export type RecordView = LedgerRecordRow & {
+  supplierContactName?: string | null;
   contactName: string | null;
   /** The record's own figure in cents: round(amount × exchangeRate × 100). */
   amountMinor: Minor;
@@ -239,6 +244,9 @@ export type RecordAttachmentRow = {
  * caller to construct movements except for a journal entry (FR-020).
  */
 export type RecordCreate = {
+  expensePaymentSource?: ExpensePaymentSource | null;
+  supplierContactId?: number | null;
+  paidByContactId?: number | null;
   date: string;
   description: string;
   amount: number;
@@ -255,6 +263,7 @@ export type RecordCreate = {
 export type RecordCreateSides =
   | {
       kind: "expense";
+      expensePaymentSource?: ExpensePaymentSource | null;
       categoryAccountId: number;
       /** Null means someone else paid, so it is owed to `contactId` (FR-008). */
       paidFromAccountId: number | null;
@@ -263,10 +272,26 @@ export type RecordCreateSides =
   | { kind: "transfer"; fromAccountId: number; toAccountId: number }
   | {
       kind: "payment";
+      settlementAccountId?: number;
       paidFromAccountId: number;
       /** we-pay settles Money we owe; we-receive settles Money owed to us. */
       direction: PaymentDirection;
       settlements?: AllocationRequest[];
+      /** Explicit application of earlier payments; never inferred or auto-applied. */
+      creditApplications?: {
+        paymentMovementId: number;
+        owedMovementId: number;
+        amountMinor: Minor;
+      }[];
+    }
+  | {
+      kind: "reimbursement-transfer";
+      clearingAccountId: number;
+      leg:
+        | "supplier"
+        | "recipient"
+        | "supplier-reversal"
+        | "recipient-reversal";
     }
   | { kind: "opening-balance"; accountId: number }
   | { kind: "invoice-issue"; incomeAccountId: number }
@@ -294,7 +319,11 @@ export type RecordCreateSides =
       storedKind?: LedgerRecordKindCode;
     };
 
-export type PaymentDirection = "we-pay" | "we-receive";
+export type PaymentDirection =
+  | "we-pay"
+  | "we-receive"
+  | "refund-received"
+  | "refund-paid";
 
 /**
  * What the one form sends. The kind is derived, never stated (D-01, research.md
@@ -325,6 +354,9 @@ export type RecordCreateFromSides = {
 
 /** Only the fields a `PATCH /api/records/[id]` may carry. */
 export type RecordPatch = {
+  expensePaymentSource?: ExpensePaymentSource | null;
+  supplierContactId?: number | null;
+  paidByContactId?: number | null;
   date?: string;
   description?: string;
   amount?: number;
@@ -414,6 +446,7 @@ export type AccountTypeFor = (role: AccountRoleCode) => AccountTypeCode;
 
 /** Everything a builder needs beyond the record itself, gathered once. */
 export type BuildContext = {
+  reimbursementPayableAccountId?: number;
   /** Every account the input names, so a role can be checked without a query. */
   accounts: ReadonlyMap<number, AccountRef>;
   receivableAccountId: number;
@@ -449,6 +482,8 @@ export type AllocationRequest = { owedMovementId: number; amountMinor: Minor };
 
 /** What one outstanding item looks like on a payment screen and in US6's ageing. */
 export type OutstandingItem = {
+  expensePaymentSource?: ExpensePaymentSource | null;
+  supplierContactName?: string | null;
   movementId: number;
   recordId: number;
   recordNumber: string | null;
@@ -461,6 +496,9 @@ export type OutstandingItem = {
   settledMinor: Minor;
   outstandingMinor: Minor;
   daysOverdue: number;
+  /** Original signed control-account movement; magnitudes above remain unsigned. */
+  signedAmountMinor?: Minor;
+  position?: "obligation" | "credit";
 };
 
 export type OutstandingDirection = "owed-to-us" | "we-owe";
@@ -468,6 +506,8 @@ export type OutstandingDirection = "owed-to-us" | "we-owe";
 export type OutstandingResult = {
   items: OutstandingItem[];
   totalOutstandingMinor: Minor;
+  totalObligationsMinor?: Minor;
+  totalCreditsMinor?: Minor;
 };
 
 /** A record's paid state, computed from its shared-owed movements (FR-012). */

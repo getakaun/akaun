@@ -1,12 +1,19 @@
 import { eq, sql } from "drizzle-orm";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
-import { settings, ledgerRecords, quotations, invoices } from "./db/schema.js";
+import {
+  settings,
+  ledgerRecords,
+  quotations,
+  invoices,
+  contacts,
+} from "./db/schema.js";
 
 export const SETTING_KEYS = {
   // Which account new records pre-select as the one that paid or received
   // (FR-011). Written by the ledger upgrade's account seeding, changeable in
   // Settings once more than one account exists.
   ledgerDefaultAccountId: "ledger_default_account_id",
+  reimbursementDefaultPayeeContactId: "reimbursements.defaultPayeeContactId",
   // The ledger upgrade's phase, before-snapshot, backup path and report (D-15).
   ledgerUpgradeState: "ledger_upgrade_state",
   // Set once `expenses` + `income` have been merged into `records` and
@@ -90,5 +97,23 @@ export function hasAnyDocuments(
         .select({ n: sql<number>`count(*)` })
         .from(table)
         .get()?.n ?? 0) > 0,
+  );
+}
+
+/** A stale or cleared default never silently selects a different recipient. */
+export function defaultReimbursementPayeeId(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: BunSQLiteDatabase<any>,
+): number | null {
+  const id = Number(
+    getSetting(db, SETTING_KEYS.reimbursementDefaultPayeeContactId),
+  );
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  return (
+    db
+      .select({ id: contacts.id })
+      .from(contacts)
+      .where(eq(contacts.id, id))
+      .get()?.id ?? null
   );
 }

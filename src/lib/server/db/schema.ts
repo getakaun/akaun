@@ -425,6 +425,17 @@ export const llmProviders = sqliteTable("llm_providers", {
  */
 function reviewColumns() {
   return {
+    expensePaymentSource: text("expense_payment_source", {
+      enum: ["company", "personal", "unpaid"],
+    }),
+    supplierContactId: integer("supplier_contact_id").references(
+      () => contacts.id,
+      { onDelete: "set null" },
+    ),
+    paidByContactId: integer("paid_by_contact_id").references(
+      () => contacts.id,
+      { onDelete: "set null" },
+    ),
     // DocumentType code (1 = expense, 2 = income, 3 and 4 = a transfer out of
     // or into the account the document is about). See enums.ts. On an item it
     // is the item's kind: set by its section, or by the sign of its amount.
@@ -1118,6 +1129,13 @@ export const ledgerRecords = sqliteTable(
     // journal entries (D-13). No reference number is ever regenerated.
     recordNumber: text("record_number").unique(),
     description: text("description").notNull().default(""),
+    expensePaymentSource: text("expense_payment_source", {
+      enum: ["company", "personal", "unpaid"],
+    }),
+    supplierContactId: integer("supplier_contact_id").references(
+      () => contacts.id,
+      { onDelete: "set null" },
+    ),
     // Required when any movement touches a shared owed account (FR-008).
     contactId: integer("contact_id").references(() => contacts.id, {
       onDelete: "set null",
@@ -1219,24 +1237,26 @@ export const settlements = sqliteTable(
     // The paying side, on a shared owed account.
     paymentMovementId: integer("payment_movement_id")
       .notNull()
-      .references(() => ledgerMovements.id, { onDelete: "cascade" }),
+      .references(() => ledgerMovements.id, { onDelete: "restrict" }),
     // The outstanding side, on the same shared owed account.
     owedMovementId: integer("owed_movement_id")
       .notNull()
-      .references(() => ledgerMovements.id, { onDelete: "cascade" }),
+      .references(() => ledgerMovements.id, { onDelete: "restrict" }),
     // How much of the outstanding item this payment covers. Always > 0; the
     // total against one owed movement may never exceed its own amount (FR-016).
     amountMinor: integer("amount_minor").notNull(),
+    reversedAt: text("reversed_at"),
+    reversedBy: integer("reversed_by").references(() => users.id),
+    reversalReason: text("reversal_reason"),
     createdBy: integer("created_by").references(() => users.id),
     createdAt: text("created_at")
       .notNull()
       .default(sql`(datetime('now'))`),
   },
   (t) => [
-    uniqueIndex("settlements_pair_idx").on(
-      t.paymentMovementId,
-      t.owedMovementId,
-    ),
+    uniqueIndex("settlements_pair_idx")
+      .on(t.paymentMovementId, t.owedMovementId)
+      .where(sql`${t.reversedAt} IS NULL`),
     // The "how much is left" aggregate.
     index("settlements_owed_idx").on(t.owedMovementId),
   ],
@@ -1287,4 +1307,41 @@ export const recordSearchText = sqliteTable("record_search_text", {
     .primaryKey()
     .references(() => ledgerRecords.id, { onDelete: "cascade" }),
   text: text("text").notNull(),
+});
+
+/** Linked, read-only postings transfer supplier obligations to one recipient. */
+export const reimbursements = sqliteTable("reimbursements", {
+  reversedAt: text("reversed_at"),
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  payableRecordId: integer("payable_record_id")
+    .notNull()
+    .references(() => ledgerRecords.id, { onDelete: "restrict" }),
+  paymentRecordId: integer("payment_record_id").references(
+    () => ledgerRecords.id,
+    { onDelete: "restrict" },
+  ),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
+export const reimbursementEntries = sqliteTable("reimbursement_entries", {
+  recordId: integer("record_id")
+    .primaryKey()
+    .references(() => ledgerRecords.id, { onDelete: "restrict" }),
+  groupId: integer("group_id")
+    .notNull()
+    .references(() => reimbursements.id, { onDelete: "restrict" }),
+  role: text("role", {
+    enum: ["supplier", "recipient", "supplier-reversal", "recipient-reversal"],
+  }).notNull(),
+});
+export const reimbursementItems = sqliteTable("reimbursement_items", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  groupId: integer("group_id")
+    .notNull()
+    .references(() => reimbursements.id, { onDelete: "restrict" }),
+  sourceMovementId: integer("source_movement_id")
+    .notNull()
+    .references(() => ledgerMovements.id, { onDelete: "restrict" }),
+  amountMinor: integer("amount_minor").notNull(),
 });

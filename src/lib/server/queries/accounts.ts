@@ -149,6 +149,7 @@ export function listAccounts(
         inArray(accountDefaults.purpose, [
           DefaultAccountPurpose.Receivable,
           DefaultAccountPurpose.Payable,
+          DefaultAccountPurpose.ReimbursementsPayable,
         ]),
       )
       .all()

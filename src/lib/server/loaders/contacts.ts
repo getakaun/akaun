@@ -17,8 +17,7 @@ import { fail, redirect } from "@sveltejs/kit";
 import { can } from "$lib/server/permissions.js";
 
 export function loadContactsPage(locals: App.Locals) {
-  if (!can(locals, "contacts.read"))
-    throw redirect(302, "/dashboard");
+  if (!can(locals, "contacts.read")) throw redirect(302, "/dashboard");
 
   const contacts = listContacts(db, {});
   const usage = getContactUsageCounts(
@@ -88,8 +87,7 @@ export function loadContactsPage(locals: App.Locals) {
  * computed correctly since the double-entry release — had nowhere to appear.
  */
 export function loadContactDetail(locals: App.Locals, id: number) {
-  if (!can(locals, "contacts.read"))
-    throw redirect(302, "/dashboard");
+  if (!can(locals, "contacts.read")) throw redirect(302, "/dashboard");
 
   const contact = getContact(db, id);
   if (!contact) throw redirect(302, "/contacts");
@@ -99,14 +97,14 @@ export function loadContactDetail(locals: App.Locals, id: number) {
   // Gated on `records.view`, not on `contacts.view`: it is derived from
   // records, so seeing it means being allowed to see them.
   const canSeeRecords = can(locals, "records.read");
-  const owedToUs = canSeeRecords
-    ? (contactBalances(db, "owed-to-us").find((r) => r.contactId === id)
-        ?.outstandingMinor ?? 0)
-    : 0;
-  const weOwe = canSeeRecords
-    ? (contactBalances(db, "we-owe").find((r) => r.contactId === id)
-        ?.outstandingMinor ?? 0)
-    : 0;
+  const receivable = canSeeRecords
+    ? contactBalances(db, "owed-to-us", id)[0]
+    : undefined;
+  const payable = canSeeRecords
+    ? contactBalances(db, "we-owe", id)[0]
+    : undefined;
+  const owedToUs = receivable?.outstandingMinor ?? 0;
+  const weOwe = payable?.outstandingMinor ?? 0;
 
   return {
     contact,
@@ -115,6 +113,10 @@ export function loadContactDetail(locals: App.Locals, id: number) {
     // sides nets out, which is the answer a person wants when they buy from a
     // customer.
     balanceMinor: owedToUs - weOwe,
+    obligationsToUsMinor: receivable?.obligationsMinor ?? 0,
+    obligationsWeOweMinor: payable?.obligationsMinor ?? 0,
+    creditsReceivedMinor: receivable?.creditsMinor ?? 0,
+    creditsPaidMinor: payable?.creditsMinor ?? 0,
     perms: {
       change: can(locals, "contacts.update"),
       delete: can(locals, "contacts.delete"),

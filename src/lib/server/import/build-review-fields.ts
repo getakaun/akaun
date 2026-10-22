@@ -174,6 +174,10 @@ async function transferReviewFields(
 ): Promise<ReviewFields> {
   const currency = input.currency.toUpperCase();
   return {
+    // Deprecated review metadata is left empty; the source account defines payment.
+    expensePaymentSource: null,
+    supplierContactId: null,
+    paidByContactId: null,
     documentType: input.documentType,
     itemName: input.itemName,
     supplier: null,
@@ -268,6 +272,10 @@ export async function buildReviewFields(
         null);
 
   return {
+    // Deprecated review metadata is left empty; the source account defines payment.
+    expensePaymentSource: null,
+    supplierContactId: null,
+    paidByContactId: null,
     documentType: docType,
     itemName: input.itemName,
     supplier: input.supplier,

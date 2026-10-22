@@ -25,6 +25,8 @@ import type { Allowed, LockResult, LockState } from "./types.js";
  * regardless of how many category lines the patch names.
  */
 export const LOCKED_FIELDS = [
+  "expensePaymentSource",
+  "paidByContactId",
   "amount",
   "currency",
   "exchangeRate",

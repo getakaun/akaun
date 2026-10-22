@@ -56,23 +56,84 @@ A payment cannot put more against a record than the amount that is outstanding o
 One payment can settle many records. For example, a supplier sends three bills in one month. You
 pay all three with one bank transfer.
 
-One payment can also settle records of many contacts. In the **Payee** field (or the **Payer**
-field), choose **Batch (several contacts)**. On the **Records** screen, **Pay all payables** opens
-a payment for all contacts that the business owes money to.
+For company-paid expenses, **Auto import** or **+ Add record** records the expense
+and bank payment together, with the supplier as its contact. There is no additional payment step.
 
-On the page of a record, the rail shows **Payments applied**: each payment that settles the
-record. On the page of a payment, the rail shows **Allocated to**: each record that the payment
-settles.
+For expenses someone personally paid, select **Accounts payable** as the source account
+when recording the expense or reviewing an import. Keep the supplier as the contact.
+Accounts payable expenses are treated as personally paid; no additional payment-source field is needed.
+
+Use **Reimburse expenses** on Records, select the person receiving the reimbursement,
+and choose outstanding expenses across suppliers. **Default reimbursement payee** in Settings
+prefills that recipient. Available credit belongs to the selected recipient.
+
+The bank payment is allocated directly to the selected expenses. No summary, clearing or
+supplier-transfer records are created. You can pay part now, apply selected available credit,
+or settle using credit alone. Credit-only settlement creates no new bank payment.
+
+The payment's original amount stays visible with the amount applied and current available credit.
+On each expense, **Payments applied** links to its payments. On a payment, **Allocated to**
+links to the covered expenses, including their suppliers.
+
+Previously recorded reimbursements retain their original accounts and helper entries.
+Those entries remain read-only under **Accounting details**, with their existing correction
+and full-reversal safeguards. They are not converted automatically. Credits stay on their
+original payable account; they are not silently transferred between supplier and reimbursement balances.
 
 ## Reverse an allocation
 
 If a payment is on the wrong record, reverse the allocation. On the record page or the payment
-page, click the undo icon (**Reverse allocation**) beside the allocation. The record is then
+page, click **Correct allocation** beside the allocation. Review the selected
+allocations and the amount that will remain unallocated, enter a reason, and confirm. You can
+also choose replacement allocations in the same correction. The record is then
 **Outstanding** or **Partially paid** again. To do this, you must have the permission to delete
 records.
 
 **Reverse allocation** removes the allocation only. The payment record stays. Its money still
 moved out of the cash or bank account.
+
+## Carry an overpayment forward
+
+An unallocated payment is credit on the contact's account. It does not increase the original
+expense. Contacts show unpaid bills and invoices separately from unapplied credits, along with
+the net balance. Payments show **Allocated** or **Unallocated credit**.
+
+When you record the next payment for the same contact, choose the bills or claims being paid.
+Under **Available credit**, select **Apply** beside the earlier payment and enter how much to use.
+Akaun shows the claim total, credit applied and cash remaining. It never applies credit automatically.
+
+For example, an employee received 28.00 too much. Their next valid claim is 100.00. Apply the
+28.00 credit and record a bank payment of 72.00. The expense remains 100.00. If the next claim
+is only 20.00, apply 20.00 credit with no cash payment; 8.00 remains for another claim.
+
+Credits apply only to the same contact and the same payable or receivable account. Use the
+single-contact payment flow to apply credit. Batch payments do not automatically deduct credits.
+
+## Record an overpayment refund
+
+If the contact returns an overpayment, open the original overpaid payment and use
+**Record refund**. Select their credit, the amount returned, the receipt account and the actual
+refund date. Match the receipt to the bank statement when available.
+
+To return a customer's excess payment, use **Record refund** on the original customer receipt.
+The form opens in the appropriate direction automatically.
+Refunds reduce the original credit balance. They do not create income or reverse the expense.
+Partial refunds leave the remaining credit available.
+
+## Correcting a reimbursement allocation
+
+Choose **Correct allocation** beside an expense on the payment. Review the affected amounts,
+remove or replace only the mistaken allocations, enter a reason, and confirm. The real bank payment
+and its bank matches stay recorded. Removed allocations become available credit for that person;
+the expense stays recorded under its original supplier and becomes outstanding again.
+
+If the original expense itself was entered incorrectly, correct that separately after removing
+its allocations. A new reimbursement does not need a whole-group reversal or replacement
+helper entries merely to correct payment coverage.
+
+Older reimbursements that contain linked transfer entries still use **Reverse entire reimbursement…**.
+The preview shows every affected expense and credit before and after; their reversal history
+remains visible. No replacement reimbursement is created automatically.
 
 ## Paid and reconciled are different
 

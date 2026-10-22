@@ -408,6 +408,7 @@ export const DefaultAccountPurpose = {
   UncategorisedExpense: 5,
   EverydayTransaction: 6,
   UncategorisedIncome: 7,
+  ReimbursementsPayable: 8,
 } as const;
 
 // A kind belongs to one *event* on one date. It carries intent the movements
@@ -561,6 +562,7 @@ export const DefaultAccountPurposeLabels: Record<number, string> = {
   [DefaultAccountPurpose.UncategorisedExpense]: "uncategorised_expense",
   [DefaultAccountPurpose.EverydayTransaction]: "everyday_transaction",
   [DefaultAccountPurpose.UncategorisedIncome]: "uncategorised_income",
+  [DefaultAccountPurpose.ReimbursementsPayable]: "reimbursements_payable",
 };
 
 export const DefaultAccountPurposeDisplayLabels: Record<number, string> = {
@@ -571,6 +573,7 @@ export const DefaultAccountPurposeDisplayLabels: Record<number, string> = {
   [DefaultAccountPurpose.UncategorisedExpense]: "Uncategorised expense",
   [DefaultAccountPurpose.EverydayTransaction]: "Default transaction account",
   [DefaultAccountPurpose.UncategorisedIncome]: "Uncategorised income",
+  [DefaultAccountPurpose.ReimbursementsPayable]: "Reimbursements payable",
 };
 
 export const DefaultAccountPurposeTypes: Record<
@@ -584,6 +587,7 @@ export const DefaultAccountPurposeTypes: Record<
   [DefaultAccountPurpose.UncategorisedExpense]: AccountType.Expense,
   [DefaultAccountPurpose.EverydayTransaction]: AccountType.Asset,
   [DefaultAccountPurpose.UncategorisedIncome]: AccountType.Revenue,
+  [DefaultAccountPurpose.ReimbursementsPayable]: AccountType.Liability,
 };
 
 export const LedgerRecordKindLabels: Record<number, string> = {

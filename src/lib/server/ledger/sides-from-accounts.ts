@@ -86,6 +86,7 @@ export type SidesContext = {
   canAdjust: boolean;
   receivableAccountId: number;
   payableAccountId: number;
+  reimbursementPayableAccountId?: number;
   openingBalancesAccountId: number;
 };
 
@@ -109,7 +110,8 @@ function isSpendingCategory(account: SidesAccount): boolean {
 function isOwedAccount(account: SidesAccount, ctx: SidesContext): boolean {
   return (
     account.id === ctx.receivableAccountId ||
-    account.id === ctx.payableAccountId
+    account.id === ctx.payableAccountId ||
+    account.id === ctx.reimbursementPayableAccountId
   );
 }
 
@@ -366,12 +368,18 @@ function derive(
     if (isMoneyPot(to)) {
       return { kind: "transfer", fromAccountId: from.id, toAccountId: to.id };
     }
-    if (to.id === ctx.payableAccountId) {
+    if (
+      to.id === ctx.payableAccountId ||
+      to.id === ctx.reimbursementPayableAccountId
+    ) {
       // Money leaving an account to settle what the business owes.
       return {
         kind: "payment",
         paidFromAccountId: from.id,
         direction: "we-pay",
+        ...(to.id === ctx.reimbursementPayableAccountId
+          ? { settlementAccountId: to.id }
+          : {}),
       };
     }
   }
@@ -384,13 +392,20 @@ function derive(
     };
   }
 
-  if (from.id === ctx.payableAccountId && isSpendingCategory(to)) {
+  if (
+    (from.id === ctx.payableAccountId ||
+      from.id === ctx.reimbursementPayableAccountId) &&
+    isSpendingCategory(to)
+  ) {
     // Somebody else paid for this. A null paying side is what makes it read as
     // owed to that person rather than as already paid (FR-008, FR-011).
     return {
       kind: "expense",
       categoryAccountId: to.id,
       paidFromAccountId: null,
+      ...(from.id === ctx.reimbursementPayableAccountId
+        ? { expensePaymentSource: "personal" as const }
+        : {}),
     };
   }
 

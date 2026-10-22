@@ -1,6 +1,18 @@
+import { createSettlements } from "../services/settlements.js";
+import { repairPaymentRecipients } from "./repair-payment-recipients.js";
+import {
+  prepareReimbursementReversal,
+  reverseReimbursement,
+} from "./reimbursement-reversal.js";
+import { listRecords } from "../queries/ledger.js";
+import { createLegacyReimbursement as createReimbursement } from "./__fixtures__/legacy-reimbursement.js";
+import {
+  prepareRecipientCorrection,
+  correctPaymentRecipient,
+} from "./payment-recipient.js";
 import { createHash } from "node:crypto";
 import { Database } from "bun:sqlite";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -28,8 +40,20 @@ import { LEAF_PERMISSIONS } from "$lib/permissions/catalog.js";
 import { localsFor } from "../permissions/test-locals.js";
 import type { LedgerDb } from "../ledger/types.js";
 import type { AppContext } from "./context.js";
+import {
+  correctPaymentAllocations,
+  preparePaymentCorrection,
+  paymentAllocationSnapshot,
+} from "./payment-corrections.js";
+import {
+  listOutstanding,
+  listOutstandingPage,
+  contactBalances,
+  settledMinorFor,
+} from "../queries/settlements.js";
 import { createRecord, deleteRecord, updateRecord } from "./records.js";
 import { recordVersion, recordVersions } from "./version.js";
+import { setSetting, SETTING_KEYS } from "../settings.js";
 import { setExtractedText } from "../queries/ledger.js";
 import { getRecord } from "../queries/ledger.js";
 import {
@@ -85,6 +109,7 @@ beforeEach(() => {
   sqlite = new Database(":memory:");
   db = drizzle(sqlite, { schema }) as unknown as LedgerDb;
   migrate(db as never, { migrationsFolder: "drizzle" });
+  setSetting(db, SETTING_KEYS.currencyCode, "MYR");
   db.insert(users)
     .values({ email: "u@test", username: "u", passwordHash: "x" })
     .run();
@@ -815,5 +840,1229 @@ describe("controlled settled date correction", () => {
     } finally {
       ledgerEvents.off("record-update", listener);
     }
+  });
+});
+
+describe("payment correction and overpayment recovery", () => {
+  function written(input: Parameters<typeof createRecord>[1]) {
+    const result = createRecord(ctx(), input);
+    if (!result.ok) throw new Error(result.reason);
+    return result.value.record;
+  }
+  function bill(amount: number, contactId = supplier) {
+    return written({
+      ...base,
+      kind: "expense",
+      amount,
+      paidFromAccountId: null,
+      categoryAccountId: fuel,
+      contactId,
+    });
+  }
+  function side(record: ReturnType<typeof written>, accountId = payable) {
+    return record.movements.find((m) => m.accountId === accountId)!.id;
+  }
+  function payment(
+    amount: number,
+    allocations: { owedMovementId: number; amountMinor: number }[] = [],
+  ) {
+    return written({
+      ...base,
+      kind: "payment",
+      date: "2026-04-02",
+      amount,
+      direction: "we-pay",
+      paidFromAccountId: bank,
+      contactId: supplier,
+      settlements: allocations,
+    });
+  }
+  function request(paymentMovementId: number, removeSettlementIds: number[]) {
+    return {
+      paymentMovementId,
+      removeSettlementIds,
+      allocations: [],
+      reason: "Company already paid this bill directly.",
+      expectedVersion: paymentAllocationSnapshot(ctx(), paymentMovementId)!
+        .version,
+    };
+  }
+  function matchBank(record: ReturnType<typeof written>, amount: number) {
+    const statement = db
+      .insert(schema.bankStatements)
+      .values({
+        originalFilename: "fixture.pdf",
+        storedFilePath: "fixture.pdf",
+        accountId: bank,
+      })
+      .returning()
+      .get();
+    const line = db
+      .insert(schema.bankStatementLines)
+      .values({
+        statementId: statement.id,
+        date: record.date,
+        amount,
+        direction: StatementDirection.Out,
+      })
+      .returning()
+      .get();
+    db.insert(schema.reconciliationAllocations)
+      .values({
+        lineId: line.id,
+        movementId: side(record, bank),
+        amount,
+        itemAmountSnapshot: amount,
+      })
+      .run();
+  }
+
+  it("corrects the RM28 case preserving eight legacy allocations, cash and attachments", () => {
+    const amounts = [9857, 2800, 13800, 10000, 2450, 484, 700, 438, 17765];
+    const bills = amounts.map((n) => bill(n / 100));
+    const reimbursement = payment(
+      582.94,
+      bills.map((b, i) => ({
+        owedMovementId: side(b),
+        amountMinor: amounts[i],
+      })),
+    );
+    // Fixture reproduces the historical cross-contact relationships found in the books.
+    const easyParcel = db
+      .insert(contacts)
+      .values({ entityType: 2, legalName: "EasyParcel" })
+      .returning()
+      .get().id;
+    db.update(ledgerRecords)
+      .set({ contactId: easyParcel })
+      .where(eq(ledgerRecords.id, bills[1].id))
+      .run();
+    db.update(ledgerRecords)
+      .set({ contactId: easyParcel })
+      .where(eq(ledgerRecords.id, bills[8].id))
+      .run();
+    db.insert(recordAttachments)
+      .values({
+        recordId: reimbursement.id,
+        filename: "fixture.pdf",
+        displayName: "Reimbursement receipt",
+        addedDate: base.date,
+      })
+      .run();
+    matchBank(reimbursement, 582.94);
+    const beforeMovements = db
+      .select()
+      .from(ledgerMovements)
+      .where(eq(ledgerMovements.recordId, reimbursement.id))
+      .all();
+    const beforeMatches = db
+      .select()
+      .from(schema.reconciliationAllocations)
+      .all();
+    const original = db.select().from(settlements).all();
+    const mistaken = original.find((a) => a.owedMovementId === side(bills[1]))!;
+    const corrected = correctPaymentAllocations(
+      ctx(),
+      request(side(reimbursement), [mistaken.id]),
+    );
+    expect(corrected).toMatchObject({
+      ok: true,
+      value: { undoneIds: [mistaken.id] },
+    });
+    const retained = db.select().from(settlements).all();
+    expect(retained.filter((a) => a.reversedAt === null)).toEqual(
+      original.filter((a) => a.id !== mistaken.id),
+    );
+    expect(retained.find((a) => a.id === mistaken.id)).toMatchObject({
+      ...mistaken,
+      reversedAt: expect.any(String),
+      reversedBy: 1,
+      reversalReason: "Company already paid this bill directly.",
+    });
+    expect(
+      db
+        .select()
+        .from(ledgerMovements)
+        .where(eq(ledgerMovements.recordId, reimbursement.id))
+        .all(),
+    ).toEqual(beforeMovements);
+    expect(db.select().from(schema.reconciliationAllocations).all()).toEqual(
+      beforeMatches,
+    );
+    expect(getRecord(db, reimbursement.id)).toMatchObject({
+      amount: 582.94,
+      outstandingMinor: 2800,
+      attachmentCount: 1,
+      cleared: true,
+    });
+    const direct = written({
+      ...base,
+      kind: "payment",
+      date: "2026-02-23",
+      amount: 28,
+      direction: "we-pay",
+      paidFromAccountId: bank,
+      contactId: easyParcel,
+      settlements: [{ owedMovementId: side(bills[1]), amountMinor: 2800 }],
+    });
+    matchBank(direct, 28);
+    expect(getRecord(db, bills[1].id)).toMatchObject({
+      amount: 28,
+      paid: true,
+    });
+    expect(getRecord(db, direct.id)).toMatchObject({ cleared: true });
+    expect(contactBalances(db, "we-owe", supplier)).toMatchObject([
+      { outstandingMinor: -2800, obligationsMinor: 0, creditsMinor: 2800 },
+    ]);
+    const audits = db
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.recordId, String(reimbursement.id)))
+      .all();
+    expect(
+      audits.some(
+        (a) =>
+          a.changes?.includes("correctionReason") &&
+          a.changes.includes("allocations"),
+      ),
+    ).toBe(true);
+  });
+
+  it("applies RM28 explicitly to a RM100 claim and records only RM72 cash", () => {
+    const credit = payment(28);
+    const claim = bill(100);
+    const result = written({
+      ...base,
+      kind: "payment",
+      amount: 72,
+      direction: "we-pay",
+      paidFromAccountId: bank,
+      contactId: supplier,
+      creditApplications: [
+        {
+          paymentMovementId: side(credit),
+          owedMovementId: side(claim),
+          amountMinor: 2800,
+        },
+      ],
+      settlements: [{ owedMovementId: side(claim), amountMinor: 7200 }],
+    });
+    expect(
+      result.movements.find((m) => m.accountId === bank)?.amountMinor,
+    ).toBe(-7200);
+    expect(getRecord(db, claim.id)).toMatchObject({ amount: 100, paid: true });
+    expect(getRecord(db, credit.id)?.outstandingMinor).toBe(0);
+  });
+
+  it("settles a smaller claim entirely with credit, leaving RM8 and no cash posting", () => {
+    const credit = payment(28);
+    const claim = bill(20);
+    const before = db.select().from(ledgerRecords).all().length;
+    const result = written({
+      ...base,
+      kind: "payment",
+      amount: 0,
+      direction: "we-pay",
+      paidFromAccountId: bank,
+      contactId: supplier,
+      creditApplications: [
+        {
+          paymentMovementId: side(credit),
+          owedMovementId: side(claim),
+          amountMinor: 2000,
+        },
+      ],
+      settlements: [],
+    });
+    expect(result.id).toBe(claim.id);
+    expect(db.select().from(ledgerRecords).all()).toHaveLength(before);
+    expect(getRecord(db, claim.id)?.paid).toBe(true);
+    expect(getRecord(db, credit.id)?.outstandingMinor).toBe(800);
+  });
+
+  it("rolls back credit application when the cash allocation fails, emitting nothing", () => {
+    const credit = payment(28);
+    const claim = bill(100);
+    const before = db.select().from(settlements).all();
+    let count = 0;
+    const listener = () => count++;
+    ledgerEvents.on("settlement-changed", listener);
+    try {
+      const result = createRecord(ctx(), {
+        ...base,
+        kind: "payment",
+        amount: 72,
+        direction: "we-pay",
+        paidFromAccountId: bank,
+        contactId: supplier,
+        creditApplications: [
+          {
+            paymentMovementId: side(credit),
+            owedMovementId: side(claim),
+            amountMinor: 2800,
+          },
+        ],
+        settlements: [{ owedMovementId: side(claim), amountMinor: 7300 }],
+      });
+      expect(result.ok).toBe(false);
+      expect(db.select().from(settlements).all()).toEqual(before);
+      expect(count).toBe(0);
+    } finally {
+      ledgerEvents.off("settlement-changed", listener);
+    }
+  });
+
+  it("keeps signed net totals and gross credits consistent across pages", () => {
+    bill(100);
+    payment(28);
+    const first = listOutstandingPage(
+      db,
+      { direction: "we-owe", contactId: supplier },
+      { limit: 1, offset: 0 },
+    );
+    const second = listOutstandingPage(
+      db,
+      { direction: "we-owe", contactId: supplier },
+      { limit: 1, offset: 1 },
+    );
+    expect(first).toMatchObject({
+      totalOutstandingMinor: 7200,
+      totalObligationsMinor: 10000,
+      totalCreditsMinor: 2800,
+      total: 2,
+    });
+    expect(second.totalOutstandingMinor).toBe(first.totalOutstandingMinor);
+    expect(second.items[0]).toMatchObject({
+      position: "credit",
+      signedAmountMinor: 2800,
+      daysOverdue: 0,
+    });
+    expect(
+      listOutstanding(db, { direction: "we-owe" }).totalOutstandingMinor,
+    ).toBe(7200);
+    expect(
+      accountTotalsUpTo(db, "2026-12-31").find((a) => a.accountId === payable)
+        ?.amountMinor,
+    ).toBe(-7200);
+  });
+
+  it("records partial refunds against payable credit without affecting expenses", () => {
+    const credit = payment(28);
+    const refund = written({
+      ...base,
+      kind: "payment",
+      amount: 10,
+      direction: "refund-received",
+      paidFromAccountId: bank,
+      contactId: supplier,
+      settlements: [{ owedMovementId: side(credit), amountMinor: 1000 }],
+    });
+    expect(
+      refund.movements.find((m) => m.accountId === bank)?.amountMinor,
+    ).toBe(1000);
+    expect(getRecord(db, credit.id)?.outstandingMinor).toBe(1800);
+    expect(contactBalances(db, "we-owe", supplier)[0].outstandingMinor).toBe(
+      -1800,
+    );
+    expect(refund.movements.every((m) => m.accountId !== fuel)).toBe(true);
+    expect(
+      createRecord(ctx(), {
+        ...base,
+        kind: "payment",
+        amount: 30,
+        direction: "refund-received",
+        paidFromAccountId: bank,
+        contactId: supplier,
+        settlements: [{ owedMovementId: side(credit), amountMinor: 3000 }],
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("refunds customer credits on receivable and can apply them to later income", () => {
+    const receivable = db
+      .select()
+      .from(accountDefaults)
+      .where(eq(accountDefaults.purpose, DefaultAccountPurpose.Receivable))
+      .get()!.accountId;
+    const received = written({
+      ...base,
+      kind: "payment",
+      amount: 28,
+      direction: "we-receive",
+      paidFromAccountId: bank,
+      contactId: supplier,
+    });
+    expect(
+      contactBalances(db, "owed-to-us", supplier)[0].outstandingMinor,
+    ).toBe(-2800);
+    const refund = written({
+      ...base,
+      kind: "payment",
+      amount: 10,
+      direction: "refund-paid",
+      paidFromAccountId: bank,
+      contactId: supplier,
+      settlements: [
+        { owedMovementId: side(received, receivable), amountMinor: 1000 },
+      ],
+    });
+    expect(
+      refund.movements.find((m) => m.accountId === bank)?.amountMinor,
+    ).toBe(-1000);
+    const revenue = account("Sales", AccountType.Revenue);
+    const invoice = written({
+      ...base,
+      kind: "income",
+      amount: 18,
+      categoryAccountId: revenue,
+      receivedIntoAccountId: receivable,
+      contactId: supplier,
+    });
+    const covered = written({
+      ...base,
+      kind: "payment",
+      amount: 0,
+      direction: "we-receive",
+      paidFromAccountId: bank,
+      contactId: supplier,
+      creditApplications: [
+        {
+          paymentMovementId: side(received, receivable),
+          owedMovementId: side(invoice, receivable),
+          amountMinor: 1800,
+        },
+      ],
+    });
+    expect(covered.id).toBe(invoice.id);
+    expect(getRecord(db, invoice.id)?.paid).toBe(true);
+    expect(getRecord(db, received.id)?.outstandingMinor).toBe(0);
+  });
+
+  it("keeps credit-only dry runs free of settlements and events", () => {
+    const credit = payment(28);
+    const claim = bill(28);
+    const result = createRecord(
+      ctx(),
+      {
+        ...base,
+        kind: "payment",
+        amount: 0,
+        direction: "we-pay",
+        paidFromAccountId: bank,
+        contactId: supplier,
+        creditApplications: [
+          {
+            paymentMovementId: side(credit),
+            owedMovementId: side(claim),
+            amountMinor: 2800,
+          },
+        ],
+      },
+      { dryRun: true },
+    );
+    expect(result.ok).toBe(true);
+    expect(db.select().from(settlements).all()).toHaveLength(0);
+    expect(getRecord(db, claim.id)?.paid).toBe(false);
+  });
+
+  it("reallocates only selected amounts and leaves unrelated allocations untouched", () => {
+    const first = bill(30);
+    const keep = bill(20);
+    const replacement = bill(30);
+    const pay = payment(50, [
+      { owedMovementId: side(first), amountMinor: 3000 },
+      { owedMovementId: side(keep), amountMinor: 2000 },
+    ]);
+    const before = paymentAllocationSnapshot(ctx(), side(pay))!;
+    const remove = before.allocations.find(
+      (a) => a.owedMovementId === side(first),
+    )!;
+    const kept = before.allocations.find(
+      (a) => a.owedMovementId === side(keep),
+    )!;
+    expect(
+      correctPaymentAllocations(ctx(), {
+        ...request(side(pay), [remove.id]),
+        allocations: [{ owedMovementId: side(replacement), amountMinor: 3000 }],
+      }).ok,
+    ).toBe(true);
+    expect(
+      db.select().from(settlements).where(eq(settlements.id, kept.id)).get(),
+    ).toEqual(kept);
+    expect(getRecord(db, first.id)?.paid).toBe(false);
+    expect(getRecord(db, replacement.id)?.paid).toBe(true);
+  });
+
+  it("rolls back a correction when the audit write fails", () => {
+    const claim = bill(28);
+    const pay = payment(28, [
+      { owedMovementId: side(claim), amountMinor: 2800 },
+    ]);
+    const before = paymentAllocationSnapshot(ctx(), side(pay))!;
+    sqlite.exec(
+      "CREATE TRIGGER reject_allocation_audit BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END",
+    );
+    let count = 0;
+    const listener = () => count++;
+    ledgerEvents.on("settlement-changed", listener);
+    try {
+      expect(() =>
+        correctPaymentAllocations(
+          ctx(),
+          request(side(pay), [before.allocations[0].id]),
+        ),
+      ).toThrow("audit unavailable");
+      expect(paymentAllocationSnapshot(ctx(), side(pay))).toEqual(before);
+      expect(count).toBe(0);
+    } finally {
+      ledgerEvents.off("settlement-changed", listener);
+    }
+  });
+
+  it("refuses wrong contacts and directions, incomplete refunds and credit over-allocation", () => {
+    const credit = payment(28);
+    const other = db
+      .insert(contacts)
+      .values({ entityType: 2, legalName: "Other" })
+      .returning()
+      .get().id;
+    const claim = bill(100, other);
+    expect(
+      createRecord(ctx(), {
+        ...base,
+        kind: "payment",
+        amount: 0,
+        direction: "we-pay",
+        paidFromAccountId: bank,
+        contactId: other,
+        creditApplications: [
+          {
+            paymentMovementId: side(credit),
+            owedMovementId: side(claim),
+            amountMinor: 2800,
+          },
+        ],
+      }).ok,
+    ).toBe(false);
+    expect(
+      createRecord(ctx(), {
+        ...base,
+        kind: "payment",
+        amount: 28,
+        direction: "refund-received",
+        paidFromAccountId: bank,
+        contactId: supplier,
+      }).ok,
+    ).toBe(false);
+    expect(
+      createRecord(ctx(), {
+        ...base,
+        kind: "payment",
+        amount: 0,
+        direction: "we-receive",
+        paidFromAccountId: bank,
+        contactId: supplier,
+        creditApplications: [
+          {
+            paymentMovementId: side(credit),
+            owedMovementId: side(claim),
+            amountMinor: 2800,
+          },
+        ],
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("rejects stale corrections, wrong settlement ids and missing reasons", () => {
+    const claim = bill(100);
+    const pay = payment(100, [
+      { owedMovementId: side(claim), amountMinor: 10000 },
+    ]);
+    const snapshot = paymentAllocationSnapshot(ctx(), side(pay))!;
+    const input = request(side(pay), [snapshot.allocations[0].id]);
+    expect(
+      correctPaymentAllocations(ctx(), { ...input, reason: "short" }),
+    ).toMatchObject({ code: "INVALID_INPUT" });
+    expect(
+      correctPaymentAllocations(ctx(), { ...input, expectedVersion: "" }),
+    ).toMatchObject({ code: "INVALID_INPUT" });
+    expect(
+      correctPaymentAllocations(ctx(), {
+        ...input,
+        removeSettlementIds: [999999],
+      }),
+    ).toMatchObject({ code: "REFUSED" });
+    expect(correctPaymentAllocations(ctx(), input).ok).toBe(true);
+    expect(correctPaymentAllocations(ctx(), input)).toMatchObject({
+      code: "CONFLICT",
+    });
+  });
+
+  it("requires correction permissions and refuses contact changes with active allocations", () => {
+    const claim = bill(100);
+    const pay = payment(100, [
+      { owedMovementId: side(claim), amountMinor: 10000 },
+    ]);
+    const input = request(side(pay), [
+      paymentAllocationSnapshot(ctx(), side(pay))!.allocations[0].id,
+    ]);
+    const other = db
+      .insert(contacts)
+      .values({ entityType: 2, legalName: "Other" })
+      .returning()
+      .get().id;
+    expect(updateRecord(ctx(), claim.id, { contactId: other })).toMatchObject({
+      code: "REFUSED",
+    });
+    expect(
+      correctPaymentAllocations(ctx(["records.delete"]), input),
+    ).toMatchObject({ code: "FORBIDDEN" });
+    expect(
+      preparePaymentCorrection(ctx(["records.read"]), side(pay)),
+    ).toMatchObject({ code: "FORBIDDEN" });
+    expect(correctPaymentAllocations(ctx(), input).ok).toBe(true);
+    expect(updateRecord(ctx(), claim.id, { contactId: other }).ok).toBe(true);
+  });
+
+  it("rolls correction back when replacements fail, preserving allocations and events", () => {
+    const claim = bill(100);
+    const pay = payment(100, [
+      { owedMovementId: side(claim), amountMinor: 10000 },
+    ]);
+    const before = paymentAllocationSnapshot(ctx(), side(pay))!;
+    let count = 0;
+    const listener = () => count++;
+    ledgerEvents.on("settlement-changed", listener);
+    try {
+      const result = correctPaymentAllocations(ctx(), {
+        ...request(side(pay), [before.allocations[0].id]),
+        allocations: [{ owedMovementId: side(claim), amountMinor: 10001 }],
+      });
+      expect(result.ok).toBe(false);
+      expect(paymentAllocationSnapshot(ctx(), side(pay))).toEqual(before);
+      expect(count).toBe(0);
+    } finally {
+      ledgerEvents.off("settlement-changed", listener);
+    }
+  });
+
+  it("reverses every allocation of a contactless batch together", () => {
+    const first = bill(30);
+    const second = bill(20);
+    const batch = written({
+      ...base,
+      kind: "payment",
+      amount: 50,
+      direction: "we-pay",
+      paidFromAccountId: bank,
+      contactId: supplier,
+      settlements: [
+        { owedMovementId: side(first), amountMinor: 3000 },
+        { owedMovementId: side(second), amountMinor: 2000 },
+      ],
+    });
+    db.update(ledgerRecords)
+      .set({ contactId: null })
+      .where(eq(ledgerRecords.id, batch.id))
+      .run();
+    const before = paymentAllocationSnapshot(ctx(), side(batch))!;
+    const result = correctPaymentAllocations(
+      ctx(),
+      request(side(batch), [before.allocations[0].id]),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: { undoneIds: before.allocations.map((a) => a.id) },
+    });
+    expect(settledMinorFor(db, [side(first), side(second)]).size).toBe(0);
+  });
+});
+
+describe("single-recipient reimbursements", () => {
+  function expense(amount = 28) {
+    const result = createRecord(ctx(), {
+      ...base,
+      kind: "expense",
+      amount,
+      categoryAccountId: fuel,
+      paidFromAccountId: null,
+      contactId: supplier,
+    });
+    if (!result.ok) throw new Error(result.reason);
+    return result.value.record;
+  }
+  function person(name = "Employee") {
+    return db
+      .insert(contacts)
+      .values({ entityType: 2, legalName: name })
+      .returning()
+      .get()!.id;
+  }
+  function claim(
+    recipient: number,
+    bill: ReturnType<typeof expense>,
+    cashMinor = 2800,
+  ) {
+    return {
+      contactId: recipient,
+      personallyPaid: true as const,
+      date: base.date,
+      description: "Employee reimbursement",
+      reference: "",
+      remark: "",
+      items: [
+        {
+          owedMovementId: bill.movements.find((m) => m.accountId === payable)!
+            .id,
+          amountMinor: 2800,
+        },
+      ],
+      cashMinor,
+      paidFromAccountId: bank,
+      credits: [],
+    };
+  }
+  it("preserves suppliers and balances clearing with a partially paid recipient payable", () => {
+    const bill = expense();
+    const recipient = person();
+    const result = createReimbursement(
+      ctx(["records.adjust"]),
+      claim(recipient, bill, 1000),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(getRecord(db, bill.id)!.contactId).toBe(supplier);
+    expect(getRecord(db, bill.id)!.outstandingMinor).toBe(0);
+    expect(result.value.payment!.contactId).toBe(recipient);
+    expect(result.value.payable.contactId).toBe(recipient);
+    expect(result.value.remainingMinor).toBe(1800);
+    expect(result.value.payable.outstandingMinor).toBe(1800);
+    const entries = db.select().from(schema.reimbursementEntries).all();
+    expect(
+      getRecord(
+        db,
+        entries.find((entry) => entry.role === "recipient")!.recordId,
+      )!.description,
+    ).toBe("Reimbursement summary: Employee reimbursement");
+    expect(
+      getRecord(
+        db,
+        entries.find((entry) => entry.role === "supplier")!.recordId,
+      )!.description,
+    ).toBe("Included expenses: Employee reimbursement");
+    const sides = db
+      .select()
+      .from(ledgerMovements)
+      .where(
+        inArray(
+          ledgerMovements.recordId,
+          entries.map((e) => e.recordId),
+        ),
+      )
+      .all();
+    const clearing = sides.filter((m) => m.accountId !== payable);
+    expect(clearing.reduce((n, m) => n + m.amountMinor, 0)).toBe(0);
+    expect(
+      accountTotalsUpTo(db, "2099-01-01").find((a) => a.accountId === fuel)
+        ?.amountMinor,
+    ).toBe(2800);
+  });
+  it("rejects absent acknowledgement, duplicate claims and excess cash atomically", () => {
+    const bill = expense();
+    const recipient = person();
+    const input = claim(recipient, bill);
+    const before = db.select().from(ledgerRecords).all().length;
+    expect(
+      createReimbursement(ctx(), { ...input, personallyPaid: false } as never)
+        .ok,
+    ).toBe(false);
+    expect(
+      createReimbursement(ctx(), {
+        ...input,
+        items: [...input.items, ...input.items],
+      }).ok,
+    ).toBe(false);
+    expect(createReimbursement(ctx(), { ...input, cashMinor: 2801 }).ok).toBe(
+      false,
+    );
+    expect(db.select().from(ledgerRecords).all()).toHaveLength(before);
+    expect(db.select().from(schema.reimbursements).all()).toHaveLength(0);
+  });
+  it("applies only recipient credits and allows credit-only claims", () => {
+    const bill = expense();
+    const recipient = person();
+    const credit = createRecord(ctx(), {
+      ...base,
+      kind: "payment",
+      direction: "we-pay",
+      amount: 28,
+      contactId: recipient,
+      paidFromAccountId: bank,
+    });
+    if (!credit.ok) throw new Error(credit.reason);
+    const creditId = credit.value.record.movements.find(
+      (m) => m.accountId === payable,
+    )!.id;
+    const result = createReimbursement(ctx(), {
+      ...claim(recipient, bill, 0),
+      credits: [{ paymentMovementId: creditId, amountMinor: 2800 }],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.payment).toBeNull();
+    expect(result.value.remainingMinor).toBe(0);
+    expect(createReimbursement(ctx(), claim(recipient, bill)).ok).toBe(false);
+  });
+  it("rolls back generated entries when credit belongs to another person", () => {
+    const bill = expense();
+    const recipient = person();
+    const credit = createRecord(ctx(), {
+      ...base,
+      kind: "payment",
+      direction: "we-pay",
+      amount: 28,
+      contactId: supplier,
+      paidFromAccountId: bank,
+    });
+    if (!credit.ok) throw new Error(credit.reason);
+    const before = db.select().from(ledgerRecords).all().length;
+    const result = createReimbursement(ctx(), {
+      ...claim(recipient, bill, 0),
+      credits: [
+        {
+          paymentMovementId: credit.value.record.movements.find(
+            (m) => m.accountId === payable,
+          )!.id,
+          amountMinor: 2800,
+        },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    expect(db.select().from(ledgerRecords).all()).toHaveLength(before);
+    expect(db.select().from(schema.reimbursements).all()).toHaveLength(0);
+    expect(getRecord(db, bill.id)!.outstandingMinor).toBe(2800);
+  });
+  it("corrects completed reimbursement recipients without replacing cash movements", () => {
+    const bill = expense();
+    const recipient = person();
+    const corrected = person("Correct recipient");
+    const claimResult = createReimbursement(ctx(), claim(recipient, bill));
+    if (!claimResult.ok) throw new Error(claimResult.reason);
+    const payment = claimResult.value.payment!;
+    const preview = prepareRecipientCorrection(ctx(), payment.id);
+    if (!preview.ok) throw new Error(preview.reason);
+    const result = correctPaymentRecipient(ctx(), {
+      recordId: payment.id,
+      contactId: corrected,
+      reason: "Recipient was selected incorrectly",
+      expectedVersion: preview.value.version,
+    });
+    expect(result.ok).toBe(true);
+    expect(getRecord(db, payment.id)!.movements).toEqual(payment.movements);
+    expect(getRecord(db, payment.id)!.contactId).toBe(corrected);
+    expect(getRecord(db, claimResult.value.payable.id)!.contactId).toBe(
+      corrected,
+    );
+    expect(getRecord(db, bill.id)!.contactId).toBe(supplier);
+    expect(
+      correctPaymentRecipient(ctx(), {
+        recordId: payment.id,
+        contactId: recipient,
+        reason: "Old preview must be refused",
+        expectedVersion: preview.value.version,
+      }).ok,
+    ).toBe(false);
+  });
+
+  for (const scenario of [
+    { label: "full cash", cash: 2800, credit: 0 },
+    { label: "partial cash", cash: 1000, credit: 0 },
+    { label: "mixed funding", cash: 1800, credit: 1000 },
+    { label: "credit only", cash: 0, credit: 2800 },
+  ]) {
+    it(`previews all expenses and actual credit released for ${scenario.label}`, () => {
+      const bill = expense();
+      const recipient = person();
+      const advance = createRecord(ctx(), {
+        ...base,
+        kind: "payment",
+        direction: "we-pay",
+        amount: 50,
+        contactId: recipient,
+        paidFromAccountId: bank,
+      });
+      if (!advance.ok) throw new Error(advance.reason);
+      const advanceSide = advance.value.record.movements.find(
+        (m) => m.accountId === payable,
+      )!;
+      const result = createReimbursement(ctx(), {
+        ...claim(recipient, bill, scenario.cash),
+        credits: scenario.credit
+          ? [
+              {
+                paymentMovementId: advanceSide.id,
+                amountMinor: scenario.credit,
+              },
+            ]
+          : [],
+      });
+      if (!result.ok) throw new Error(result.reason);
+      const preview = prepareReimbursementReversal(ctx(), result.value.groupId);
+      if (!preview.ok) throw new Error(preview.reason);
+      expect(preview.value.summary.amountMinor).toBe(2800);
+      expect(preview.value.summary.items).toEqual([
+        { recordId: bill.id, description: bill.description, amountMinor: 2800 },
+      ]);
+      expect(preview.value.summary.unfundedMinor).toBe(
+        2800 - scenario.cash - scenario.credit,
+      );
+      expect(
+        preview.value.summary.funding.reduce(
+          (sum, p) => sum + p.releasedMinor,
+          0,
+        ),
+      ).toBe(scenario.cash + scenario.credit);
+      if (scenario.credit)
+        expect(
+          preview.value.summary.funding.find(
+            (p) => p.recordId === advance.value.record.id,
+          ),
+        ).toMatchObject({
+          releasedMinor: scenario.credit,
+          availableCreditBeforeMinor: 5000 - scenario.credit,
+          availableCreditAfterMinor: 5000,
+        });
+      const reversed = reverseReimbursement(ctx(), {
+        groupId: result.value.groupId,
+        date: base.date,
+        reason: "Correct the whole reimbursement",
+        expectedVersion: preview.value.version,
+      });
+      expect(reversed.ok).toBe(true);
+      for (const payment of preview.value.summary.funding) {
+        expect(getRecord(db, payment.recordId)!.outstandingMinor).toBe(
+          payment.availableCreditAfterMinor,
+        );
+      }
+      expect(getRecord(db, bill.id)!.outstandingMinor).toBe(2800);
+    });
+  }
+
+  it("rejects a reversal preview after its funding credit is used elsewhere", () => {
+    const recipient = person();
+    const advance = createRecord(ctx(), {
+      ...base,
+      kind: "payment",
+      direction: "we-pay",
+      amount: 50,
+      contactId: recipient,
+      paidFromAccountId: bank,
+    });
+    if (!advance.ok) throw new Error(advance.reason);
+    const advanceSide = advance.value.record.movements.find(
+      (m) => m.accountId === payable,
+    )!;
+    const result = createReimbursement(ctx(), {
+      ...claim(recipient, expense(), 1800),
+      credits: [{ paymentMovementId: advanceSide.id, amountMinor: 1000 }],
+    });
+    if (!result.ok) throw new Error(result.reason);
+    const preview = prepareReimbursementReversal(ctx(), result.value.groupId);
+    if (!preview.ok) throw new Error(preview.reason);
+    const otherBill = createRecord(ctx(), {
+      ...base,
+      kind: "expense",
+      amount: 5,
+      contactId: recipient,
+      categoryAccountId: fuel,
+      paidFromAccountId: null,
+    });
+    if (!otherBill.ok) throw new Error(otherBill.reason);
+    const allocated = createSettlements(db, userId, advanceSide.id, [
+      {
+        owedMovementId: otherBill.value.record.movements.find(
+          (m) => m.accountId === payable,
+        )!.id,
+        amountMinor: 500,
+      },
+    ]);
+    expect(allocated.ok).toBe(true);
+    const reversed = reverseReimbursement(ctx(), {
+      groupId: result.value.groupId,
+      date: base.date,
+      reason: "Correct the whole reimbursement",
+      expectedVersion: preview.value.version,
+    });
+    expect(reversed.ok).toBe(false);
+    if (!reversed.ok) expect(reversed.code).toBe("CONFLICT");
+    expect(
+      db.select().from(schema.reimbursements).get()!.reversedAt,
+    ).toBeNull();
+  });
+
+  it("reverses the complete reimbursement with contra entries while retaining cash", () => {
+    const bill = expense();
+    const recipient = person();
+    const result = createReimbursement(ctx(), claim(recipient, bill));
+    if (!result.ok) throw new Error(result.reason);
+    const preview = prepareReimbursementReversal(ctx(), result.value.groupId);
+    if (!preview.ok) throw new Error(preview.reason);
+    const payment = getRecord(db, result.value.payment!.id)!;
+    const reversed = reverseReimbursement(ctx(), {
+      groupId: result.value.groupId,
+      date: "2026-10-21",
+      reason: "One expense was paid by the company",
+      expectedVersion: preview.value.version,
+    });
+    expect(reversed.ok).toBe(true);
+    if (reversed.ok) {
+      for (const id of reversed.value.reversalIds)
+        expect(getRecord(db, id)!.description).toBe(
+          "Full reimbursement reversal: Employee reimbursement",
+        );
+    }
+    expect(getRecord(db, bill.id)!.outstandingMinor).toBe(2800);
+    expect(getRecord(db, payment.id)!.movements).toEqual(payment.movements);
+    expect(getRecord(db, payment.id)!.outstandingMinor).toBe(2800);
+    expect(getRecord(db, result.value.payable.id)!.outstandingMinor).toBe(0);
+    const list = listRecords(db, {});
+    expect(list.records.map((r) => r.id)).toEqual(
+      expect.arrayContaining([bill.id, payment.id]),
+    );
+    expect(list.records.some((r) => r.id === result.value.payable.id)).toBe(
+      false,
+    );
+  });
+  it("repairs legacy contactless and cross-contact payments once and preserves valid allocations", () => {
+    const first = expense();
+    const second = expense();
+    const recipient = person();
+    const own = createRecord(ctx(), {
+      ...base,
+      kind: "expense",
+      amount: 10,
+      categoryAccountId: paper,
+      paidFromAccountId: null,
+      contactId: recipient,
+    });
+    if (!own.ok) throw new Error(own.reason);
+    const pay = createRecord(ctx(), {
+      ...base,
+      kind: "payment",
+      direction: "we-pay",
+      amount: 10,
+      contactId: recipient,
+      paidFromAccountId: bank,
+      settlements: [
+        {
+          owedMovementId: own.value.record.movements.find(
+            (m) => m.accountId === payable,
+          )!.id,
+          amountMinor: 1000,
+        },
+      ],
+    });
+    if (!pay.ok) throw new Error(pay.reason);
+    const legacy = createRecord(ctx(), {
+      ...base,
+      kind: "payment",
+      direction: "we-pay",
+      amount: 56,
+      contactId: supplier,
+      paidFromAccountId: bank,
+      settlements: [first, second].map((b) => ({
+        owedMovementId: b.movements.find((m) => m.accountId === payable)!.id,
+        amountMinor: 2800,
+      })),
+    });
+    if (!legacy.ok) throw new Error(legacy.reason);
+    db.update(ledgerRecords)
+      .set({ contactId: null })
+      .where(eq(ledgerRecords.id, legacy.value.record.id))
+      .run();
+    const untouched = db
+      .select()
+      .from(settlements)
+      .where(
+        eq(
+          settlements.paymentMovementId,
+          pay.value.record.movements.find((m) => m.accountId === payable)!.id,
+        ),
+      )
+      .all();
+    const previews = [pay.value.record, legacy.value.record].map((p) => {
+      const preview = prepareRecipientCorrection(ctx(), p.id);
+      if (!preview.ok) throw new Error(preview.reason);
+      return { recordId: p.id, expectedVersion: preview.value.version };
+    });
+    const manifest = { recipientId: recipient, payments: previews };
+    expect(repairPaymentRecipients(ctx(), manifest).ok).toBe(true);
+    const recordCount = db.select().from(ledgerRecords).all().length;
+    expect(repairPaymentRecipients(ctx(), manifest)).toMatchObject({
+      ok: true,
+      value: { alreadyApplied: true },
+    });
+    expect(db.select().from(ledgerRecords).all()).toHaveLength(recordCount);
+    expect(getRecord(db, legacy.value.record.id)!.contactId).toBe(recipient);
+    expect(getRecord(db, legacy.value.record.id)!.movements).toEqual(
+      legacy.value.record.movements,
+    );
+    expect(getRecord(db, first.id)!.contactId).toBe(supplier);
+    expect(
+      db
+        .select()
+        .from(settlements)
+        .where(
+          eq(
+            settlements.paymentMovementId,
+            pay.value.record.movements.find((m) => m.accountId === payable)!.id,
+          ),
+        )
+        .all(),
+    ).toEqual(untouched);
+  });
+  it("blocks recipient correction after its credit funds a later reimbursement", () => {
+    const bill = expense();
+    const recipient = person();
+    const credit = createRecord(ctx(), {
+      ...base,
+      kind: "payment",
+      direction: "we-pay",
+      amount: 28,
+      contactId: recipient,
+      paidFromAccountId: bank,
+    });
+    if (!credit.ok) throw new Error(credit.reason);
+    const applied = createReimbursement(ctx(), {
+      ...claim(recipient, bill, 0),
+      credits: [
+        {
+          paymentMovementId: credit.value.record.movements.find(
+            (m) => m.accountId === payable,
+          )!.id,
+          amountMinor: 2800,
+        },
+      ],
+    });
+    if (!applied.ok) throw new Error(applied.reason);
+    const preview = prepareRecipientCorrection(ctx(), credit.value.record.id);
+    if (!preview.ok) throw new Error(preview.reason);
+    expect(preview.value.dependencies).toHaveLength(1);
+    const corrected = correctPaymentRecipient(ctx(), {
+      recordId: credit.value.record.id,
+      contactId: supplier,
+      reason: "Attempt to change a consumed credit",
+      expectedVersion: preview.value.version,
+    });
+    expect(corrected.ok).toBe(false);
+    expect(getRecord(db, credit.value.record.id)!.contactId).toBe(recipient);
+    const movementId = credit.value.record.movements.find(
+      (m) => m.accountId === payable,
+    )!.id;
+    const funding = paymentAllocationSnapshot(ctx(), movementId)!;
+    expect(
+      correctPaymentAllocations(ctx(), {
+        paymentMovementId: movementId,
+        removeSettlementIds: funding.allocations.map((a) => a.id),
+        allocations: [],
+        reason: "Release the credit before correcting its recipient",
+        expectedVersion: funding.version,
+      }).ok,
+    ).toBe(true);
+    const refreshed = prepareRecipientCorrection(ctx(), credit.value.record.id);
+    if (!refreshed.ok) throw new Error(refreshed.reason);
+    expect(refreshed.value.dependencies).toEqual([]);
+    expect(
+      correctPaymentRecipient(ctx(), {
+        recordId: credit.value.record.id,
+        contactId: supplier,
+        reason: "Correct the recipient after releasing the credit",
+        expectedVersion: refreshed.value.version,
+      }).ok,
+    ).toBe(true);
+    // The released allocation remains history and must not be reversed a second time.
+    const group = prepareReimbursementReversal(ctx(), applied.value.groupId);
+    if (!group.ok) throw new Error(group.reason);
+    expect(
+      reverseReimbursement(ctx(), {
+        groupId: applied.value.groupId,
+        date: base.date,
+        reason: "Reverse the original unfunded reimbursement",
+        expectedVersion: group.value.version,
+      }).ok,
+    ).toBe(true);
+  });
+  it("rolls back the whole repair on a stale manifest", () => {
+    const bill = expense();
+    const recipient = person();
+    const result = createReimbursement(ctx(), claim(recipient, bill));
+    if (!result.ok) throw new Error(result.reason);
+    const payment = result.value.payment!;
+    const before = db.select().from(ledgerRecords).all();
+    expect(
+      repairPaymentRecipients(ctx(), {
+        recipientId: supplier,
+        payments: [{ recordId: payment.id, expectedVersion: "stale" }],
+      }).ok,
+    ).toBe(false);
+    expect(db.select().from(ledgerRecords).all()).toEqual(before);
+  });
+
+  it("rolls back all earlier repairs when a later audit write fails", () => {
+    const recipient = person();
+    const payments = [expense(), expense()].map((bill) => {
+      const result = createRecord(ctx(), {
+        ...base,
+        kind: "payment",
+        direction: "we-pay",
+        amount: 28,
+        contactId: supplier,
+        paidFromAccountId: bank,
+        settlements: [
+          {
+            owedMovementId: bill.movements.find((m) => m.accountId === payable)!
+              .id,
+            amountMinor: 2800,
+          },
+        ],
+      });
+      if (!result.ok) throw new Error(result.reason);
+      return result.value.record;
+    });
+    const before = {
+      records: db.select().from(ledgerRecords).all(),
+      movements: db.select().from(ledgerMovements).all(),
+      allocations: db.select().from(settlements).all(),
+    };
+    const manifest = {
+      recipientId: recipient,
+      payments: payments.map((p) => {
+        const preview = prepareRecipientCorrection(ctx(), p.id);
+        if (!preview.ok) throw new Error(preview.reason);
+        return { recordId: p.id, expectedVersion: preview.value.version };
+      }),
+    };
+    sqlite.exec(
+      `CREATE TRIGGER fail_second_repair BEFORE INSERT ON audit_log WHEN NEW.record_type = 'record' AND NEW.record_id = '${payments[1].id}' AND NEW.action = 'update' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END`,
+    );
+    expect(() => repairPaymentRecipients(ctx(), manifest)).toThrow(
+      "audit unavailable",
+    );
+    expect(db.select().from(ledgerRecords).all()).toEqual(before.records);
+    expect(db.select().from(ledgerMovements).all()).toEqual(before.movements);
+    expect(db.select().from(settlements).all()).toEqual(before.allocations);
+    expect(db.select().from(schema.reimbursements).all()).toHaveLength(0);
+  });
+  it("refuses new payments without a single payee", () => {
+    expect(
+      createRecord(ctx(), {
+        ...base,
+        kind: "payment",
+        direction: "we-pay",
+        contactId: null,
+        paidFromAccountId: bank,
+        settlements: [],
+      }).ok,
+    ).toBe(false);
   });
 });

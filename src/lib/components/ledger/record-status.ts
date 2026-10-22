@@ -1,4 +1,5 @@
-import type { RecordView } from '$lib/server/ledger/types.js';
+import { LedgerRecordKind } from "$lib/enums.js";
+import type { RecordView } from "$lib/server/ledger/types.js";
 
 // Mirrors the derived states in src/lib/server/ledger/settlement-rules.ts:
 // a record with no side on a shared owed account was paid straight from an
@@ -11,8 +12,12 @@ import type { RecordView } from '$lib/server/ledger/types.js';
 // already worked out, so the two cannot drift on the figures. Keep the labels in
 // step with StatusBadge's `byLabel` map (CLAUDE.md § Gotchas).
 export function statusLabelFor(record: RecordView): string {
-	if (record.paid) return 'paid';
-	return record.outstandingMinor < Math.abs(record.amountMinor) ? 'part-paid' : 'owed';
+  if (record.kind === LedgerRecordKind.Payment)
+    return record.paid ? "allocated" : "unallocated";
+  if (record.paid) return "paid";
+  return record.outstandingMinor < Math.abs(record.amountMinor)
+    ? "part-paid"
+    : "owed";
 }
 
 /**
@@ -28,5 +33,5 @@ export function statusLabelFor(record: RecordView): string {
  * names what the server already worked out (FR-056).
  */
 export function clearedLabelFor(record: RecordView): string {
-	return record.cleared ? 'cleared' : 'not cleared';
+  return record.cleared ? "cleared" : "not cleared";
 }

@@ -126,7 +126,13 @@ export const DEFAULT_CHART: readonly SeedAccount[] = [
 ] as const;
 
 const INITIAL_DEFAULT_CODES: Readonly<
-  Record<DefaultAccountPurposeCode, number>
+  Record<
+    Exclude<
+      DefaultAccountPurposeCode,
+      typeof DefaultAccountPurpose.ReimbursementsPayable
+    >,
+    number
+  >
 > = {
   [DefaultAccountPurpose.Receivable]: 1200,
   [DefaultAccountPurpose.Payable]: 2000,

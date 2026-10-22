@@ -1,4 +1,8 @@
 import { isMoneyPotAccount } from "../ledger/account-type.js";
+import {
+  allocationHistoryDeletionReason,
+  ALLOCATION_HISTORY_EDIT_REASON,
+} from "../queries/allocation-state.js";
 import { eq } from "drizzle-orm";
 import { contacts, reimbursementEntries } from "../db/schema.js";
 import { DefaultAccountPurpose, LedgerRecordKind } from "$lib/enums.js";
@@ -29,6 +33,7 @@ import {
   lockStateFor,
   snapshotForAudit,
   updateRecord,
+  wouldRemoveAllocationHistory,
 } from "../queries/ledger.js";
 import { getInvoice, invoiceIdsForLedgerRecords } from "../queries/invoices.js";
 import { invoiceEvents } from "../finance/events.js";
@@ -560,6 +565,9 @@ export function patchRecord(
     };
   }
 
+  if (movements && wouldRemoveAllocationHistory(db, id, movements))
+    return { ok: false, reason: ALLOCATION_HISTORY_EDIT_REASON };
+
   updateRecord(
     db,
     id,
@@ -906,6 +914,8 @@ export function removeRecord(
 
   const allowed = canDeleteRecord(lockStateFor(db, id));
   if (!allowed.ok) return allowed;
+  const historyReason = allocationHistoryDeletionReason(db, id);
+  if (historyReason) return { ok: false, reason: historyReason };
 
   const before = snapshotForAudit(db, id);
   const touched = existing.movements.map((m) => m.accountId);

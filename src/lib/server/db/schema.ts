@@ -1237,24 +1237,26 @@ export const settlements = sqliteTable(
     // The paying side, on a shared owed account.
     paymentMovementId: integer("payment_movement_id")
       .notNull()
-      .references(() => ledgerMovements.id, { onDelete: "cascade" }),
+      .references(() => ledgerMovements.id, { onDelete: "restrict" }),
     // The outstanding side, on the same shared owed account.
     owedMovementId: integer("owed_movement_id")
       .notNull()
-      .references(() => ledgerMovements.id, { onDelete: "cascade" }),
+      .references(() => ledgerMovements.id, { onDelete: "restrict" }),
     // How much of the outstanding item this payment covers. Always > 0; the
     // total against one owed movement may never exceed its own amount (FR-016).
     amountMinor: integer("amount_minor").notNull(),
+    reversedAt: text("reversed_at"),
+    reversedBy: integer("reversed_by").references(() => users.id),
+    reversalReason: text("reversal_reason"),
     createdBy: integer("created_by").references(() => users.id),
     createdAt: text("created_at")
       .notNull()
       .default(sql`(datetime('now'))`),
   },
   (t) => [
-    uniqueIndex("settlements_pair_idx").on(
-      t.paymentMovementId,
-      t.owedMovementId,
-    ),
+    uniqueIndex("settlements_pair_idx")
+      .on(t.paymentMovementId, t.owedMovementId)
+      .where(sql`${t.reversedAt} IS NULL`),
     // The "how much is left" aggregate.
     index("settlements_owed_idx").on(t.owedMovementId),
   ],

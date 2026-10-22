@@ -1,4 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Database } from "bun:sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import * as schema from "../db/schema.js";
+import type { LedgerDb } from "../ledger/types.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultAccountPurpose } from "$lib/enums.js";
 
 const mocks = vi.hoisted(() => ({
@@ -36,9 +41,14 @@ vi.mock("../queries/ledger.js", () => ({
 vi.mock("./accounts.js", () => ({ touchAccounts: mocks.touchAccounts }));
 vi.mock("./account-defaults.js", () => ({
   requireAccountDefault: mocks.requireAccountDefault,
+  accountDefaultId: vi.fn(),
 }));
 
 import { createRecord } from "./ledger.js";
+
+let sqlite: Database;
+let db: LedgerDb;
+afterEach(() => sqlite.close());
 
 const input = {
   kind: "opening-balance" as const,
@@ -52,6 +62,9 @@ const input = {
 
 describe("opening-balance saved default integration", () => {
   beforeEach(() => {
+    sqlite = new Database(":memory:");
+    db = drizzle(sqlite, { schema }) as unknown as LedgerDb;
+    migrate(db as never, { migrationsFolder: "drizzle" });
     vi.clearAllMocks();
     mocks.requireAccountDefault.mockReturnValue({ ok: true, value: 73 });
     mocks.accountRefs.mockReturnValue(
@@ -77,7 +90,7 @@ describe("opening-balance saved default integration", () => {
   });
 
   it("uses the validated saved Opening Balances account for the offset side", () => {
-    expect(createRecord({} as never, 7, input).ok).toBe(true);
+    expect(createRecord(db, 7, input).ok).toBe(true);
     expect(mocks.requireAccountDefault).toHaveBeenCalledWith(
       expect.anything(),
       DefaultAccountPurpose.OpeningBalances,
@@ -102,7 +115,7 @@ describe("opening-balance saved default integration", () => {
       reason: "Choose a valid opening balances account.",
     });
 
-    expect(createRecord({} as never, 7, input)).toEqual({
+    expect(createRecord(db, 7, input)).toEqual({
       ok: false,
       reason: "Choose a valid opening balances account.",
     });

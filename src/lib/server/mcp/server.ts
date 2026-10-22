@@ -72,7 +72,7 @@ export function createServer(context: McpContext) {
             money:
               "Movement amounts are signed: positive enters the account. Reports use movements. Record amounts are in original currency; never sum them across currencies or kinds.",
             outstanding:
-              "Current balances use all saved settlements; there is no historical as-at outstanding query.",
+              "Current balances use active settlements; there is no historical as-at outstanding query.",
             categories:
               "Categories are accounts, classified by type and subtype. Contacts are separate entities.",
             recordKinds: [

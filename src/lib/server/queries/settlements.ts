@@ -1,3 +1,4 @@
+import { activeAllocation } from "./allocation-state.js";
 import {
   and,
   asc,
@@ -72,9 +73,12 @@ export function settledMinorFor(
     })
     .from(settlements)
     .where(
-      or(
-        inArray(settlements.paymentMovementId, movementIds),
-        inArray(settlements.owedMovementId, movementIds),
+      and(
+        activeAllocation(),
+        or(
+          inArray(settlements.paymentMovementId, movementIds),
+          inArray(settlements.owedMovementId, movementIds),
+        ),
       ),
     )
     .all();
@@ -170,8 +174,8 @@ function collectOutstanding(
   // zero. Apply before LIMIT so fully paid items do not consume a page.
   const remaining = sql<number>`max(0, abs(${ledgerMovements.amountMinor}) - coalesce((
     SELECT sum(${settlements.amountMinor}) FROM ${settlements}
-    WHERE ${settlements.owedMovementId} = ${ledgerMovements.id}
-       OR ${settlements.paymentMovementId} = ${ledgerMovements.id}
+    WHERE ${activeAllocation()} AND (${settlements.owedMovementId} = ${ledgerMovements.id}
+       OR ${settlements.paymentMovementId} = ${ledgerMovements.id})
   ), 0))`;
   if (openOnly) conditions.push(sql`${remaining} > 0`);
   const isObligation =
@@ -484,9 +488,12 @@ export function settlementsForRecord(
     })
     .from(settlements)
     .where(
-      or(
-        inArray(settlements.paymentMovementId, ourMovements),
-        inArray(settlements.owedMovementId, ourMovements),
+      and(
+        activeAllocation(),
+        or(
+          inArray(settlements.paymentMovementId, ourMovements),
+          inArray(settlements.owedMovementId, ourMovements),
+        ),
       ),
     )
     .all();
@@ -546,7 +553,11 @@ export function settlementsForRecord(
 
 export function getSettlement(db: LedgerDb, id: number) {
   return (
-    db.select().from(settlements).where(eq(settlements.id, id)).get() ?? null
+    db
+      .select()
+      .from(settlements)
+      .where(and(activeAllocation(), eq(settlements.id, id)))
+      .get() ?? null
   );
 }
 
@@ -580,15 +591,30 @@ export function settlementIdsForPayment(
   return db
     .select({ id: settlements.id })
     .from(settlements)
-    .where(eq(settlements.paymentMovementId, paymentMovementId))
+    .where(
+      and(
+        activeAllocation(),
+        eq(settlements.paymentMovementId, paymentMovementId),
+      ),
+    )
     .all()
     .map((row) => row.id);
 }
 
-export function deleteSettlement(db: LedgerDb, id: number): boolean {
+export function reverseSettlement(
+  db: LedgerDb,
+  id: number,
+  actingUserId: number,
+  reason: string,
+): boolean {
   const row = db
-    .delete(settlements)
-    .where(eq(settlements.id, id))
+    .update(settlements)
+    .set({
+      reversedAt: new Date().toISOString(),
+      reversedBy: actingUserId,
+      reversalReason: reason,
+    })
+    .where(and(eq(settlements.id, id), activeAllocation()))
     .returning({ id: settlements.id })
     .get();
   return row !== undefined;

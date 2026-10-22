@@ -424,7 +424,13 @@ describe("taking back part of a batch payment", () => {
     ]);
     if (!settled.ok) throw new Error(settled.reason);
 
-    const undone = undoSettlement(db, settled.value[0], userId);
+    const undone = undoSettlement(
+      db,
+      settled.value[0],
+      userId,
+      undefined,
+      "Reverse this legacy batch allocation",
+    );
     expect(undone.ok).toBe(true);
     if (undone.ok)
       expect([...undone.value].sort()).toEqual([...settled.value].sort());

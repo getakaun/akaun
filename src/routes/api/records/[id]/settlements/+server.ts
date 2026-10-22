@@ -1,3 +1,4 @@
+import { allocationHistoryDeletionReason } from "$lib/server/queries/allocation-state.js";
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
 import { can } from "$lib/server/permissions.js";
@@ -28,5 +29,9 @@ export const GET: RequestHandler = async ({ locals, params }) => {
     return forbidden();
   }
 
-  return Response.json({ record, ...recordRelations(db, id) });
+  return Response.json({
+    record,
+    ...recordRelations(db, id),
+    allocationHistoryDeleteReason: allocationHistoryDeletionReason(db, id),
+  });
 };

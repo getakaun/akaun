@@ -969,9 +969,16 @@ describe("payment correction and overpayment recovery", () => {
       ok: true,
       value: { undoneIds: [mistaken.id] },
     });
-    expect(db.select().from(settlements).all()).toEqual(
+    const retained = db.select().from(settlements).all();
+    expect(retained.filter((a) => a.reversedAt === null)).toEqual(
       original.filter((a) => a.id !== mistaken.id),
     );
+    expect(retained.find((a) => a.id === mistaken.id)).toMatchObject({
+      ...mistaken,
+      reversedAt: expect.any(String),
+      reversedBy: 1,
+      reversalReason: "Company already paid this bill directly.",
+    });
     expect(
       db
         .select()
@@ -1949,6 +1956,41 @@ describe("single-recipient reimbursements", () => {
     });
     expect(corrected.ok).toBe(false);
     expect(getRecord(db, credit.value.record.id)!.contactId).toBe(recipient);
+    const movementId = credit.value.record.movements.find(
+      (m) => m.accountId === payable,
+    )!.id;
+    const funding = paymentAllocationSnapshot(ctx(), movementId)!;
+    expect(
+      correctPaymentAllocations(ctx(), {
+        paymentMovementId: movementId,
+        removeSettlementIds: funding.allocations.map((a) => a.id),
+        allocations: [],
+        reason: "Release the credit before correcting its recipient",
+        expectedVersion: funding.version,
+      }).ok,
+    ).toBe(true);
+    const refreshed = prepareRecipientCorrection(ctx(), credit.value.record.id);
+    if (!refreshed.ok) throw new Error(refreshed.reason);
+    expect(refreshed.value.dependencies).toEqual([]);
+    expect(
+      correctPaymentRecipient(ctx(), {
+        recordId: credit.value.record.id,
+        contactId: supplier,
+        reason: "Correct the recipient after releasing the credit",
+        expectedVersion: refreshed.value.version,
+      }).ok,
+    ).toBe(true);
+    // The released allocation remains history and must not be reversed a second time.
+    const group = prepareReimbursementReversal(ctx(), applied.value.groupId);
+    if (!group.ok) throw new Error(group.reason);
+    expect(
+      reverseReimbursement(ctx(), {
+        groupId: applied.value.groupId,
+        date: base.date,
+        reason: "Reverse the original unfunded reimbursement",
+        expectedVersion: group.value.version,
+      }).ok,
+    ).toBe(true);
   });
   it("rolls back the whole repair on a stale manifest", () => {
     const bill = expense();

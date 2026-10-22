@@ -2,6 +2,22 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { confirmImportRow } from "../services/import.js";
+import { eq } from "drizzle-orm";
+import { recordAudit } from "../audit.js";
+import { ledgerEvents } from "../ledger/events.js";
+import { recordRelations } from "../queries/reimbursements.js";
+import {
+  getSettlement,
+  settlementsForRecord,
+  listOutstanding,
+} from "../queries/settlements.js";
+import { removeRecord, patchRecord } from "../services/ledger.js";
+import { undoSettlement } from "../services/settlements.js";
+import {
+  updateRecord,
+  wouldRemoveAllocationHistory,
+} from "../queries/ledger.js";
+import { prepareRecordDateCorrection } from "./record-date-correction.js";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
@@ -542,5 +558,253 @@ describe("direct reimbursements", () => {
       listRecords(db, { search: "Shop" }).records.map((r) => r.id),
     ).toContain(personallyPaid.id);
     expect(checkIntegrity(integrityInputs(db)).ok).toBe(true);
+  });
+});
+
+describe("retained allocation reversals", () => {
+  function funded() {
+    const bill = expense(100);
+    const request = claim(bill, 10000);
+    const paid = createReimbursement(ctx, request);
+    if (!paid.ok) throw new Error(paid.reason);
+    const payment = paid.value.payment!;
+    const movementId = payment.movements.find((m) => m.amountMinor > 0)!.id;
+    const prepared = preparePaymentCorrection(ctx, movementId);
+    if (!prepared.ok) throw new Error(prepared.reason);
+    return {
+      bill,
+      payment,
+      movementId,
+      prepared: prepared.value,
+      allocation: prepared.value.allocations[0],
+      owedId: request.items[0].owedMovementId,
+    };
+  }
+  const reason = "This allocation covered the wrong purchase";
+  function reverse(f: ReturnType<typeof funded>) {
+    const result = correctPaymentAllocations(ctx, {
+      paymentMovementId: f.movementId,
+      removeSettlementIds: [f.allocation.id],
+      allocations: [],
+      reason,
+      expectedVersion: f.prepared.version,
+    });
+    if (!result.ok) throw new Error(result.reason);
+    return result.value;
+  }
+
+  it("retains immutable data and metadata while releasing credit and allowing a new pair", () => {
+    const f = funded();
+    const records = db.select().from(schema.ledgerRecords).all();
+    const movements = db.select().from(schema.ledgerMovements).all();
+    expect(getRecord(db, f.bill.id)?.outstandingMinor).toBe(0);
+    expect(getRecord(db, f.payment.id)?.outstandingMinor).toBe(0);
+    const result = reverse(f);
+    const retained = db.select().from(schema.settlements).get()!;
+    expect(retained).toMatchObject({
+      ...f.allocation,
+      reversedAt: expect.any(String),
+      reversedBy: 1,
+      reversalReason: reason,
+    });
+    expect(getRecord(db, f.bill.id)).toMatchObject({
+      outstandingMinor: 10000,
+      locked: false,
+    });
+    expect(getRecord(db, f.payment.id)?.outstandingMinor).toBe(10000);
+    expect(getSettlement(db, retained.id)).toBeNull();
+    expect(settlementsForRecord(db, f.bill.id)).toEqual([]);
+    expect(
+      listOutstanding(db, { direction: "we-owe", openOnly: true }).items.find(
+        (i) => i.recordId === f.bill.id,
+      )?.outstandingMinor,
+    ).toBe(10000);
+    expect(
+      listRecords(db, { paid: false }).records.some((r) => r.id === f.bill.id),
+    ).toBe(true);
+    const replacement = correctPaymentAllocations(ctx, {
+      paymentMovementId: f.movementId,
+      removeSettlementIds: [],
+      allocations: [{ owedMovementId: f.owedId, amountMinor: 6000 }],
+      reason,
+      expectedVersion: result.version,
+    });
+    expect(replacement.ok).toBe(true);
+    expect(getRecord(db, f.bill.id)?.outstandingMinor).toBe(4000);
+    expect(getRecord(db, f.payment.id)?.outstandingMinor).toBe(4000);
+    expect(db.select().from(schema.settlements).all()).toHaveLength(2);
+    expect(db.select().from(schema.ledgerRecords).all()).toEqual(records);
+    expect(db.select().from(schema.ledgerMovements).all()).toEqual(movements);
+    expect(() =>
+      db
+        .insert(schema.settlements)
+        .values({
+          paymentMovementId: f.movementId,
+          owedMovementId: f.owedId,
+          amountMinor: 1,
+        })
+        .run(),
+    ).toThrow();
+    const links = recordRelations(db, f.payment.id);
+    expect(links.historicalLinks).toHaveLength(1);
+    expect(links.historicalLinks[0]).toMatchObject({
+      settlementId: retained.id,
+      reversedBy: 1,
+      reversedByName: "direct",
+      reversalReason: reason,
+      canUndo: false,
+    });
+    expect(
+      recordRelations(db, f.bill.id).historicalLinks[0].otherRecordId,
+    ).toBe(f.payment.id);
+    expect(links.reimbursement.allocationHistory).toHaveLength(2);
+  });
+
+  it("rolls back reversals, audits and notifications when a replacement fails", () => {
+    const f = funded();
+    const rows = db.select().from(schema.settlements).all();
+    const audits = db.select().from(schema.auditLog).all();
+    let emitted = 0;
+    const event = () => {
+      emitted += 1;
+    };
+    ledgerEvents.on("settlement-changed", event);
+    try {
+      const result = correctPaymentAllocations(ctx, {
+        paymentMovementId: f.movementId,
+        removeSettlementIds: [f.allocation.id],
+        allocations: [{ owedMovementId: f.owedId, amountMinor: 10001 }],
+        reason,
+        expectedVersion: f.prepared.version,
+      });
+      expect(result.ok).toBe(false);
+      expect(db.select().from(schema.settlements).all()).toEqual(rows);
+      expect(db.select().from(schema.auditLog).all()).toEqual(audits);
+      expect(emitted).toBe(0);
+    } finally {
+      ledgerEvents.off("settlement-changed", event);
+    }
+  });
+
+  it("rejects stale, invalid and already-reversed requests without changing history", () => {
+    const f = funded();
+    const input = {
+      paymentMovementId: f.movementId,
+      removeSettlementIds: [f.allocation.id],
+      allocations: [],
+      reason,
+      expectedVersion: f.prepared.version,
+    };
+    expect(
+      correctPaymentAllocations(ctx, { ...input, reason: "short" }).ok,
+    ).toBe(false);
+    expect(
+      correctPaymentAllocations(ctx, { ...input, expectedVersion: "stale" }).ok,
+    ).toBe(false);
+    const result = reverse(f);
+    const audits = db.select().from(schema.auditLog).all();
+    expect(correctPaymentAllocations(ctx, input).ok).toBe(false);
+    expect(
+      correctPaymentAllocations(ctx, {
+        ...input,
+        expectedVersion: result.version,
+      }).ok,
+    ).toBe(false);
+    expect(undoSettlement(db, f.allocation.id, 1, undefined, reason).ok).toBe(
+      false,
+    );
+    expect(db.select().from(schema.auditLog).all()).toEqual(audits);
+  });
+
+  it("protects parent deletion separately from ordinary edits and recipient corrections", () => {
+    const f = funded();
+    reverse(f);
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    for (const id of [f.bill.id, f.payment.id]) {
+      expect(removeRecord(db, id, 1)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining("allocation history"),
+      });
+      expect(() =>
+        db
+          .delete(schema.ledgerRecords)
+          .where(eq(schema.ledgerRecords.id, id))
+          .run(),
+      ).toThrow();
+    }
+    expect(() =>
+      db
+        .delete(schema.ledgerMovements)
+        .where(eq(schema.ledgerMovements.id, f.owedId))
+        .run(),
+    ).toThrow();
+    expect(
+      patchRecord(db, f.bill.id, 1, { date: "2026-03-02", amount: 110 }).ok,
+    ).toBe(true);
+    expect(prepareRecordDateCorrection(ctx, f.bill.id)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("ordinary record form"),
+    });
+    expect(
+      getRecord(db, f.bill.id)?.movements.some((m) => m.id === f.owedId),
+    ).toBe(true);
+    const before = db.select().from(schema.ledgerRecords).all();
+    const next = db
+      .select()
+      .from(schema.ledgerMovements)
+      .where(eq(schema.ledgerMovements.recordId, f.bill.id))
+      .all()
+      .filter((m) => m.id !== f.owedId);
+    expect(wouldRemoveAllocationHistory(db, f.bill.id, next)).toBe(true);
+    expect(() =>
+      updateRecord(db, f.bill.id, 1, { description: "Must not persist" }, next),
+    ).toThrow("allocation history");
+    expect(db.select().from(schema.ledgerRecords).all()).toEqual(before);
+    const another = db
+      .insert(schema.contacts)
+      .values({ legalName: "Correct recipient", entityType: 2 })
+      .returning()
+      .get()!.id;
+    const prepared = prepareRecipientCorrection(ctx, f.payment.id);
+    if (!prepared.ok) throw new Error(prepared.reason);
+    expect(
+      correctPaymentRecipient(ctx, {
+        recordId: f.payment.id,
+        contactId: another,
+        reason,
+        expectedVersion: prepared.value.version,
+      }).ok,
+    ).toBe(true);
+    expect(contactBalances(db, "we-owe", another)[0]?.creditsMinor).toBe(10000);
+    expect(recordRelations(db, f.bill.id).historicalLinks).toHaveLength(1);
+  });
+
+  it("prefers retained history over overlapping old delete audits and keeps audit-only history", () => {
+    const f = funded();
+    reverse(f);
+    recordAudit(db, {
+      recordType: "settlement",
+      recordId: f.allocation.id,
+      userId: 1,
+      action: "delete",
+      changes: [
+        { field: "allocation", before: f.allocation, after: null },
+        { field: "reason", before: null, after: "Old duplicate" },
+      ],
+    });
+    expect(recordRelations(db, f.payment.id).historicalLinks).toHaveLength(1);
+    expect(
+      recordRelations(db, f.payment.id).historicalLinks[0].reversalReason,
+    ).toBe(reason);
+    // Simulate an allocation physically deleted before this migration.
+    db.delete(schema.settlements)
+      .where(eq(schema.settlements.id, f.allocation.id))
+      .run();
+    expect(recordRelations(db, f.bill.id).historicalLinks).toHaveLength(1);
+    expect(recordRelations(db, f.bill.id).historicalLinks[0]).toMatchObject({
+      reversalReason: "Old duplicate",
+      reversedBy: 1,
+      canUndo: false,
+    });
   });
 });

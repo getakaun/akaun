@@ -23,6 +23,10 @@
 		/** Presentation rows may explain a protected reimbursement relationship. */
 		canUndo?: boolean;
 		presentationKey?: string;
+		reversedAt?: string | null;
+		reversedBy?: number | null;
+		reversedByName?: string | null;
+		reversalReason?: string | null;
 		amountMinor: number;
 		createdAt: string;
 		otherRecordId: number;
@@ -101,6 +105,10 @@
 	<span class="settle-main">
 		<span class="settle-name">{titleOf(link)}</span>
 		<span class="settle-sub">{subOf(link)}</span>
+		{#if link.reversedAt}
+			<span class="settle-sub">Reversed · {formatDate(link.reversedAt.slice(0, 10))}{link.reversedByName ? ` · ${link.reversedByName}` : ''}</span>
+			{#if link.reversalReason}<span class="settle-sub">Reason: {link.reversalReason}</span>{/if}
+		{/if}
 	</span>
 	<span class="settle-amt">{formatMinor(link.amountMinor)}</span>
 	{#if canOpen(link.otherKind)}
@@ -111,7 +119,7 @@
 {#if links.length > 0}
 	<div class="settle-list">
 		{#each shown as link (link.presentationKey ?? `${link.settlementId}-${link.otherRecordId}`)}
-			{#if onundo && link.canUndo !== false}
+			{#if onundo && link.canUndo !== false && !link.reversedAt}
 				<!-- Two independent actions on one row — open it, or take it back — so
 				     the row carries the shared hover and each action is its own target. -->
 				<div class="settle-row" class:related-link={canOpen(link.otherKind)}>

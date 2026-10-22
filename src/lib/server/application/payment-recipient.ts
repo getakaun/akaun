@@ -1,5 +1,6 @@
+import { activeAllocation } from "../queries/allocation-state.js";
 import { createHash } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { LedgerRecordKind, DefaultAccountPurpose } from "$lib/enums.js";
 import {
@@ -62,13 +63,18 @@ function snapshot(ctx: AppContext, id: number) {
     ? ctx.db
         .select()
         .from(settlements)
-        .where(inArray(settlements.owedMovementId, ownOwedIds))
+        .where(
+          and(
+            activeAllocation(),
+            inArray(settlements.owedMovementId, ownOwedIds),
+          ),
+        )
         .all()
     : [];
   const incoming = ctx.db
     .select()
     .from(settlements)
-    .where(eq(settlements.owedMovementId, side.id))
+    .where(and(activeAllocation(), eq(settlements.owedMovementId, side.id)))
     .all();
   const dependencies: {
     settlementId: number;

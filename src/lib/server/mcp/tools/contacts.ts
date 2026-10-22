@@ -133,7 +133,7 @@ export function registerContacts(server: McpServer, context: McpContext) {
         pagination: pagination(result.total, input, result.items.length),
         filters: input,
         balanceBasis:
-          "Current movements less all saved settlements. asOf controls ageing, not historical inclusion.",
+          "Current movements less active settlements. asOf controls ageing, not historical inclusion.",
       };
     },
   );

@@ -1,9 +1,10 @@
+import { activeAllocation } from "../queries/allocation-state.js";
 import {
   reimbursementEntryDescription,
   originalReimbursementDescription,
 } from "$lib/reimbursement-labels.js";
 import { createHash } from "node:crypto";
-import { eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { z } from "zod";
 import { DefaultAccountPurpose } from "$lib/enums.js";
 import {
@@ -76,9 +77,12 @@ function snapshot(ctx: AppContext, id: number) {
         .select()
         .from(settlements)
         .where(
-          or(
-            inArray(settlements.paymentMovementId, movementIds),
-            inArray(settlements.owedMovementId, movementIds),
+          and(
+            activeAllocation(),
+            or(
+              inArray(settlements.paymentMovementId, movementIds),
+              inArray(settlements.owedMovementId, movementIds),
+            ),
           ),
         )
         .all()

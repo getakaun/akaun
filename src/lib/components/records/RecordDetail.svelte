@@ -42,6 +42,8 @@
 	let attachments = $derived<Attachment[]>(data.attachments as Attachment[]);
 	let settlementLinks = $derived<SettlementLink[]>(data.displayLinks);
 	let reimbursement = $derived(data.reimbursement);
+	let historicalLinks = $derived(data.historicalLinks);
+	let historyDeleteReason = $derived(data.allocationHistoryDeleteReason);
 	let refreshVersion = 0;
 	let relationsError = $state('');
 
@@ -97,7 +99,7 @@
 			(record.kind === LedgerRecordKind.Expense || record.kind === LedgerRecordKind.Income)
 	);
 	const deleteBlockedReason = $derived(
-		fromInvoice ? 'Cancel the invoice instead' : record.locked ? (record.lockedReason ?? '') : null
+		fromInvoice ? 'Cancel the invoice instead' : historyDeleteReason ?? (record.locked ? (record.lockedReason ?? '') : null)
 	);
 	const isPayment = $derived(record.kind === LedgerRecordKind.Payment);
 	const paymentControl = $derived(
@@ -185,6 +187,8 @@
 			record = body.record;
 			settlementLinks = body.displayLinks;
 			reimbursement = body.reimbursement;
+			historicalLinks = body.historicalLinks;
+			historyDeleteReason = body.allocationHistoryDeleteReason;
 			relationsError = '';
 		} catch (cause) {
 			if (version === refreshVersion && record.id === requestedId)
@@ -451,6 +455,15 @@
 						? 'This payment is not allocated to a record yet.'
 						: 'No payments are applied yet.'}
 				/>
+			</section>
+		{/if}
+
+		{#if historicalLinks.length}
+			<section class="detail-card">
+				<details>
+					<summary class="cursor-pointer text-sm font-medium">Reversed allocations · {historicalLinks.length}</summary>
+					<div class="mt-3"><SettlementList links={historicalLinks} /></div>
+				</details>
 			</section>
 		{/if}
 

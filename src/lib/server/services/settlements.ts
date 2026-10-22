@@ -1,5 +1,9 @@
 import { eq } from "drizzle-orm";
-import { ledgerRecords, reimbursementEntries } from "../db/schema.js";
+import {
+  ledgerRecords,
+  reimbursementEntries,
+  settlements,
+} from "../db/schema.js";
 import { recordAudit } from "../audit.js";
 import {
   checkAllocations,
@@ -16,7 +20,7 @@ import type {
   SettlementSide,
 } from "../ledger/types.js";
 import {
-  deleteSettlement,
+  reverseSettlement,
   getSettlement,
   settlementIdsForPayment,
   getSide,
@@ -257,6 +261,12 @@ export function undoSettlement(
   reason?: string,
   reimbursementReversal = false,
 ): Refusable<number[]> {
+  const trimmedReason = reason?.trim() ?? "";
+  if (trimmedReason.length < 10 || trimmedReason.length > 2000)
+    return {
+      ok: false,
+      reason: "Explain the correction in 10 to 2000 characters.",
+    };
   const existing = getSettlement(db, id);
   if (!existing) {
     return { ok: false, reason: "That settlement has already been undone." };
@@ -280,14 +290,16 @@ export function undoSettlement(
       reason:
         "This allocation is part of a reimbursement transfer and cannot be reversed separately.",
     };
-  const payment = getSide(db, existing.paymentMovementId);
-  const ids =
-    payment && payment.contactId === null
-      ? settlementIdsForPayment(db, existing.paymentMovementId)
-      : [id];
-
   const touched = new Set<number>();
   const undone = db.transaction(() => {
+    // Recheck under the same transaction as the writes. A legacy batch must
+    // include every currently active allocation, even if its preview changed.
+    if (!getSettlement(db, id)) return [];
+    const payment = getSide(db, existing.paymentMovementId);
+    const ids =
+      payment && payment.contactId === null
+        ? settlementIdsForPayment(db, existing.paymentMovementId)
+        : [id];
     const done: number[] = [];
     for (const settlementId of ids) {
       const row = getSettlement(db, settlementId);
@@ -298,15 +310,24 @@ export function undoSettlement(
         row.owedMovementId,
       ))
         touched.add(recordId);
-      if (!deleteSettlement(db, settlementId)) continue;
+      if (!reverseSettlement(db, settlementId, actingUserId, trimmedReason))
+        continue;
       recordAudit(db, {
         recordType: "settlement",
         recordId: settlementId,
         userId: actingUserId,
-        action: "delete",
+        action: "update",
         changes: [
-          { field: "allocation", before: row, after: null },
-          ...(reason ? [{ field: "reason", before: null, after: reason }] : []),
+          {
+            field: "allocation",
+            before: row,
+            after: db
+              .select()
+              .from(settlements)
+              .where(eq(settlements.id, settlementId))
+              .get(),
+          },
+          { field: "reason", before: null, after: trimmedReason },
         ],
       });
       done.push(settlementId);

@@ -216,7 +216,7 @@ export function registerRecordWrites(server: McpServer, context: McpContext) {
     server,
     context,
     "delete_record",
-    "Permanently delete a record and its movements. Refused while it is settled or bank-matched (undo those first) and for invoice postings (void the invoice instead). Confirm with the user before calling. Requires the `version` from get_record.",
+    "Permanently delete a record and its movements. Refused while it is settled or bank-matched, when retained allocation history references its movements, and for invoice postings (void the invoice instead). Reversing an allocation preserves its history and does not make its parent records deletable. Confirm with the user before calling. Requires the `version` from get_record.",
     { recordId: id, expectedVersion },
     ({ recordId, expectedVersion }) =>
       deleteRecord(context, recordId, expectedVersion),

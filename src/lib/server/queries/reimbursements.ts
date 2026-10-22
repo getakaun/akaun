@@ -2,26 +2,37 @@ import {
   reimbursementEntryDescription,
   originalReimbursementDescription,
 } from "$lib/reimbursement-labels.js";
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import {
   auditLog,
   ledgerMovements,
   reimbursementEntries,
   reimbursementItems,
   reimbursements,
+  settlements,
+  users,
 } from "../db/schema.js";
 import type { LedgerDb, RecordView } from "../ledger/types.js";
 import { getRecord } from "./ledger.js";
 import { settlementsForRecord, type SettlementLink } from "./settlements.js";
 
-export type DisplaySettlementLink = SettlementLink & { canUndo?: boolean };
+export type DisplaySettlementLink = SettlementLink & {
+  canUndo?: boolean;
+  reversedAt?: string | null;
+  reversedBy?: number | null;
+  reversedByName?: string | null;
+  reversalReason?: string | null;
+};
 type AuditChange = { field: string; before?: unknown; after?: unknown };
-type DeletedAllocation = {
+type HistoricalAllocation = {
   id: number;
   paymentMovementId: number;
   owedMovementId: number;
   amountMinor: number;
   createdAt: string;
+  reversedAt?: string | null;
+  reversedBy?: number | null;
+  reversalReason?: string | null;
 };
 function changes(value: string | null): AuditChange[] {
   try {
@@ -32,14 +43,18 @@ function changes(value: string | null): AuditChange[] {
   }
 }
 
-/** Deleted funding remains a historical relationship after a group reversal. */
-function deletedAllocations(
+/** Retained rows are authoritative; old delete audits remain a compatibility fallback. */
+function reversedAllocations(
   db: LedgerDb,
   movementIds: number[],
-): DeletedAllocation[] {
+): HistoricalAllocation[] {
   if (!movementIds.length) return [];
   const rows = db
-    .select({ changes: auditLog.changes })
+    .select({
+      changes: auditLog.changes,
+      createdAt: auditLog.createdAt,
+      userId: auditLog.userId,
+    })
     .from(auditLog)
     .where(
       and(
@@ -58,7 +73,23 @@ function deletedAllocations(
       ),
     )
     .all();
-  return rows.flatMap((row) =>
+  const retained = db
+    .select()
+    .from(settlements)
+    .where(
+      and(
+        isNotNull(settlements.reversedAt),
+        or(
+          inArray(settlements.paymentMovementId, movementIds),
+          inArray(settlements.owedMovementId, movementIds),
+        ),
+      ),
+    )
+    .all();
+  const byId = new Map<number, HistoricalAllocation>(
+    retained.map((row) => [row.id, row]),
+  );
+  const legacy = rows.flatMap((row) =>
     changes(row.changes).flatMap((change) => {
       if (
         change.field !== "allocation" ||
@@ -66,14 +97,76 @@ function deletedAllocations(
         typeof change.before !== "object"
       )
         return [];
-      const allocation = change.before as DeletedAllocation;
-      return Number.isInteger(allocation.paymentMovementId) &&
+      const allocation = change.before as HistoricalAllocation;
+      const reason = changes(row.changes).find(
+        (c) => c.field === "reason",
+      )?.after;
+      return Number.isSafeInteger(allocation.id) &&
+        Number.isInteger(allocation.paymentMovementId) &&
         Number.isInteger(allocation.owedMovementId) &&
         Number.isInteger(allocation.amountMinor)
-        ? [allocation]
+        ? [
+            {
+              ...allocation,
+              reversedAt: row.createdAt,
+              reversedBy: row.userId,
+              reversalReason: typeof reason === "string" ? reason : null,
+            },
+          ]
         : [];
     }),
   );
+  for (const allocation of legacy) {
+    if (!byId.has(allocation.id)) byId.set(allocation.id, allocation);
+  }
+  return [...byId.values()];
+}
+
+/** Historical links never contribute to current funding or correction targets. */
+export function reversedAllocationsForRecord(
+  db: LedgerDb,
+  recordId: number,
+): DisplaySettlementLink[] {
+  const ids = db
+    .select({ id: ledgerMovements.id })
+    .from(ledgerMovements)
+    .where(eq(ledgerMovements.recordId, recordId))
+    .all()
+    .map((m) => m.id);
+  return reversedAllocations(db, ids).flatMap((allocation) => {
+    const otherId = ids.includes(allocation.paymentMovementId)
+      ? allocation.owedMovementId
+      : allocation.paymentMovementId;
+    const movement = db
+      .select()
+      .from(ledgerMovements)
+      .where(eq(ledgerMovements.id, otherId))
+      .get();
+    const other = movement ? getRecord(db, movement.recordId) : null;
+    if (!other) return [];
+    const user =
+      allocation.reversedBy == null
+        ? null
+        : db
+            .select({ name: users.username })
+            .from(users)
+            .where(eq(users.id, allocation.reversedBy))
+            .get();
+    return [
+      {
+        ...linkTo(
+          other,
+          allocation.amountMinor,
+          allocation.id,
+          allocation.createdAt,
+        ),
+        reversedAt: allocation.reversedAt ?? null,
+        reversedBy: allocation.reversedBy ?? null,
+        reversedByName: user?.name ?? null,
+        reversalReason: allocation.reversalReason ?? null,
+      },
+    ];
+  });
 }
 
 function linkTo(
@@ -119,9 +212,9 @@ function allocationHistoryForRecord(db: LedgerDb, recordId: number) {
         !Array.isArray(change.after)
       )
         return [];
-      const before = change.before as DeletedAllocation[];
-      const after = change.after as DeletedAllocation[];
-      const same = (a: DeletedAllocation, b: DeletedAllocation) =>
+      const before = change.before as HistoricalAllocation[];
+      const after = change.after as HistoricalAllocation[];
+      const same = (a: HistoricalAllocation, b: HistoricalAllocation) =>
         a.id === b.id &&
         a.paymentMovementId === b.paymentMovementId &&
         a.owedMovementId === b.owedMovementId &&
@@ -181,7 +274,7 @@ export function reimbursementsForRecord(db: LedgerDb, recordId: number) {
   const linkedIds = settlementsForRecord(db, recordId).map(
     (link) => link.otherRecordId,
   );
-  for (const allocation of deletedAllocations(db, sideIds)) {
+  for (const allocation of reversedAllocations(db, sideIds)) {
     const otherId = sideIds.includes(allocation.paymentMovementId)
       ? allocation.owedMovementId
       : allocation.paymentMovementId;
@@ -272,29 +365,10 @@ export function reimbursementsForRecord(db: LedgerDb, recordId: number) {
       const funding = settlementsForRecord(db, group.payableRecordId).filter(
         (link) => !internal.has(link.otherRecordId),
       );
-      const historicalFunding = deletedAllocations(
+      const historicalFunding = reversedAllocationsForRecord(
         db,
-        payable.movements.map((m) => m.id),
-      ).flatMap((allocation) => {
-        if (!payable.movements.some((m) => m.id === allocation.owedMovementId))
-          return [];
-        const paymentSide = db
-          .select()
-          .from(ledgerMovements)
-          .where(eq(ledgerMovements.id, allocation.paymentMovementId))
-          .get();
-        const payment = paymentSide ? record(paymentSide.recordId) : null;
-        return payment && !internal.has(payment.id)
-          ? [
-              linkTo(
-                payment,
-                allocation.amountMinor,
-                allocation.id,
-                allocation.createdAt,
-              ),
-            ]
-          : [];
-      });
+        payable.id,
+      ).filter((link) => !internal.has(link.otherRecordId));
       const reversal = group.reversedAt
         ? db
             .select()
@@ -474,5 +548,10 @@ export function recordRelations(db: LedgerDb, recordId: number) {
       ? { ...link, canUndo: false }
       : link,
   );
-  return { links, displayLinks, reimbursement };
+  return {
+    links,
+    displayLinks,
+    historicalLinks: reversedAllocationsForRecord(db, recordId),
+    reimbursement,
+  };
 }

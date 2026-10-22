@@ -710,6 +710,21 @@ for (const era of ["legacy", "modern"] as const) {
           }),
         );
         expect(corrected.undoneIds).toEqual([preview.allocations[0].id]);
+        const history = data(
+          await call(client, "get_record", {
+            recordId: payment.record.id,
+            includeSettlements: true,
+          }),
+        );
+        expect(history.settlements).toEqual([]);
+        expect(history.reversedSettlements).toEqual([
+          expect.objectContaining({
+            settlementId: preview.allocations[0].id,
+            reversedAt: expect.any(String),
+            reversalReason: "Company had paid the supplier directly.",
+            canUndo: false,
+          }),
+        ]);
         const balance = data(
           await call(client, "get_contact_balance", { contactId: supplier }),
         );

@@ -1,4 +1,5 @@
 import { recordRelations } from "../queries/reimbursements.js";
+import { allocationHistoryDeletionReason } from "../queries/allocation-state.js";
 import { fail, redirect, type Actions } from "@sveltejs/kit";
 import { z } from "zod";
 import { db } from "$lib/server/db/client.js";
@@ -88,6 +89,7 @@ export function loadRecordDetail(locals: App.Locals, id: number) {
   return {
     record,
     ...recordRelations(db, id),
+    allocationHistoryDeleteReason: allocationHistoryDeletionReason(db, id),
     attachments: listAttachments(db, id),
 
     // The invoice an issue posting belongs to, for the link back to it. Kept

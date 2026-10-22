@@ -1,4 +1,9 @@
 import {
+  activeAllocation,
+  hasAllocationHistory,
+  ALLOCATION_HISTORY_EDIT_REASON,
+} from "./allocation-state.js";
+import {
   and,
   asc,
   desc,
@@ -292,9 +297,12 @@ function settledByMovement(
     })
     .from(settlements)
     .where(
-      or(
-        inArray(settlements.paymentMovementId, movementIds),
-        inArray(settlements.owedMovementId, movementIds),
+      and(
+        activeAllocation(),
+        or(
+          inArray(settlements.paymentMovementId, movementIds),
+          inArray(settlements.owedMovementId, movementIds),
+        ),
       ),
     )
     .all();
@@ -590,7 +598,7 @@ function recordConditions(filters: RecordListFilters): SQL[] {
     conditions.push(
       sql`(${eq(ledgerRecords.contactId, filters.contactId)} OR ${eq(ledgerRecords.supplierContactId, filters.contactId)} OR EXISTS (
         SELECT 1 FROM ${ledgerMovements} AS "payment_movements_for_contact"
-        INNER JOIN ${settlements} ON ${settlements.paymentMovementId} = ${paymentMovementsForContact.id}
+        INNER JOIN ${settlements} ON ${settlements.paymentMovementId} = ${paymentMovementsForContact.id} AND ${activeAllocation()}
         INNER JOIN ${ledgerMovements} AS "owed_movements_for_contact" ON ${owedMovementsForContact.id} = ${settlements.owedMovementId}
         INNER JOIN ${ledgerRecords} AS "owed_records_for_contact" ON ${owedRecordsForContact.id} = ${owedMovementsForContact.recordId}
         WHERE ${paymentMovementsForContact.recordId} = ${ledgerRecords.id}
@@ -665,8 +673,8 @@ function recordConditions(filters: RecordListFilters): SQL[] {
         )
         AND abs(${ledgerMovements.amountMinor}) > coalesce((
           SELECT sum(${settlements.amountMinor}) FROM ${settlements}
-          WHERE ${settlements.owedMovementId} = ${ledgerMovements.id}
-             OR ${settlements.paymentMovementId} = ${ledgerMovements.id}
+          WHERE ${activeAllocation()} AND (${settlements.owedMovementId} = ${ledgerMovements.id}
+             OR ${settlements.paymentMovementId} = ${ledgerMovements.id})
         ), 0)
     )`;
     conditions.push(filters.paid ? sql`NOT ${stillOwed}` : stillOwed);
@@ -806,6 +814,8 @@ function replaceMovements(
   recordId: number,
   movements: MovementDraft[],
 ): void {
+  if (wouldRemoveAllocationHistory(db, recordId, movements))
+    throw new Error(ALLOCATION_HISTORY_EDIT_REASON);
   const existingRows = db
     .select({ id: ledgerMovements.id, sortOrder: ledgerMovements.sortOrder })
     .from(ledgerMovements)
@@ -854,6 +864,23 @@ function replaceMovements(
       .where(inArray(ledgerMovements.id, toDeleteIds))
       .run();
   }
+}
+
+/** Check before record writes, since rebuilding can remove a historical parent. */
+export function wouldRemoveAllocationHistory(
+  db: LedgerDb,
+  recordId: number,
+  movements: MovementDraft[],
+): boolean {
+  const next = new Set(movements.map((m) => m.sortOrder));
+  const removed = db
+    .select({ id: ledgerMovements.id, sortOrder: ledgerMovements.sortOrder })
+    .from(ledgerMovements)
+    .where(eq(ledgerMovements.recordId, recordId))
+    .all()
+    .filter((m) => !next.has(m.sortOrder))
+    .map((m) => m.id);
+  return hasAllocationHistory(db, removed);
 }
 
 export function insertRecord(
@@ -938,6 +965,8 @@ export function updateRecord(
   }>,
   movements?: MovementDraft[],
 ): LedgerRecordRow | null {
+  if (movements && wouldRemoveAllocationHistory(db, id, movements))
+    throw new Error(ALLOCATION_HISTORY_EDIT_REASON);
   const existing = db
     .select()
     .from(ledgerRecords)

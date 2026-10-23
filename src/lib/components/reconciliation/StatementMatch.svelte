@@ -27,6 +27,7 @@
   import { toast } from "svelte-sonner";
   import * as Sheet from "$lib/components/ui/sheet/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
+  import * as Switch from "$lib/components/ui/switch/index.js";
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import DatePicker from "$lib/components/ui/date-picker/DatePicker.svelte";
   import EmptyState from "$lib/components/ui/EmptyState.svelte";
@@ -85,6 +86,8 @@
   let from = $state(page.url.searchParams.get("from") ?? "");
   let to = $state(page.url.searchParams.get("to") ?? "");
   let mobileFilterOpen = $state(false);
+  let showMatchedRecords = $state(false);
+  let showMatchedTransactions = $state(false);
   let selectedMovementId = $state(
     Number(page.url.searchParams.get("movement")) || null,
   );
@@ -122,12 +125,17 @@
       0,
     ),
   );
+  const visibleStatementLines = $derived(
+    showMatchedTransactions
+      ? data.lines
+      : data.lines.filter((line) => transactionStatus(line) !== "reconciled"),
+  );
   const dateRangeActive = $derived(!!(from || to));
   const activeFilterCount = $derived(dateRangeActive ? 1 : 0);
 
   const visibleMovements = $derived.by(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    return data.movements
+    return (showMatchedRecords ? data.movements : reviewMovements)
       .filter(
         (movement) =>
           !normalized ||
@@ -135,7 +143,12 @@
             .toLocaleLowerCase()
             .includes(normalized),
       )
-      .toSorted((left, right) => matchRank(left) - matchRank(right));
+      .toSorted(
+        (left, right) =>
+          matchRank(left) - matchRank(right) ||
+          left.date.localeCompare(right.date) ||
+          left.movementId - right.movementId,
+      );
   });
   const bulkMatchable = $derived(
     visibleMovements.filter(
@@ -854,7 +867,20 @@
       <div class="toolbar matching-toolbar">
         <div class="matching-heading">
           <h2>Records to match</h2>
-          <span class="num">{reviewMovements.length}</span>
+          <span class="num"
+            >{showMatchedRecords
+              ? data.movements.length
+              : reviewMovements.length}</span
+          >
+        </div>
+        <div class="matched-toggle">
+          <Switch.Root
+            id="show-matched-records"
+            bind:checked={showMatchedRecords}
+            aria-label="Show matched records"
+            size="sm"
+          />
+          <label for="show-matched-records">Show matched</label>
         </div>
         <div class="search-box recon-search">
           <div style="position:relative; display:flex; align-items:center;">
@@ -1034,11 +1060,22 @@
 
       <!-- The bank's own lines, as extracted from the statement. -->
       <div class="statement-lines-panel">
-        <div class="detail-section-label">
-          Extracted Transactions ({data.lines.length})
+        <div class="statement-lines-heading">
+          <div class="detail-section-label">
+            Extracted Transactions ({visibleStatementLines.length})
+          </div>
+          <div class="matched-toggle">
+            <Switch.Root
+              id="show-matched-transactions"
+              bind:checked={showMatchedTransactions}
+              aria-label="Show matched transactions"
+              size="sm"
+            />
+            <label for="show-matched-transactions">Show matched</label>
+          </div>
         </div>
         <div class="statement-lines">
-          {#each data.lines as line (line.id)}
+          {#each visibleStatementLines as line (line.id)}
             {@const status = transactionStatus(line)}
             <div class="statement-line">
               <button
@@ -1177,6 +1214,10 @@
                   ? "Retry extraction, or delete this statement and upload a clearer file."
                   : "Delete this statement and upload a clearer file."}
               >{#snippet icon()}<FileText size={20} />{/snippet}</EmptyState
+            >{:else if visibleStatementLines.length === 0}<EmptyState
+              title="All transactions matched"
+              sub="Turn on Show matched to review reconciled transactions."
+              >{#snippet icon()}<Check size={20} />{/snippet}</EmptyState
             >{/if}
         </div>
       </div>
@@ -1728,8 +1769,27 @@
     padding: 14px;
     background: var(--card);
   }
-  .statement-lines-panel > .detail-section-label {
-    margin-top: 0;
+  .statement-lines-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .statement-lines-heading > .detail-section-label {
+    margin: 0;
+  }
+  .matched-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted-foreground);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .matched-toggle label {
+    cursor: pointer;
   }
   .statement-line-copy .statement-line-meta {
     display: flex;

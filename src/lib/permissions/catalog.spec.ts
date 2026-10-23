@@ -37,6 +37,11 @@ describe("permission catalog", () => {
     expect(expandPermission("records")).not.toContain("records.correctDate");
     expect(leafMeta("records.correctDate").sensitive).toBe(true);
     expect(isDelegable("records.correctDate")).toBe(false);
+    expect(expandPermission("records")).not.toContain(
+      "records.correctReimbursementAmount",
+    );
+    expect(leafMeta("records.correctReimbursementAmount").sensitive).toBe(true);
+    expect(isDelegable("records.correctReimbursementAmount")).toBe(false);
     expect(expandPermission("records.adjust")).toEqual(["records.adjust"]);
   });
 
@@ -76,6 +81,7 @@ describe("OAuth scopes", () => {
   it("never offers settings, users or the dashboard to an app", () => {
     const offered = new Set(expandScopes(OAUTH_SCOPES));
     expect(offered.has("records.correctDate")).toBe(false);
+    expect(offered.has("records.correctReimbursementAmount")).toBe(false);
     for (const leaf of offered)
       expect(leaf.split(".")[0]).not.toMatch(/^(settings|users|dashboard)$/);
   });

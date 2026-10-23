@@ -15,6 +15,7 @@
 	import RecordActions from './RecordActions.svelte';
 	import AllocationCorrectionDialog from './AllocationCorrectionDialog.svelte';
 	import DateCorrectionDialog from './DateCorrectionDialog.svelte';
+	import ReimbursementAmountCorrectionDialog from './ReimbursementAmountCorrectionDialog.svelte';
 	import SettlementList, {
 		type SettlementLink
 	} from '$lib/components/ledger/SettlementList.svelte';
@@ -58,6 +59,7 @@
 	let error = $state('');
 	let deleteDialogOpen = $state(false);
 	let dateCorrectionOpen = $state(false);
+	let amountCorrectionOpen = $state(false);
 	let recipientCorrectionOpen = $state(false);
 	let reversalGroupId = $state<number | null>(null);
 	let correctionSettlementId = $state<number | null>(null);
@@ -291,16 +293,19 @@
 >
 	{#snippet actions()}
 		<RecordActions
+			canCorrectAmount={data.reimbursementAmountCorrection !== null}
+			amountBlockedReason={data.reimbursementAmountCorrection?.blockedReason ?? null}
 			{canCorrectPayee}
 			{canCorrectDate}
 			canDelete={data.perms.delete && !reimbursement.generated}
 			{deleteBlockedReason}
 			{dirty}
 			{saving}
-			dialogOpen={recipientCorrectionOpen || dateCorrectionOpen || deleteDialogOpen}
+			dialogOpen={recipientCorrectionOpen || dateCorrectionOpen || amountCorrectionOpen || deleteDialogOpen}
 			onaction={(action) => {
 				if (action === 'payee') recipientCorrectionOpen = true;
 				else if (action === 'date') dateCorrectionOpen = true;
+				else if (action === 'amount') amountCorrectionOpen = true;
 				else deleteDialogOpen = true;
 			}}
 		/>
@@ -545,6 +550,17 @@
 		oncorrected={() => {
 			auditTrailRef?.refresh();
 			toast('The record date was corrected.');
+		}}
+	/>
+{/if}
+
+{#if amountCorrectionOpen}
+	<ReimbursementAmountCorrectionDialog
+		recordId={record.id}
+		onclose={() => (amountCorrectionOpen = false)}
+		oncorrected={() => {
+			auditTrailRef?.refresh();
+			toast('The reimbursement amount was corrected.');
 		}}
 	/>
 {/if}

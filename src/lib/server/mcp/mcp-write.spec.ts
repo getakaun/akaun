@@ -50,6 +50,7 @@ import { resolveAccess } from "../permissions.js";
 import { grantGroup, issueTestToken } from "../permissions/test-locals.js";
 import {
   LEAF_PERMISSIONS,
+  isDelegable,
   type LeafPermission,
 } from "$lib/permissions/catalog.js";
 import { expandScopes } from "$lib/permissions/oauth-scopes.js";
@@ -103,10 +104,7 @@ const inScope = (leaf: LeafPermission) =>
   (RESOURCES as readonly string[]).includes(leaf.split(".")[0]);
 /** Delegable abilities in these areas except Adjustments. */
 const WRITER = LEAF_PERMISSIONS.filter(
-  (leaf) =>
-    inScope(leaf) &&
-    leaf !== "records.adjust" &&
-    leaf !== "records.correctDate",
+  (leaf) => inScope(leaf) && leaf !== "records.adjust" && isDelegable(leaf),
 );
 /** A bookkeeper: adds and changes, never deletes or merges. */
 const KEEPER = WRITER.filter(

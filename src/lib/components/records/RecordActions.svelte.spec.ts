@@ -146,3 +146,65 @@ it('supports keyboard selection and Escape with focus returning to the trigger',
 	await userEvent.keyboard('{Enter}');
 	await expect.poll(() => onaction.mock.calls).toEqual([['payee']]);
 });
+
+it('disables reimbursement correction and explains bank matches or unsaved changes', async () => {
+	render(RecordActions, {
+		canCorrectAmount: true,
+		amountBlockedReason: 'Remove bank matches first.',
+		dirty: true,
+		onaction: vi.fn()
+	});
+	await page.getByRole('button', { name: 'Actions' }).click();
+	await expect
+		.element(
+			page.getByRole('menuitem', { name: 'Correct reimbursement amount…' })
+		)
+		.toHaveAttribute('aria-disabled', 'true');
+	await expect
+		.element(page.getByText('Remove bank matches first.'))
+		.toBeVisible();
+	await expect
+		.element(
+			page.getByText(
+				'Save or discard your changes before correcting this record.'
+			)
+		)
+		.toBeVisible();
+	await userEvent.keyboard('{Escape}');
+});
+
+it('hands keyboard focus to reimbursement correction and returns it after closing', async () => {
+	vi.stubGlobal(
+		'fetch',
+		vi.fn(async () =>
+			Response.json({
+				version: 'current',
+				record: {
+					amountMinor: 550,
+					recordNumber: 'CL-208',
+					contactName: 'Employee'
+				},
+				expenses: [],
+				availableCreditMinor: 550
+			})
+		)
+	);
+	render(RecordActionsHarness);
+	await page.getByRole('button', { name: 'Actions' }).click();
+	await page
+		.getByRole('menuitem', { name: 'Correct reimbursement amount…' })
+		.click();
+	const dialog = page.getByRole('dialog', {
+		name: 'Correct reimbursement amount',
+		exact: true
+	});
+	await expect.element(dialog).toBeVisible();
+	await expect
+		.poll(() => dialog.element().contains(document.activeElement))
+		.toBe(true);
+	await page.getByRole('button', { name: 'Close', exact: true }).click();
+	await expect.element(dialog).not.toBeInTheDocument();
+	await expect
+		.element(page.getByRole('button', { name: 'Actions' }))
+		.toHaveFocus();
+});

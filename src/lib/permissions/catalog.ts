@@ -104,6 +104,15 @@ export const PERMISSION_CATALOG = {
         sensitive: true,
         delegable: false,
       },
+      correctReimbursementAmount: {
+        label: "Correct reimbursement amounts",
+        description:
+          "Correct a reimbursement payment amount and its expense allocations with a reason and review. Browser only; changes historical balances.",
+        phrase: "correct reimbursement amounts",
+        explicit: true,
+        sensitive: true,
+        delegable: false,
+      },
       adjust: {
         label: "Adjustments",
         description:

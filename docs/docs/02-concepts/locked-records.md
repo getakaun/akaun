@@ -72,6 +72,16 @@ closed-books cutoff for this action. Ordinary date editing remains locked.
 
 ### Unlock other changes
 
+For an incorrectly entered reimbursement payment amount, trusted users with **Change records**
+and **Correct reimbursement amounts** can use **Actions → Correct reimbursement amount…**
+in the browser. Remove any bank statement matches first. Enter the amount actually paid and
+a reason, review the expense balances and available credit, then confirm.
+
+This action corrects the payment and its expense allocations together. It keeps the expense
+costs unchanged and retains previous allocations in History. Older reimbursements with
+generated payable or clearing entries use their existing correction flow. See
+[Correct a reimbursement amount](./owed-and-paid.md#correct-a-reimbursement-amount).
+
 Remove each thing that locks the record:
 
 - If a payment settles the record, click the undo icon (**Reverse allocation**) beside the payment. See

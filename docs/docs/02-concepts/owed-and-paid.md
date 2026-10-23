@@ -80,6 +80,31 @@ Those entries remain read-only under **Accounting details**, with their existing
 and full-reversal safeguards. They are not converted automatically. Credits stay on their
 original payable account; they are not silently transferred between supplier and reimbursement balances.
 
+## Correct a reimbursement amount
+
+If a reimbursement payment was entered with the wrong amount, open its payment record and
+choose **Actions → Correct reimbursement amount…**. This controlled action requires a signed-in
+browser session and both **Change records** and **Correct reimbursement amounts** permissions.
+Save or discard other edits and remove any bank statement matches first.
+
+Enter the amount actually paid and a reason of 10–2000 characters. For one covered expense,
+Akaun calculates the reimbursement automatically. For several expenses, enter how much was
+reimbursed against each one. Review the corrected payment, remaining expense balances and
+available credit, then choose **Confirm correction**.
+
+For example, an expense costs RM5.50 but only RM5.00 was reimbursed. Correcting its payment
+from RM5.50 to RM5.00 makes the expense **Partially paid**, with RM0.50 outstanding. Use
+**Reimburse expenses** when that RM0.50 is paid later; it creates a separate payment for the
+new transfer. The expense cost stays RM5.50.
+
+An increase beyond the covered expenses remains available credit for the same recipient.
+Previous allocations and the correction reason stay in History. The correction changes
+historical bank and payable balances; it does not move money at the bank.
+
+This action supports direct reimbursements. Older reimbursements with generated payable or
+clearing entries, refunds and payments with dependent refund/offset allocations use their
+existing correction flows. If another change happens while reviewing, reload and review again.
+
 ## Reverse an allocation
 
 If a payment is on the wrong record, reverse the allocation. On the record page or the payment

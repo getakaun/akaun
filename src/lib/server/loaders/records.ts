@@ -1,4 +1,5 @@
 import { recordRelations } from "../queries/reimbursements.js";
+import { reimbursementAmountCorrectionAvailability } from "../application/reimbursement-amount-correction.js";
 import { allocationHistoryDeletionReason } from "../queries/allocation-state.js";
 import { fail, redirect, type Actions } from "@sveltejs/kit";
 import { z } from "zod";
@@ -88,6 +89,10 @@ export function loadRecordDetail(locals: App.Locals, id: number) {
 
   return {
     record,
+    reimbursementAmountCorrection: reimbursementAmountCorrectionAvailability(
+      { db, locals },
+      id,
+    ),
     ...recordRelations(db, id),
     allocationHistoryDeleteReason: allocationHistoryDeletionReason(db, id),
     attachments: listAttachments(db, id),

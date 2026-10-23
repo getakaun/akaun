@@ -48,15 +48,16 @@ Use HTTPS for remote connections. For a desktop sidecar, use its actual local se
 
 Phase two adds these reads:
 
-| Tool                   | Inputs                                                       | Permission                          |
-| ---------------------- | ------------------------------------------------------------ | ----------------------------------- |
-| `list_invoices`        | Status, contact, dates, overdue toggle, search, limit/offset | Invoices View                       |
-| `get_invoice`          | `invoiceId` — includes `owedMovementId` for `record_payment` | Invoices View                       |
-| `list_quotations`      | Status, contact, dates, search, limit/offset                 | Quotations View                     |
-| `get_quotation`        | `quotationId`                                                | Quotations View                     |
-| `list_bank_statements` | Optional `accountId`                                         | Reconciliation View                 |
-| `get_bank_statement`   | `statementId`, `includeCandidates` (movements + suggestions) | Reconciliation **and** Records View |
-| `get_audit_history`    | `recordType`, `recordId`, `limit`                            | View on the item's own resource     |
+| Tool                      | Inputs                                                       | Permission                          |
+| ------------------------- | ------------------------------------------------------------ | ----------------------------------- |
+| `list_invoices`           | Status, contact, dates, overdue toggle, search, limit/offset | Invoices View                       |
+| `get_invoice`             | `invoiceId` — includes `owedMovementId` for `record_payment` | Invoices View                       |
+| `list_quotations`         | Status, contact, dates, search, limit/offset                 | Quotations View                     |
+| `get_quotation`           | `quotationId`                                                | Quotations View                     |
+| `list_bank_statements`    | Optional `accountId`                                         | Reconciliation View                 |
+| `get_bank_statement_file` | `statementId` — original uploaded file                       | Reconciliation View                 |
+| `get_bank_statement`      | `statementId`, `includeCandidates` (movements + suggestions) | Reconciliation **and** Records View |
+| `get_audit_history`       | `recordType`, `recordId`, `limit`                            | View on the item's own resource     |
 
 Every `get_*` (and `list_accounts`, `list_contacts`) returns a `version` for each item: the token a write must send back as `expectedVersion`.
 
@@ -135,7 +136,8 @@ Semantics every write tool shares:
 - Statements default to 100 movements, maximum 500. They do not accept offset or arbitrary filters. When truncated, `periodClosingBalanceMinor` is null and `returnedClosingBalanceMinor` covers only returned movements. Narrow the dates for a complete statement.
 - Stored evidence is optional, capped at 6,000 characters and labeled as untrusted content. Reads do not trigger OCR, extraction or provider calls. Attachment responses contain display metadata, not storage paths.
 - `get_attachment` (`records:read`) returns one attached file: JPEG/PNG as image content, PDF as an embedded blob resource (`akaun://records/{id}/attachments/{attachmentId}`), xlsx/csv as cell text capped at 200,000 characters. The type is sniffed from content, not the name. Files over 5 MB are refused (`OUTPUT_TOO_LARGE`); 60 files per user per 10 minutes (`RATE_LIMITED`, in-memory). It reads through the `store` in `McpContext`, never `STORAGE_PATH`, so specs use a tmpdir store. No OCR, no paths, no audit row.
-- Tool results are limited to 512 KiB of serialized data, except `get_attachment`, which is limited by file size; requests are limited to 128 KiB, except `attach_file`. Narrow the query if the output budget is exceeded. Raw server errors, tokens, file paths and provider settings are withheld.
+- `get_bank_statement_file` (`reconciliation:read`) returns the original uploaded statement: JPEG/PNG as image content, PDF and CSV/XLSX as embedded blob resources (`akaun://bank-statements/{statementId}/file`). It works before or after extraction, including failed extraction. It performs no OCR or writes and exposes no storage paths. The 5 MiB cap and 60 reads per user per 10 minutes are shared with `get_attachment`. Spreadsheet bytes are preserved.
+- Tool results are limited to 512 KiB of serialized data, except `get_attachment` and `get_bank_statement_file`, which are limited by file size; requests are limited to 128 KiB, except `attach_file`. Narrow the query if the output budget is exceeded. Raw server errors, tokens, file paths and provider settings are withheld.
 
 ## Description review
 
@@ -161,7 +163,7 @@ Reverse proxies need to forward `/mcp`, Authorization, Accept, Content-Type, `Mc
 
 ### Inspector schema portability
 
-Every data tool shares the output envelope in `src/lib/server/mcp/common.ts`; `get_attachment` returns content blocks instead (see the limits above).
+Every data tool shares the output envelope in `src/lib/server/mcp/common.ts`; `get_attachment` and `get_bank_statement_file` return content blocks instead (see the limits above).
 Its `data` field is a string-keyed record of JSON values (`z.json()`), including
 scalars, null, arrays and nested objects. The previous `z.unknown()` value schema
 emitted `additionalProperties: {}`, which accepts anything and triggers the
@@ -271,7 +273,6 @@ normal-direction obligations minus credits; `totalObligationsMinor` and `totalCr
 the gross figures across the full filter, independently of pagination. Contact balance responses
 also expose gross payable/receivable obligations and credits. Ageing bands contain obligations;
 credits remain separate and are never overdue. No stored balance/status or migration is needed.
-
 
 ### Single-recipient reimbursements
 

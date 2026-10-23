@@ -1,3 +1,5 @@
+import { reset, hit } from "../rate-limit.js";
+import { MAX_FILE_BYTES, FILE_READ_LIMIT } from "./file-read-policy.js";
 import { getRecord } from "../queries/ledger.js";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
@@ -1200,6 +1202,191 @@ for (const era of ["legacy", "modern"] as const) {
     });
 
     describe("reconciliation", () => {
+      async function statementFile(
+        key: string,
+        bytes?: Buffer,
+        state = StatementExtractionState.Extracting as number,
+      ) {
+        if (bytes) await store.put(key, bytes);
+        return db
+          .insert(bankStatements)
+          .values({
+            originalFilename: "original." + key.split(".").pop(),
+            storedFilePath: key,
+            extractionState: state,
+            uploadedBy: 1,
+            accountId: bank,
+          })
+          .returning({ id: bankStatements.id })
+          .get()!.id;
+      }
+
+      beforeEach(() => reset("mcp-attachment:1"));
+
+      it("reads original bytes with reconciliation-only access and no output schema", async () => {
+        const token = issueTestToken(db, 1, ["reconciliation.read"]);
+        const client = await connect({
+          token,
+          scopes: ["reconciliation:read"],
+        });
+        const listed = (await client.listTools()).tools;
+        expect(
+          listed.find((t) => t.name === "get_bank_statement_file")
+            ?.outputSchema,
+        ).toBeUndefined();
+        expect(listed.map((t) => t.name)).toContain("get_bank_statement_file");
+        expect(listed.map((t) => t.name)).not.toContain("get_bank_statement");
+        const initialAudit = db.select().from(auditLog).all().length;
+        const fixtures = [
+          [
+            "pdf",
+            Buffer.from("%PDF-1.7 source"),
+            "application/pdf",
+            "resource",
+          ],
+          [
+            "png",
+            Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 7]),
+            "image/png",
+            "image",
+          ],
+          ["jpg", Buffer.from([255, 216, 255, 7]), "image/jpeg", "image"],
+          [
+            "csv",
+            Buffer.from("Date,Amount\n2026-09-01,12.50\n"),
+            "text/csv",
+            "resource",
+          ],
+          [
+            "xlsx",
+            Buffer.from([80, 75, 3, 4, 7]),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "resource",
+          ],
+        ] as const;
+        for (const [ext, bytes, mime, type] of fixtures) {
+          const statementId = await statementFile(
+            `reconciliation/private/source.${ext}`,
+            bytes,
+          );
+          const result = await call(client, "get_bank_statement_file", {
+            statementId,
+          });
+          expect(result.isError).toBeFalsy();
+          const metadata = JSON.parse(
+            (result.content as { text: string }[])[0].text,
+          );
+          expect(metadata).toMatchObject({
+            statementId,
+            originalFilename: `original.${ext}`,
+            mimeType: mime,
+            sizeBytes: bytes.length,
+          });
+          expect(result.content).toMatchObject([
+            { type: "text" },
+            type === "image"
+              ? { type, mimeType: mime, data: bytes.toString("base64") }
+              : {
+                  type,
+                  resource: {
+                    uri: `akaun://bank-statements/${statementId}/file`,
+                    mimeType: mime,
+                    blob: bytes.toString("base64"),
+                  },
+                },
+          ]);
+          expect(JSON.stringify(result)).toContain("untrusted");
+          expect(JSON.stringify(result)).not.toContain(
+            "reconciliation/private",
+          );
+          expect(JSON.stringify(result)).not.toContain(storageRoot);
+        }
+        expect(db.select().from(auditLog).all()).toHaveLength(initialAudit);
+        const failed = await statementFile(
+          "reconciliation/failed.pdf",
+          Buffer.from("%PDF-failed"),
+          StatementExtractionState.Failed,
+        );
+        expect(
+          (
+            await call(client, "get_bank_statement_file", {
+              statementId: failed,
+            })
+          ).isError,
+        ).toBeFalsy();
+      });
+
+      it("handles absent, unsupported, and oversized files and accepts the exact size limit", async () => {
+        const client = await connect();
+        const missing = await statementFile("reconciliation/missing.pdf");
+        const absent = await statementFile("");
+        for (const statementId of [missing, absent, 999999])
+          expect(
+            JSON.stringify(
+              await call(client, "get_bank_statement_file", { statementId }),
+            ),
+          ).toContain("NOT_FOUND");
+        const unsupported = await statementFile(
+          "reconciliation/file.txt",
+          Buffer.from("hello"),
+        );
+        expect(
+          JSON.stringify(
+            await call(client, "get_bank_statement_file", {
+              statementId: unsupported,
+            }),
+          ),
+        ).toContain("UNSUPPORTED");
+        const bytes = Buffer.alloc(MAX_FILE_BYTES, 32);
+        bytes.write("%PDF-");
+        const exact = await statementFile("reconciliation/exact.pdf", bytes);
+        const result = await call(client, "get_bank_statement_file", {
+          statementId: exact,
+        });
+        expect(result.isError).toBeFalsy();
+        expect(result.content).toMatchObject([
+          { type: "text" },
+          { type: "resource", resource: { blob: bytes.toString("base64") } },
+        ]);
+        const large = await statementFile(
+          "reconciliation/large.pdf",
+          Buffer.concat([bytes, Buffer.from("x")]),
+        );
+        expect(
+          JSON.stringify(
+            await call(client, "get_bank_statement_file", {
+              statementId: large,
+            }),
+          ),
+        ).toContain("OUTPUT_TOO_LARGE");
+      });
+
+      it("shares the attachment read throttle and hides the tool without reconciliation access", async () => {
+        const statementId = await statementFile(
+          "reconciliation/limit.pdf",
+          Buffer.from("%PDF-limit"),
+        );
+        for (let i = 0; i < FILE_READ_LIMIT.max; i++)
+          hit(
+            "mcp-attachment:1",
+            FILE_READ_LIMIT.max,
+            FILE_READ_LIMIT.windowMs,
+          );
+        const client = await connect();
+        expect(
+          JSON.stringify(
+            await call(client, "get_bank_statement_file", { statementId }),
+          ),
+        ).toContain("RATE_LIMITED");
+        const denied = await connect({
+          token: issueTestToken(db, 1, ["records.read"]),
+        });
+        expect(await tools(denied)).not.toContain("get_bank_statement_file");
+        await expect(
+          call(denied, "get_bank_statement_file", { statementId }),
+        ).rejects.toThrow("not found");
+      });
+
       function statementWithLines() {
         const statementId = db
           .insert(bankStatements)

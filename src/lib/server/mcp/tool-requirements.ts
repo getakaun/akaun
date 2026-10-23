@@ -52,6 +52,7 @@ export const TOOL_REQUIREMENTS: Record<string, ToolRequirement> = {
   get_invoice: read(["invoices:read"]),
   list_quotations: read(["quotations:read"]),
   get_quotation: read(["quotations:read"]),
+  get_bank_statement_file: read(["reconciliation:read"]),
   list_bank_statements: read(["reconciliation:read"]),
   get_bank_statement: read(["reconciliation:read", "records:read"]),
   // What it reads depends on what is asked about; checked when it runs.

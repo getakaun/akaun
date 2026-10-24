@@ -52,6 +52,7 @@ export const TOOL_REQUIREMENTS: Record<string, ToolRequirement> = {
   get_invoice: read(["invoices:read"]),
   list_quotations: read(["quotations:read"]),
   get_quotation: read(["quotations:read"]),
+  get_bank_statement_file: read(["reconciliation:read"]),
   list_bank_statements: read(["reconciliation:read"]),
   get_bank_statement: read(["reconciliation:read", "records:read"]),
   // What it reads depends on what is asked about; checked when it runs.
@@ -66,6 +67,22 @@ export const TOOL_REQUIREMENTS: Record<string, ToolRequirement> = {
   ),
   get_reimbursement_candidates: read(["records:read"]),
   create_reimbursement: write(["records:write"], ["records.create"]),
+  get_record_date_correction: read(
+    ["records:read", "records:write", "records:correct-date"],
+    ["records.read", "records.update", "records.correctDate"],
+  ),
+  correct_record_date: write(
+    ["records:read", "records:write", "records:correct-date"],
+    ["records.read", "records.update", "records.correctDate"],
+  ),
+  get_reimbursement_amount_correction: read(
+    ["records:read", "records:write", "records:correct-reimbursement-amount"],
+    ["records.read", "records.update", "records.correctReimbursementAmount"],
+  ),
+  correct_reimbursement_amount: write(
+    ["records:read", "records:write", "records:correct-reimbursement-amount"],
+    ["records.read", "records.update", "records.correctReimbursementAmount"],
+  ),
   get_payment_recipient_correction: read(["records:read"]),
   correct_payment_recipient: write(
     ["records:write", "records:delete"],

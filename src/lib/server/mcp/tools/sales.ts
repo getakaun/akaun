@@ -261,6 +261,7 @@ export function registerSales(server: McpServer, context: McpContext) {
     `Create a draft invoice. Name the customer by contactId, or by newContactName to match or create one (creating needs contacts access). ${linesNote} A draft is not posted to the ledger until issue_invoice.`,
     createInvoiceShape,
     (input) => invoiceResult(createInvoice(context, input)),
+    { destructive: false },
   );
 
   registerWrite(
@@ -271,27 +272,31 @@ export function registerSales(server: McpServer, context: McpContext) {
     { invoiceId: id, expectedVersion, ...updateInvoiceShape },
     ({ invoiceId, expectedVersion, ...input }) =>
       invoiceResult(updateInvoice(context, invoiceId, input, expectedVersion)),
-    { idempotent: true, ids: (input) => ({ invoiceId: input.invoiceId }) },
+    {
+      destructive: true,
+      idempotent: true,
+      ids: (input) => ({ invoiceId: input.invoiceId }),
+    },
   );
 
   registerWrite(
     server,
     context,
     "issue_invoice",
-    "Mark a draft invoice as sent. This posts it to the ledger: debit Accounts Receivable, credit the default sales account or `incomeAccountId` (an open Revenue account), for its total. The app does not email it. Requires a customer.",
+    "Mark a draft invoice as sent and post its total to the ledger: debit Accounts Receivable and credit the default sales account or incomeAccountId (an active Revenue account). Requires a customer and the invoice's version from get_invoice. Changes the existing document state and creates its posting; does not email the customer. A specific user request to issue the reviewed invoice authorizes this lifecycle action.",
     { invoiceId: id, expectedVersion, incomeAccountId: id.optional() },
     ({ invoiceId, expectedVersion, incomeAccountId }) =>
       invoiceResult(
         issueInvoice(context, invoiceId, { incomeAccountId }, expectedVersion),
       ),
-    { ids: (input) => ({ invoiceId: input.invoiceId }) },
+    { destructive: true, ids: (input) => ({ invoiceId: input.invoiceId }) },
   );
 
   registerWrite(
     server,
     context,
     "void_invoice",
-    "Void a sent invoice: it keeps its number, is marked cancelled and its ledger posting is removed (past reports change too). Refused once anything is paid against it or its posting is bank-matched. With `reissue`, a corrected draft copy is created to edit and send. Confirm with the user before calling.",
+    "Void a sent invoice: keeps its number, marks it cancelled and removes its ledger posting, changing past reports. Refused once anything is paid against it or its posting is bank-matched. With reissue, also creates a corrected draft copy to edit and issue. Present the invoice, removed posting and report effects and whether a replacement draft will be created, and obtain reviewed confirmation before calling. Requires the invoice's version from get_invoice. Does not email the customer.",
     { invoiceId: id, expectedVersion, reissue: z.boolean().default(false) },
     ({ invoiceId, expectedVersion, reissue }) => {
       const result = voidInvoice(
@@ -319,7 +324,7 @@ export function registerSales(server: McpServer, context: McpContext) {
     server,
     context,
     "delete_invoice",
-    "Permanently delete a draft invoice. Sent invoices are voided instead, and cancelled ones keep their number. Confirm with the user before calling.",
+    "Permanently delete a draft invoice. Sent invoices must be voided instead, and cancelled ones keep their number. Present the draft being removed and obtain reviewed confirmation before calling. Requires the invoice's version from get_invoice.",
     { invoiceId: id, expectedVersion },
     ({ invoiceId, expectedVersion }) =>
       deleteInvoice(context, invoiceId, expectedVersion),
@@ -333,6 +338,7 @@ export function registerSales(server: McpServer, context: McpContext) {
     `Create a draft quotation. Name the customer by contactId or newContactName. ${linesNote}`,
     createQuotationShape,
     (input) => quotationResult(createQuotation(context, input)),
+    { destructive: false },
   );
 
   registerWrite(
@@ -345,14 +351,18 @@ export function registerSales(server: McpServer, context: McpContext) {
       quotationResult(
         updateQuotation(context, quotationId, input, expectedVersion),
       ),
-    { idempotent: true, ids: (input) => ({ quotationId: input.quotationId }) },
+    {
+      destructive: true,
+      idempotent: true,
+      ids: (input) => ({ quotationId: input.quotationId }),
+    },
   );
 
   registerWrite(
     server,
     context,
     "set_quotation_status",
-    "Record that a quotation was sent, accepted or declined. Converted and superseded are reached only through their own tools.",
+    "Update a quotation's status to sent, accepted or declined, using its version from get_quotation. Sent seals its customer, date, currency, rate and lines. Converted and superseded are reached only through their own tools. Does not email the customer; a specific request to record this status authorizes the change.",
     {
       quotationId: id,
       expectedVersion,
@@ -368,14 +378,18 @@ export function registerSales(server: McpServer, context: McpContext) {
       quotationResult(
         setQuotationStatus(context, quotationId, status, expectedVersion),
       ),
-    { idempotent: true, ids: (input) => ({ quotationId: input.quotationId }) },
+    {
+      destructive: true,
+      idempotent: true,
+      ids: (input) => ({ quotationId: input.quotationId }),
+    },
   );
 
   registerWrite(
     server,
     context,
     "revise_quotation",
-    "Replace a sent quotation with a new draft revision to edit and send; the old one is kept as superseded.",
+    "Create a new draft revision of a sent quotation and mark the existing quotation superseded, retaining its history. Requires the existing quotation's version from get_quotation. A specific request to revise that quotation authorizes the lifecycle change; this does not email either document.",
     { quotationId: id, expectedVersion },
     ({ quotationId, expectedVersion }) => {
       const result = reviseQuotation(context, quotationId, expectedVersion);
@@ -392,14 +406,14 @@ export function registerSales(server: McpServer, context: McpContext) {
           }
         : result;
     },
-    { ids: (input) => ({ quotationId: input.quotationId }) },
+    { destructive: true, ids: (input) => ({ quotationId: input.quotationId }) },
   );
 
   registerWrite(
     server,
     context,
     "convert_quotation_to_invoice",
-    "Turn an accepted quotation into a draft invoice with the same customer and lines. The invoice still needs issue_invoice to be posted to the ledger.",
+    "Create a draft invoice from an accepted quotation with the same customer and lines, and mark the quotation converted. Requires the quotation's version from get_quotation. The invoice still needs issue_invoice to post to the ledger; this does not email it. A specific request to convert that quotation authorizes the lifecycle change.",
     { quotationId: id, expectedVersion },
     ({ quotationId, expectedVersion }) => {
       const result = convertQuotation(context, quotationId, expectedVersion);
@@ -413,14 +427,14 @@ export function registerSales(server: McpServer, context: McpContext) {
           }
         : result;
     },
-    { ids: (input) => ({ quotationId: input.quotationId }) },
+    { destructive: true, ids: (input) => ({ quotationId: input.quotationId }) },
   );
 
   registerWrite(
     server,
     context,
     "delete_quotation",
-    "Permanently delete a quotation. Converted and superseded quotations are kept. Confirm with the user before calling.",
+    "Permanently delete a quotation. Converted and superseded quotations are kept. Present the quotation being removed and obtain reviewed confirmation before calling. Requires the quotation's version from get_quotation.",
     { quotationId: id, expectedVersion },
     ({ quotationId, expectedVersion }) =>
       deleteQuotation(context, quotationId, expectedVersion),

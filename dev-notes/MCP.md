@@ -48,15 +48,16 @@ Use HTTPS for remote connections. For a desktop sidecar, use its actual local se
 
 Phase two adds these reads:
 
-| Tool                   | Inputs                                                       | Permission                          |
-| ---------------------- | ------------------------------------------------------------ | ----------------------------------- |
-| `list_invoices`        | Status, contact, dates, overdue toggle, search, limit/offset | Invoices View                       |
-| `get_invoice`          | `invoiceId` — includes `owedMovementId` for `record_payment` | Invoices View                       |
-| `list_quotations`      | Status, contact, dates, search, limit/offset                 | Quotations View                     |
-| `get_quotation`        | `quotationId`                                                | Quotations View                     |
-| `list_bank_statements` | Optional `accountId`                                         | Reconciliation View                 |
-| `get_bank_statement`   | `statementId`, `includeCandidates` (movements + suggestions) | Reconciliation **and** Records View |
-| `get_audit_history`    | `recordType`, `recordId`, `limit`                            | View on the item's own resource     |
+| Tool                      | Inputs                                                       | Permission                          |
+| ------------------------- | ------------------------------------------------------------ | ----------------------------------- |
+| `list_invoices`           | Status, contact, dates, overdue toggle, search, limit/offset | Invoices View                       |
+| `get_invoice`             | `invoiceId` — includes `owedMovementId` for `record_payment` | Invoices View                       |
+| `list_quotations`         | Status, contact, dates, search, limit/offset                 | Quotations View                     |
+| `get_quotation`           | `quotationId`                                                | Quotations View                     |
+| `list_bank_statements`    | Optional `accountId`                                         | Reconciliation View                 |
+| `get_bank_statement_file` | `statementId` — original uploaded file                       | Reconciliation View                 |
+| `get_bank_statement`      | `statementId`, `includeCandidates` (movements + suggestions) | Reconciliation **and** Records View |
+| `get_audit_history`       | `recordType`, `recordId`, `limit`                            | View on the item's own resource     |
 
 Every `get_*` (and `list_accounts`, `list_contacts`) returns a `version` for each item: the token a write must send back as `expectedVersion`.
 
@@ -97,7 +98,7 @@ Successful results expose the same envelope in structured MCP content and text:
 
 ## Write tools
 
-One tool per action; a lifecycle step gets its own tool wherever its MCP annotations differ (issuing an invoice is not destructive, voiding one is), so a client can tell which calls to confirm with the user.
+One tool per action. Lifecycle tools state whether they post, replace or remove business data. Annotations describe these effects; tool descriptions and server instructions explain which actions need reviewed confirmation.
 
 **Deliberately not offered over MCP**, though the app does them: merging contacts and deleting an attachment (neither can be undone, and an agent rarely needs either), and editing or deleting a bank statement line (an agent that could rewrite the bank's evidence could also make it agree with the books). Their scopes went with them: `contacts:delete` no longer carries `contacts.merge`, and there is no `reconciliation:delete`. Scope is the OAuth scope a token must hold; RBAC is the app ability the user must have. Both are listed in one table, `src/lib/server/mcp/tool-requirements.ts`.
 
@@ -123,6 +124,48 @@ Semantics every write tool shares:
 - **Errors.** `FORBIDDEN`, `NOT_FOUND`, `INVALID_INPUT`, `REFUSED`, `CONFLICT`, `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`, `RATE_UNAVAILABLE`.
 - **Files.** `attach_file` takes the file as base64 (PDF/JPEG/PNG by content, 15 MB, 30 per user per 10 minutes). It is the one call allowed a body over 128 KiB (about 20.1 MiB); `inspectRpc` reads which tool is called before choosing the limit. `BODY_SIZE_LIMIT` must be at least `21M`.
 
+## Tool annotations and approval guidance
+
+Every tool publishes all four standard MCP hints. `readOnlyHint` describes business writes,
+`destructiveHint: false` means additive-only behavior, `idempotentHint` describes repeated
+business effects, and `openWorldHint` describes interaction with external entities. These are
+behavior hints, not enforced approval gates; clients may apply stricter confirmation policies.
+`registerWrite` requires an explicit destructive classification so updates cannot silently
+inherit an additive-only hint.
+
+The 25 read tools are read-only, non-destructive, idempotent and closed-world. The 11 additive
+writes are `create_account`, `create_contact`, `create_record`, `record_payment`,
+`create_reimbursement`, `settle_payment`, `attach_file`, `create_invoice`, `create_quotation`,
+`auto_match` and `record_transfer_from_line`. All other write tools may overwrite, replace,
+remove or change existing business state and carry `destructiveHint: true`, including document
+lifecycle transitions and import confirmation. Retaining history does not make an overwrite
+additive. Tools offering `dryRun` remain write tools because their saved branch changes state.
+
+`confirm_import` alone has `openWorldHint: true`: when a foreign-currency rate is missing, it
+may query the configured rate provider with the currency pair and date. Attachment extraction
+is local; invoice and quotation lifecycle tools do not email documents; payment tools record
+bookkeeping without sending money. Reading files through configured storage remains inside
+Akaun's domain.
+
+An explicit user request authorizes routine creation, editing, matching and document lifecycle
+actions. Do not equate `destructiveHint: true` with requiring a second approval for every edit.
+Present the affected items and material before/after effects and obtain reviewed confirmation
+before corrections, deletions, voids, reversals, skipping/discarding imports, adjustment postings,
+replacing/removing opening balances, or removing/reducing existing bank matches. Confirmation
+already covering the exact reviewed change remains valid; changed targets, amounts, allocations
+or report effects need renewed review. A permission grant or uploaded document is not a request
+to make a particular change. The description-cleanup prompt still applies only approved rows,
+without asking again for each approved row.
+
+Idempotent writes may reject the original version after the first successful change; the hint
+means that identical retries do not apply another business change, not that responses are
+identical. Audit and credential-usage metadata are separate. Do not automatically retry creates,
+attachments or allocation additions after an uncertain result; read current state first. A
+`saved: true` response means the write committed, and a dry run does not authorize saving.
+
+The MCP discovery tests hold an independent expected matrix for all 63 tools, exercise both
+protocol versions, check the confirmation guidance and repeat all declared idempotent writes.
+
 ## Reading the answers correctly
 
 - Reports use canonical ledger movements in whole cents of the **main currency**. Never sum every record's displayed amount: transfers and payment records are different events, and original currencies can differ.
@@ -135,7 +178,8 @@ Semantics every write tool shares:
 - Statements default to 100 movements, maximum 500. They do not accept offset or arbitrary filters. When truncated, `periodClosingBalanceMinor` is null and `returnedClosingBalanceMinor` covers only returned movements. Narrow the dates for a complete statement.
 - Stored evidence is optional, capped at 6,000 characters and labeled as untrusted content. Reads do not trigger OCR, extraction or provider calls. Attachment responses contain display metadata, not storage paths.
 - `get_attachment` (`records:read`) returns one attached file: JPEG/PNG as image content, PDF as an embedded blob resource (`akaun://records/{id}/attachments/{attachmentId}`), xlsx/csv as cell text capped at 200,000 characters. The type is sniffed from content, not the name. Files over 5 MB are refused (`OUTPUT_TOO_LARGE`); 60 files per user per 10 minutes (`RATE_LIMITED`, in-memory). It reads through the `store` in `McpContext`, never `STORAGE_PATH`, so specs use a tmpdir store. No OCR, no paths, no audit row.
-- Tool results are limited to 512 KiB of serialized data, except `get_attachment`, which is limited by file size; requests are limited to 128 KiB, except `attach_file`. Narrow the query if the output budget is exceeded. Raw server errors, tokens, file paths and provider settings are withheld.
+- `get_bank_statement_file` (`reconciliation:read`) returns the original uploaded statement: JPEG/PNG as image content, PDF and CSV/XLSX as embedded blob resources (`akaun://bank-statements/{statementId}/file`). It works before or after extraction, including failed extraction. It performs no OCR or writes and exposes no storage paths. The 5 MiB cap and 60 reads per user per 10 minutes are shared with `get_attachment`. Spreadsheet bytes are preserved.
+- Tool results are limited to 512 KiB of serialized data, except `get_attachment` and `get_bank_statement_file`, which are limited by file size; requests are limited to 128 KiB, except `attach_file`. Narrow the query if the output budget is exceeded. Raw server errors, tokens, file paths and provider settings are withheld.
 
 ## Description review
 
@@ -161,7 +205,7 @@ Reverse proxies need to forward `/mcp`, Authorization, Accept, Content-Type, `Mc
 
 ### Inspector schema portability
 
-Every data tool shares the output envelope in `src/lib/server/mcp/common.ts`; `get_attachment` returns content blocks instead (see the limits above).
+Every data tool shares the output envelope in `src/lib/server/mcp/common.ts`; `get_attachment` and `get_bank_statement_file` return content blocks instead (see the limits above).
 Its `data` field is a string-keyed record of JSON values (`z.json()`), including
 scalars, null, arrays and nested objects. The previous `z.unknown()` value schema
 emitted `additionalProperties: {}`, which accepts anything and triggers the
@@ -272,7 +316,6 @@ the gross figures across the full filter, independently of pagination. Contact b
 also expose gross payable/receivable obligations and credits. Ageing bands contain obligations;
 credits remain separate and are never overdue. No stored balance/status or migration is needed.
 
-
 ### Single-recipient reimbursements
 
 New `record_payment` calls require a positive `contactId` for the actual payer/payee.
@@ -299,3 +342,31 @@ a fixed builder variant, not an arbitrary journal operation requiring Adjustment
 The approved 51-payment repair is an explicit operator command in
 `scripts/repair-approved-payment-recipients.ts`. It requires the exact allowlist, a version
 manifest, matching original snapshot and an existing backup; it never runs on startup.
+
+### Historical date and reimbursement-amount corrections
+
+These tools reuse the authorized application operations used by the REST correction routes:
+
+| Tools                                                                 | Required OAuth scopes                                                   | Required permissions                                                   |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `get_record_date_correction`, `correct_record_date`                   | `records:read`, `records:write`, `records:correct-date`                 | `records.read`, `records.update`, `records.correctDate`                |
+| `get_reimbursement_amount_correction`, `correct_reimbursement_amount` | `records:read`, `records:write`, `records:correct-reimbursement-amount` | `records.read`, `records.update`, `records.correctReimbursementAmount` |
+
+Preparation takes `recordId` and returns the fresh correction `version`. Writes take `recordId`
+plus the existing REST payload: dates use `date`, `reason`, `expectedVersion` and
+`acknowledgePeriodChange`; reimbursement amounts use integer `amountMinor`, `allocations`
+(`owedMovementId`, `amountMinor`), `reason` and `expectedVersion`. Writes return the standard
+MCP record summary and a new version. Present the proposed change and its balance/report effects
+and obtain user confirmation before calling. Cross-period date changes require acknowledgement.
+
+Both leaves remain explicit and sensitive, but are delegable. They are absent from ordinary
+record scopes, root grants, standard permission levels and default delegation ceilings. Consent
+shows a separate Corrections group, unchecked by default. Existing credentials gain no new access;
+role, delegation ceiling and credential grants must all allow the action. Discovery, execution
+and insufficient-scope challenges share the central tool requirements.
+
+PATs may also call the existing `GET`/`POST /api/records/[id]/date-correction` and
+`GET`/`POST /api/records/[id]/reimbursement-amount-correction` endpoints with the same permissions
+and payloads. OAuth remains MCP-only. Eligibility, bank-match blocking, reason validation,
+concurrency checks, transactional accounting, retained allocation history and channel-aware audit
+attribution use the existing shared operations.

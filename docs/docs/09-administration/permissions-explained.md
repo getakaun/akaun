@@ -226,6 +226,13 @@ are true:
 A permission that a user has as an extra permission is never handed on. See
 [What members may hand on](./users-and-groups.md#what-members-may-hand-on).
 
+**Correct settled dates** and **Correct reimbursement amounts** on **Records** can be handed
+on only when explicitly enabled. Like **Adjustments**, they are excluded from the standard
+permission levels and default delegation ceilings. Each requires **View** and **Change** on
+**Records** as well. Personal access tokens can use these permissions through the API or MCP;
+connected apps use separate correction choices during OAuth consent. Ordinary record change
+access includes neither permission.
+
 ## How the old permissions changed
 
 Before this version, each area had the same four actions. Akaun changed the permissions of each

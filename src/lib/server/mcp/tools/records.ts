@@ -11,7 +11,7 @@ import {
   listRecords,
   listAttachments,
 } from "../../queries/ledger.js";
-import { hit } from "../../rate-limit.js";
+import { checkFileReadLimit, MAX_FILE_BYTES } from "../file-read-policy.js";
 import { readCsv } from "../../extraction/spreadsheet/csv.js";
 import { readXlsx } from "../../extraction/spreadsheet/xlsx.js";
 import { renderWorkbook } from "../../extraction/spreadsheet/render.js";
@@ -33,12 +33,13 @@ import {
   type McpContext,
 } from "../common.js";
 
-/** Largest attached file `get_attachment` returns, in bytes. */
-export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+// Compatibility exports for existing attachment consumers.
+export {
+  MAX_FILE_BYTES as MAX_ATTACHMENT_BYTES,
+  FILE_READ_LIMIT as ATTACHMENT_READ_LIMIT,
+} from "../file-read-policy.js";
 /** Most spreadsheet text `get_attachment` returns, in characters. */
 export const MAX_SPREADSHEET_CHARS = 200_000;
-/** How many files one user may read through MCP in a window. */
-export const ATTACHMENT_READ_LIMIT = { max: 60, windowMs: 10 * 60_000 };
 
 const kinds = z.enum([
   "expense",
@@ -212,16 +213,7 @@ export function registerRecords(server: McpServer, context: McpContext) {
       if (!record || !attachment || attachment.recordId !== record.id)
         throw new McpToolError("NOT_FOUND", "That attachment does not exist.");
 
-      const limit = hit(
-        `mcp-attachment:${context.locals.user!.id}`,
-        ATTACHMENT_READ_LIMIT.max,
-        ATTACHMENT_READ_LIMIT.windowMs,
-      );
-      if (limit.limited)
-        throw new McpToolError(
-          "RATE_LIMITED",
-          `Too many files read. Try again in ${limit.retryAfterSeconds} seconds.`,
-        );
+      checkFileReadLimit(context.locals.user!.id);
 
       const stat = await context.store.stat(attachment.filename);
       if (!stat)
@@ -229,7 +221,7 @@ export function registerRecords(server: McpServer, context: McpContext) {
           "NOT_FOUND",
           "The attached file is missing from storage.",
         );
-      if (stat.size > MAX_ATTACHMENT_BYTES)
+      if (stat.size > MAX_FILE_BYTES)
         throw new McpToolError(
           "OUTPUT_TOO_LARGE",
           `The file is ${(stat.size / (1024 * 1024)).toFixed(1)} MB; files over 5 MB cannot be read here. Use the record's stored evidence (get_record with includeEvidence) instead.`,

@@ -14,10 +14,9 @@ import type { LeafPermission } from "./catalog.js";
  * There are no scopes for dashboard, settings or users: an OAuth token is for
  * `/mcp` alone (its audience), and none of those are offered there.
  *
- * `records:adjust` is the one scope outside the three tiers. It stands for the
- * explicit, sensitive `records.adjust` leaf, which lets the books say anything
- * and still add up, so an app gets it only when the user ticks it by name —
- * never as part of "change records".
+ * Adjustments and historical corrections have separate scopes outside the
+ * ordinary tiers. Each stands for one explicit, sensitive leaf and must be
+ * selected by name, never as part of "change records".
  */
 export const READ_SCOPES = [
   "records:read",
@@ -56,11 +55,16 @@ export const DELETE_SCOPES = [
   "import:delete",
 ] as const;
 export const ADJUST_SCOPES = ["records:adjust"] as const;
+export const CORRECTION_SCOPES = [
+  "records:correct-date",
+  "records:correct-reimbursement-amount",
+] as const;
 export const OAUTH_SCOPES = [
   ...READ_SCOPES,
   ...WRITE_SCOPES,
   ...DELETE_SCOPES,
   ...ADJUST_SCOPES,
+  ...CORRECTION_SCOPES,
 ] as const;
 export type OAuthScope = (typeof OAUTH_SCOPES)[number];
 
@@ -70,6 +74,10 @@ export const SCOPE_PERMISSIONS: Record<OAuthScope, readonly LeafPermission[]> =
     "records:write": ["records.create", "records.update"],
     "records:delete": ["records.delete"],
     "records:adjust": ["records.adjust"],
+    "records:correct-date": ["records.correctDate"],
+    "records:correct-reimbursement-amount": [
+      "records.correctReimbursementAmount",
+    ],
     "accounts:read": ["accounts.read"],
     "accounts:write": ["accounts.create", "accounts.update"],
     "accounts:delete": ["accounts.delete"],
@@ -147,12 +155,18 @@ export const SCOPE_LABELS: Record<OAuthScope, string> = {
   "invoices:delete": "Delete draft invoices",
   "quotations:delete": "Delete quotations",
   "import:delete": "Discard import jobs",
+  "records:correct-date":
+    "Correct settled expense and income dates, which can change historical reports",
+  "records:correct-reimbursement-amount":
+    "Correct reimbursement payment amounts and allocations, which changes historical balances",
   "records:adjust":
     "Make adjustments: journals and records between any accounts, which can change any balance",
 };
 
-export type ScopeTier = "read" | "write" | "delete" | "adjust";
+export type ScopeTier = "read" | "write" | "delete" | "adjust" | "correct";
 
 export function scopeTier(scope: string): ScopeTier {
+  if ((CORRECTION_SCOPES as readonly string[]).includes(scope))
+    return "correct";
   return scope.split(":")[1] as ScopeTier;
 }

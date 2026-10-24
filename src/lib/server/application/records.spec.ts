@@ -600,7 +600,7 @@ describe("controlled settled date correction", () => {
     ]);
   });
 
-  it("requires the separate permission, ordinary update permission and browser authentication", () => {
+  it("requires all permissions and authentication", () => {
     const { id } = settled();
     for (const denied of [
       "records.correctDate",
@@ -617,25 +617,27 @@ describe("controlled settled date correction", () => {
     expect(correctRecordDate(anonymous, id, input(id))).toMatchObject({
       code: "FORBIDDEN",
     });
-    for (const credential of [
-      { kind: "pat", tokenId: 1 },
-      { kind: "oauth", grantId: "g", clientId: "c" },
-    ] as const) {
-      const context = ctx();
-      context.locals.credential = credential;
-      expect(correctRecordDate(context, id, input(id))).toMatchObject({
-        code: "FORBIDDEN",
-      });
-      expect(prepareRecordDateCorrection(context, id)).toMatchObject({
-        code: "FORBIDDEN",
-      });
-    }
     expect(updateRecord(ctx(), id, { date: "2026-02-28" })).toMatchObject({
       ok: false,
       code: "REFUSED",
     });
     expect(getRecord(db, id)!.date).toBe(base.date);
   });
+
+  it.each(["pat", "oauth"] as const)(
+    "allows an authorized %s correction",
+    (kind) => {
+      const { id } = settled();
+      const context = ctx();
+      context.locals.credential =
+        kind === "pat"
+          ? { kind, tokenId: 1 }
+          : { kind, grantId: "g", clientId: "c" };
+      expect(prepareRecordDateCorrection(context, id).ok).toBe(true);
+      expect(correctRecordDate(context, id, input(id)).ok).toBe(true);
+      expect(getRecord(db, id)!.date).toBe("2026-02-28");
+    },
+  );
 
   it.each([
     { date: "2026-02-30" },

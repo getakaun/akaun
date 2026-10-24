@@ -279,8 +279,10 @@ export function registerFileRead<S extends z.ZodRawShape>(
 type WriteLogIds = Record<string, number | string | (number | string)[]>;
 
 export type WriteOptions<I> = {
-  /** Removes or voids something. Clients use this to decide whether to ask first. */
-  destructive?: boolean;
+  /** Can replace, remove or change existing business data; false means additive only. */
+  destructive: boolean;
+  /** May interact with an external entity, such as an exchange-rate provider. */
+  openWorld?: boolean;
   /** Repeating the same call leaves the books as one call did. */
   idempotent?: boolean;
   /** Which ids to log, from the parsed input. */
@@ -351,7 +353,7 @@ export function registerWrite<S extends z.ZodRawShape>(
   ) =>
     | AppResult<Record<string, unknown>>
     | Promise<AppResult<Record<string, unknown>>>,
-  options: WriteOptions<z.output<z.ZodObject<S>>> = {},
+  options: WriteOptions<z.output<z.ZodObject<S>>>,
 ) {
   const requirement = requirementOf(name);
   const allowed = () => toolAllowed(context.locals, requirement);
@@ -365,9 +367,9 @@ export function registerWrite<S extends z.ZodRawShape>(
       outputSchema,
       annotations: {
         readOnlyHint: false,
-        destructiveHint: options.destructive ?? false,
+        destructiveHint: options.destructive,
         idempotentHint: options.idempotent ?? false,
-        openWorldHint: false,
+        openWorldHint: options.openWorld ?? false,
       },
     },
     async (args) => {

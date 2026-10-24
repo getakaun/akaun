@@ -46,6 +46,19 @@ describe("seeding the default groups", () => {
     expect(names()).not.toContain("Reviewer");
   });
 
+  it("does not seed historical correction grants or delegation ceilings", () => {
+    seedGroups(db);
+    for (const table of [schema.groupGrants, schema.groupDelegations]) {
+      const permissions = db
+        .select()
+        .from(table)
+        .all()
+        .map((row) => row.permission);
+      expect(permissions).not.toContain("records.correctDate");
+      expect(permissions).not.toContain("records.correctReimbursementAmount");
+    }
+  });
+
   it("leaves a book that already has groups alone", () => {
     db.insert(groups).values({ name: "Owners", isSuperuser: true }).run();
     seedGroups(db);

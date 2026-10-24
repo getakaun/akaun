@@ -393,7 +393,7 @@ describe("controlled reimbursement amount corrections", () => {
     }
   });
 
-  it("requires all permissions and rejects PAT and OAuth calls even with the permission", () => {
+  it("requires all permissions", () => {
     const f = funded();
     for (const permission of [
       "records.read",
@@ -411,27 +411,41 @@ describe("controlled reimbursement amount corrections", () => {
         correctReimbursementAmount(limited, f.payment.id, {}),
       ).toMatchObject({ ok: false, code: "FORBIDDEN" });
     }
-    for (const credentials of [
-      { credential: { kind: "pat" as const, tokenId: 1 } },
-      {
-        oauth: {
-          clientId: "app",
-          grantId: "grant",
-          resource: "https://test",
-          scopes: [],
-        },
-      },
-    ]) {
-      const api = { ...ctx, locals: { ...ctx.locals, ...credentials } };
-      expect(
-        prepareReimbursementAmountCorrection(api, f.payment.id),
-      ).toMatchObject({ ok: false, code: "FORBIDDEN" });
-      expect(correctReimbursementAmount(api, f.payment.id, {})).toMatchObject({
-        ok: false,
-        code: "FORBIDDEN",
-      });
-    }
   });
+
+  it.each(["pat", "oauth"] as const)(
+    "allows authorized %s reimbursement amount corrections",
+    (kind) => {
+      const f = funded();
+      const api = {
+        ...ctx,
+        locals: {
+          ...ctx.locals,
+          credential:
+            kind === "pat"
+              ? { kind, tokenId: 1 }
+              : { kind, grantId: "g", clientId: "c" },
+        },
+      };
+      expect(prepareReimbursementAmountCorrection(api, f.payment.id).ok).toBe(
+        true,
+      );
+      expect(
+        correctReimbursementAmount(api, f.payment.id, {
+          amountMinor: 500,
+          allocations: [
+            {
+              owedMovementId: f.state.expenses[0].owedMovementId,
+              amountMinor: 500,
+            },
+          ],
+          reason,
+          expectedVersion: f.state.version,
+        }).ok,
+      ).toBe(true);
+      expect(getRecord(db, f.payment.id)?.amountMinor).toBe(500);
+    },
+  );
 
   it("rejects stale payment and expense edits, and repeat confirmation", () => {
     const f = funded();

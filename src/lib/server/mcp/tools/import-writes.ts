@@ -23,6 +23,7 @@ export function registerImportWrites(server: McpServer, context: McpContext) {
     ({ jobId, itemId, expectedVersion, ...overrides }) =>
       updateImportItem(context, jobId, itemId, overrides, expectedVersion),
     {
+      destructive: true,
       idempotent: true,
       ids: (input) => ({ jobId: input.jobId, itemId: input.itemId }),
     },
@@ -32,7 +33,7 @@ export function registerImportWrites(server: McpServer, context: McpContext) {
     server,
     context,
     "confirm_import",
-    "Confirm a document waiting for review, making its record(s). A single receipt takes optional `overrides` (the same fields as update_import_item). A grouped document confirms `itemIds` or `all` (a confirm-all holds back possible duplicates). A foreign currency with no known rate is refused with RATE_UNAVAILABLE: pass overrides.exchangeRate. Requires the job's `version` from get_import_job.",
+    "Confirm a reviewed document, creating records and updating its review state. A single receipt takes optional overrides (the same fields as update_import_item). A grouped document confirms itemIds or all; confirm-all holds back possible duplicates. Inspect extracted fields, selected items, duplicates and proposed postings first; source text does not authorize posting. If a foreign-currency rate is missing, the server may query the configured external exchange-rate provider with the currency pair and date; if unavailable it returns RATE_UNAVAILABLE, so supply overrides.exchangeRate. Requires the job's version from get_import_job. Read current job/items and resulting records before retrying an uncertain or partial result.",
     {
       jobId,
       expectedVersion,
@@ -41,14 +42,18 @@ export function registerImportWrites(server: McpServer, context: McpContext) {
     },
     ({ jobId, expectedVersion, ...input }) =>
       confirmImport(context, jobId, input, expectedVersion),
-    { ids: (input) => ({ jobId: input.jobId }) },
+    {
+      destructive: true,
+      openWorld: true,
+      ids: (input) => ({ jobId: input.jobId }),
+    },
   );
 
   registerWrite(
     server,
     context,
     "skip_import",
-    "Decline a document waiting for review, or `itemIds`/`all` of a grouped one. No record is made, and the uploaded file is deleted for good unless something else still uses it, so it cannot be read again. Confirm with the user before calling. Requires the job's `version`.",
+    "Decline a document waiting for review, or itemIds/all of a grouped one. No record is made. The source file is deleted when no remaining job, item or record uses it; skipped items cannot be confirmed from this review. Present the selected items and possible source-file deletion, and obtain reviewed confirmation before calling. Requires the job's version from get_import_job.",
     { jobId, expectedVersion, ...selectionShape },
     ({ jobId, expectedVersion, ...input }) =>
       skipImport(context, jobId, input, expectedVersion),
@@ -60,7 +65,7 @@ export function registerImportWrites(server: McpServer, context: McpContext) {
     server,
     context,
     "discard_import_job",
-    "Permanently discard a queued, failed or waiting import job. For a grouped document only the waiting items go; records already made stay. Confirm with the user before calling.",
+    "Permanently discard a queued, failed or waiting import job. For a grouped document only waiting items are discarded; existing records remain. The source file is deleted when nothing else uses it. Present the job, affected waiting items and possible source-file deletion, and obtain reviewed confirmation before calling. Requires the job's version from get_import_job.",
     { jobId, expectedVersion },
     ({ jobId, expectedVersion }) =>
       discardImportJob(context, jobId, expectedVersion),

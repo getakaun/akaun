@@ -1,7 +1,11 @@
 <script lang="ts">
   import type { PageData, ActionData } from "./$types.js";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { SCOPE_LABELS, scopeTier, type ScopeTier } from "$lib/permissions/oauth-scopes.js";
+  import {
+    SCOPE_LABELS,
+    scopeTier,
+    type ScopeTier,
+  } from "$lib/permissions/oauth-scopes.js";
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const tiers: { tier: ScopeTier; heading: string; note: string | null }[] = [
@@ -21,10 +25,18 @@
       heading: "Adjust",
       note: "The app can post journals and records between any accounts. These can change any balance and still add up, so allow this only for an app you trust with your books.",
     },
+    {
+      tier: "correct",
+      heading: "Corrections",
+      note: "The app can correct historical dates or reimbursement amounts with a reason. These changes can affect previously finalized reports and balances. Allow each correction only for an app you trust with your books.",
+    },
   ];
   const groups = $derived(
     tiers
-      .map((t) => ({ ...t, items: data.scopes.filter((s) => scopeTier(s.scope) === t.tier) }))
+      .map((t) => ({
+        ...t,
+        items: data.scopes.filter((s) => scopeTier(s.scope) === t.tier),
+      }))
       .filter((g) => g.items.length > 0),
   );
 </script>
@@ -50,7 +62,9 @@
         <legend class="mb-1 font-medium">{group.heading}</legend>
         {#if group.note}
           <p
-            class="text-sm {group.tier === 'delete' || group.tier === 'adjust'
+            class="text-sm {group.tier === 'delete' ||
+            group.tier === 'adjust' ||
+            group.tier === 'correct'
               ? 'text-destructive'
               : 'text-muted-foreground'}"
           >

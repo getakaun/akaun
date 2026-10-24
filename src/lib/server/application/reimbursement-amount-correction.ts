@@ -42,11 +42,6 @@ export const reimbursementAmountCorrectionSchema = z
   .strict();
 
 function authorization(ctx: AppContext) {
-  if (ctx.locals.credential || ctx.locals.oauth)
-    return fail(
-      "FORBIDDEN",
-      "Reimbursement amount corrections require a signed-in browser session.",
-    );
   return requirePermissions(ctx, [
     "records.read",
     "records.update",

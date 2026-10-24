@@ -85,7 +85,11 @@ beforeEach(() => {
     ])
     .run();
   grantGroup(db, { name: "admins", userIds: [1], grants: [], superuser: true });
-  grantGroup(db, { name: "directory", userIds: [2], grants: ["contacts.read"] });
+  grantGroup(db, {
+    name: "directory",
+    userIds: [2],
+    grants: ["contacts.read"],
+  });
   oauth = createOAuth(db, config);
   registered = oauth.register({
     client_name: "Test MCP",
@@ -576,6 +580,64 @@ describe("OAuth authorization and persistence", () => {
     expect(can(adjust, "records.adjust")).toBe(true);
     expect(can(adjust, "records.create")).toBe(true);
   });
+  it.each([
+    [
+      "records:correct-date",
+      "records.correctDate",
+      "records.correctReimbursementAmount",
+    ],
+    [
+      "records:correct-reimbursement-amount",
+      "records.correctReimbursementAmount",
+      "records.correctDate",
+    ],
+  ] as const)(
+    "grants only the correction named by %s",
+    async (scope, permission, other) => {
+      const ordinary = (await oauth.authenticate(
+        bearer((await tokens(["records:read", "records:write"])).access_token),
+      ))!;
+      expect(can(ordinary, permission)).toBe(false);
+      const token = await tokens(["records:read", "records:write", scope]);
+      const auth = (await oauth.authenticate(bearer(token.access_token)))!;
+      expect(can(auth, permission)).toBe(true);
+      expect(can(auth, other)).toBe(false);
+      db.update(schema.groups)
+        .set({ isSuperuser: false })
+        .where(eq(schema.groups.id, 1))
+        .run();
+      const groupId = grantGroup(db, {
+        name: "corrections",
+        userIds: [1],
+        grants: ["records.read", "records.update", permission],
+        delegations: ["records.read", "records.update"],
+      });
+      expect(allowedScopes(actor().role!)).not.toContain(scope);
+      expect(
+        can(
+          (await oauth.authenticate(bearer(token.access_token)))!,
+          permission,
+        ),
+      ).toBe(false);
+      db.insert(schema.groupDelegations).values({ groupId, permission }).run();
+      expect(
+        can(
+          (await oauth.authenticate(bearer(token.access_token)))!,
+          permission,
+        ),
+      ).toBe(true);
+      db.delete(schema.groupGrants)
+        .where(eq(schema.groupGrants.permission, permission))
+        .run();
+      expect(
+        can(
+          (await oauth.authenticate(bearer(token.access_token)))!,
+          permission,
+        ),
+      ).toBe(false);
+    },
+  );
+
   it("bounds an app by the user's delegation ceiling, at once", async () => {
     db.update(schema.groups)
       .set({ isSuperuser: false })

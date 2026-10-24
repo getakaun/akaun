@@ -31,12 +31,6 @@ export const dateCorrectionSchema = z
   .strict();
 
 function authorization(ctx: AppContext): AppFailure | null {
-  if (ctx.locals.credential || ctx.locals.oauth) {
-    return fail(
-      "FORBIDDEN",
-      "Date corrections require a signed-in browser session.",
-    );
-  }
   return requirePermissions(ctx, [
     "records.read",
     "records.update",

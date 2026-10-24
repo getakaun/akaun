@@ -94,17 +94,57 @@ access to records does not include it. Give it only to an assistant that you tru
 books: an adjustment can change any balance and keep the ledger in balance. A bank line recorded as a transfer
 to anything other than a bank or cash account is an adjustment too.
 
+### Historical corrections
+
+**Correct settled dates** and **Correct reimbursement amounts** on **Records** are separate
+abilities, like **Adjustments**. Each also needs **View** and **Change** on **Records**. They are
+excluded from ordinary record access and must be granted by name, including in the group's
+**Members may hand on to tokens & apps** permissions and in a personal access token.
+
+With the sign-in, select the corresponding permission under **Corrections** when connecting.
+These choices start unchecked. Existing connections need a new consent grant; ordinary change
+access does not include either correction.
+
+The assistant reads a fresh correction snapshot, presents the proposed change and its effects,
+and asks you to confirm before submitting a reason and version. Settled-date corrections keep
+allocations and payment dates; a change of accounting period needs your acknowledgement.
+Reimbursement-amount corrections update the payment and its covered expense allocations together,
+retaining reversed allocations in history. Both refuse bank-matched records and retain the same
+eligibility rules as Akaun's correction dialogs.
+
 Akaun applies all its normal rules to the assistant. For example:
 
-- A record that is paid or matched to a bank line keeps its amount and date. Its description can
-  still change.
+- Ordinary edits keep a paid or bank-matched record's amount and date locked. The dedicated
+  correction tools allow only the eligible corrections described above.
 - A sent invoice keeps its amounts. The assistant must void it and make a new one.
 - An account with records cannot be deleted. The assistant can archive it.
 - If someone else changed an item after the assistant read it, Akaun refuses the change. The
   assistant must read the item again.
 
-Each change is saved at once. It shows in the history of the item under the name of the user, and
-on other open screens at once. The assistant asks you before it deletes or voids something.
+### When the assistant asks for confirmation
+
+A specific request authorizes routine actions, such as creating a draft, editing a description,
+matching a new bank line, or recording an invoice's status. The assistant is instructed to
+present the affected items and material effects and obtain your confirmation before corrections,
+deletions, voids, reversals, skipping or discarding imports, adjustment postings, replacing or
+removing opening balances, or removing or reducing existing bank matches.
+
+Approval of an exact reviewed change remains valid, including a table of description edits.
+The assistant need not ask again for every approved row. If the targets, amounts, allocations
+or effects change, it must present the new proposal for review. A permission grant gives access;
+it does not ask the assistant to make a particular change.
+
+Akaun sends behavior hints with each MCP tool, including whether it reads, overwrites data,
+can safely repeat a business operation, or contacts an external service. An overwrite hint
+also applies to routine edits. These hints and instructions guide the assistant; the client
+controls its approval prompts and may require more confirmation. Akaun enforces permissions and
+accounting rules, but these hints do not prove that a human approved an individual call.
+
+Each change is saved at once and appears in the item's history under the user's name. Payment
+tools record bookkeeping entries without sending money. Issuing an invoice posts it to the
+ledger without emailing it. Import confirmation may look up a missing exchange rate with an
+external provider using the currency pair and date. After an uncertain write result, the
+assistant should read current state before retrying to avoid duplicate entries.
 
 :::caution
 

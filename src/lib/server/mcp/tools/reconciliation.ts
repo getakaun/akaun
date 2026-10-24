@@ -232,11 +232,15 @@ export function registerReconciliation(server: McpServer, context: McpContext) {
     server,
     context,
     "set_movement_matches",
-    "Say which bank lines cover one ledger movement, replacing what it was matched to; an empty list clears its matches. A line matches only movements on its own statement's account, in the same direction, and never for more than it has left. Matching locks the record's amount and date. Requires the movement's `matchesVersion` from get_bank_statement.",
+    "Replace all bank-line matches for one ledger movement; an empty allocations list clears them. Read current matches first; if their details are unavailable through MCP reads, ask the user to review them in Akaun and do not assume there are none. Before removing or reducing an existing match, present the old and proposed matches and reconciliation/locking effects, and obtain reviewed confirmation. Explicit requests authorize new or increased matches that preserve existing matches. Lines must belong to the movement's account, match its direction and stay within available balances. Matching locks the record's amount and date. Requires the movement's matchesVersion from get_bank_statement.",
     { movementId: id, expectedVersion, allocations: allocationsShape },
     ({ movementId, expectedVersion, allocations }) =>
       setMovementMatches(context, movementId, allocations, expectedVersion),
-    { idempotent: true, ids: (input) => ({ movementId: input.movementId }) },
+    {
+      destructive: true,
+      idempotent: true,
+      ids: (input) => ({ movementId: input.movementId }),
+    },
   );
 
   registerWrite(
@@ -247,14 +251,17 @@ export function registerReconciliation(server: McpServer, context: McpContext) {
     { movementIds: z.array(id).min(1).max(500), statementId: id.optional() },
     ({ movementIds, statementId }) =>
       autoMatch(context, movementIds, statementId),
-    { ids: (input) => ({ movementIds: input.movementIds }) },
+    {
+      destructive: false,
+      ids: (input) => ({ movementIds: input.movementIds }),
+    },
   );
 
   registerWrite(
     server,
     context,
     "record_transfer_from_line",
-    "Record an unmatched bank line as a transfer between this statement's account and another of the user's own accounts (`otherAccountId`), and match it — for a transfer between the user's own cash or bank accounts, which needs no expense or income. Requires the line's `version`.",
+    "Record an unmatched bank line against another account and match it, using the line's version from get_bank_statement. Between the user's own cash or bank accounts this creates a transfer. Other account combinations are derived from the accounts and may require Adjustments permission and records:adjust scope; present the accounts, amount, date and ledger effects and obtain reviewed confirmation before an adjustment posting. This records bookkeeping only and does not move bank funds.",
     {
       lineId: id,
       expectedVersion,
@@ -264,6 +271,7 @@ export function registerReconciliation(server: McpServer, context: McpContext) {
     ({ lineId, expectedVersion, ...input }) =>
       recordTransferFromLine(context, lineId, input, expectedVersion),
     {
+      destructive: false,
       ids: (input) => ({
         lineId: input.lineId,
         otherAccountId: input.otherAccountId,

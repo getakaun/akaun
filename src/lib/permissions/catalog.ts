@@ -98,20 +98,18 @@ export const PERMISSION_CATALOG = {
       correctDate: {
         label: "Correct settled dates",
         description:
-          "Correct a settled expense or income date with a reason and review. Browser only; changes can affect previously finalized reports.",
+          "Correct a settled expense or income date with a reason and review. Changes can affect previously finalized reports.",
         phrase: "correct settled dates",
         explicit: true,
         sensitive: true,
-        delegable: false,
       },
       correctReimbursementAmount: {
         label: "Correct reimbursement amounts",
         description:
-          "Correct a reimbursement payment amount and its expense allocations with a reason and review. Browser only; changes historical balances.",
+          "Correct a reimbursement payment amount and its expense allocations with a reason and review. Changes historical balances.",
         phrase: "correct reimbursement amounts",
         explicit: true,
         sensitive: true,
-        delegable: false,
       },
       adjust: {
         label: "Adjustments",

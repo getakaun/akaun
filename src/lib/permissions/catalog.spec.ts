@@ -14,6 +14,7 @@ import {
   SCOPE_LABELS,
   SCOPE_PERMISSIONS,
   expandScopes,
+  scopeTier,
 } from "./oauth-scopes.js";
 
 describe("permission catalog", () => {
@@ -36,12 +37,12 @@ describe("permission catalog", () => {
     expect(expandPermission("records")).not.toContain("records.adjust");
     expect(expandPermission("records")).not.toContain("records.correctDate");
     expect(leafMeta("records.correctDate").sensitive).toBe(true);
-    expect(isDelegable("records.correctDate")).toBe(false);
+    expect(isDelegable("records.correctDate")).toBe(true);
     expect(expandPermission("records")).not.toContain(
       "records.correctReimbursementAmount",
     );
     expect(leafMeta("records.correctReimbursementAmount").sensitive).toBe(true);
-    expect(isDelegable("records.correctReimbursementAmount")).toBe(false);
+    expect(isDelegable("records.correctReimbursementAmount")).toBe(true);
     expect(expandPermission("records.adjust")).toEqual(["records.adjust"]);
   });
 
@@ -80,10 +81,28 @@ describe("OAuth scopes", () => {
 
   it("never offers settings, users or the dashboard to an app", () => {
     const offered = new Set(expandScopes(OAUTH_SCOPES));
-    expect(offered.has("records.correctDate")).toBe(false);
-    expect(offered.has("records.correctReimbursementAmount")).toBe(false);
+
     for (const leaf of offered)
       expect(leaf.split(".")[0]).not.toMatch(/^(settings|users|dashboard)$/);
+  });
+
+  it("requires independent correction scopes outside ordinary record access", () => {
+    const ordinary = expandScopes([
+      "records:read",
+      "records:write",
+      "records:delete",
+      "records:adjust",
+    ]);
+    expect(ordinary).not.toContain("records.correctDate");
+    expect(ordinary).not.toContain("records.correctReimbursementAmount");
+    expect(expandScopes(["records:correct-date"])).toEqual([
+      "records.correctDate",
+    ]);
+    expect(expandScopes(["records:correct-reimbursement-amount"])).toEqual([
+      "records.correctReimbursementAmount",
+    ]);
+    expect(scopeTier("records:correct-date")).toBe("correct");
+    expect(scopeTier("records:correct-reimbursement-amount")).toBe("correct");
   });
 
   it("keeps every read scope to reads", () => {

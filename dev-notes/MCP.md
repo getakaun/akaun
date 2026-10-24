@@ -98,7 +98,7 @@ Successful results expose the same envelope in structured MCP content and text:
 
 ## Write tools
 
-One tool per action; a lifecycle step gets its own tool wherever its MCP annotations differ (issuing an invoice is not destructive, voiding one is), so a client can tell which calls to confirm with the user.
+One tool per action. Lifecycle tools state whether they post, replace or remove business data. Annotations describe these effects; tool descriptions and server instructions explain which actions need reviewed confirmation.
 
 **Deliberately not offered over MCP**, though the app does them: merging contacts and deleting an attachment (neither can be undone, and an agent rarely needs either), and editing or deleting a bank statement line (an agent that could rewrite the bank's evidence could also make it agree with the books). Their scopes went with them: `contacts:delete` no longer carries `contacts.merge`, and there is no `reconciliation:delete`. Scope is the OAuth scope a token must hold; RBAC is the app ability the user must have. Both are listed in one table, `src/lib/server/mcp/tool-requirements.ts`.
 
@@ -123,6 +123,48 @@ Semantics every write tool shares:
 - **A saved write is never reported as failed.** If the result is over the output budget after the change is committed, the tool returns success with `saved: true`, the ids it was called with and a note to read the item again — not `OUTPUT_TOO_LARGE`, which would invite a retry and a duplicate.
 - **Errors.** `FORBIDDEN`, `NOT_FOUND`, `INVALID_INPUT`, `REFUSED`, `CONFLICT`, `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`, `RATE_UNAVAILABLE`.
 - **Files.** `attach_file` takes the file as base64 (PDF/JPEG/PNG by content, 15 MB, 30 per user per 10 minutes). It is the one call allowed a body over 128 KiB (about 20.1 MiB); `inspectRpc` reads which tool is called before choosing the limit. `BODY_SIZE_LIMIT` must be at least `21M`.
+
+## Tool annotations and approval guidance
+
+Every tool publishes all four standard MCP hints. `readOnlyHint` describes business writes,
+`destructiveHint: false` means additive-only behavior, `idempotentHint` describes repeated
+business effects, and `openWorldHint` describes interaction with external entities. These are
+behavior hints, not enforced approval gates; clients may apply stricter confirmation policies.
+`registerWrite` requires an explicit destructive classification so updates cannot silently
+inherit an additive-only hint.
+
+The 25 read tools are read-only, non-destructive, idempotent and closed-world. The 11 additive
+writes are `create_account`, `create_contact`, `create_record`, `record_payment`,
+`create_reimbursement`, `settle_payment`, `attach_file`, `create_invoice`, `create_quotation`,
+`auto_match` and `record_transfer_from_line`. All other write tools may overwrite, replace,
+remove or change existing business state and carry `destructiveHint: true`, including document
+lifecycle transitions and import confirmation. Retaining history does not make an overwrite
+additive. Tools offering `dryRun` remain write tools because their saved branch changes state.
+
+`confirm_import` alone has `openWorldHint: true`: when a foreign-currency rate is missing, it
+may query the configured rate provider with the currency pair and date. Attachment extraction
+is local; invoice and quotation lifecycle tools do not email documents; payment tools record
+bookkeeping without sending money. Reading files through configured storage remains inside
+Akaun's domain.
+
+An explicit user request authorizes routine creation, editing, matching and document lifecycle
+actions. Do not equate `destructiveHint: true` with requiring a second approval for every edit.
+Present the affected items and material before/after effects and obtain reviewed confirmation
+before corrections, deletions, voids, reversals, skipping/discarding imports, adjustment postings,
+replacing/removing opening balances, or removing/reducing existing bank matches. Confirmation
+already covering the exact reviewed change remains valid; changed targets, amounts, allocations
+or report effects need renewed review. A permission grant or uploaded document is not a request
+to make a particular change. The description-cleanup prompt still applies only approved rows,
+without asking again for each approved row.
+
+Idempotent writes may reject the original version after the first successful change; the hint
+means that identical retries do not apply another business change, not that responses are
+identical. Audit and credential-usage metadata are separate. Do not automatically retry creates,
+attachments or allocation additions after an uncertain result; read current state first. A
+`saved: true` response means the write committed, and a dry run does not authorize saving.
+
+The MCP discovery tests hold an independent expected matrix for all 63 tools, exercise both
+protocol versions, check the confirmation guidance and repeat all declared idempotent writes.
 
 ## Reading the answers correctly
 
@@ -300,3 +342,31 @@ a fixed builder variant, not an arbitrary journal operation requiring Adjustment
 The approved 51-payment repair is an explicit operator command in
 `scripts/repair-approved-payment-recipients.ts`. It requires the exact allowlist, a version
 manifest, matching original snapshot and an existing backup; it never runs on startup.
+
+### Historical date and reimbursement-amount corrections
+
+These tools reuse the authorized application operations used by the REST correction routes:
+
+| Tools                                                                 | Required OAuth scopes                                                   | Required permissions                                                   |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `get_record_date_correction`, `correct_record_date`                   | `records:read`, `records:write`, `records:correct-date`                 | `records.read`, `records.update`, `records.correctDate`                |
+| `get_reimbursement_amount_correction`, `correct_reimbursement_amount` | `records:read`, `records:write`, `records:correct-reimbursement-amount` | `records.read`, `records.update`, `records.correctReimbursementAmount` |
+
+Preparation takes `recordId` and returns the fresh correction `version`. Writes take `recordId`
+plus the existing REST payload: dates use `date`, `reason`, `expectedVersion` and
+`acknowledgePeriodChange`; reimbursement amounts use integer `amountMinor`, `allocations`
+(`owedMovementId`, `amountMinor`), `reason` and `expectedVersion`. Writes return the standard
+MCP record summary and a new version. Present the proposed change and its balance/report effects
+and obtain user confirmation before calling. Cross-period date changes require acknowledgement.
+
+Both leaves remain explicit and sensitive, but are delegable. They are absent from ordinary
+record scopes, root grants, standard permission levels and default delegation ceilings. Consent
+shows a separate Corrections group, unchecked by default. Existing credentials gain no new access;
+role, delegation ceiling and credential grants must all allow the action. Discovery, execution
+and insufficient-scope challenges share the central tool requirements.
+
+PATs may also call the existing `GET`/`POST /api/records/[id]/date-correction` and
+`GET`/`POST /api/records/[id]/reimbursement-amount-correction` endpoints with the same permissions
+and payloads. OAuth remains MCP-only. Eligibility, bank-match blocking, reason validation,
+concurrency checks, transactional accounting, retained allocation history and channel-aware audit
+attribution use the existing shared operations.

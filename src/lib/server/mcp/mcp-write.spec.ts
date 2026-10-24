@@ -4,7 +4,7 @@ import { getRecord } from "../queries/ledger.js";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { eq } from "drizzle-orm";
+import { eq, getTableName } from "drizzle-orm";
 import {
   existsSync,
   mkdirSync,
@@ -209,6 +209,8 @@ const ALL_WRITE: OAuthScope[] = [
   "records:read",
   "records:write",
   "records:delete",
+  "records:correct-date",
+  "records:correct-reimbursement-amount",
   "accounts:read",
   "accounts:write",
   "accounts:delete",
@@ -226,6 +228,109 @@ const ALL_WRITE: OAuthScope[] = [
   "import:read",
   "import:write",
   "import:delete",
+];
+
+// Independent expected behavior, deliberately not derived from registrations or permissions.
+const READ_TOOLS = [
+  "list_records",
+  "get_record",
+  "get_attachment",
+  "list_outstanding",
+  "get_account_statement",
+  "list_accounts",
+  "list_contacts",
+  "get_contact_balance",
+  "get_financial_report",
+  "list_import_jobs",
+  "get_import_job",
+  "list_invoices",
+  "get_invoice",
+  "list_quotations",
+  "get_quotation",
+  "get_bank_statement_file",
+  "list_bank_statements",
+  "get_bank_statement",
+  "get_audit_history",
+  "get_reimbursement_reversal",
+  "get_reimbursement_candidates",
+  "get_payment_recipient_correction",
+  "get_record_date_correction",
+  "get_reimbursement_amount_correction",
+  "get_payment_allocations",
+];
+const ADDITIVE_TOOLS = [
+  "create_account",
+  "create_contact",
+  "create_record",
+  "record_payment",
+  "create_reimbursement",
+  "settle_payment",
+  "attach_file",
+  "create_invoice",
+  "create_quotation",
+  "auto_match",
+  "record_transfer_from_line",
+];
+const OVERWRITE_TOOLS = [
+  "update_account",
+  "delete_account",
+  "set_opening_balance",
+  "update_contact",
+  "delete_contact",
+  "update_import_item",
+  "confirm_import",
+  "skip_import",
+  "discard_import_job",
+  "correct_record_date",
+  "correct_reimbursement_amount",
+  "reverse_reimbursement",
+  "correct_payment_recipient",
+  "update_record",
+  "delete_record",
+  "undo_settlement",
+  "correct_payment_allocations",
+  "update_invoice",
+  "issue_invoice",
+  "void_invoice",
+  "delete_invoice",
+  "update_quotation",
+  "set_quotation_status",
+  "revise_quotation",
+  "convert_quotation_to_invoice",
+  "delete_quotation",
+  "set_movement_matches",
+];
+const IDEMPOTENT_WRITES = [
+  "update_account",
+  "set_opening_balance",
+  "update_contact",
+  "update_import_item",
+  "update_record",
+  "update_invoice",
+  "update_quotation",
+  "set_quotation_status",
+  "set_movement_matches",
+];
+const REVIEWED_TOOLS = [
+  "correct_record_date",
+  "correct_reimbursement_amount",
+  "correct_payment_recipient",
+  "reverse_reimbursement",
+  "delete_record",
+  "undo_settlement",
+  "correct_payment_allocations",
+  "delete_account",
+  "delete_contact",
+  "void_invoice",
+  "delete_invoice",
+  "delete_quotation",
+  "skip_import",
+  "discard_import_job",
+  "set_opening_balance",
+  "set_movement_matches",
+  "create_record",
+  "update_record",
+  "record_transfer_from_line",
 ];
 
 for (const era of ["legacy", "modern"] as const) {
@@ -300,6 +405,95 @@ for (const era of ["legacy", "modern"] as const) {
 
   describe(`MCP writes (${era})`, () => {
     describe("discovery", () => {
+      it("publishes the complete reviewed annotation matrix", async () => {
+        const client = await connect({ token: writerToken });
+        const listed = (await client.listTools()).tools;
+        const expectedNames = [
+          ...READ_TOOLS,
+          ...ADDITIVE_TOOLS,
+          ...OVERWRITE_TOOLS,
+        ];
+        expect(new Set(expectedNames).size).toBe(63);
+        expect(listed.map((tool) => tool.name).sort()).toEqual(
+          expectedNames.sort(),
+        );
+        for (const tool of listed) {
+          const read = READ_TOOLS.includes(tool.name);
+          expect(tool.annotations, tool.name).toMatchObject({
+            readOnlyHint: read,
+            destructiveHint: OVERWRITE_TOOLS.includes(tool.name),
+            idempotentHint: read || IDEMPOTENT_WRITES.includes(tool.name),
+            openWorldHint: tool.name === "confirm_import",
+          });
+          expect(tool.description?.length, tool.name).toBeGreaterThan(0);
+        }
+      });
+
+      it("describes reviewed approvals separately from overwrite effects", async () => {
+        const client = await connect({ token: writerToken });
+        const listed = (await client.listTools()).tools;
+        for (const name of REVIEWED_TOOLS) {
+          const tool = listed.find((tool) => tool.name === name)!;
+          expect(tool.description, name).toMatch(/reviewed confirmation/i);
+          expect(tool.description, name).toMatch(/present/i);
+        }
+        const description = (name: string) =>
+          listed.find((tool) => tool.name === name)!.description!;
+        expect(description("set_opening_balance")).toMatch(
+          /before replacing or removing/i,
+        );
+        expect(description("set_movement_matches")).toMatch(
+          /before removing or reducing/i,
+        );
+        expect(description("set_movement_matches")).toContain(
+          "do not assume there are none",
+        );
+        expect(description("record_transfer_from_line")).toContain(
+          "records:adjust",
+        );
+        expect(description("confirm_import")).toContain(
+          "external exchange-rate provider",
+        );
+        expect(description("confirm_import")).toContain("partial result");
+        expect(description("undo_settlement")).toContain(
+          "may still keep records locked",
+        );
+        for (const name of ["create_record", "record_payment"]) {
+          const tool = listed.find((tool) => tool.name === name)!;
+          expect(tool.inputSchema.properties).toHaveProperty("dryRun");
+          expect(tool.annotations?.readOnlyHint).toBe(false);
+        }
+        for (const name of ["record_payment", "create_reimbursement"])
+          expect(description(name)).toContain("does not send money");
+        for (const name of [
+          "issue_invoice",
+          "set_quotation_status",
+          "revise_quotation",
+          "convert_quotation_to_invoice",
+        ])
+          expect(description(name)).toMatch(/does not email/i);
+        // Legacy initialization and modern server/discover both expose instructions.
+        expect(client.getInstructions()).toContain(
+          "explicit user request authorizes routine",
+        );
+        expect(client.getInstructions()).toContain(
+          "effects, not a mandatory approval policy",
+        );
+        expect(client.getInstructions()).toContain(
+          "An existing approval covering that exact reviewed change remains valid",
+        );
+        expect(client.getInstructions()).toContain("saved: true");
+        const prompt = await client.getPrompt({
+          name: "review-record-descriptions",
+        });
+        expect(JSON.stringify(prompt.messages)).toContain(
+          "without another approval question for each row",
+        );
+        expect(JSON.stringify(prompt.messages)).toContain(
+          "apply only the approved rows",
+        );
+      });
+
       it("lists for a personal access token exactly what it was granted", async () => {
         const reads = await tools(
           await connect({ token: issueTestToken(db, 1, ["records.read"]) }),
@@ -397,6 +591,465 @@ for (const era of ["legacy", "modern"] as const) {
           Object.keys(TOOL_REQUIREMENTS).sort(),
         );
       });
+    });
+
+    describe("declared idempotence", () => {
+      it("repeating every declared idempotent write has no additional business effects", async () => {
+        const client = await connect({ token: writerToken });
+        const tested = new Set<string>();
+        const businessTables = [
+          schema.accounts,
+          schema.contacts,
+          schema.contactRoles,
+          schema.ledgerRecords,
+          schema.ledgerMovements,
+          schema.settlements,
+          schema.invoices,
+          schema.invoiceLines,
+          schema.quotations,
+          schema.quotationLines,
+          schema.importQueue,
+          schema.importItems,
+          schema.reconciliationAllocations,
+          schema.reimbursements,
+          schema.reimbursementEntries,
+        ];
+        // Credential usage and audit metadata are intentionally outside business-state idempotence.
+        const snapshot = () =>
+          businessTables.map((table) =>
+            sqlite
+              .query(`SELECT * FROM "${getTableName(table)}" ORDER BY rowid`)
+              .all(),
+          );
+        const applyAndRepeat = async (
+          name: string,
+          input: Record<string, unknown>,
+        ) => {
+          const first = data(await call(client, name, input));
+          const before = snapshot();
+          const repeated = await call(client, name, input);
+          if (repeated.isError)
+            expect(["CONFLICT", "REFUSED"]).toContain(errorOf(repeated).code);
+          expect(snapshot(), name).toEqual(before);
+          tested.add(name);
+          return first;
+        };
+        const record = data(
+          await call(client, "create_record", {
+            ...expenseArgs,
+            fromAccountId: bank,
+            toAccountId: software,
+          }),
+        );
+        await applyAndRepeat("update_record", {
+          recordId: record.record.id,
+          expectedVersion: record.version,
+          description: "Annual software",
+        });
+        const account = data(
+          await call(client, "list_accounts", {}),
+        ).accounts.find((a: { id: number }) => a.id === software);
+        await applyAndRepeat("update_account", {
+          accountId: software,
+          expectedVersion: account.version,
+          name: "Software licences",
+        });
+        const contact = data(
+          await call(client, "list_contacts", {}),
+        ).contacts.find((c: { id: number }) => c.id === supplier);
+        const changedContact = await applyAndRepeat("update_contact", {
+          contactId: supplier,
+          expectedVersion: contact.version,
+          legalName: "Supplier Sdn Bhd",
+          roles: [2],
+        });
+        // Replacing an already identical set of roles is also a business no-op.
+        await applyAndRepeat("update_contact", {
+          contactId: supplier,
+          expectedVersion: changedContact.version,
+          roles: [2],
+        });
+        const document = {
+          contactId: supplier,
+          issueDate: "2026-09-01",
+          lines: [{ description: "Consulting", quantity: 1, unitPrice: 100 }],
+        };
+        const invoice = data(await call(client, "create_invoice", document));
+        await applyAndRepeat("update_invoice", {
+          invoiceId: invoice.invoice.id,
+          expectedVersion: invoice.invoice.version,
+          notes: "Reviewed terms",
+        });
+        const quotation = data(
+          await call(client, "create_quotation", document),
+        );
+        const updatedQuotation = await applyAndRepeat("update_quotation", {
+          quotationId: quotation.quotation.id,
+          expectedVersion: quotation.quotation.version,
+          notes: "Reviewed offer",
+        });
+        await applyAndRepeat("set_quotation_status", {
+          quotationId: quotation.quotation.id,
+          expectedVersion: updatedQuotation.quotation.version,
+          status: "sent",
+        });
+        await applyAndRepeat("set_opening_balance", {
+          accountId: bank,
+          expectedVersion: "absent",
+          date: "2026-01-01",
+          amountMinor: 100000,
+        });
+        const jobId = "00000000-0000-4000-8000-0000000000aa";
+        db.insert(importQueue)
+          .values({
+            id: jobId,
+            createdBy: 1,
+            originalFilename: "group.pdf",
+            tempFilePath: "import/temp/group.pdf",
+            state: ImportState.Grouped,
+          })
+          .run();
+        db.insert(schema.importItems)
+          .values({
+            id: "item-one",
+            jobId,
+            position: 0,
+            sectionKey: "items",
+            state: ImportState.PendingReview,
+            itemName: "Software",
+            documentType: 1,
+            date: "2026-09-02",
+            amount: 12.5,
+            currency: "MYR",
+            exchangeRate: 1,
+            accountId: bank,
+            categoryAccountId: software,
+          })
+          .run();
+        const job = data(await call(client, "get_import_job", { jobId }));
+        await applyAndRepeat("update_import_item", {
+          jobId,
+          itemId: "item-one",
+          expectedVersion: job.items[0].version,
+          item_name: "Software licence",
+        });
+        const statementId = db
+          .insert(bankStatements)
+          .values({
+            originalFilename: "sept.pdf",
+            storedFilePath: "reconciliation/sept.pdf",
+            extractionState: StatementExtractionState.Ready,
+            uploadedBy: 1,
+            accountId: bank,
+          })
+          .returning()
+          .get()!.id;
+        const lineId = db
+          .insert(bankStatementLines)
+          .values({
+            statementId,
+            date: "2026-09-02",
+            amount: 12.5,
+            direction: StatementDirection.Out,
+          })
+          .returning()
+          .get()!.id;
+        const read = data(
+          await call(client, "get_bank_statement", { statementId }),
+        );
+        const movement = read.candidates.find(
+          (candidate: { recordId: number }) =>
+            candidate.recordId === record.record.id,
+        );
+        const matched = await applyAndRepeat("set_movement_matches", {
+          movementId: movement.movementId,
+          expectedVersion: movement.matchesVersion,
+          allocations: [{ lineId, amount: 12.5 }],
+        });
+        const cleared = await applyAndRepeat("set_movement_matches", {
+          movementId: movement.movementId,
+          expectedVersion: matched.version,
+          allocations: [],
+        });
+        await applyAndRepeat("set_movement_matches", {
+          movementId: movement.movementId,
+          expectedVersion: cleared.version,
+          allocations: [],
+        });
+        expect([...tested].sort()).toEqual([...IDEMPOTENT_WRITES].sort());
+      });
+    });
+
+    describe("historical corrections", () => {
+      const corrections = [
+        {
+          scope: "records:correct-date",
+          permission: "records.correctDate",
+          read: "get_record_date_correction",
+          write: "correct_record_date",
+        },
+        {
+          scope: "records:correct-reimbursement-amount",
+          permission: "records.correctReimbursementAmount",
+          read: "get_reimbursement_amount_correction",
+          write: "correct_reimbursement_amount",
+        },
+      ] as const;
+
+      for (const correction of corrections) {
+        it(`requires every scope and PAT permission for ${correction.write}`, async () => {
+          const scopes: OAuthScope[] = [
+            "records:read",
+            "records:write",
+            correction.scope,
+          ];
+          const permissions: LeafPermission[] = [
+            "records.read",
+            "records.update",
+            correction.permission,
+          ];
+          for (const missing of scopes) {
+            const auth = {
+              token: writerToken,
+              scopes: scopes.filter((scope) => scope !== missing),
+            };
+            const names = await tools(await connect(auth));
+            expect(names).not.toContain(correction.read);
+            expect(names).not.toContain(correction.write);
+            const response = await handleMcpRequest(
+              new Request(`${origin}/mcp`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: 1,
+                  method: "tools/call",
+                  params: {
+                    name: correction.write,
+                    arguments: { recordId: 1 },
+                  },
+                }),
+              }),
+              { db, store, storageRoot, locals: localsFor(auth) },
+              origin,
+            );
+            expect(response.status).toBe(403);
+            expect(response.headers.get("WWW-Authenticate")).toContain(
+              'error="insufficient_scope"',
+            );
+            expect(response.headers.get("WWW-Authenticate")).toContain(
+              correction.scope,
+            );
+          }
+          for (const missing of permissions) {
+            const token = issueTestToken(
+              db,
+              1,
+              permissions.filter((permission) => permission !== missing),
+            );
+            const client = await connect({ token });
+            expect(await tools(client)).not.toContain(correction.read);
+            expect(await tools(client)).not.toContain(correction.write);
+            await expect(
+              call(client, correction.write, { recordId: 1 }),
+            ).rejects.toThrow("not found");
+          }
+          const names = await tools(
+            await connect({ token: writerToken, scopes }),
+          );
+          expect(names).toContain(correction.read);
+          expect(names).toContain(correction.write);
+          expect(names).not.toContain(
+            corrections.find((c) => c.scope !== correction.scope)!.write,
+          );
+        });
+
+        it(`revokes ${correction.write} when its role or delegation changes`, async () => {
+          for (const table of [groupDelegations, groupGrants]) {
+            const client = await connect({ token: writerToken });
+            expect(await tools(client)).toContain(correction.write);
+            db.delete(table)
+              .where(eq(table.permission, correction.permission))
+              .run();
+            expect(await tools(client)).not.toContain(correction.read);
+            expect(await tools(client)).not.toContain(correction.write);
+            await expect(
+              call(client, correction.write, { recordId: 1 }),
+            ).rejects.toThrow("not found");
+            // Restore the rows for the independent role/ceiling check.
+            const groups = db.select().from(schema.groups).all();
+            db.insert(table)
+              .values(
+                groups
+                  .filter((g) => g.name !== "readers")
+                  .map((g) => ({
+                    groupId: g.id,
+                    permission: correction.permission,
+                  })),
+              )
+              .run();
+          }
+        });
+
+        it(`rechecks ${correction.write} at invocation on an existing server`, async () => {
+          const locals = localsFor({ token: writerToken });
+          const server = createServer({ db, store, storageRoot, locals });
+          const client = new Client({
+            name: "correction-recheck",
+            version: "1",
+          });
+          const [clientTransport, serverTransport] =
+            InMemoryTransport.createLinkedPair();
+          clients.push(client);
+          await server.connect(serverTransport);
+          await client.connect(clientTransport);
+          (locals.permissions as Set<string>).delete(correction.permission);
+          expect(
+            errorOf(await call(client, correction.read, { recordId: 1 })).code,
+          ).toBe("FORBIDDEN");
+          const input =
+            correction.scope === "records:correct-date"
+              ? { date: "2026-08-31", acknowledgePeriodChange: true }
+              : { amountMinor: 500, allocations: [] };
+          expect(
+            errorOf(
+              await call(client, correction.write, {
+                recordId: 1,
+                reason: "Correction checked against receipt",
+                expectedVersion: "stale",
+                ...input,
+              }),
+            ).code,
+          ).toBe("FORBIDDEN");
+          await server.close();
+        });
+      }
+
+      for (const via of ["pat", "oauth"] as const) {
+        it(`corrects dates and reimbursement amounts with audit attribution through ${via}`, async () => {
+          const client = await connect({
+            token: writerToken,
+            ...(via === "oauth" ? { scopes: ALL_WRITE } : {}),
+          });
+          const employee = db
+            .insert(contacts)
+            .values({ entityType: 2, legalName: "Employee" })
+            .returning()
+            .get()!.id;
+          const bill = data(
+            await call(client, "create_record", {
+              ...expenseArgs,
+              amount: 5.5,
+              fromAccountId: payable,
+              toAccountId: software,
+              contactId: supplier,
+            }),
+          );
+          const owed = bill.record.movements.find(
+            (m: { accountId: number }) => m.accountId === payable,
+          );
+          const reimbursement = data(
+            await call(client, "create_reimbursement", {
+              contactId: employee,
+              personallyPaid: true,
+              date: "2026-09-03",
+              description: "Employee reimbursement",
+              items: [{ owedMovementId: owed.id, amountMinor: 550 }],
+              cashMinor: 550,
+              paidFromAccountId: bank,
+            }),
+          );
+          const paymentId = reimbursement.payment.id;
+          const before = getRecord(db, bill.record.id)!;
+          const dateState = data(
+            await call(client, "get_record_date_correction", {
+              recordId: before.id,
+            }),
+          );
+          const dateInput = {
+            recordId: before.id,
+            date: "2026-08-31",
+            reason: "Corrected against original receipt",
+            expectedVersion: dateState.version,
+            acknowledgePeriodChange: true,
+          };
+          expect(
+            errorOf(
+              await call(client, "correct_record_date", {
+                ...dateInput,
+                acknowledgePeriodChange: false,
+              }),
+            ).code,
+          ).toBe("INVALID_INPUT");
+          const dated = data(
+            await call(client, "correct_record_date", dateInput),
+          );
+          expect(dated.record.date).toBe("2026-08-31");
+          expect(getRecord(db, before.id)!.movements).toEqual(before.movements);
+          expect(getRecord(db, paymentId)!.date).toBe("2026-09-03");
+          expect(
+            errorOf(await call(client, "correct_record_date", dateInput)).code,
+          ).toBe("CONFLICT");
+          const amountState = data(
+            await call(client, "get_reimbursement_amount_correction", {
+              recordId: paymentId,
+            }),
+          );
+          const amountInput = {
+            recordId: paymentId,
+            amountMinor: 500,
+            allocations: [{ owedMovementId: owed.id, amountMinor: 500 }],
+            reason: "Correct to actual bank transfer amount",
+            expectedVersion: amountState.version,
+          };
+          expect(
+            errorOf(
+              await call(client, "correct_reimbursement_amount", {
+                ...amountInput,
+                allocations: [{ owedMovementId: owed.id, amountMinor: 600 }],
+              }),
+            ).code,
+          ).toBe("INVALID_INPUT");
+          const corrected = data(
+            await call(client, "correct_reimbursement_amount", amountInput),
+          );
+          expect(corrected.record.mainCurrencyAmountMinor).toBe(500);
+          const finalState = data(
+            await call(client, "get_reimbursement_amount_correction", {
+              recordId: paymentId,
+            }),
+          );
+          expect(
+            finalState.expenses[0].availableMinor -
+              finalState.expenses[0].allocatedMinor,
+          ).toBe(50);
+          expect(finalState.availableCreditMinor).toBe(0);
+          expect(
+            errorOf(
+              await call(client, "correct_reimbursement_amount", amountInput),
+            ).code,
+          ).toBe("CONFLICT");
+          for (const name of [
+            "correct_record_date",
+            "correct_reimbursement_amount",
+          ]) {
+            const entries = db
+              .select()
+              .from(auditLog)
+              .all()
+              .filter((entry) => entry.operation === `mcp:${name}`);
+            expect(entries.length).toBeGreaterThan(0);
+            expect(
+              entries.every(
+                (entry) =>
+                  entry.via === via &&
+                  entry.userId === 1 &&
+                  entry.credentialId !== null,
+              ),
+            ).toBe(true);
+          }
+        });
+      }
     });
 
     describe("records", () => {

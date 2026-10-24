@@ -83,15 +83,30 @@ describe("effectivePermissions", () => {
     expect(can(locals, "users.manage")).toBe(false);
   });
 
-  it("never delegates settled date corrections, even from a superuser", () => {
-    const locals = localsFor([], {
-      superuser: true,
-      credential: ["records.correctDate"],
-    });
-    expect(can(locals, "records.correctDate")).toBe(false);
-    expect(can(localsFor([], { superuser: true }), "records.correctDate")).toBe(
-      true,
-    );
+  it("delegates only explicitly granted corrections within the ceiling", () => {
+    for (const permission of [
+      "records.correctDate",
+      "records.correctReimbursementAmount",
+    ] as const) {
+      expect(
+        can(
+          localsFor([], { superuser: true, credential: [permission] }),
+          permission,
+        ),
+      ).toBe(true);
+      expect(can(localsFor([permission], { credential: [] }), permission)).toBe(
+        false,
+      );
+      expect(
+        can(
+          localsFor([permission], { credential: [permission], delegable: [] }),
+          permission,
+        ),
+      ).toBe(false);
+      expect(can(localsFor([], { credential: [permission] }), permission)).toBe(
+        false,
+      );
+    }
   });
 });
 

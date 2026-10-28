@@ -425,7 +425,7 @@ export function patchRecord(
     return {
       ok: false,
       reason:
-        "A payment's contact is set when it is created and cannot be changed afterward. Delete it and record it again.",
+        "A payment's contact cannot be changed by an ordinary edit. For an outgoing payment, use Correct payee instead.",
     };
   }
 

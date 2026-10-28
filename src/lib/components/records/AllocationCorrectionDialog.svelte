@@ -11,9 +11,10 @@
 	import type { OutstandingItem } from '$lib/server/ledger/types.js';
 	let {
 		settlementId,
+		canReplace = true,
 		onclose,
 		oncorrected
-	}: { settlementId: number; onclose: () => void; oncorrected: () => void } = $props();
+	}: { settlementId: number; canReplace?: boolean; onclose: () => void; oncorrected: () => void } = $props();
 	let snapshot = $state<NonNullable<ReturnType<typeof paymentAllocationSnapshot>> | null>(null);
 	let selected = $state<number[]>([]);
 	let picked = $state<Record<number, string>>({});
@@ -197,7 +198,7 @@
 					</label>
 				{/each}
 				{#if !reviewing}
-					{#if replacementCandidates.length > 0}
+					{#if canReplace && replacementCandidates.length > 0}
 						<p class="mt-4 text-sm font-medium">Replacement allocations (optional)</p>
 						{#each replacementCandidates as item (item.movementId)}
 							<div class="mt-2 flex items-center gap-3 text-sm">

@@ -52,9 +52,11 @@ Some fields are read only in these cases:
   only.
   A payment settles the record, or a bank statement line matches it. A note above the form gives
   the reason. See [Locked records](../02-concepts/locked-records.md).
-- If the record is a payment, you can change only the description, the reference and the remark.
-  To correct a payment, click **Reverse allocation** on each allocation. Then delete the payment and
-  record a new one.
+- If the record is a payment, ordinary edits change only the description, the reference and the remark.
+  Use **Correct payee** for an incorrect outgoing-payment recipient, **Reverse allocation**
+  to reopen an expense, or **Correct reimbursement amount** for an eligible incorrectly
+  recorded reimbursement payment amount. These corrections retain their history;
+  reversing an allocation does not make its parent payment deletable.
 - If the record came from an invoice, change the invoice, not the record. The note above the form
   says "This record was created by issuing an invoice. Change it on the invoice instead." See
   [Invoices](../05-sales/invoices.md).

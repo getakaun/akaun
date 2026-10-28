@@ -42,7 +42,7 @@ import { setSetting, SETTING_KEYS } from "../settings.js";
 import { getRecord, integrityInputs, listRecords } from "../queries/ledger.js";
 import { checkIntegrity } from "../ledger/integrity.js";
 import { contactBalances } from "../queries/settlements.js";
-import { createRecord } from "./records.js";
+import { createRecord, deleteRecord } from "./records.js";
 import {
   correctReimbursementAmount,
   prepareReimbursementAmountCorrection,
@@ -799,6 +799,62 @@ describe("direct reimbursements", () => {
     expect(corrected.ok).toBe(true);
     expect(getRecord(db, bill.id)?.contactId).toBe(supplier);
     expect(getRecord(db, bill.id)?.outstandingMinor).toBe(55494);
+  });
+  it("allows allocation-only reversal without create or delete and refuses replacement or deletion", () => {
+    const bill = expense();
+    const reimbursed = createReimbursement(ctx, claim(bill));
+    if (!reimbursed.ok) throw new Error(reimbursed.reason);
+    const payment = reimbursed.value.payment!;
+    const payable = accountDefaultId(db, DefaultAccountPurpose.Payable)!;
+    const paymentMovementId = payment.movements.find(
+      (m) => m.accountId === payable,
+    )!.id;
+    ctx.locals = localsFor(["records.read", "records.correctAllocations"]);
+    const preview = preparePaymentCorrection(ctx, paymentMovementId);
+    if (!preview.ok) throw new Error(preview.reason);
+    const reversed = correctPaymentAllocations(ctx, {
+      paymentMovementId,
+      removeSettlementIds: [preview.value.allocations[0].id],
+      allocations: [],
+      reason: "Reopen the incorrectly recorded expense",
+      expectedVersion: preview.value.version,
+    });
+    expect(reversed.ok).toBe(true);
+    if (!reversed.ok) throw new Error(reversed.reason);
+    expect(deleteRecord(ctx, payment.id)).toMatchObject({
+      ok: false,
+      code: "FORBIDDEN",
+    });
+    expect(
+      correctPaymentAllocations(ctx, {
+        paymentMovementId,
+        removeSettlementIds: [],
+        allocations: [
+          {
+            owedMovementId: preview.value.allocations[0].owedMovementId,
+            amountMinor: 1,
+          },
+        ],
+        reason: "Attempt replacement without creation access",
+        expectedVersion: reversed.value.version,
+      }),
+    ).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    ctx.locals = localsFor([
+      "records.read",
+      "records.create",
+      "records.update",
+    ]);
+    const recipient = prepareRecipientCorrection(ctx, payment.id);
+    if (!recipient.ok) throw new Error(recipient.reason);
+    expect(
+      correctPaymentRecipient(ctx, {
+        recordId: payment.id,
+        contactId: supplier,
+        reason: "Attempt payee edit without correction access",
+        expectedVersion: recipient.value.version,
+      }),
+    ).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(getRecord(db, payment.id)?.contactId).toBe(person);
   });
   it("accepts the original manual two-account form without payment metadata", () => {
     const payable = accountDefaultId(db, DefaultAccountPurpose.Payable)!;

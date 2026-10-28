@@ -61,7 +61,12 @@ import type { OAuthScope } from "../oauth/config.js";
 import { LocalBlobStore } from "../storage/blob-store.js";
 import { handleMcpRequest } from "./http.js";
 import { createServer } from "./server.js";
-import { TOOL_REQUIREMENTS } from "./tool-requirements.js";
+import {
+  TOOL_REQUIREMENTS,
+  toolAccessOptions,
+  toolAllowed,
+} from "./tool-requirements.js";
+import { inspectRpc } from "./oauth-challenge.js";
 import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 
 // Like mcp.spec.ts, nothing here imports db/client.ts or starts the app: the
@@ -780,6 +785,383 @@ for (const era of ["legacy", "modern"] as const) {
       });
     });
 
+    describe("grouped correction access", () => {
+      const grouped: OAuthScope[] = [
+        "records:read",
+        "records:write",
+        "records:correction",
+      ];
+      const permissions: LeafPermission[] = [
+        "records.read",
+        "records.create",
+        "records.update",
+        "records.correctAllocations",
+        "records.correctPaymentRecipient",
+      ];
+
+      it("offers grouped corrections without deletion, adjustment or group reversal", async () => {
+        const client = await connect({ token: writerToken, scopes: grouped });
+        const names = await tools(client);
+        for (const name of [
+          "undo_settlement",
+          "correct_payment_allocations",
+          "correct_payment_recipient",
+          "correct_record_date",
+          "correct_reimbursement_amount",
+        ])
+          expect(names).toContain(name);
+        for (const name of ["delete_record", "reverse_reimbursement"])
+          expect(names).not.toContain(name);
+        const auth = localsFor({ token: writerToken, scopes: grouped });
+        expect(auth.permissions?.has("records.delete")).toBe(false);
+        expect(auth.permissions?.has("records.adjust")).toBe(false);
+        const resource = await client.readResource({ uri: "akaun://context" });
+        const resourceContent = resource.contents[0];
+        if (!("text" in resourceContent))
+          throw new Error("Expected JSON context");
+        const context = JSON.parse(resourceContent.text);
+        expect(context.recordCorrections.undo_settlement.available).toBe(true);
+        expect(
+          context.recordCorrections.correct_payment_recipient.available,
+        ).toBe(true);
+        const limited = await connect({
+          token: writerToken,
+          scopes: ["records:read", "records:write"],
+        });
+        const limitedResource = await limited.readResource({
+          uri: "akaun://context",
+        });
+        const limitedContent = limitedResource.contents[0];
+        if (!("text" in limitedContent))
+          throw new Error("Expected JSON context");
+        const unavailable = JSON.parse(limitedContent.text).recordCorrections
+          .correct_payment_recipient;
+        expect(unavailable.available).toBe(false);
+        expect(unavailable.alternatives[0].missingScopes).toEqual([
+          "records:correction",
+        ]);
+        const narrow = await tools(
+          await connect({
+            token: writerToken,
+            scopes: ["records:read", "records:write", "records:correct-date"],
+          }),
+        );
+        expect(narrow).toContain("correct_record_date");
+        expect(narrow).not.toContain("correct_reimbursement_amount");
+        expect(narrow).not.toContain("undo_settlement");
+        expect(narrow).not.toContain("correct_payment_recipient");
+      });
+
+      it("checks complete alternatives instead of mixing their scopes and permissions", () => {
+        const auth = localsFor({ token: writerToken, scopes: grouped });
+        auth.permissions = new Set([
+          "records.create",
+          "records.update",
+          "records.delete",
+        ]);
+        expect(
+          toolAllowed(auth, TOOL_REQUIREMENTS.correct_payment_recipient),
+        ).toBe(false);
+        expect(toolAllowed(auth, TOOL_REQUIREMENTS.undo_settlement)).toBe(
+          false,
+        );
+      });
+
+      it("bounds a grouped grant by each role leaf and delegation ceiling", async () => {
+        const cases = [
+          ["records.correctAllocations", "undo_settlement"],
+          ["records.correctPaymentRecipient", "correct_payment_recipient"],
+          ["records.correctDate", "correct_record_date"],
+          [
+            "records.correctReimbursementAmount",
+            "correct_reimbursement_amount",
+          ],
+        ] as const;
+        const client = await connect({ token: writerToken, scopes: grouped });
+        for (const [permission, name] of cases) {
+          db.delete(groupDelegations)
+            .where(eq(groupDelegations.permission, permission))
+            .run();
+          expect(await tools(client)).not.toContain(name);
+        }
+        // Having some other grouped permission is not enough to step up for a
+        // correction whose own role/delegation leaf is missing.
+        const inspection = await inspectRpc(
+          new Request(`${origin}/mcp`, {
+            method: "POST",
+            body: JSON.stringify({
+              method: "tools/call",
+              params: { name: "correct_payment_recipient" },
+            }),
+          }),
+          localsFor({
+            token: writerToken,
+            scopes: ["records:read", "records:write"],
+          }),
+        );
+        // Legacy delete access is still grantable, so only that route is offered.
+        expect(inspection.response?.headers.get("WWW-Authenticate")).toContain(
+          "records:delete",
+        );
+        expect(
+          inspection.response?.headers.get("WWW-Authenticate"),
+        ).not.toContain("records:correction");
+        db.delete(groupGrants)
+          .where(eq(groupGrants.permission, "records.correctDate"))
+          .run();
+        expect(await tools(client)).not.toContain("correct_record_date");
+      });
+
+      it("challenges for one grantable alternative and does not challenge an existing grouped grant", async () => {
+        const request = () =>
+          new Request(`${origin}/mcp`, {
+            method: "POST",
+            body: JSON.stringify({
+              method: "tools/call",
+              params: { name: "correct_payment_recipient" },
+            }),
+          });
+        const inspection = await inspectRpc(
+          request(),
+          localsFor({
+            token: writerToken,
+            scopes: ["records:read", "records:write"],
+          }),
+        );
+        const header = inspection.response?.headers.get("WWW-Authenticate");
+        expect(inspection.response?.status).toBe(403);
+        expect(header).toContain("records:correction");
+        expect(header).not.toContain("records:delete");
+        expect(
+          (
+            await inspectRpc(
+              request(),
+              localsFor({ token: writerToken, scopes: grouped }),
+            )
+          ).response,
+        ).toBeNull();
+        // With both authorization routes unavailable, no impossible consent loop.
+        for (const permission of [
+          "records.correctPaymentRecipient",
+          "records.delete",
+        ])
+          db.delete(groupDelegations)
+            .where(eq(groupDelegations.permission, permission))
+            .run();
+        expect(
+          (
+            await inspectRpc(
+              request(),
+              localsFor({
+                token: writerToken,
+                scopes: ["records:read", "records:write"],
+              }),
+            )
+          ).response,
+        ).toBeNull();
+      });
+
+      it("rechecks correction authorization when invoking a registered tool", async () => {
+        const auth = localsFor({ token: writerToken, scopes: grouped });
+        const server = createServer({ db, store, storageRoot, locals: auth });
+        const registered = (
+          server as unknown as {
+            _registeredTools: Record<
+              string,
+              { handler: (input: unknown, extra: unknown) => Promise<Result> }
+            >;
+          }
+        )._registeredTools;
+        expect(registered.correct_payment_recipient).toBeDefined();
+        auth.permissions = new Set(["records.create", "records.update"]);
+        expect(
+          errorOf(
+            await registered.correct_payment_recipient.handler(
+              {
+                recordId: 1,
+                contactId: supplier,
+                reason: "Reviewed payee correction",
+                expectedVersion: "stale",
+              },
+              {},
+            ),
+          ).code,
+        ).toBe("FORBIDDEN");
+        await server.close();
+      });
+
+      for (const via of ["pat", "oauth"] as const) {
+        for (const correctedMinor of [1000, 1500]) {
+          it(`reopens, edits, corrects payee and reapplies original credit to ${correctedMinor} cents through ${via} without deletion`, async () => {
+            const token = issueTestToken(db, 1, permissions);
+            const client = await connect({
+              token,
+              ...(via === "oauth" ? { scopes: grouped } : {}),
+            });
+            expect(await tools(client)).not.toContain("delete_record");
+            const correctPayee = db
+              .insert(contacts)
+              .values({ entityType: 2, legalName: "Correct employee" })
+              .returning()
+              .get()!.id;
+            const bill = data(
+              await call(client, "create_record", {
+                ...expenseArgs,
+                fromAccountId: payable,
+                toAccountId: software,
+                contactId: supplier,
+              }),
+            );
+            const owedId = bill.record.movements.find(
+              (m: { accountId: number }) => m.accountId === payable,
+            ).id;
+            const reimbursed = data(
+              await call(client, "create_reimbursement", {
+                contactId: supplier,
+                personallyPaid: true,
+                date: "2026-09-03",
+                description: "Imported reimbursement with wrong payee",
+                items: [{ owedMovementId: owedId, amountMinor: 1250 }],
+                cashMinor: 1250,
+                paidFromAccountId: bank,
+              }),
+            );
+            const paymentId = reimbursed.payment.id;
+            const paymentMovementId = reimbursed.payment.movements.find(
+              (m: { accountId: number }) => m.accountId === payable,
+            ).id;
+            const original = getRecord(db, paymentId)!;
+            const postings = original.movements.map(
+              ({ id, accountId, amountMinor }) => ({
+                id,
+                accountId,
+                amountMinor,
+              }),
+            );
+            const preview = data(
+              await call(client, "get_payment_allocations", {
+                paymentMovementId,
+              }),
+            );
+            const undo = {
+              settlementId: preview.allocations[0].id,
+              reason: "Reopen imported expense to correct its amount",
+              expectedVersion: preview.version,
+            };
+            data(await call(client, "undo_settlement", undo));
+            expect(
+              errorOf(await call(client, "undo_settlement", undo)).code,
+            ).toBe("NOT_FOUND");
+            expect(
+              errorOf(
+                await call(client, "correct_payment_allocations", {
+                  paymentMovementId,
+                  allocations: [{ owedMovementId: owedId, amountMinor: 1000 }],
+                  reason: "Reapply credit using a stale allocation preview",
+                  expectedVersion: preview.version,
+                }),
+              ).code,
+            ).toBe("CONFLICT");
+            expect(getRecord(db, bill.record.id)!.locked).toBe(false);
+            const fresh = data(
+              await call(client, "get_record", { recordId: bill.record.id }),
+            );
+            data(
+              await call(client, "update_record", {
+                recordId: bill.record.id,
+                expectedVersion: fresh.record.version,
+                amount: correctedMinor / 100,
+              }),
+            );
+            const recipient = data(
+              await call(client, "get_payment_recipient_correction", {
+                recordId: paymentId,
+              }),
+            );
+            data(
+              await call(client, "correct_payment_recipient", {
+                recordId: paymentId,
+                contactId: correctPayee,
+                reason: "Correct payee from the original bank evidence",
+                expectedVersion: recipient.version,
+              }),
+            );
+            const current = data(
+              await call(client, "get_payment_allocations", {
+                paymentMovementId,
+              }),
+            );
+            data(
+              await call(client, "correct_payment_allocations", {
+                paymentMovementId,
+                removeSettlementIds: [],
+                allocations: [
+                  {
+                    owedMovementId: owedId,
+                    amountMinor: Math.min(1250, correctedMinor),
+                  },
+                ],
+                reason: "Reapply original payment credit to corrected expense",
+                expectedVersion: current.version,
+              }),
+            );
+            const finalPayment = getRecord(db, paymentId)!;
+            const finalExpense = getRecord(db, bill.record.id)!;
+            expect(finalPayment.contactId).toBe(correctPayee);
+            expect(finalPayment.amountMinor).toBe(1250);
+            expect(finalPayment.date).toBe(original.date);
+            expect(finalPayment.recordNumber).toBe(original.recordNumber);
+            expect(
+              finalPayment.movements.map(({ id, accountId, amountMinor }) => ({
+                id,
+                accountId,
+                amountMinor,
+              })),
+            ).toEqual(postings);
+            expect(finalExpense.contactId).toBe(supplier);
+            expect(finalExpense.outstandingMinor).toBe(
+              Math.max(0, correctedMinor - 1250),
+            );
+            expect(finalPayment.outstandingMinor).toBe(
+              Math.max(0, 1250 - correctedMinor),
+            );
+            const history = data(
+              await call(client, "get_record", {
+                recordId: paymentId,
+                includeSettlements: true,
+              }),
+            );
+            expect(history.reversedSettlements).toHaveLength(1);
+            expect(history.reversedSettlements[0].reversalReason).toBe(
+              undo.reason,
+            );
+            expect(db.select().from(ledgerRecords).all()).toHaveLength(2);
+            expect(
+              db
+                .select()
+                .from(auditLog)
+                .all()
+                .filter(
+                  (entry) =>
+                    entry.operation === "mcp:correct_payment_recipient",
+                ).length,
+            ).toBeGreaterThan(0);
+            expect(
+              db
+                .select()
+                .from(auditLog)
+                .all()
+                .filter(
+                  (entry) =>
+                    entry.operation === "mcp:correct_payment_recipient",
+                )
+                .every((entry) => entry.via === via && entry.userId === 1),
+            ).toBe(true);
+          });
+        }
+      }
+    });
+
     describe("historical corrections", () => {
       const corrections = [
         {
@@ -925,11 +1307,21 @@ for (const era of ["legacy", "modern"] as const) {
         });
       }
 
-      for (const via of ["pat", "oauth"] as const) {
+      for (const via of ["pat", "oauth", "grouped-oauth"] as const) {
         it(`corrects dates and reimbursement amounts with audit attribution through ${via}`, async () => {
           const client = await connect({
             token: writerToken,
-            ...(via === "oauth" ? { scopes: ALL_WRITE } : {}),
+            ...(via === "oauth"
+              ? { scopes: ALL_WRITE }
+              : via === "grouped-oauth"
+                ? {
+                    scopes: [
+                      "records:read",
+                      "records:write",
+                      "records:correction",
+                    ] as OAuthScope[],
+                  }
+                : {}),
           });
           const employee = db
             .insert(contacts)
@@ -1042,7 +1434,7 @@ for (const era of ["legacy", "modern"] as const) {
             expect(
               entries.every(
                 (entry) =>
-                  entry.via === via &&
+                  entry.via === (via === "grouped-oauth" ? "oauth" : via) &&
                   entry.userId === 1 &&
                   entry.credentialId !== null,
               ),
@@ -2440,9 +2832,13 @@ describe("MCP writes (requirements table)", () => {
     for (const [name, requirement] of Object.entries(TOOL_REQUIREMENTS)) {
       if (requirement.writes)
         expect(requirement.scopes.length, name).toBeGreaterThan(0);
-      const covered = new Set(expandScopes(requirement.scopes));
-      for (const permission of requirement.permissions)
-        expect(covered.has(permission), `${name}: ${permission}`).toBe(true);
+      for (const option of toolAccessOptions(requirement)) {
+        if (requirement.writes)
+          expect(option.scopes.length, name).toBeGreaterThan(0);
+        const covered = new Set(expandScopes(option.scopes));
+        for (const permission of option.permissions)
+          expect(covered.has(permission), `${name}: ${permission}`).toBe(true);
+      }
     }
   });
   it("never offers a write on reports", () => {

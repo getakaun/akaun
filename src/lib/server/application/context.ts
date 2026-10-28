@@ -1,6 +1,6 @@
 import type { LedgerDb } from "../ledger/types.js";
 import type { BlobStore } from "../storage/blob-store.js";
-import { canAll } from "../permissions.js";
+import { canAll, canAny } from "../permissions.js";
 import type { LeafPermission } from "$lib/permissions/catalog.js";
 import { denied, type AppFailure } from "./result.js";
 
@@ -53,4 +53,13 @@ export function requirePermissions(
 ): AppFailure | null {
   if (!ctx.locals.user) return denied();
   return canAll(ctx.locals, permissions) ? null : denied();
+}
+
+/** Accept a new explicit correction ability or the unchanged legacy route. */
+export function requireAnyPermissions(
+  ctx: AppContext,
+  alternatives: readonly (readonly LeafPermission[])[],
+): AppFailure | null {
+  if (!ctx.locals.user) return denied();
+  return canAny(ctx.locals, alternatives) ? null : denied();
 }

@@ -16,9 +16,14 @@ import type { LeafPermission } from "$lib/permissions/catalog.js";
  * adjustment, an invoice naming a new customer). Those are asked by the
  * operation in `application/` when it knows, never here.
  */
-export type ToolRequirement = {
+export type ToolAccess = {
   scopes: OAuthScope[];
   permissions: LeafPermission[];
+};
+
+export type ToolRequirement = ToolAccess & {
+  /** Each alternative is a complete scope AND permission route. */
+  alternatives?: ToolAccess[];
   /** Changes the books. */
   writes: boolean;
 };
@@ -34,6 +39,15 @@ const write = (
   scopes: OAuthScope[],
   permissions: LeafPermission[],
 ): ToolRequirement => ({ scopes, permissions, writes: true });
+
+const either = (
+  primary: ToolRequirement,
+  ...alternatives: ToolRequirement[]
+): ToolRequirement => ({ ...primary, alternatives });
+
+export function toolAccessOptions(requirement: ToolRequirement): ToolAccess[] {
+  return [requirement, ...(requirement.alternatives ?? [])];
+}
 
 export const TOOL_REQUIREMENTS: Record<string, ToolRequirement> = {
   // Reads
@@ -67,37 +81,76 @@ export const TOOL_REQUIREMENTS: Record<string, ToolRequirement> = {
   ),
   get_reimbursement_candidates: read(["records:read"]),
   create_reimbursement: write(["records:write"], ["records.create"]),
-  get_record_date_correction: read(
-    ["records:read", "records:write", "records:correct-date"],
-    ["records.read", "records.update", "records.correctDate"],
+  get_record_date_correction: either(
+    read(
+      ["records:read", "records:write", "records:correct-date"],
+      ["records.read", "records.update", "records.correctDate"],
+    ),
+    read(
+      ["records:read", "records:write", "records:correction"],
+      ["records.read", "records.update", "records.correctDate"],
+    ),
   ),
-  correct_record_date: write(
-    ["records:read", "records:write", "records:correct-date"],
-    ["records.read", "records.update", "records.correctDate"],
+  correct_record_date: either(
+    write(
+      ["records:read", "records:write", "records:correct-date"],
+      ["records.read", "records.update", "records.correctDate"],
+    ),
+    write(
+      ["records:read", "records:write", "records:correction"],
+      ["records.read", "records.update", "records.correctDate"],
+    ),
   ),
-  get_reimbursement_amount_correction: read(
-    ["records:read", "records:write", "records:correct-reimbursement-amount"],
-    ["records.read", "records.update", "records.correctReimbursementAmount"],
+  get_reimbursement_amount_correction: either(
+    read(
+      ["records:read", "records:write", "records:correct-reimbursement-amount"],
+      ["records.read", "records.update", "records.correctReimbursementAmount"],
+    ),
+    read(
+      ["records:read", "records:write", "records:correction"],
+      ["records.read", "records.update", "records.correctReimbursementAmount"],
+    ),
   ),
-  correct_reimbursement_amount: write(
-    ["records:read", "records:write", "records:correct-reimbursement-amount"],
-    ["records.read", "records.update", "records.correctReimbursementAmount"],
+  correct_reimbursement_amount: either(
+    write(
+      ["records:read", "records:write", "records:correct-reimbursement-amount"],
+      ["records.read", "records.update", "records.correctReimbursementAmount"],
+    ),
+    write(
+      ["records:read", "records:write", "records:correction"],
+      ["records.read", "records.update", "records.correctReimbursementAmount"],
+    ),
   ),
   get_payment_recipient_correction: read(["records:read"]),
-  correct_payment_recipient: write(
-    ["records:write", "records:delete"],
-    ["records.create", "records.update", "records.delete"],
+  correct_payment_recipient: either(
+    write(
+      ["records:write", "records:correction"],
+      ["records.create", "records.update", "records.correctPaymentRecipient"],
+    ),
+    write(
+      ["records:write", "records:delete"],
+      ["records.create", "records.update", "records.delete"],
+    ),
   ),
   record_payment: write(["records:write"], ["records.create"]),
   update_record: write(["records:write"], ["records.update"]),
   delete_record: write(["records:delete"], ["records.delete"]),
   settle_payment: write(["records:write"], ["records.create"]),
   get_payment_allocations: read(["records:read"]),
-  correct_payment_allocations: write(
-    ["records:delete", "records:write"],
-    ["records.delete", "records.create"],
+  correct_payment_allocations: either(
+    write(
+      ["records:correction", "records:write"],
+      ["records.correctAllocations", "records.create"],
+    ),
+    write(
+      ["records:delete", "records:write"],
+      ["records.delete", "records.create"],
+    ),
   ),
-  undo_settlement: write(["records:delete"], ["records.delete"]),
+  undo_settlement: either(
+    write(["records:correction"], ["records.correctAllocations"]),
+    write(["records:delete"], ["records.delete"]),
+  ),
   attach_file: write(["records:write"], ["records.update"]),
 
   // Accounts and contacts
@@ -173,10 +226,10 @@ export function toolAllowed(
   requirement: ToolRequirement,
 ): boolean {
   if (!locals.user) return false;
-  if (
-    locals.oauth &&
-    !requirement.scopes.every((s) => locals.oauth!.scopes.includes(s))
-  )
-    return false;
-  return canAll(locals, requirement.permissions);
+  return toolAccessOptions(requirement).some(
+    (option) =>
+      (!locals.oauth ||
+        option.scopes.every((s) => locals.oauth!.scopes.includes(s))) &&
+      canAll(locals, option.permissions),
+  );
 }

@@ -95,6 +95,22 @@ export const PERMISSION_CATALOG = {
       create: create("records and payments"),
       update: update("records, settle payments and attach files"),
       delete: remove("records, settlements and attachments"),
+      correctAllocations: {
+        label: "Correct allocations",
+        description:
+          "Reverse or replace payment allocations with a reason and review, retaining their history. Reopens obligations and releases payment credit without deleting records.",
+        phrase: "correct payment allocations",
+        explicit: true,
+        sensitive: true,
+      },
+      correctPaymentRecipient: {
+        label: "Correct payment payees",
+        description:
+          "Correct the recipient of an outgoing payment with a reason and review, preserving the cash payment and original expense suppliers.",
+        phrase: "correct payment payees",
+        explicit: true,
+        sensitive: true,
+      },
       correctDate: {
         label: "Correct settled dates",
         description:

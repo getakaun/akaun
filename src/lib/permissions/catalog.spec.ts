@@ -43,6 +43,14 @@ describe("permission catalog", () => {
     );
     expect(leafMeta("records.correctReimbursementAmount").sensitive).toBe(true);
     expect(isDelegable("records.correctReimbursementAmount")).toBe(true);
+    for (const permission of [
+      "records.correctAllocations",
+      "records.correctPaymentRecipient",
+    ] as const) {
+      expect(expandPermission("records")).not.toContain(permission);
+      expect(leafMeta(permission).sensitive).toBe(true);
+      expect(isDelegable(permission)).toBe(true);
+    }
     expect(expandPermission("records.adjust")).toEqual(["records.adjust"]);
   });
 
@@ -103,6 +111,15 @@ describe("OAuth scopes", () => {
     ]);
     expect(scopeTier("records:correct-date")).toBe("correct");
     expect(scopeTier("records:correct-reimbursement-amount")).toBe("correct");
+    expect(scopeTier("records:correction")).toBe("correct");
+    expect(expandScopes(["records:correction"])).toEqual([
+      "records.correctAllocations",
+      "records.correctPaymentRecipient",
+      "records.correctDate",
+      "records.correctReimbursementAmount",
+    ]);
+    expect(ordinary).not.toContain("records.correctAllocations");
+    expect(ordinary).not.toContain("records.correctPaymentRecipient");
   });
 
   it("keeps every read scope to reads", () => {

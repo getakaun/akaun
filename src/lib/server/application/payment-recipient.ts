@@ -17,7 +17,12 @@ import { createSettlements, undoSettlement } from "../services/settlements.js";
 import { emitRecordUpdate, type DeferredEmits } from "../services/ledger.js";
 import { recordAudit } from "../audit.js";
 import { transferClaim } from "./reimbursements.js";
-import { actor, requirePermissions, type AppContext } from "./context.js";
+import {
+  actor,
+  requirePermissions,
+  requireAnyPermissions,
+  type AppContext,
+} from "./context.js";
 import { positiveId } from "./records.js";
 import { checkVersion, recordVersion } from "./version.js";
 import { fail, ok, Rollback } from "./result.js";
@@ -159,11 +164,12 @@ export function correctPaymentRecipient(
   raw: z.output<z.ZodObject<typeof recipientCorrectionShape>>,
   deferredEmits?: DeferredEmits,
 ) {
-  const denied = requirePermissions(ctx, [
-    "records.create",
-    "records.update",
-    "records.delete",
-  ]);
+  const denied =
+    requirePermissions(ctx, ["records.create", "records.update"]) ??
+    requireAnyPermissions(ctx, [
+      ["records.correctPaymentRecipient"],
+      ["records.delete"],
+    ]);
   if (denied) return denied;
   const parsed = z.object(recipientCorrectionShape).strict().safeParse(raw);
   if (!parsed.success)

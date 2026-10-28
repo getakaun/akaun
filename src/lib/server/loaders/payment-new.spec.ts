@@ -50,6 +50,10 @@ vi.mock("$lib/server/permissions.js", async () => {
       allow(...legacyPairOf(permission)),
     canAll: (_locals: unknown, permissions: string[]) =>
       permissions.every((permission) => allow(...legacyPairOf(permission))),
+    canAny: (_locals: unknown, alternatives: string[][]) =>
+      alternatives.some((permissions) =>
+        permissions.every((permission) => allow(...legacyPairOf(permission))),
+      ),
   };
 });
 

@@ -961,6 +961,44 @@ for (const era of ["legacy", "modern"] as const) {
         ).toBeNull();
       });
 
+      for (const blockedBy of ["role", "ceiling"] as const) {
+        it(`steps up to a grantable legacy route when the grouped permission is blocked by ${blockedBy}`, async () => {
+          const table = blockedBy === "role" ? groupGrants : groupDelegations;
+          db.delete(table)
+            .where(eq(table.permission, "records.correctPaymentRecipient"))
+            .run();
+          const auth = localsFor({ token: writerToken, scopes: grouped });
+          // The grouped scope is valid for another correction, but cannot
+          // authorize this payee operation through the user's role/ceiling.
+          expect(auth.permissions?.has("records.correctDate")).toBe(true);
+          expect(
+            toolAllowed(auth, TOOL_REQUIREMENTS.correct_payment_recipient),
+          ).toBe(false);
+          const inspection = await inspectRpc(
+            new Request(`${origin}/mcp`, {
+              method: "POST",
+              body: JSON.stringify({
+                method: "tools/call",
+                params: { name: "correct_payment_recipient" },
+              }),
+            }),
+            auth,
+          );
+          expect(inspection.response?.status).toBe(403);
+          expect(
+            inspection.response?.headers.get("WWW-Authenticate"),
+          ).toContain('scope="records:write records:delete"');
+          expect(
+            inspection.response?.headers.get("WWW-Authenticate"),
+          ).not.toContain("records:correction");
+          const steppedUp = await connect({
+            token: writerToken,
+            scopes: [...grouped, "records:delete"],
+          });
+          expect(await tools(steppedUp)).toContain("correct_payment_recipient");
+        });
+      }
+
       it("rechecks correction authorization when invoking a registered tool", async () => {
         const auth = localsFor({ token: writerToken, scopes: grouped });
         const server = createServer({ db, store, storageRoot, locals: auth });

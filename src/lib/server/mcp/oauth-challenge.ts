@@ -1,5 +1,9 @@
 import type { OAuthScope } from "../oauth/config.js";
-import { TOOL_REQUIREMENTS, toolAccessOptions } from "./tool-requirements.js";
+import {
+  TOOL_REQUIREMENTS,
+  toolAccessOptions,
+  toolAllowed,
+} from "./tool-requirements.js";
 import { allowedScopes } from "../oauth/scopes.js";
 import { MAX_ATTACHMENT_FILE_BYTES } from "../application/attachments.js";
 
@@ -90,13 +94,10 @@ export async function inspectRpc(
     const requirement = TOOL_REQUIREMENTS[call.params.name];
     if (requirement) {
       const options = toolAccessOptions(requirement);
-      // A satisfied scope route must not trigger consent for another route.
-      // RBAC is still enforced at discovery and invocation.
-      if (
-        options.some((option) =>
-          option.scopes.every((s) => locals.oauth!.scopes.includes(s)),
-        )
-      )
+      // Only a complete scope-and-permission route suppresses step-up. A token
+      // can hold a grouped scope for another permission while this operation
+      // still needs a grantable alternative (such as legacy delete access).
+      if (toolAllowed(locals, requirement))
         return { response: null, maxRequestBodySize };
       const grantable = locals.role ? allowedScopes(locals.role) : [];
       const candidates = options.filter(

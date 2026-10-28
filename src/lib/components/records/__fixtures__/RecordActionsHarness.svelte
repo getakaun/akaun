@@ -1,16 +1,16 @@
 <script lang="ts">
 	import RecordActions from '../RecordActions.svelte';
-	import RecipientCorrectionDialog from '../RecipientCorrectionDialog.svelte';
+	import ContactCorrectionDialog from '../ContactCorrectionDialog.svelte';
 	import DateCorrectionDialog from '../DateCorrectionDialog.svelte';
 	import ReimbursementAmountCorrectionDialog from '../ReimbursementAmountCorrectionDialog.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 
-	let action = $state<'payee' | 'date' | 'amount' | 'delete' | null>(null);
+	let action = $state<'contact' | 'date' | 'amount' | 'delete' | null>(null);
 	let deleting = $state(false);
 </script>
 
 <RecordActions
-	canCorrectPayee
+	canCorrectContact
 	canCorrectDate
 	canCorrectAmount
 	canDelete
@@ -20,8 +20,8 @@
 		else action = selected;
 	}}
 />
-{#if action === 'payee'}
-	<RecipientCorrectionDialog
+{#if action === 'contact'}
+	<ContactCorrectionDialog
 		recordId={219}
 		contacts={[
 			{ id: 90, legalName: 'admin' },

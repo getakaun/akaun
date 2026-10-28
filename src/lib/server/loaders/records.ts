@@ -248,6 +248,7 @@ function recordFormOptions(
     perms: {
       add: can(locals, "records.create"),
       change: can(locals, "records.update"),
+      correctContact: can(locals, "records.correctContact"),
       correctDate:
         !locals.credential &&
         !locals.oauth &&

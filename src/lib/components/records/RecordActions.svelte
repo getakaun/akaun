@@ -11,7 +11,7 @@
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 
 	let {
-		canCorrectPayee = false,
+		canCorrectContact = false,
 		canCorrectDate = false,
 		canCorrectAmount = false,
 		amountBlockedReason = null,
@@ -22,7 +22,7 @@
 		dialogOpen = false,
 		onaction
 	}: {
-		canCorrectPayee?: boolean;
+		canCorrectContact?: boolean;
 		canCorrectDate?: boolean;
 		canCorrectAmount?: boolean;
 		amountBlockedReason?: string | null;
@@ -31,17 +31,17 @@
 		dirty?: boolean;
 		saving?: boolean;
 		dialogOpen?: boolean;
-		onaction: (action: 'payee' | 'date' | 'amount' | 'delete') => void;
+		onaction: (action: 'contact' | 'date' | 'amount' | 'delete') => void;
 	} = $props();
 
 	let open = $state(false);
 	let trigger = $state<HTMLButtonElement | null>(null);
-	let pendingAction: 'payee' | 'date' | 'amount' | 'delete' | null = null;
+	let pendingAction: 'contact' | 'date' | 'amount' | 'delete' | null = null;
 	// Keep the closing menu from stealing focus from the dialog it opens.
 	let handingOff = false;
 	let hadDialog = false;
 
-	function selectAction(action: 'payee' | 'date' | 'amount' | 'delete') {
+	function selectAction(action: 'contact' | 'date' | 'amount' | 'delete') {
 		pendingAction = action;
 		handingOff = true;
 		open = false;
@@ -63,7 +63,7 @@
 	});
 </script>
 
-{#if canCorrectPayee || canCorrectDate || canCorrectAmount || canDelete}
+{#if canCorrectContact || canCorrectDate || canCorrectAmount || canDelete}
 	<DropdownMenu.Root
 		bind:open
 		onOpenChange={(isOpen) => {
@@ -103,12 +103,12 @@
 						{amountBlockedReason}
 					</p>{/if}
 			{/if}
-			{#if canCorrectPayee}
+			{#if canCorrectContact}
 				<DropdownMenu.Item
 					disabled={dirty || saving}
-					onSelect={() => selectAction('payee')}
+					onSelect={() => selectAction('contact')}
 				>
-					<UserRoundPen aria-hidden="true" /> Correct payee…
+					<UserRoundPen aria-hidden="true" /> Correct contact…
 				</DropdownMenu.Item>
 			{/if}
 			{#if canCorrectDate}
@@ -119,13 +119,13 @@
 					<CalendarDays aria-hidden="true" /> Correct date…
 				</DropdownMenu.Item>
 			{/if}
-			{#if dirty && (canCorrectPayee || canCorrectDate || canCorrectAmount)}
+			{#if dirty && (canCorrectContact || canCorrectDate || canCorrectAmount)}
 				<p class="text-muted-foreground px-2 py-1.5 text-xs">
 					Save or discard your changes before correcting this record.
 				</p>
 			{/if}
 			{#if canDelete}
-				{#if canCorrectPayee || canCorrectDate || canCorrectAmount}<DropdownMenu.Separator
+				{#if canCorrectContact || canCorrectDate || canCorrectAmount}<DropdownMenu.Separator
 					/>{/if}
 				<DropdownMenu.Item
 					variant="destructive"

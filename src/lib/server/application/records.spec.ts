@@ -1,3 +1,8 @@
+import {
+  correctExpenseContact,
+  prepareExpenseContactCorrection,
+} from "./expense-contact-correction.js";
+import { ensureReimbursementsPayableAccount } from "../services/account-defaults.js";
 import { createSettlements } from "../services/settlements.js";
 import { repairPaymentRecipients } from "./repair-payment-recipients.js";
 import {
@@ -2066,5 +2071,309 @@ describe("single-recipient reimbursements", () => {
         settlements: [],
       }).ok,
     ).toBe(false);
+  });
+});
+
+describe("controlled expense contact correction", () => {
+  function contact(name = "Correct supplier") {
+    return db
+      .insert(contacts)
+      .values({ entityType: 2, legalName: name })
+      .returning()
+      .get().id;
+  }
+  function bill(personal = false, company = false) {
+    if (personal) {
+      const configured = ensureReimbursementsPayableAccount(db, userId);
+      if (!configured.ok) throw new Error(configured.reason);
+    }
+    const result = createRecord(ctx(), {
+      ...base,
+      kind: "expense",
+      categoryAccountId: fuel,
+      paidFromAccountId: company ? bank : null,
+      contactId: supplier,
+      supplierContactId: supplier,
+      expensePaymentSource: personal
+        ? "personal"
+        : company
+          ? "company"
+          : "unpaid",
+    });
+    if (!result.ok) throw new Error(result.reason);
+    return result.value.record;
+  }
+  function prepared(id: number) {
+    const result = prepareExpenseContactCorrection(ctx(), id);
+    if (!result.ok) throw new Error(result.reason);
+    return result.value;
+  }
+  function request(
+    id: number,
+    contactId: number,
+    field: "supplier" | "paidBy" = "supplier",
+  ) {
+    return {
+      field,
+      contactId,
+      reason: "Mislabeled contact on original receipt",
+      expectedVersion: prepared(id).version,
+    };
+  }
+  function pay(record: ReturnType<typeof bill>, amount = 20, payee = supplier) {
+    const owed = record.movements.find((m) => m.amountMinor < 0)!;
+    const result = createRecord(ctx(), {
+      ...base,
+      kind: "payment",
+      direction: "we-pay",
+      paidFromAccountId: bank,
+      settlementAccountId: owed.accountId,
+      amount,
+      contactId: payee,
+      settlements: [{ owedMovementId: owed.id, amountMinor: amount * 100 }],
+    });
+    if (!result.ok) throw new Error(result.reason);
+    return result.value.record;
+  }
+
+  it.each([20, 50])(
+    "preserves payment history and moves only the remaining balance for %s paid",
+    (amount) => {
+      const expense = bill();
+      const payment = pay(expense, amount);
+      const before = getRecord(db, expense.id)!;
+      const allocations = db.select().from(settlements).all();
+      const movements = db.select().from(ledgerMovements).all();
+      const totals = accountTotalsUpTo(db, "2099-12-31");
+      const next = contact();
+      const result = correctExpenseContact(
+        ctx(),
+        expense.id,
+        request(expense.id, next),
+      );
+      expect(result.ok).toBe(true);
+      const after = getRecord(db, expense.id)!;
+      expect(after).toMatchObject({
+        contactId: next,
+        supplierContactId: next,
+        paid: before.paid,
+        outstandingMinor: before.outstandingMinor,
+        date: before.date,
+        amount: before.amount,
+      });
+      expect(db.select().from(ledgerMovements).all()).toEqual(movements);
+      expect(db.select().from(settlements).all()).toEqual(allocations);
+      expect(getRecord(db, payment.id)).toEqual(payment);
+      expect(accountTotalsUpTo(db, "2099-12-31")).toEqual(totals);
+      expect(contactBalances(db, "we-owe", supplier)).toEqual([]);
+      expect(
+        contactBalances(db, "we-owe", next).reduce(
+          (sum, c) => sum + c.outstandingMinor,
+          0,
+        ),
+      ).toBe(5000 - amount * 100);
+      const audit = db.select().from(auditLog).all().at(-1)!;
+      expect(audit.changes).toContain("contactCorrectionReason");
+    },
+  );
+
+  it("corrects a personally paid supplier without changing reimbursement ownership", () => {
+    const configured = ensureReimbursementsPayableAccount(db, userId);
+    if (!configured.ok) throw new Error(configured.reason);
+    const expense = bill(true);
+    pay(expense);
+    const before = getRecord(db, expense.id)!;
+    const allocations = db.select().from(settlements).all();
+    const next = contact();
+    expect(
+      correctExpenseContact(ctx(), expense.id, request(expense.id, next)).ok,
+    ).toBe(true);
+    expect(getRecord(db, expense.id)).toMatchObject({
+      contactId: supplier,
+      supplierContactId: next,
+      outstandingMinor: before.outstandingMinor,
+    });
+    expect(db.select().from(settlements).all()).toEqual(allocations);
+    expect(
+      correctExpenseContact(
+        ctx(),
+        expense.id,
+        request(expense.id, next, "paidBy"),
+      ),
+    ).toMatchObject({ ok: false, code: "REFUSED" });
+    expect(getRecord(db, expense.id)!.contactId).toBe(supplier);
+  });
+
+  it("corrects an unallocated personal payer without rebuilding movements", () => {
+    const expense = bill(true);
+    const next = contact("Correct person");
+    expect(
+      correctExpenseContact(
+        ctx(),
+        expense.id,
+        request(expense.id, next, "paidBy"),
+      ).ok,
+    ).toBe(true);
+    const after = getRecord(db, expense.id)!;
+    expect(after.contactId).toBe(next);
+    expect(after.supplierContactId).toBe(supplier);
+    expect(after.movements).toEqual(expense.movements);
+  });
+
+  it("requires an explicit permission for preview and write; ordinary patches cannot bypass it", () => {
+    const expense = bill();
+    pay(expense);
+    const next = contact();
+    const input = request(expense.id, next);
+    for (const denied of [
+      "records.correctContact",
+      "records.read",
+      "records.update",
+    ]) {
+      expect(
+        prepareExpenseContactCorrection(ctx([denied]), expense.id),
+      ).toMatchObject({ code: "FORBIDDEN" });
+      expect(
+        correctExpenseContact(ctx([denied]), expense.id, input),
+      ).toMatchObject({ code: "FORBIDDEN" });
+    }
+    expect(updateRecord(ctx(), expense.id, { contactId: next })).toMatchObject({
+      code: "REFUSED",
+    });
+    expect(
+      updateRecord(ctx(), expense.id, { supplierContactId: next }),
+    ).toMatchObject({ code: "REFUSED" });
+    expect(getRecord(db, expense.id)!.contactId).toBe(supplier);
+  });
+
+  it("detects allocation changes even when the record version is unchanged", () => {
+    const expense = bill();
+    const next = contact();
+    const input = request(expense.id, next);
+    const version = recordVersion(db, expense.id);
+    pay(expense);
+    expect(recordVersion(db, expense.id)).toBe(version);
+    const audit = db.select().from(auditLog).all();
+    expect(correctExpenseContact(ctx(), expense.id, input)).toMatchObject({
+      code: "CONFLICT",
+    });
+    expect(getRecord(db, expense.id)!.contactId).toBe(supplier);
+    expect(db.select().from(auditLog).all()).toEqual(audit);
+  });
+
+  it.each([
+    { reason: "short" },
+    { expectedVersion: "" },
+    { contactId: null },
+    { contactId: 0 },
+    { amount: 10 },
+    { field: "contactId" },
+  ])("rejects invalid inputs without writing: %j", (patch) => {
+    const expense = bill();
+    const input = { ...request(expense.id, contact()), ...patch };
+    const audit = db.select().from(auditLog).all();
+    expect(correctExpenseContact(ctx(), expense.id, input)).toMatchObject({
+      code: "INVALID_INPUT",
+    });
+    expect(db.select().from(auditLog).all()).toEqual(audit);
+  });
+
+  it("rejects unchanged and missing contacts and non-expense records", () => {
+    const expense = bill();
+    expect(
+      correctExpenseContact(ctx(), expense.id, request(expense.id, supplier)),
+    ).toMatchObject({ code: "INVALID_INPUT" });
+    expect(
+      correctExpenseContact(ctx(), expense.id, request(expense.id, 999999)),
+    ).toMatchObject({ code: "REFUSED" });
+    const payment = pay(expense);
+    expect(prepareExpenseContactCorrection(ctx(), payment.id)).toMatchObject({
+      code: "REFUSED",
+    });
+  });
+
+  it("preserves a company-paid expense bank match and rejects ordinary contact edits", () => {
+    const expense = bill(false, true);
+    const statement = db
+      .insert(schema.bankStatements)
+      .values({
+        originalFilename: "fixture.pdf",
+        storedFilePath: "fixture.pdf",
+        accountId: bank,
+      })
+      .returning()
+      .get();
+    const line = db
+      .insert(schema.bankStatementLines)
+      .values({
+        statementId: statement.id,
+        date: base.date,
+        amount: 50,
+        direction: StatementDirection.Out,
+      })
+      .returning()
+      .get();
+    db.insert(schema.reconciliationAllocations)
+      .values({
+        lineId: line.id,
+        movementId: expense.movements.find((m) => m.accountId === bank)!.id,
+        amount: 50,
+        itemAmountSnapshot: 50,
+      })
+      .run();
+    const matches = db.select().from(schema.reconciliationAllocations).all();
+    const next = contact();
+    expect(updateRecord(ctx(), expense.id, { contactId: next })).toMatchObject({
+      code: "REFUSED",
+    });
+    expect(
+      correctExpenseContact(ctx(), expense.id, request(expense.id, next)).ok,
+    ).toBe(true);
+    expect(db.select().from(schema.reconciliationAllocations).all()).toEqual(
+      matches,
+    );
+    const after = getRecord(db, expense.id)!;
+    expect(after.reconciled).toBe(true);
+    expect(after.movements).toEqual(expense.movements);
+    expect(after.supplierContactId).toBe(next);
+  });
+
+  it("rolls back the contact if auditing fails", () => {
+    const expense = bill();
+    pay(expense);
+    const input = request(expense.id, contact());
+    const before = getRecord(db, expense.id)!;
+    sqlite.exec(
+      "CREATE TRIGGER reject_contact_audit BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'audit failed'); END",
+    );
+    expect(() => correctExpenseContact(ctx(), expense.id, input)).toThrow(
+      "audit failed",
+    );
+    expect(getRecord(db, expense.id)).toEqual(before);
+  });
+
+  it("blocks ownership changes linked to legacy reimbursement transfers", () => {
+    const expense = bill();
+    const owed = expense.movements.find((m) => m.accountId === payable)!;
+    const person = contact("Employee");
+    const claim = createReimbursement(ctx(), {
+      contactId: person,
+      date: base.date,
+      description: "Claim",
+      paidFromAccountId: bank,
+      cashMinor: 2000,
+      personallyPaid: true,
+      reference: "",
+      remark: "",
+      credits: [],
+      items: [{ owedMovementId: owed.id, amountMinor: 2000 }],
+    });
+    if (!claim.ok) throw new Error(claim.reason);
+    expect(prepared(expense.id).fields[0].blockedReason).toMatch(
+      /linked reimbursement/,
+    );
+    expect(
+      correctExpenseContact(ctx(), expense.id, request(expense.id, contact())),
+    ).toMatchObject({ code: "REFUSED" });
   });
 });

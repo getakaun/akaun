@@ -95,6 +95,16 @@ export const PERMISSION_CATALOG = {
       create: create("records and payments"),
       update: update("records, settle payments and attach files"),
       delete: remove("records, settlements and attachments"),
+      correctContact: {
+        label: "Correct expense contacts",
+        description:
+          "Correct an expense supplier or personal payer with a reason and review. Can move outstanding amounts between contacts.",
+        phrase: "correct expense contacts",
+        explicit: true,
+        sensitive: true,
+        // Available to explicitly granted sessions/PATs. No OAuth scope or MCP
+        // tool exposes this new operation; existing credentials gain nothing.
+      },
       correctDate: {
         label: "Correct settled dates",
         description:

@@ -17,6 +17,11 @@ import type { LeafPermission } from "$lib/permissions/catalog.js";
 import { WRITE_RESOURCES } from "../oauth/config.js";
 import { MAX_ATTACH_FILE_BYTES } from "./oauth-challenge.js";
 import { requireView, type McpContext } from "./common.js";
+import {
+  TOOL_REQUIREMENTS,
+  toolAccessOptions,
+  toolAllowed,
+} from "./tool-requirements.js";
 
 /** A fresh server per HTTP request; never stores one caller in global state. */
 export function createServer(context: McpContext) {
@@ -125,6 +130,37 @@ export function createServer(context: McpContext) {
                   ).some((leaf) => can(context.locals, leaf as LeafPermission)),
                 },
               ]),
+            ),
+            recordCorrections: Object.fromEntries(
+              [
+                "undo_settlement",
+                "correct_payment_allocations",
+                "correct_payment_recipient",
+                "correct_record_date",
+                "correct_reimbursement_amount",
+              ].map((name) => {
+                const requirement = TOOL_REQUIREMENTS[name];
+                return [
+                  name,
+                  {
+                    available: toolAllowed(context.locals, requirement),
+                    alternatives: toolAccessOptions(requirement).map(
+                      (option) => ({
+                        requiredScopes: option.scopes,
+                        missingScopes: context.locals.oauth
+                          ? option.scopes.filter(
+                              (scope) =>
+                                !context.locals.oauth!.scopes.includes(scope),
+                            )
+                          : [],
+                        missingPermissions: option.permissions.filter(
+                          (permission) => !can(context.locals, permission),
+                        ),
+                      }),
+                    ),
+                  },
+                ];
+              }),
             ),
             writes:
               "Saved immediately and audited under the signed-in user. Follow the tool-specific version and reviewed-confirmation instructions; annotations describe effects and do not enforce approval.",

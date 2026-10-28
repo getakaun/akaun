@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import { can } from "$lib/server/permissions.js";
+import { can, canAny } from "$lib/server/permissions.js";
 import { badRequest, forbidden, notFound } from "$lib/server/api-response.js";
 import { getSettlement } from "$lib/server/queries/settlements.js";
 import {
@@ -21,7 +21,8 @@ export const GET: RequestHandler = ({ locals, params }) => {
 };
 
 export const DELETE: RequestHandler = async ({ locals, params, request }) => {
-  if (!can(locals, "records.delete")) return forbidden();
+  if (!canAny(locals, [["records.correctAllocations"], ["records.delete"]]))
+    return forbidden();
   const row = getSettlement(db, Number(params.id));
   if (!row) return notFound("That allocation no longer exists.");
   const parsed = z

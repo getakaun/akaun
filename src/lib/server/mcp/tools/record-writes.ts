@@ -288,7 +288,7 @@ export function registerRecordWrites(server: McpServer, context: McpContext) {
     server,
     context,
     "settle_payment",
-    "Apply an existing payment to open receivable or payable items. `paymentMovementId` is the payment's movement on Accounts Receivable or Accounts Payable (see get_record movements); each allocation names an `owedMovementId` from list_outstanding and the minor amount. Both must be the same contact and control account, in opposite directions. Adds allocations without replacing existing ones; a repeated call may add another allocation, so inspect current allocations before retrying.",
+    "Apply an existing payment to open receivable or payable items. `paymentMovementId` is the payment's control-account movement (see get_record movements); each allocation names an `owedMovementId` from list_outstanding and the minor amount. Both must be on the same control account in opposite directions. Accounts Payable reimbursements can cover expenses across suppliers while retaining the payment's actual payee; other named payments require the same contact. Adds allocations without replacing existing ones; a repeated call may add another allocation, so inspect current allocations before retrying.",
     settleShape,
     (input) => settlePayment(context, input),
     {

@@ -60,7 +60,8 @@ const SUPERUSER_ACCESS: RoleAccess = {
 
 /** A superuser-only leaf (`users.manage`) never comes from a grant. */
 function grantable(leaves: Set<LeafPermission>): Set<LeafPermission> {
-  for (const leaf of leaves) if (leafMeta(leaf).superuserOnly) leaves.delete(leaf);
+  for (const leaf of leaves)
+    if (leafMeta(leaf).superuserOnly) leaves.delete(leaf);
   return leaves;
 }
 
@@ -155,4 +156,12 @@ export function canAll(
   permissions: readonly LeafPermission[],
 ): boolean {
   return permissions.every((permission) => can(locals, permission));
+}
+
+/** One complete authorization route, never a mixture of partial routes. */
+export function canAny(
+  locals: App.Locals,
+  alternatives: readonly (readonly LeafPermission[])[],
+): boolean {
+  return alternatives.some((permissions) => canAll(locals, permissions));
 }

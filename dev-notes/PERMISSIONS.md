@@ -109,6 +109,22 @@ The screens (New token, a group's grants and ceiling, a user's extra grants) edi
 
 Scopes stay coarse on the wire (`<area>:read|write|delete`, `$lib/permissions/oauth-scopes.ts`). This keeps scope strings stable for clients and existing grants, and the consent page short. On every request `expandScopes` turns them into catalog leaves (`SCOPE_PERMISSIONS`), and those are intersected like a token's permissions. There are no scopes for dashboard, settings or users: an OAuth token's audience is `/mcp` only.
 
+`records:correction` is an opt-in, fixed allowlist of `records.correctAllocations`,
+`records.correctPaymentRecipient`, `records.correctDate` and
+`records.correctReimbursementAmount`. All four leaves are explicit and sensitive;
+ordinary root/Full grants and default delegation ceilings do not acquire them.
+The narrow date and reimbursement-amount scopes remain supported. Read/write
+co-requirements still apply. Neither the new scope nor these leaves grants
+permanent deletion or arbitrary adjustments.
+
+Allocation and payee operations accept the new explicit leaves or their original
+delete-based permission route. This preserves existing session, PAT and OAuth
+behavior without rewriting any grants or running a data migration. MCP requirements
+model complete alternatives (scopes AND permissions), shared by discovery,
+invocation and grantable step-up selection. Existing grants do not gain new
+corrections. Reimbursement-group reversal remains on its original create/delete
+route and is outside the grouped scope.
+
 - **Advertised scopes.** Protected-resource metadata advertises **reads only** in `scopes_supported`, the minimal set the MCP spec recommends. Write and delete scopes come by step-up: a 403 `insufficient_scope` naming them. The challenge is sent only when the user could actually grant those scopes (`allowedScopes(role)`), so a client never loops through consent it cannot complete.
 - **Consent page.** It offers only scopes whose expansion intersects the user's delegable set. A scope the role could use but the ceiling blocks shows "Your administrator does not allow apps to do this". Reads are pre-ticked; write and delete never are.
 

@@ -233,6 +233,18 @@ permission levels and default delegation ceilings. Each requires **View** and **
 connected apps use separate correction choices during OAuth consent. Ordinary record change
 access includes neither permission.
 
+**Correct allocations** reverses or replaces a payment's allocations while keeping
+their history. Replacements also need **Add** on **Records**. **Correct payment
+payees** changes the recipient of an outgoing payment and also needs **Add** and
+**Change**. Both are explicit permissions outside standard levels and default
+delegation ceilings. They allow these corrections without permanent deletion.
+Existing **Delete**-based correction access remains supported for compatibility.
+
+Connected apps can request the opt-in **Grouped record corrections** scope for
+these four correction abilities. The group's grants and delegation ceiling still
+limit each action. Date-only and reimbursement-amount-only scopes remain available.
+Existing connections are not upgraded automatically; reconnect to grant new access.
+
 ## How the old permissions changed
 
 Before this version, each area had the same four actions. Akaun changed the permissions of each

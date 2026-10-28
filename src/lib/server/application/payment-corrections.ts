@@ -13,7 +13,12 @@ import {
 } from "../queries/settlements.js";
 import { createSettlements, undoSettlement } from "../services/settlements.js";
 import type { DeferredEmits } from "../services/ledger.js";
-import { actor, requirePermissions, type AppContext } from "./context.js";
+import {
+  actor,
+  requirePermissions,
+  requireAnyPermissions,
+  type AppContext,
+} from "./context.js";
 import { checkVersion, recordVersion } from "./version.js";
 import { allocationShape, positiveId } from "./records.js";
 import { fail, ok, Rollback, type AppResult } from "./result.js";
@@ -119,10 +124,12 @@ export function correctPaymentAllocations(
   settlementIds: number[];
   version: string;
 }> {
-  const denied = requirePermissions(ctx, [
-    "records.delete",
-    ...(input.allocations.length ? ["records.create" as const] : []),
-  ]);
+  const denied =
+    requireAnyPermissions(ctx, [
+      ["records.correctAllocations"],
+      ["records.delete"],
+    ]) ??
+    requirePermissions(ctx, input.allocations.length ? ["records.create"] : []);
   if (denied) return denied;
   if (!input.expectedVersion)
     return fail(

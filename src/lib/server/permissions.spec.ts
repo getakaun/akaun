@@ -85,6 +85,8 @@ describe("effectivePermissions", () => {
 
   it("delegates only explicitly granted corrections within the ceiling", () => {
     for (const permission of [
+      "records.correctAllocations",
+      "records.correctPaymentRecipient",
       "records.correctDate",
       "records.correctReimbursementAmount",
     ] as const) {

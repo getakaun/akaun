@@ -4,7 +4,7 @@ import { allocationHistoryDeletionReason } from "../queries/allocation-state.js"
 import { fail, redirect, type Actions } from "@sveltejs/kit";
 import { z } from "zod";
 import { db } from "$lib/server/db/client.js";
-import { can } from "$lib/server/permissions.js";
+import { can, canAny } from "$lib/server/permissions.js";
 import {
   defaultAccountId,
   listAccounts,
@@ -253,6 +253,14 @@ function recordFormOptions(
         !locals.oauth &&
         can(locals, "records.correctDate"),
       delete: can(locals, "records.delete"),
+      correctAllocations: canAny(locals, [
+        ["records.correctAllocations"],
+        ["records.delete"],
+      ]),
+      correctPaymentRecipient: canAny(locals, [
+        ["records.correctPaymentRecipient"],
+        ["records.delete"],
+      ]),
       // Free choice of account and a third side. The server enforces this at
       // the point of derivation; the screen only stops offering what would be
       // refused (FR-031c).

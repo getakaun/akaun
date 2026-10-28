@@ -20,7 +20,7 @@ it('shows only eligible actions and omits an unnecessary separator', async () =>
 		.element(page.getByRole('menuitem', { name: 'Correct date…' }))
 		.toBeVisible();
 	await expect
-		.element(page.getByRole('menuitem', { name: 'Correct payee…' }))
+		.element(page.getByRole('menuitem', { name: 'Correct contact…' }))
 		.not.toBeInTheDocument();
 	await expect
 		.element(page.getByRole('menuitem', { name: 'Delete…' }))
@@ -34,7 +34,7 @@ it('shows only eligible actions and omits an unnecessary separator', async () =>
 
 it('separates Delete and explains blocked corrections and deletion', async () => {
 	render(RecordActions, {
-		canCorrectPayee: true,
+		canCorrectContact: true,
 		canCorrectDate: true,
 		canDelete: true,
 		dirty: true,
@@ -42,7 +42,7 @@ it('separates Delete and explains blocked corrections and deletion', async () =>
 		onaction: vi.fn()
 	});
 	await page.getByRole('button', { name: 'Actions' }).click();
-	for (const name of ['Correct payee…', 'Correct date…', 'Delete…']) {
+	for (const name of ['Correct contact…', 'Correct date…', 'Delete…']) {
 		await expect
 			.element(page.getByRole('menuitem', { name }))
 			.toHaveAttribute('aria-disabled', 'true');
@@ -103,7 +103,7 @@ it('opens each existing dialog and returns focus to Actions after cancellation',
 	);
 	render(RecordActionsHarness);
 	for (const [item, title, role] of [
-		['Correct payee…', 'Correct payee', 'dialog'],
+		['Correct contact…', 'Correct contact', 'dialog'],
 		['Correct date…', 'Correct settled record date', 'dialog'],
 		['Delete…', 'Delete this record?', 'alertdialog']
 	] as const) {
@@ -125,14 +125,14 @@ it('opens each existing dialog and returns focus to Actions after cancellation',
 
 it('supports keyboard selection and Escape with focus returning to the trigger', async () => {
 	const onaction = vi.fn();
-	render(RecordActions, { canCorrectPayee: true, canDelete: true, onaction });
+	render(RecordActions, { canCorrectContact: true, canDelete: true, onaction });
 	await userEvent.tab();
 	await expect
 		.element(page.getByRole('button', { name: 'Actions' }))
 		.toHaveFocus();
 	await userEvent.keyboard('{ArrowDown}');
 	await expect
-		.element(page.getByRole('menuitem', { name: 'Correct payee…' }))
+		.element(page.getByRole('menuitem', { name: 'Correct contact…' }))
 		.toHaveFocus();
 	await userEvent.keyboard('{Escape}');
 	await expect
@@ -141,10 +141,10 @@ it('supports keyboard selection and Escape with focus returning to the trigger',
 	expect(onaction).not.toHaveBeenCalled();
 	await userEvent.keyboard('{ArrowDown}');
 	await expect
-		.element(page.getByRole('menuitem', { name: 'Correct payee…' }))
+		.element(page.getByRole('menuitem', { name: 'Correct contact…' }))
 		.toHaveFocus();
 	await userEvent.keyboard('{Enter}');
-	await expect.poll(() => onaction.mock.calls).toEqual([['payee']]);
+	await expect.poll(() => onaction.mock.calls).toEqual([['contact']]);
 });
 
 it('disables reimbursement correction and explains bank matches or unsaved changes', async () => {

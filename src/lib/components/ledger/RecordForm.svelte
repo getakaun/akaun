@@ -899,7 +899,7 @@
 				bind:value={contactId}
 				bind:newName={contactName}
 				initialLabel={contactInitialLabel}
-				disabled={isPayment || (!canChange && !isNew)}
+				disabled={isPayment || (locked && record?.kind === LedgerRecordKind.Expense) || (!canChange && !isNew)}
 				placeholder="Search or create a contact…"
 			/>
 			{#if contactId === null && !contactName}
@@ -914,7 +914,7 @@
 				bind:value={contactId}
 				bind:newName={contactName}
 				initialLabel={contactInitialLabel}
-				disabled={!canChange && !isNew}
+				disabled={(locked && record?.kind === LedgerRecordKind.Expense) || (!canChange && !isNew)}
 				placeholder="Search or create a contact…"
 			/>
 		</div>

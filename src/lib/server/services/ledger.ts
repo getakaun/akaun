@@ -447,6 +447,20 @@ export function patchRecord(
     return { ok: false, reason: "Select an existing supplier." };
   const lock = lockStateFor(db, id);
   if (
+    existing.kind === LedgerRecordKind.Expense &&
+    (lock.settled || lock.reconciled) &&
+    ((patch.contactId !== undefined &&
+      patch.contactId !== existing.contactId) ||
+      (patch.supplierContactId !== undefined &&
+        patch.supplierContactId !== existing.supplierContactId))
+  ) {
+    return {
+      ok: false,
+      reason:
+        "Use Correct contact with the required permission to correct a paid or reconciled expense contact.",
+    };
+  }
+  if (
     lock.settled &&
     patch.contactId !== undefined &&
     patch.contactId !== existing.contactId

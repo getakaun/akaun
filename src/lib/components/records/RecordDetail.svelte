@@ -11,7 +11,7 @@
 	import RecordForm from '$lib/components/ledger/RecordForm.svelte';
 	import ReimbursementDetails from './ReimbursementDetails.svelte';
 	import ReimbursementReversalDialog from './ReimbursementReversalDialog.svelte';
-	import RecipientCorrectionDialog from './RecipientCorrectionDialog.svelte';
+	import ContactCorrectionDialog from './ContactCorrectionDialog.svelte';
 	import RecordActions from './RecordActions.svelte';
 	import AllocationCorrectionDialog from './AllocationCorrectionDialog.svelte';
 	import DateCorrectionDialog from './DateCorrectionDialog.svelte';
@@ -122,6 +122,10 @@
 			data.perms.correctPaymentRecipient &&
 			data.perms.add
 	);
+	const canCorrectContact = $derived(canCorrectPayee || (
+		record.kind === LedgerRecordKind.Expense && !reimbursement.generated &&
+		data.perms.change && data.perms.correctContact
+	));
 	const creditPayment = $derived(
 		!!paymentControl &&
 			record.contactId !== null &&
@@ -253,8 +257,9 @@
 		}}
 	/>{/if}
 {#if recipientCorrectionOpen}
-	<RecipientCorrectionDialog
+	<ContactCorrectionDialog
 		recordId={record.id}
+		expense={record.kind === LedgerRecordKind.Expense}
 		contacts={data.contacts}
 		onclose={() => (recipientCorrectionOpen = false)}
 		oncorrected={() => {
@@ -296,7 +301,7 @@
 		<RecordActions
 			canCorrectAmount={data.reimbursementAmountCorrection !== null}
 			amountBlockedReason={data.reimbursementAmountCorrection?.blockedReason ?? null}
-			{canCorrectPayee}
+			{canCorrectContact}
 			{canCorrectDate}
 			canDelete={data.perms.delete && !reimbursement.generated}
 			{deleteBlockedReason}
@@ -304,7 +309,7 @@
 			{saving}
 			dialogOpen={recipientCorrectionOpen || dateCorrectionOpen || amountCorrectionOpen || deleteDialogOpen}
 			onaction={(action) => {
-				if (action === 'payee') recipientCorrectionOpen = true;
+				if (action === 'contact') recipientCorrectionOpen = true;
 				else if (action === 'date') dateCorrectionOpen = true;
 				else if (action === 'amount') amountCorrectionOpen = true;
 				else deleteDialogOpen = true;

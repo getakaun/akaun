@@ -1,3 +1,8 @@
+import { searchContactCorrectionContacts } from "./contact-correction-search.js";
+import {
+  listContacts,
+  createContact as createDirectoryContact,
+} from "../queries/contacts.js";
 import {
   correctExpenseContact,
   prepareExpenseContactCorrection,
@@ -2353,6 +2358,82 @@ describe("controlled expense contact correction", () => {
       "audit failed",
     );
     expect(getRecord(db, expense.id)).toEqual(before);
+  });
+
+  it.each(["supplier", "paidBy"] as const)(
+    "finds and corrects a %s beyond the initial 500 contacts without requiring directory access",
+    (field) => {
+      db.insert(contacts)
+        .values(
+          Array.from({ length: 501 }, (_, index) => ({
+            entityType: 2 as const,
+            legalName: `A contact ${index}`,
+          })),
+        )
+        .run();
+      const remote = createDirectoryContact(db, userId, {
+        entityType: 2,
+        legalName: "ZZ remote correction target",
+      });
+      expect(
+        listContacts(db, { limit: 500 }).some((c) => c.id === remote.id),
+      ).toBe(false);
+      const expense = bill(field === "paidBy");
+      const context = ctx(["contacts.read"]);
+      const matches = searchContactCorrectionContacts(
+        context,
+        expense.id,
+        "remote correction target",
+      );
+      expect(matches).toEqual({
+        ok: true,
+        value: [{ id: remote.id, legalName: remote.legalName }],
+      });
+      expect(
+        correctExpenseContact(
+          context,
+          expense.id,
+          request(expense.id, remote.id, field),
+        ).ok,
+      ).toBe(true);
+      const after = getRecord(db, expense.id)!;
+      expect(
+        field === "paidBy" ? after.contactId : after.supplierContactId,
+      ).toBe(remote.id);
+      expect(
+        searchContactCorrectionContacts(
+          ctx(["records.correctContact"]),
+          expense.id,
+          "remote",
+        ),
+      ).toMatchObject({ code: "FORBIDDEN" });
+    },
+  );
+
+  it("uses outgoing-payment correction permissions for contact search", () => {
+    const expense = bill();
+    const payment = pay(expense);
+    const remote = createDirectoryContact(db, userId, {
+      entityType: 2,
+      legalName: "Remote payee",
+    });
+    expect(
+      searchContactCorrectionContacts(
+        ctx(["contacts.read", "records.correctContact", "records.delete"]),
+        payment.id,
+        "Remote payee",
+      ),
+    ).toEqual({
+      ok: true,
+      value: [{ id: remote.id, legalName: remote.legalName }],
+    });
+    expect(
+      searchContactCorrectionContacts(
+        ctx(["records.correctPaymentRecipient", "records.delete"]),
+        payment.id,
+        "Remote payee",
+      ),
+    ).toMatchObject({ code: "FORBIDDEN" });
   });
 
   it("blocks ownership changes linked to legacy reimbursement transfers", () => {

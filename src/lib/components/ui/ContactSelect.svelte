@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { SvelteSet } from 'svelte/reactivity';
+	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import { cn, focusRingClass, focusRingOpenClass } from '$lib/utils.js';
 	import XIcon from '@lucide/svelte/icons/x';
 
@@ -10,15 +10,22 @@
 		value = $bindable(null),
 		newName = $bindable(null),
 		role,
+		id,
+		searchUrl = '/api/contacts',
+		allowCreate = true,
 		disabled = false,
 		placeholder = 'Search contact…',
 		initialLabel = null,
 		suggestions = [],
-		onChange = undefined
+		onChange = undefined,
+		onSelect = undefined
 	}: {
 		value?: number | null;
 		newName?: string | null;
-		role: number;
+		role?: number;
+		id?: string;
+		searchUrl?: string;
+		allowCreate?: boolean;
 		disabled?: boolean;
 		placeholder?: string;
 		// Label to show when `value` is pre-set but we haven't fetched its name yet.
@@ -27,6 +34,8 @@
 		suggestions?: Candidate[];
 		// Fired whenever the selection changes (existing pick / new name / cleared).
 		onChange?: (v: { value: number | null; newName: string | null }) => void;
+		// Optional full selected contact, including names fetched beyond the initial page.
+		onSelect?: (contact: Candidate) => void;
 	} = $props();
 
 	const controlClass = cn(
@@ -58,7 +67,10 @@
 		// Abort a still-in-flight request from a stale search term so its response can't
 		// land after (and overwrite results with) a more recent, narrower search.
 		const controller = new AbortController();
-		const url = `/api/contacts?role=${role}${term ? `&search=${encodeURIComponent(term)}` : ''}`;
+		const params = new SvelteURLSearchParams();
+		if (role !== undefined) params.set('role', String(role));
+		if (term) params.set('search', term);
+		const url = `${searchUrl}?${params}`;
 		fetch(url, { signal: controller.signal })
 			.then((r) => (r.ok ? r.json() : []))
 			.then((rows: Candidate[]) => {
@@ -93,7 +105,7 @@
 
 	const typed = $derived(query.trim());
 	const showCreate = $derived(
-		typed.length > 0 &&
+		allowCreate && typed.length > 0 &&
 			!shown.some((c) => c.legalName.toLowerCase() === typed.toLowerCase())
 	);
 
@@ -104,6 +116,7 @@
 		open = false;
 		query = '';
 		onChange?.({ value, newName });
+		onSelect?.(c);
 	}
 
 	function createNew() {
@@ -139,6 +152,7 @@
 	{#if selectedLabel && !open}
 		<button
 			type="button"
+			{id}
 			class={cn(controlClass, 'justify-between gap-2 text-left cursor-pointer')}
 			data-state={open ? 'open' : 'closed'}
 			{disabled}
@@ -169,6 +183,7 @@
 			class={cn(controlClass, 'placeholder:text-muted-foreground', open && focusRingOpenClass)}
 			data-state={open ? 'open' : 'closed'}
 			type="text"
+			{id}
 			{placeholder}
 			{disabled}
 			bind:value={query}

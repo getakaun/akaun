@@ -3,7 +3,7 @@
   import { Dialog } from "bits-ui";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
-  import * as Select from "$lib/components/ui/select/index.js";
+  import ContactSelect from "$lib/components/ui/ContactSelect.svelte";
   import { formatMinor } from "$lib/format.js";
   let {
     recordId,
@@ -36,6 +36,7 @@
     dependencies?: { settlementId: number; recordId: number; reason: string }[];
   } | null>(null);
   let recipient = $state("");
+  let recipientName = $state("");
   let field = $state<"supplier" | "paidBy">("supplier");
   const endpoint = $derived(
     expense
@@ -59,6 +60,7 @@
     field = value;
     const id = preview?.fields?.find((f) => f.field === value)?.contactId;
     recipient = id ? String(id) : "";
+    recipientName = contacts.find((c) => c.id === id)?.legalName ?? "";
     reviewing = false;
     error = "";
   }
@@ -78,6 +80,7 @@
           preview = body;
           const id = expense ? body.fields[0].contactId : body.record.contactId;
           recipient = id ? String(id) : "";
+          recipientName = contacts.find((c) => c.id === id)?.legalName ?? "";
         }
       })
       .catch((e) => {
@@ -191,22 +194,26 @@
           <label class="mt-4 block text-sm" for="correct-recipient"
             >{label}</label
           >
-          <Select.Root
-            type="single"
-            bind:value={recipient}
-            disabled={reviewing || sending}
-          >
-            <Select.Trigger id="correct-recipient" class="mt-2 w-full"
-              >{contacts.find((c) => String(c.id) === recipient)?.legalName ??
-                `Select ${label.toLowerCase()}`}</Select.Trigger
-            >
-            <Select.Content
-              >{#each contacts as contact (contact.id)}<Select.Item
-                  value={String(contact.id)}
-                  label={contact.legalName}
-                />{/each}</Select.Content
-            >
-          </Select.Root>
+          {#key `${field}:${currentId}`}
+            <div class="mt-2">
+              <ContactSelect
+                id="correct-recipient"
+                value={recipient ? Number(recipient) : null}
+                initialLabel={currentId ? currentName : null}
+                searchUrl={`/api/records/${recordId}/contact-correction/contacts`}
+                allowCreate={false}
+                placeholder={`Search ${label.toLowerCase()}…`}
+                disabled={reviewing || sending}
+                onChange={(selection) => {
+                  recipient = selection.value ? String(selection.value) : "";
+                  recipientName = "";
+                }}
+                onSelect={(contact) => {
+                  recipientName = contact.legalName;
+                }}
+              />
+            </div>
+          {/key}
           <label class="mt-4 block text-sm" for="recipient-reason">Reason</label
           >
           <Textarea
@@ -218,9 +225,7 @@
             class="mt-2"
           />
           {#if reviewing}<p class="mt-4 text-sm">
-              Change {currentName} to {contacts.find(
-                (c) => String(c.id) === recipient,
-              )?.legalName}.
+              Change {currentName} to {recipientName}.
               {#if expense}
                 {#if preview.personal && field === "supplier"}The person who
                   paid and their reimbursement balance stay the same.

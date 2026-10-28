@@ -14,6 +14,11 @@
   expenses. On personally paid expenses it updates only the supplier; changing
   the person owed is a separate choice in the same dialog. Inspect the actual
   reimbursement control account for older personally paid records too.
+- Search contacts on the server through the correction-authorized
+  `/api/records/[id]/contact-correction/contacts` endpoint. The picker can find
+  suppliers, personal payers and payment recipients beyond the page loader's
+  first 500 contacts, without adding a separate directory permission. Retain
+  fetched names for review and allow selecting existing contacts only.
 - Show paid/outstanding amounts, old/new contact and the effect on ownership
   before confirmation. Require an existing different contact and a reason.
 - Preserve movement IDs, amounts, dates, bank matches, active allocations and

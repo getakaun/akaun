@@ -570,6 +570,34 @@ describe("OAuth authorization and persistence", () => {
     expect(can(writes, "contacts.create")).toBe(false);
     expect(can(writes, "users.manage")).toBe(false);
   });
+  it("grants only the fixed correction allowlist through explicit grouped consent", async () => {
+    const token = await tokens([
+      "records:read",
+      "records:write",
+      "records:correction",
+    ]);
+    const auth = (await oauth.authenticate(bearer(token.access_token)))!;
+    for (const permission of [
+      "records.correctAllocations",
+      "records.correctPaymentRecipient",
+      "records.correctDate",
+      "records.correctReimbursementAmount",
+    ] as const)
+      expect(can(auth, permission)).toBe(true);
+    expect(can(auth, "records.delete")).toBe(false);
+    expect(can(auth, "records.adjust")).toBe(false);
+    const old = (await oauth.authenticate(
+      bearer(
+        (await tokens(["records:read", "records:write", "records:delete"]))
+          .access_token,
+      ),
+    ))!;
+    expect(can(old, "records.correctAllocations")).toBe(false);
+    expect(can(old, "records.correctPaymentRecipient")).toBe(false);
+    expect(can(old, "records.correctDate")).toBe(false);
+    expect(can(old, "records.correctReimbursementAmount")).toBe(false);
+  });
+
   it("grants adjustments only through records:adjust", async () => {
     const adjust = (await oauth.authenticate(
       bearer(

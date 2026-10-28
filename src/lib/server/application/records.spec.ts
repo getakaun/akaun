@@ -1422,7 +1422,10 @@ describe("payment correction and overpayment recovery", () => {
       code: "REFUSED",
     });
     expect(
-      correctPaymentAllocations(ctx(["records.delete"]), input),
+      correctPaymentAllocations(
+        ctx(["records.delete", "records.correctAllocations"]),
+        input,
+      ),
     ).toMatchObject({ code: "FORBIDDEN" });
     expect(
       preparePaymentCorrection(ctx(["records.read"]), side(pay)),

@@ -119,7 +119,7 @@
 			paymentControl.amountMinor > 0 &&
 			paymentControl.accountSubType === AccountSubType.AccountsPayable &&
 			data.perms.change &&
-			data.perms.delete &&
+			data.perms.correctPaymentRecipient &&
 			data.perms.add
 	);
 	const canCorrectContact = $derived(canCorrectPayee || (
@@ -237,6 +237,7 @@
 {#if correctionSettlementId !== null}
 	<AllocationCorrectionDialog
 		settlementId={correctionSettlementId}
+		canReplace={data.perms.add}
 		onclose={() => {
 			correctionSettlementId = null;
 		}}
@@ -460,7 +461,7 @@
 				{/if}
 				<SettlementList
 					links={settlementLinks}
-					onundo={data.perms.delete ? undoPayment : undefined}
+					onundo={data.perms.correctAllocations ? undoPayment : undefined}
 					emptyLabel={isPayment
 						? 'This payment is not allocated to a record yet.'
 						: 'No payments are applied yet.'}

@@ -105,6 +105,22 @@ export const PERMISSION_CATALOG = {
         // Available to explicitly granted sessions/PATs. No OAuth scope or MCP
         // tool exposes this new operation; existing credentials gain nothing.
       },
+      correctAllocations: {
+        label: "Correct allocations",
+        description:
+          "Reverse or replace payment allocations with a reason and review, retaining their history. Reopens obligations and releases payment credit without deleting records.",
+        phrase: "correct payment allocations",
+        explicit: true,
+        sensitive: true,
+      },
+      correctPaymentRecipient: {
+        label: "Correct payment payees",
+        description:
+          "Correct the recipient of an outgoing payment with a reason and review, preserving the cash payment and original expense suppliers.",
+        phrase: "correct payment payees",
+        explicit: true,
+        sensitive: true,
+      },
       correctDate: {
         label: "Correct settled dates",
         description:

@@ -14,9 +14,9 @@ import type { LeafPermission } from "./catalog.js";
  * There are no scopes for dashboard, settings or users: an OAuth token is for
  * `/mcp` alone (its audience), and none of those are offered there.
  *
- * Adjustments and historical corrections have separate scopes outside the
- * ordinary tiers. Each stands for one explicit, sensitive leaf and must be
- * selected by name, never as part of "change records".
+ * Adjustments and corrections have opt-in scopes outside ordinary tiers.
+ * The grouped correction scope has an explicit allowlist; the narrow date and
+ * reimbursement-amount scopes remain available without gaining other powers.
  */
 export const READ_SCOPES = [
   "records:read",
@@ -56,6 +56,7 @@ export const DELETE_SCOPES = [
 ] as const;
 export const ADJUST_SCOPES = ["records:adjust"] as const;
 export const CORRECTION_SCOPES = [
+  "records:correction",
   "records:correct-date",
   "records:correct-reimbursement-amount",
 ] as const;
@@ -74,6 +75,12 @@ export const SCOPE_PERMISSIONS: Record<OAuthScope, readonly LeafPermission[]> =
     "records:write": ["records.create", "records.update"],
     "records:delete": ["records.delete"],
     "records:adjust": ["records.adjust"],
+    "records:correction": [
+      "records.correctAllocations",
+      "records.correctPaymentRecipient",
+      "records.correctDate",
+      "records.correctReimbursementAmount",
+    ],
     "records:correct-date": ["records.correctDate"],
     "records:correct-reimbursement-amount": [
       "records.correctReimbursementAmount",
@@ -157,6 +164,8 @@ export const SCOPE_LABELS: Record<OAuthScope, string> = {
   "import:delete": "Discard import jobs",
   "records:correct-date":
     "Correct settled expense and income dates, which can change historical reports",
+  "records:correction":
+    "Grouped record corrections: payment allocations and payees, settled dates and reimbursement amounts; can change historical reports and balances",
   "records:correct-reimbursement-amount":
     "Correct reimbursement payment amounts and allocations, which changes historical balances",
   "records:adjust":

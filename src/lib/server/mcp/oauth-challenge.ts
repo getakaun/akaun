@@ -1,5 +1,9 @@
 import type { OAuthScope } from "../oauth/config.js";
-import { TOOL_REQUIREMENTS } from "./tool-requirements.js";
+import {
+  TOOL_REQUIREMENTS,
+  toolAccessOptions,
+  toolAllowed,
+} from "./tool-requirements.js";
 import { allowedScopes } from "../oauth/scopes.js";
 import { MAX_ATTACHMENT_FILE_BYTES } from "../application/attachments.js";
 
@@ -86,8 +90,32 @@ export async function inspectRpc(
   if (!locals.oauth || !single) return { response: null, maxRequestBodySize };
   const call = rpc as Rpc;
   let required: OAuthScope[] = [];
-  if (call.method === "tools/call" && typeof call.params?.name === "string")
-    required = TOOL_REQUIREMENTS[call.params.name]?.scopes ?? [];
+  if (call.method === "tools/call" && typeof call.params?.name === "string") {
+    const requirement = TOOL_REQUIREMENTS[call.params.name];
+    if (requirement) {
+      const options = toolAccessOptions(requirement);
+      // Only a complete scope-and-permission route suppresses step-up. A token
+      // can hold a grouped scope for another permission while this operation
+      // still needs a grantable alternative (such as legacy delete access).
+      if (toolAllowed(locals, requirement))
+        return { response: null, maxRequestBodySize };
+      const grantable = locals.role ? allowedScopes(locals.role) : [];
+      const candidates = options.filter(
+        (option) =>
+          option.permissions.every((p) => locals.role?.delegable.has(p)) &&
+          option.scopes.every((s) => grantable.includes(s)),
+      );
+      // Prefer the fewest newly required scopes, preserving declaration order
+      // for ties (narrow corrections first; grouped before legacy deletion).
+      candidates.sort(
+        (a, b) =>
+          a.scopes.filter((s) => !locals.oauth!.scopes.includes(s)).length -
+          b.scopes.filter((s) => !locals.oauth!.scopes.includes(s)).length,
+      );
+      if (!candidates.length) return { response: null, maxRequestBodySize };
+      required = candidates[0].scopes;
+    }
+  }
   const descriptions =
     (call.method === "resources/read" &&
       call.params?.uri === "akaun://description-policy") ||

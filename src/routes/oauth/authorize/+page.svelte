@@ -28,7 +28,7 @@
     {
       tier: "correct",
       heading: "Corrections",
-      note: "The app can correct historical dates or reimbursement amounts with a reason. These changes can affect previously finalized reports and balances. Allow each correction only for an app you trust with your books.",
+      note: "The app can perform the selected corrections with a reason and review. Grouped correction access covers payment allocations and payees, settled dates and reimbursement amounts. These changes can affect previously finalized reports and balances. Your role and delegation permissions still limit each operation.",
     },
   ];
   const groups = $derived(

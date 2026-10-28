@@ -96,6 +96,32 @@ to anything other than a bank or cash account is an adjustment too.
 
 ### Historical corrections
 
+The opt-in **Grouped record corrections** scope (`records:correction`) covers
+payment allocation reversals and replacements, outgoing-payment payee corrections,
+settled expense/income dates, and reimbursement payment amounts. It grants no
+permanent record deletion or general adjustments. It also excludes legacy
+reimbursement-group reversals, opening-balance removal, invoice voids and bank-match
+removal. Some corrections change historical reports and balances.
+
+Each operation still needs its own **Records** permission and must fit your
+group's **Members may hand on to tokens & apps** permissions. **Correct allocations**
+allows a reversal without **Delete**; adding replacement allocations also needs
+**Add**. **Correct payment payees** also needs **Add** and **Change**. The grouped
+scope does not supply ordinary read/write access: select the corresponding access
+when needed. Personal access tokens select the individual permissions directly.
+
+An administrator who grants the grouped scope lets the app perform every listed
+correction that their account may delegate. The existing narrow
+`records:correct-date` and `records:correct-reimbursement-amount` scopes remain
+available for apps that need only one of those corrections.
+
+Existing grants are not upgraded. Reconnect with explicit consent for grouped
+corrections, and grant the individual role/delegation permissions as needed.
+Existing **Delete**-based allocation and payee correction access continues to work
+for compatibility; it does not grant the new correction permissions or broaden
+date/amount correction access. Prefer grouped correction access when permanent
+deletion is unnecessary.
+
 **Correct settled dates** and **Correct reimbursement amounts** on **Records** are separate
 abilities, like **Adjustments**. Each also needs **View** and **Change** on **Records**. They are
 excluded from ordinary record access and must be granted by name, including in the group's
@@ -104,6 +130,13 @@ excluded from ordinary record access and must be granted by name, including in t
 With the sign-in, select the corresponding permission under **Corrections** when connecting.
 These choices start unchecked. Existing connections need a new consent grant; ordinary change
 access does not include either correction.
+
+For an incorrect expense that has already been reimbursed: inspect and reverse its
+active allocations, read the reopened expense again and edit its amount, inspect
+and correct the original payment's payee, then reapply that payment's available
+credit. Use a fresh version for each correction. Preserve the actual payment
+amount unless the recorded cash payment itself is wrong. A smaller expense leaves
+available payment credit; a larger one leaves an outstanding expense balance.
 
 The assistant reads a fresh correction snapshot, presents the proposed change and its effects,
 and asks you to confirm before submitting a reason and version. Settled-date corrections keep

@@ -7,3 +7,7 @@ import { downloadMcpFile } from "$lib/server/mcp/file-links.js";
 // against the token owner's freshly resolved permissions, without cookies.
 export const GET: RequestHandler = ({ params, request }) =>
   downloadMcpFile(db, fileStore(), params.token, request);
+
+// Prevent SvelteKit's HEAD-to-GET fallback from consuming single-use tokens.
+export const HEAD: RequestHandler = () =>
+  new Response(null, { status: 405, headers: { Allow: "GET" } });

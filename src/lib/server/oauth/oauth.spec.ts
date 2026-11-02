@@ -39,7 +39,12 @@ import { requireView } from "../mcp/common.js";
 import { allowedScopes } from "./scopes.js";
 import { handleOAuthProtocol } from "./http.js";
 import { isSameOriginRequest } from "../browser-origin.js";
-import { oauthConfig, READ_SCOPES, type OAuthConfig } from "./config.js";
+import {
+  oauthConfig,
+  OAUTH_SCOPES,
+  READ_SCOPES,
+  type OAuthConfig,
+} from "./config.js";
 import {
   BROWSER_COOKIE,
   createOAuth,
@@ -552,6 +557,37 @@ describe("OAuth authorization and persistence", () => {
     const id = oauth.begin(withoutScope, browser);
     expect(oauth.pending(id, browser).scopes).toEqual([...READ_SCOPES]);
   });
+  it("grants user-selected change scopes beyond the client's initial read request", async () => {
+    const id = oauth.begin(params({ scope: "contacts:read" }), browser);
+    await expect(
+      oauth.finish(id, browser, actor(), ["records:admin"], true),
+    ).rejects.toThrow();
+    const callback = new URL(
+      await oauth.finish(
+        id,
+        browser,
+        actor(),
+        ["contacts:read", "contacts:write"],
+        true,
+      ),
+    );
+    const token: OAuthTokens = await (
+      await exchange({
+        grant_type: "authorization_code",
+        code: callback.searchParams.get("code")!,
+        redirect_uri: redirectUri,
+        code_verifier: verifier,
+      })
+    ).json();
+    expect(token.scope?.split(" ").sort()).toEqual([
+      "contacts:read",
+      "contacts:write",
+    ]);
+    const connected = (await oauth.authenticate(bearer(token.access_token)))!;
+    expect(can(connected, "contacts.create")).toBe(true);
+    expect(can(connected, "contacts.delete")).toBe(false);
+    expect(can(connected, "records.create")).toBe(false);
+  });
   it("bounds writes and deletes by their own scopes, ahead of superuser", async () => {
     const reads = (await oauth.authenticate(
       bearer((await tokens(["records:read"])).access_token),
@@ -919,7 +955,9 @@ describe("OAuth hook and MCP scope integration", () => {
         new Request(`https://attacker.example.com${path}`),
       );
       expect(res.status).toBe(200);
-      expect(await res.text()).toContain(config.issuer);
+      const metadata = await res.json();
+      expect(JSON.stringify(metadata)).toContain(config.issuer);
+      expect(metadata.scopes_supported).toEqual([...OAUTH_SCOPES]);
       expect(res.headers.get("location")).toBeNull();
     }
     expect(

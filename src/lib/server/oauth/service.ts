@@ -654,7 +654,7 @@ export function createOAuth(db: LedgerDb, config: OAuthConfig) {
       (!selected.length ||
         selected.some(
           (s) =>
-            !p.scopes.includes(s as OAuthScope) ||
+            !OAUTH_SCOPES.includes(s as OAuthScope) ||
             !allowed.includes(s as OAuthScope),
         ))
     )

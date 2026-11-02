@@ -4,7 +4,10 @@ import { oauth, config } from "$lib/server/oauth/runtime.js";
 import { BROWSER_COOKIE, OAuthFailure } from "$lib/server/oauth/service.js";
 import { isSameOriginRequest } from "$lib/server/browser-origin.js";
 import { scopeAvailability } from "$lib/server/oauth/scopes.js";
-import { SCOPE_PERMISSIONS } from "$lib/permissions/oauth-scopes.js";
+import {
+  OAUTH_SCOPES,
+  SCOPE_PERMISSIONS,
+} from "$lib/permissions/oauth-scopes.js";
 import { leafMeta } from "$lib/permissions/catalog.js";
 
 export const load: PageServerLoad = ({ url, cookies, locals, setHeaders }) => {
@@ -25,7 +28,7 @@ export const load: PageServerLoad = ({ url, cookies, locals, setHeaders }) => {
       clientId: p.client.id,
       instance: config.issuer,
       username: locals.user!.username,
-      scopes: p.scopes.map((scope) => {
+      scopes: OAUTH_SCOPES.map((scope) => {
         const entry = availability.get(scope);
         const allowed = entry?.allowed ?? false;
         return {

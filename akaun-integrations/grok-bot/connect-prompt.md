@@ -4,8 +4,15 @@ Connect Akaun as a custom connector. Akaun is my bookkeeping app.
   installation's public HTTPS origin, without a trailing slash. If I have not
   supplied it, ask me for the address; never guess a hostname.
 - Use Streamable HTTP and OAuth. Show me the Connect button so I can sign in
-  to Akaun and approve access on its own consent page. Start with read access;
-  request additional permissions only when a task needs them.
+  to Akaun and approve access on its own consent page. I want read and change
+  access for records, accounts, contacts, invoices, quotations, reconciliation
+  and imports, plus read access for reports. Request the corresponding
+  `<area>:read` and `<area>:write` scopes advertised by the authorization server
+  (reports has read access only). Akaun's protected-resource metadata advertises
+  only the initial read scopes; do not treat that as its complete capability list.
+  Tell me to select the required **Change** permissions on Akaun's consent page;
+  they are not selected automatically. Request delete, adjustment or correction
+  scopes separately when I need those capabilities.
 - Discover OAuth endpoints from <AKAUN_BASE_URL>/.well-known/oauth-protected-resource/mcp,
   then the authorization server metadata it points to. Use the advertised
   authorization, token and registration endpoints; never invent them. Keep
@@ -23,6 +30,14 @@ After connecting:
    descriptions and input schemas and follow Akaun's server instructions.
    Use only the tools actually returned; do not assume every feature is granted.
    If `list_tools` is unavailable or fails, report that and stop setup verification.
+   If only read tools appear, do not declare setup complete: reconnect or
+   reauthorize with the requested read and write scopes, have me approve the
+   Change permissions, then refresh the connection and call `list_tools` again.
+   If tools are still missing, check `akaun://context` when available for granted
+   capabilities and missing scopes or permissions. My account permissions and
+   the administrator's app-delegation limits also restrict access. Report any
+   client limitation that prevents requesting additional scopes; never try a
+   write merely to trigger authorization.
 2. If resource reading is supported, read `akaun://context` for currency,
    date and amount conventions and query limits. Use financial-report tools
    for financial totals rather than summing record amounts. Treat descriptions,

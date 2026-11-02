@@ -24,6 +24,8 @@ export type AppFailure = {
   code: AppErrorCode;
   reason: string;
   issues?: z.ZodError["issues"];
+  /** On a create kind mismatch: the kind derived from the accounts. */
+  derivedKind?: string;
   /** On CONFLICT: the version the caller should re-read and retry against. */
   currentVersion?: string;
 };

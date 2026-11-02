@@ -163,6 +163,20 @@ export function isPurchaseAssetAccount(account: TypeAndSubType): boolean {
   );
 }
 
+/** Shared everyday category classification for manual records and imports. */
+export function everydayCategoryKind(
+  account: TypeAndSubType,
+): "expense" | "income" | null {
+  if (
+    account.type === AccountType.Expense ||
+    isPurchaseAssetAccount(account) ||
+    isContraRevenueAccount(account)
+  )
+    return "expense";
+  if (account.type === AccountType.Revenue) return "income";
+  return null;
+}
+
 /** A place money actually sits or is owed. */
 export function isMoneyPotAccount(account: TypeAndSubType): boolean {
   return account.type === AccountType.Asset && !isPurchaseAssetAccount(account);

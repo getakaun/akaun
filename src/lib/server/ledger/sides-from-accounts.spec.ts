@@ -23,6 +23,20 @@ import {
  */
 
 const ACCOUNTS = {
+  contra: {
+    id: 13,
+    type: AccountType.Revenue,
+    role: AccountRole.IncomeCategory,
+    subType: AccountSubType.ContraOperatingRevenue,
+    archived: false,
+  },
+  clearing: {
+    id: 14,
+    type: AccountType.Asset,
+    role: AccountRole.Bank,
+    subType: AccountSubType.Clearing,
+    archived: false,
+  },
   bank: {
     id: 1,
     type: AccountType.Asset,
@@ -325,7 +339,9 @@ describe("sidesFromAccounts — refusals", () => {
       ctx(),
     );
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.reason).toBe("Select the contact for this receivable or payable.");
+    expect(!result.ok && result.reason).toBe(
+      "Select the contact for this receivable or payable.",
+    );
   });
 
   it("refuses a receivable side with no contact, in the same sentence", () => {
@@ -334,7 +350,9 @@ describe("sidesFromAccounts — refusals", () => {
       ctx(),
     );
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.reason).toBe("Select the contact for this receivable or payable.");
+    expect(!result.ok && result.reason).toBe(
+      "Select the contact for this receivable or payable.",
+    );
   });
 
   it("refuses an archived account", () => {
@@ -475,7 +493,9 @@ describe("a bill spanning several categories", () => {
       ctx({ canAdjust: false }),
     );
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.reason).toBe("Select the contact for this receivable or payable.");
+    expect(!result.ok && result.reason).toBe(
+      "Select the contact for this receivable or payable.",
+    );
   });
 
   // "Amount" is the bill's whole 100.00 (data-model.md invariant 6: it must
@@ -566,5 +586,54 @@ describe("a bill spanning several categories", () => {
       { accountId: ACCOUNTS.fuel.id, amountMinor: 10_000 },
       { accountId: ACCOUNTS.cash.id, amountMinor: -500 },
     ]);
+  });
+});
+
+describe("contra revenue everyday classification", () => {
+  it("clearing to contra revenue is an expense without adjustments", () => {
+    expect(sidesFromAccounts(input(14, 13), ctx({ canAdjust: false }))).toEqual(
+      {
+        ok: true,
+        value: {
+          kind: "expense",
+          categoryAccountId: 13,
+          paidFromAccountId: 14,
+        },
+      },
+    );
+  });
+
+  it.each([3, 4, 13])(
+    "a split including contra revenue and account %s never becomes income",
+    (accountId) => {
+      const result = sidesFromAccounts(
+        input(14, 13, {
+          extraSides: [{ accountId, amountMinor: 1000 }],
+        }),
+        ctx(),
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok || result.value.kind !== "journal")
+        throw new Error("Expected journal sides");
+      expect(result.value.storedKind).not.toBe(LedgerRecordKind.Income);
+      expect(result.value.storedKind).toBe(
+        accountId === 4 ? undefined : LedgerRecordKind.Expense,
+      );
+    },
+  );
+
+  it("contra revenue outflow to bank never becomes income", () => {
+    const result = sidesFromAccounts(input(13, 1), ctx({ canAdjust: false }));
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.value.kind !== "journal")
+      throw new Error("Expected journal sides");
+    expect(result.value.storedKind).toBe(LedgerRecordKind.Expense);
+  });
+
+  it("ordinary revenue to bank stays income", () => {
+    expect(sidesFromAccounts(input(4, 1), ctx({ canAdjust: false }))).toEqual({
+      ok: true,
+      value: { kind: "income", categoryAccountId: 4, receivedIntoAccountId: 1 },
+    });
   });
 });

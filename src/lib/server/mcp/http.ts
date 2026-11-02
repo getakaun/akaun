@@ -31,18 +31,22 @@ export async function handleMcpRequest(
   if (inspection.response) return inspection.response;
   // Capture this request's authenticated context only. SDK v2 serves modern
   // per-request envelopes and stateless legacy traffic from the same factory.
-  const handler = createMcpHandler(() => createServer(context), {
-    legacy: "stateless",
-    // Auto returns JSON for these synchronous calls; no handler emits related
-    // protocol notifications that would upgrade a modern response to SSE.
-    responseMode: "auto",
-    // 128 KiB, or enough for one file when the call is `attach_file`: chosen
-    // by `inspectRpc` after reading which tool this is.
-    maxRequestBodySize: inspection.maxRequestBodySize,
-    // Akaun has no MCP change-notification channel. Do not hold a stream open
-    // against a handler whose lifetime is a single authenticated request.
-    maxSubscriptions: 0,
-  });
+  const handler = createMcpHandler(
+    () =>
+      createServer({ ...context, requestOrigin: new URL(request.url).origin }),
+    {
+      legacy: "stateless",
+      // Auto returns JSON for these synchronous calls; no handler emits related
+      // protocol notifications that would upgrade a modern response to SSE.
+      responseMode: "auto",
+      // 128 KiB, or enough for one file when the call is `attach_file`: chosen
+      // by `inspectRpc` after reading which tool this is.
+      maxRequestBodySize: inspection.maxRequestBodySize,
+      // Akaun has no MCP change-notification channel. Do not hold a stream open
+      // against a handler whose lifetime is a single authenticated request.
+      maxSubscriptions: 0,
+    },
+  );
   try {
     const response = await handler.fetch(request);
     response.headers.set("Cache-Control", "no-store");

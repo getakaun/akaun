@@ -39,6 +39,7 @@ export const dateRangeShape = {
 export type McpContext = AppContext & {
   db: LedgerDb;
   store: BlobStore;
+  requestOrigin?: string;
 };
 
 export type McpErrorCode =
@@ -254,9 +255,8 @@ export function registerRead<S extends z.ZodRawShape>(
 }
 
 /**
- * A read whose result is content blocks (an image, a document) rather than
- * structured data, so it declares no output schema. Discovery and the check at
- * execution are the same as `registerRead`.
+ * An asynchronous file read, optionally declaring a structured output schema.
+ * Discovery and execution checks are the same as `registerRead`.
  */
 export function registerFileRead<S extends z.ZodRawShape>(
   server: McpServer,
@@ -265,12 +265,18 @@ export function registerFileRead<S extends z.ZodRawShape>(
   description: string,
   shape: S,
   read: (input: z.output<z.ZodObject<S>>) => Promise<CallToolResult>,
+  fileOutputSchema?: z.ZodObject,
 ) {
   if (!toolAllowed(context.locals, requirementOf(name))) return;
   const schema = z.object(shape).strict();
   server.registerTool(
     name,
-    { description, inputSchema: schema, annotations: readOnlyAnnotations },
+    {
+      description,
+      inputSchema: schema,
+      outputSchema: fileOutputSchema,
+      annotations: readOnlyAnnotations,
+    },
     (args) => runRead(context, name, () => read(schema.parse(args))),
   );
 }

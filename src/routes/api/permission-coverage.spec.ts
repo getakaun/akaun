@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
  * search rebuild once checked only that someone was signed in — and a
  * personal access token is someone signed in. A route is covered when it
  * calls `can`/`canAll` itself, or goes through an operation in `application/`
- * or the reconciliation service, which ask for it.
+ * or the reconciliation service, which ask for it. Signed MCP file routes use
+ * mcp/file-links, which reloads the token owner and checks can/permissionForKind.
  */
 const ALLOWED_WITHOUT_A_CHECK = new Set([
   // Public facts any signed-in user needs to fill a form.
@@ -29,7 +30,7 @@ describe("API permission coverage", () => {
     const missing = routes("src/routes/api").filter(
       (path) =>
         !ALLOWED_WITHOUT_A_CHECK.has(path) &&
-        !/\bcan(All)?\(|application\/|services\/reconciliation/.test(
+        !/\bcan(All)?\(|application\/|services\/reconciliation|mcp\/file-links/.test(
           readFileSync(path, "utf8"),
         ),
     );

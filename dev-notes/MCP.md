@@ -343,6 +343,16 @@ The approved 51-payment repair is an explicit operator command in
 `scripts/repair-approved-payment-recipients.ts`. It requires the exact allowlist, a version
 manifest, matching original snapshot and an existing backup; it never runs on startup.
 
+### Expense contact correction
+
+`get_expense_contact_correction`, `search_expense_contact_correction_contacts` and
+`correct_expense_contact` reuse the shared expense-contact operation. All require
+`records:read`, `records:write`, `records:correct-contact` and the corresponding
+`records.read`, `records.update`, `records.correctContact` permissions. Grouped
+correction access does not include this permission. Preview and search are read-only;
+correction is destructive and requires reviewed confirmation. See
+[Expense contact correction](EXPENSE_CONTACT_CORRECTION.md) for inputs and safeguards.
+
 ### Historical date and reimbursement-amount corrections
 
 These tools reuse the authorized application operations used by the REST correction routes:

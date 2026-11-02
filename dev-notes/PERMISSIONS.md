@@ -113,7 +113,10 @@ Scopes stay coarse on the wire (`<area>:read|write|delete`, `$lib/permissions/oa
 `records.correctPaymentRecipient`, `records.correctDate` and
 `records.correctReimbursementAmount`. All four leaves are explicit and sensitive;
 ordinary root/Full grants and default delegation ceilings do not acquire them.
-The narrow date and reimbursement-amount scopes remain supported. Read/write
+The narrow date and reimbursement-amount scopes remain supported.
+`records:correct-contact` independently grants only `records.correctContact` and
+also requires record read/write access for MCP. It is unchecked by default, excluded
+from grouped correction access and bounded by role and delegation ceiling. Read/write
 co-requirements still apply. Neither the new scope nor these leaves grants
 permanent deletion or arbitrary adjustments.
 

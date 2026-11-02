@@ -96,6 +96,18 @@ to anything other than a bank or cash account is an adjustment too.
 
 ### Historical corrections
 
+**Correct expense contacts** is a separate opt-in scope (`records:correct-contact`).
+Select it together with **Read records** and **Change records** when connecting
+or reconnecting your agent. Your role and delegation ceiling must explicitly allow
+**Correct expense contacts**. It is unchecked by default and is not included in
+**Grouped record corrections**, so existing connections gain no access automatically.
+
+The agent can preview an expense, search existing contacts and correct the supplier
+or personal payer. It must show the old/new contacts and effects on who is owed
+and obtain reviewed confirmation with a reason before saving. Existing allocation,
+reimbursement, audit and stale-record safeguards still apply.
+
+
 The opt-in **Grouped record corrections** scope (`records:correction`) covers
 payment allocation reversals and replacements, outgoing-payment payee corrections,
 settled expense/income dates, and reimbursement payment amounts. It grants no

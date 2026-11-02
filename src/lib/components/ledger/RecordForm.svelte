@@ -8,7 +8,8 @@
 	import { mainCurrency, mainCurrencySymbol } from '$lib/currency-state.svelte.js';
 	import { formatMoneyRM } from '$lib/format.js';
 	import { CURRENCIES, currencySymbol } from '$lib/currency.js';
-	import { AccountSubType, AccountType, EntityType, LedgerRecordKind, Role } from '$lib/enums.js';
+	import { AccountSubType, EntityType, LedgerRecordKind, Role } from '$lib/enums.js';
+	import { everydayCategoryKind } from '$lib/account-classification.js';
 	import EntryBlock from './EntryBlock.svelte';
 	// The running difference itself is drawn by `EntryBlock`, which owns the
 	// lines it is computed from.
@@ -324,25 +325,24 @@
 	/**
 	 * Whether this record looks like an everyday expense or income — the only
 	 * two kinds a foreign currency is offered on (FR-005 scope). A saved record
-	 * already knows its kind; an unsaved one is read off the two chosen
-	 * accounts' own `type`, the same direct check the form already makes for
-	 * `contactRole` below.
+	 * already knows its kind; an unsaved one uses the chosen accounts'
+	 * category classification, shared with the server.
 	 */
-	const accountTypeOf = $derived(
-		(accountId: number | null) =>
-			accountId === null
-				? null
-				: (allAccounts.concat(sideChoices).find((a) => a.id === accountId)?.type ?? null)
+	const categoryKindOf = $derived(
+		(accountId: number | null) => {
+			const account = allAccounts.concat(sideChoices).find((a) => a.id === accountId);
+			return account ? everydayCategoryKind(account) : null;
+		}
 	);
 
 	const predictedKind = $derived.by(() => {
 		if (record) return record.kind;
-		const fromType = accountTypeOf(fromAccountId);
-		const toType = accountTypeOf(toAccountId);
-		if (fromType === AccountType.Expense || toType === AccountType.Expense) {
+		const fromKind = categoryKindOf(fromAccountId);
+		const toKind = categoryKindOf(toAccountId);
+		if (fromKind === 'expense' || toKind === 'expense') {
 			return LedgerRecordKind.Expense;
 		}
-		if (fromType === AccountType.Revenue || toType === AccountType.Revenue) {
+		if (fromKind === 'income' || toKind === 'income') {
 			return LedgerRecordKind.Income;
 		}
 		return null;
@@ -376,14 +376,13 @@
 	const extraSideAccountChoices = $derived.by((): AccountView[] => {
 		if (canAdjust) return allAccounts;
 		if (extraSideDirection === null) return [];
-		const wantType =
-			extraSideDirection === 'in' ? AccountType.Expense : AccountType.Revenue;
+		const wantKind = extraSideDirection === 'in' ? 'expense' : 'income';
 		const used = new Set(
 			[fromAccountId, toAccountId, ...extraSides.map((s) => s.accountId)].filter(
 				(id): id is number => id !== null
 			)
 		);
-		return categories.filter((a) => a.type === wantType && !used.has(a.id));
+		return categories.filter((a) => everydayCategoryKind(a) === wantKind && !used.has(a.id));
 	});
 
 	/**
@@ -526,8 +525,8 @@
 			(id) => id !== null && categories.some((c) => c.id === id)
 		);
 		const category = categories.find((c) => c.id === categoryId);
-		if (category?.type === AccountType.Expense) return Role.Supplier;
-		if (category?.type === AccountType.Revenue) return Role.Customer;
+		if (category && everydayCategoryKind(category) === 'expense') return Role.Supplier;
+		if (category && everydayCategoryKind(category) === 'income') return Role.Customer;
 
 		const list = allAccounts.concat(sideChoices);
 		for (const id of [fromAccountId, toAccountId]) {

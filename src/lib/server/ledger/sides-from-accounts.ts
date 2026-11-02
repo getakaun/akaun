@@ -1,11 +1,10 @@
 import {
-  AccountType,
   LedgerRecordKind,
   type AccountSubTypeCode,
   type AccountTypeCode,
   type LedgerRecordKindCode,
 } from "$lib/enums.js";
-import { isMoneyPotAccount, isPurchaseAssetAccount } from "./account-type.js";
+import { everydayCategoryKind, isMoneyPotAccount } from "./account-type.js";
 import { remainderMinor } from "./money.js";
 import type { Minor, RecordCreateSides, Refusable } from "./types.js";
 
@@ -102,9 +101,7 @@ function isMoneyPot(account: SidesAccount): boolean {
 
 /** What a record is "for": a spending category, an earning category, equipment. */
 function isSpendingCategory(account: SidesAccount): boolean {
-  return (
-    account.type === AccountType.Expense || isPurchaseAssetAccount(account)
-  );
+  return everydayCategoryKind(account) === "expense";
 }
 
 function isOwedAccount(account: SidesAccount, ctx: SidesContext): boolean {
@@ -132,7 +129,7 @@ function isOwedAccount(account: SidesAccount, ctx: SidesContext): boolean {
  *
  * Returns the kind to file it under, or null when it is a real adjustment.
  */
-function everydayKindFor(
+export function everydayKindFor(
   sides: SidesAccount[],
   ctx: SidesContext,
 ): LedgerRecordKindCode | null {
@@ -149,7 +146,7 @@ function everydayKindFor(
   if (allSpending) return LedgerRecordKind.Expense;
 
   const allEarning = rest.every(
-    (account) => account.type === AccountType.Revenue,
+    (account) => everydayCategoryKind(account) === "income",
   );
   if (allEarning) return LedgerRecordKind.Income;
 
@@ -384,7 +381,7 @@ function derive(
     }
   }
 
-  if (from.type === AccountType.Revenue && isMoneyPot(to)) {
+  if (everydayCategoryKind(from) === "income" && isMoneyPot(to)) {
     return {
       kind: "income",
       categoryAccountId: from.id,

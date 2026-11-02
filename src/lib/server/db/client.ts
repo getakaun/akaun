@@ -19,6 +19,7 @@ import {
 } from "./legacy-drop-guard.js";
 import { users } from "./schema.js";
 import { seedGroups } from "../admin/seed-groups.js";
+import { applyContraRevenueReclassification } from "./contra-revenue-reclassification.js";
 
 const log = createLogger("db");
 
@@ -120,6 +121,10 @@ function createDb() {
   // this are already past it, and the four seeded defaults still need their
   // sub-type set the first time this schema version runs against them.
   applySubTypeBackfill(raw);
+  // Predicate-guarded data repair on every boot, including installations whose
+  // chart conversion completed in an earlier release. Allocates and audits in
+  // one transaction; a failure aborts startup and rolls the repair back.
+  applyContraRevenueReclassification(raw, log);
 
   return { db, raw };
 }

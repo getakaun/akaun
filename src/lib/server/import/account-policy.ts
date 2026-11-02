@@ -5,7 +5,7 @@ import {
   type AccountSubTypeCode,
 } from "$lib/enums.js";
 import type { AccountView } from "../ledger/types.js";
-import { isPurchaseAssetAccount } from "../ledger/account-type.js";
+import { everydayCategoryKind } from "../ledger/account-type.js";
 
 const TRANSACTION_ASSET_SUBTYPES = new Set<AccountSubTypeCode>([
   AccountSubType.Cash,
@@ -42,20 +42,11 @@ export function isImportPurchaseSource(
 }
 
 export function isImportPurchaseTarget(account: AccountView): boolean {
-  return (
-    posting(account) &&
-    (account.type === AccountType.Expense ||
-      isPurchaseAssetAccount(account) ||
-      isContraRevenueAccount(account))
-  );
+  return posting(account) && everydayCategoryKind(account) === "expense";
 }
 
 export function isImportIncomeSource(account: AccountView): boolean {
-  return (
-    posting(account) &&
-    account.type === AccountType.Revenue &&
-    !isContraRevenueAccount(account)
-  );
+  return posting(account) && everydayCategoryKind(account) === "income";
 }
 
 export function isImportIncomeTarget(

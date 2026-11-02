@@ -186,6 +186,9 @@ export default defineConfig({
 				extends: './vite.config.ts',
 				test: {
 					name: 'server',
+					// Bun's fork IPC can time out before the Vitest worker starts.
+					// Threads retain bun:sqlite support without that IPC handshake.
+					pool: 'threads',
 					environment: 'node',
 					include: ['src/**/*.{test,spec}.{js,ts}', 'scripts/**/*.{test,spec}.{js,ts}'],
 					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}']

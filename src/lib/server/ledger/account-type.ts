@@ -1,4 +1,14 @@
-import { isContraRevenueAccount } from "$lib/account-classification.js";
+import {
+  isContraRevenueAccount,
+  isPurchaseAssetAccount,
+  type TypeAndSubType,
+} from "$lib/account-classification.js";
+export {
+  everydayCategoryKind,
+  isPurchaseAssetAccount,
+  PURCHASE_ASSET_SUBTYPES,
+  type TypeAndSubType,
+} from "$lib/account-classification.js";
 import {
   AccountRole,
   AccountSubType,
@@ -123,16 +133,6 @@ export const accountTypeFor = accountTypeForLegacyRole;
  * these two, so the split cannot drift between the record form, the records
  * list, the dashboard and the importer.
  */
-export type TypeAndSubType = {
-  type: AccountTypeCode;
-  /**
-   * Absent for Equity. For Asset/Liability, `null` means "needs review"
-   * (`isNeedsReview` below). For Expense/Revenue, `null` defaults safely to
-   * Operating (`expenseBucket`/`revenueBucket` below).
-   */
-  subType: AccountSubTypeCode | null;
-};
-
 /** Something the business keeps, recorded as an asset but chosen as a category. */
 export function isEquipmentAccount(account: TypeAndSubType): boolean {
   return (
@@ -143,25 +143,6 @@ export function isEquipmentAccount(account: TypeAndSubType): boolean {
 
 /** Canonical name; retained beside the old helper during the terminology migration. */
 export const isFixedAssetAccount = isEquipmentAccount;
-
-export const PURCHASE_ASSET_SUBTYPES: AccountSubTypeCode[] = [
-  AccountSubType.Inventory,
-  AccountSubType.PrepaymentsAndDeposits,
-  AccountSubType.TaxReceivable,
-  AccountSubType.OtherCurrentAsset,
-  AccountSubType.FixedAsset,
-  AccountSubType.IntangibleAsset,
-  AccountSubType.OtherNonCurrentAsset,
-];
-
-/** An asset acquired from a document rather than an account used to pay. */
-export function isPurchaseAssetAccount(account: TypeAndSubType): boolean {
-  return (
-    account.type === AccountType.Asset &&
-    account.subType !== null &&
-    PURCHASE_ASSET_SUBTYPES.includes(account.subType)
-  );
-}
 
 /** A place money actually sits or is owed. */
 export function isMoneyPotAccount(account: TypeAndSubType): boolean {

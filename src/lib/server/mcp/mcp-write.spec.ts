@@ -39,6 +39,8 @@ import {
 import { seedAccounts } from "../db/seed-accounts.js";
 import { setSetting, SETTING_KEYS } from "../settings.js";
 import {
+  AccountType,
+  AccountSubType,
   DefaultAccountPurpose,
   EntityType,
   ImportState,
@@ -389,6 +391,7 @@ for (const era of ["legacy", "modern"] as const) {
       code: string;
       message: string;
       currentVersion?: string;
+      derivedKind?: string;
     };
   }
   function data(result: Result) {
@@ -1533,6 +1536,96 @@ for (const era of ["legacy", "modern"] as const) {
           operation: "mcp:create_record",
         });
         expect(made?.requestId).toBeTruthy();
+      });
+
+      it("files clearing to contra revenue as EX with the category first and guards expectedKind", async () => {
+        const client = await connect();
+        // Fixture-only accounts: no application database is opened by this suite.
+        db.update(accounts)
+          .set({ subType: AccountSubType.Clearing })
+          .where(eq(accounts.id, bank))
+          .run();
+        db.update(accounts)
+          .set({
+            type: AccountType.Revenue,
+            subType: AccountSubType.ContraOperatingRevenue,
+          })
+          .where(eq(accounts.id, software))
+          .run();
+        const args = {
+          ...expenseArgs,
+          fromAccountId: bank,
+          toAccountId: software,
+        };
+        for (const dryRun of [true, false]) {
+          const refused = errorOf(
+            await call(client, "create_record", {
+              ...args,
+              expectedKind: "income",
+              dryRun,
+            }),
+          );
+          expect(refused.code).toBe("REFUSED");
+          expect(refused.derivedKind).toBe("expense");
+          expect(refused.message).toContain("derive expense");
+          expect(db.select().from(ledgerRecords).all()).toHaveLength(0);
+        }
+        const preview = data(
+          await call(client, "create_record", {
+            ...args,
+            expectedKind: "expense",
+            dryRun: true,
+          }),
+        );
+        expect(preview.record.kind).toBe("expense");
+        expect(preview.saved).toBe(false);
+        expect(db.select().from(ledgerRecords).all()).toHaveLength(0);
+        const created = data(
+          await call(client, "create_record", {
+            ...args,
+            expectedKind: "expense",
+          }),
+        );
+        expect(created.record.kind).toBe("expense");
+        expect(created.record.recordNumber).toMatch(/^EX/);
+        expect(
+          created.record.movements.map(
+            (m: { accountId: number; amountMinor: number }) => [
+              m.accountId,
+              Math.sign(m.amountMinor),
+            ],
+          ),
+        ).toEqual([
+          [software, 1],
+          [bank, -1],
+        ]);
+      });
+
+      it("compares expectedKind against the stored kind of an everyday split", async () => {
+        const client = await connect();
+        const args = {
+          ...expenseArgs,
+          fromAccountId: bank,
+          toAccountId: software,
+          extraSides: [{ accountId: account(5900), amountMinor: 100 }],
+        };
+        const refused = errorOf(
+          await call(client, "create_record", {
+            ...args,
+            expectedKind: "journal",
+          }),
+        );
+        expect(refused.derivedKind).toBe("expense");
+        expect(db.select().from(ledgerRecords).all()).toHaveLength(0);
+        const preview = data(
+          await call(client, "create_record", {
+            ...args,
+            expectedKind: "expense",
+            dryRun: true,
+          }),
+        );
+        expect(preview.record.kind).toBe("expense");
+        expect(db.select().from(ledgerRecords).all()).toHaveLength(0);
       });
 
       it("saves nothing on a dry run", async () => {

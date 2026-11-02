@@ -23,7 +23,7 @@ import { requireAccountDefault } from "../services/account-defaults.js";
 import { loadSidesContext } from "../services/sides-context.js";
 import { mainCurrencyCode } from "../currency/form.js";
 import { setUserPreference, USER_PREF_KEYS } from "../userPreferences.js";
-import { LedgerRecordKind } from "$lib/enums.js";
+import { LedgerRecordKind, LedgerRecordKindLabels } from "$lib/enums.js";
 import type {
   LedgerDb,
   RecordCreate,
@@ -90,6 +90,9 @@ export const recordFieldsShape = {
  */
 export const createFromSidesShape = {
   ...recordFieldsShape,
+  expectedKind: z
+    .enum(["expense", "income", "transfer", "payment", "journal"])
+    .optional(),
   fromAccountId: positiveId,
   toAccountId: positiveId,
   /** Third and later sides. Requires `adjustments` unless they are all categories. */
@@ -147,7 +150,9 @@ export const patchShape = {
 export const patchSchema = z.object(patchShape).strict();
 
 export type CreateFromSides = z.output<typeof createFromSidesSchema>;
-export type CreateInput = RecordCreate | CreateFromSides;
+export type CreateInput = (RecordCreate | CreateFromSides) & {
+  expectedKind?: CreateFromSides["expectedKind"];
+};
 
 export type RecordWritten = { record: RecordView; version: string };
 
@@ -367,6 +372,19 @@ export function createRecord(
   const body = resolveCreate(ctx, input);
   if (!body.ok) return body;
   const data = body.value;
+  const derivedKind =
+    data.kind === "journal" && data.storedKind !== undefined
+      ? LedgerRecordKindLabels[data.storedKind]
+      : data.kind;
+  if (input.expectedKind !== undefined && input.expectedKind !== derivedKind) {
+    return {
+      ...fail(
+        "REFUSED",
+        `Expected ${input.expectedKind}, but the accounts derive ${derivedKind}. The record was not saved; review the accounts and expected kind.`,
+      ),
+      derivedKind,
+    };
+  }
   if (data.kind === "reimbursement-transfer")
     return fail(
       "REFUSED",

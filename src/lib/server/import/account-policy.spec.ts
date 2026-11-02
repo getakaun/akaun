@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { AccountSubType, AccountType } from "$lib/enums.js";
+import {
+  AccountSubType,
+  AccountType,
+  LedgerRecordKindLabels,
+} from "$lib/enums.js";
 import type { AccountView } from "../ledger/types.js";
 import {
   isImportIncomeSource,
@@ -9,6 +13,8 @@ import {
   importKindForSource,
   validateImportAccountPair,
 } from "./account-policy.js";
+
+import { sidesFromAccounts } from "../ledger/sides-from-accounts.js";
 
 function account(
   id: number,
@@ -166,4 +172,55 @@ describe("contra revenue import eligibility", () => {
       }
     }
   });
+});
+
+describe("manual and importer category classification", () => {
+  it.each([
+    [AccountType.Revenue, AccountSubType.ContraOperatingRevenue, "expense"],
+    [AccountType.Revenue, AccountSubType.ContraOtherRevenue, "expense"],
+    [AccountType.Expense, AccountSubType.OperatingExpense, "expense"],
+    [AccountType.Asset, AccountSubType.Inventory, "expense"],
+    [AccountType.Asset, AccountSubType.FixedAsset, "expense"],
+    [AccountType.Revenue, AccountSubType.OperatingRevenue, "income"],
+    [AccountType.Revenue, AccountSubType.OtherRevenue, "income"],
+    [AccountType.Revenue, null, "income"],
+  ] as const)(
+    "type %s subtype %s derives %s in both paths",
+    (type, subType, kind) => {
+      const money = {
+        ...account(1, AccountType.Asset, AccountSubType.Clearing),
+        role: 1,
+        archived: false,
+      };
+      const category = {
+        ...account(2, type, subType),
+        role: 1,
+        archived: false,
+      };
+      const [from, to] =
+        kind === "expense" ? [money, category] : [category, money];
+      expect(validateImportAccountPair(from, to, 90, 91)).toEqual({
+        ok: true,
+        kind,
+      });
+      const manual = sidesFromAccounts(
+        { fromAccountId: from.id, toAccountId: to.id, amountMinor: 1000 },
+        {
+          accountById: (id) =>
+            [money, category].find((a) => a.id === id) ?? null,
+          canAdjust: false,
+          payableAccountId: 90,
+          receivableAccountId: 91,
+          openingBalancesAccountId: 92,
+        },
+      );
+      expect(manual.ok).toBe(true);
+      if (!manual.ok) throw new Error(manual.reason);
+      expect(
+        manual.value.kind === "journal" && manual.value.storedKind !== undefined
+          ? LedgerRecordKindLabels[manual.value.storedKind]
+          : manual.value.kind,
+      ).toBe(kind);
+    },
+  );
 });

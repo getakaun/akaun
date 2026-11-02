@@ -404,6 +404,7 @@ export function registerWrite<S extends z.ZodRawShape>(
               ? { currentVersion: result.currentVersion }
               : {}),
             ...(result.issues ? { issues: result.issues } : {}),
+            ...(result.derivedKind ? { derivedKind: result.derivedKind } : {}),
           });
         }
         log.info(logLine("ok", ids), "MCP write");

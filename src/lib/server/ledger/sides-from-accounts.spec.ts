@@ -590,6 +590,30 @@ describe("a bill spanning several categories", () => {
 });
 
 describe("contra revenue everyday classification", () => {
+  it("bank to contra revenue is an expense without adjustments", () => {
+    expect(sidesFromAccounts(input(1, 13), ctx({ canAdjust: false }))).toEqual({
+      ok: true,
+      value: { kind: "expense", categoryAccountId: 13, paidFromAccountId: 1 },
+    });
+  });
+
+  it("accepts contra revenue on expense splits but refuses it on income splits without adjustments", () => {
+    const expense = sidesFromAccounts(
+      input(1, 3, { extraSides: [{ accountId: 13, amountMinor: 1000 }] }),
+      ctx({ canAdjust: false }),
+    );
+    expect(expense.ok).toBe(true);
+    if (!expense.ok || expense.value.kind !== "journal")
+      throw new Error("Expected journal sides");
+    expect(expense.value.storedKind).toBe(LedgerRecordKind.Expense);
+    expect(
+      sidesFromAccounts(
+        input(4, 1, { extraSides: [{ accountId: 13, amountMinor: -1000 }] }),
+        ctx({ canAdjust: false }),
+      ).ok,
+    ).toBe(false);
+  });
+
   it("clearing to contra revenue is an expense without adjustments", () => {
     expect(sidesFromAccounts(input(14, 13), ctx({ canAdjust: false }))).toEqual(
       {

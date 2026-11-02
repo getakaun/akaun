@@ -1,6 +1,6 @@
 # OAuth for MCP
 
-Akaun supports OAuth authorization code with mandatory S256 PKCE for its read-only MCP server. Users sign in with their existing Akaun account and approve the client's read scopes. API tokens remain available for clients that use configured Authorization headers.
+Akaun supports OAuth authorization code with mandatory S256 PKCE for its MCP server. Users sign in with their existing Akaun account and choose which scopes to grant. API tokens remain available for clients that use configured Authorization headers.
 
 ## Enable
 
@@ -52,8 +52,8 @@ expanded scopes ∩ the user's role ∩ their groups' delegation ceiling
 Narrowing a group or its ceiling therefore applies at once to every app. See [PERMISSIONS.md](PERMISSIONS.md).
 
 - **`reports`** is read-only. There are no scopes for dashboard, settings or users.
-- **Omitted scope requests** default to reads only. Protected-resource metadata advertises reads only in `scopes_supported`. Change and delete scopes come through step-up: a 403 `insufficient_scope` challenge naming the missing scopes. The challenge is sent only when the user could grant them.
-- **Consent page.** It offers only scopes the user may delegate, and says when an administrator's ceiling blocks one. Reads are pre-ticked; change and delete never are.
+- **Omitted scope requests** default to reads only. Both discovery documents advertise all supported scopes. The consent page offers the full scope catalog even when the client initially requests only reads; the user chooses the grant.
+- **Consent page.** It shows all supported scopes, disabling choices the user cannot delegate and explaining account or administrator limits. Reads are pre-ticked; change, delete, adjustment and correction scopes never are. Only the selected, delegable scopes are granted.
 
 Tool discovery and calls go through one table (`mcp/tool-requirements.ts`) that lists each tool's scopes and catalog permissions. Description policy and review prompts need `records.read` or `import.read`. The context resource reports read, write and delete access per area after every restriction.
 

@@ -241,7 +241,8 @@ started yourself. If you did not start the connection, click **Cancel**.
 
 The app shows on your profile, on the **Connected apps** tab.
 
-The page shows the access that the app asks for, in up to three groups:
+The page shows all supported permissions. Select the ones you want to allow;
+permissions blocked by your account or administrator are disabled. The groups include:
 
 - **Read** — Akaun selects each read permission that you can give.
 - **Change** — Akaun never selects these for you. Select each area that the assistant may add to
@@ -249,11 +250,13 @@ The page shows the access that the app asks for, in up to three groups:
   files**.
 - **Delete** — Akaun never selects these for you. Select them only if the assistant must delete
   things.
+- **Adjust** — Allow journal and adjustment postings only if needed. These start unchecked.
+- **Corrections** — Choose the corrections the assistant may make. These start unchecked.
 
 Under each choice, **Includes** lists the abilities that the choice gives, for example
 **Invoices: Add, Invoices: Change, Invoices: Send, Invoices: Void**.
 
-The page offers only what you may hand on to tokens and apps. You cannot select the other choices:
+You can select only what you may hand on to tokens and apps. Other choices are disabled:
 
 - If you do not have a permission, the page shows **Your account does not have this permission.**
 - If you have a permission, but your administrator does not let you hand it on, the page shows
@@ -263,9 +266,9 @@ The page offers only what you may hand on to tokens and apps. You cannot select 
 If you clear all the permissions, Akaun shows **Select at least one available permission.**
 Click **Cancel** to refuse the connection.
 
-Usually an app asks for read access first. When the assistant needs a tool that changes data, the
-app asks again, and the **Connect** page opens again with the new access. You can also connect the
-app again to give it more access.
+You can choose read and change access during the first connection, even if the app initially
+asks only for read access. Only the permissions you select are granted. Connect the app again
+to change the permissions you give it.
 
 A connection stays valid for 30 days or less. Then connect the assistant again.
 

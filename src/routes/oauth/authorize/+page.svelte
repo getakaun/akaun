@@ -49,9 +49,8 @@
   <h1 class="text-2xl font-semibold">Connect {data.clientName}</h1>
   <p>Signed in as <strong>{data.username}</strong> on {data.instance}.</p>
   <p>
-    This app is requesting access to your bookkeeping data. Choose the
-    permissions you want to allow. It can never do more than your Akaun account
-    can.
+    Connect this app to your bookkeeping data. Choose the permissions you want
+    to allow. It can never do more than your Akaun account can.
   </p>
   <p class="text-muted-foreground text-sm">
     The app name is supplied by the client. Client ID: {data.clientId}

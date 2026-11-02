@@ -37,6 +37,8 @@ mock.module("$env/dynamic/private", () => ({
   },
 }));
 
+mock.module("$env/dynamic/public", () => ({ env: {} }));
+
 // The one module that opens the configured database. Nothing a spec imports
 // may reach it: fail loudly rather than open anything.
 const refuseDb = () => {
@@ -44,5 +46,8 @@ const refuseDb = () => {
     "MCP tests must not load db/client.ts: it opens the configured database.",
   );
 };
-mock.module(resolve(import.meta.dir, "../src/lib/server/db/client.ts"), refuseDb);
+mock.module(
+  resolve(import.meta.dir, "../src/lib/server/db/client.ts"),
+  refuseDb,
+);
 mock.module("$lib/server/db/client.js", refuseDb);

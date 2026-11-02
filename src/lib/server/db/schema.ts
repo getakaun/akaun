@@ -1345,3 +1345,9 @@ export const reimbursementItems = sqliteTable("reimbursement_items", {
     .references(() => ledgerMovements.id, { onDelete: "restrict" }),
   amountMinor: integer("amount_minor").notNull(),
 });
+
+/** Redeemed MCP file capabilities. The primary key makes consumption atomic. */
+export const mcpFileLinkUses = sqliteTable("mcp_file_link_uses", {
+  jti: text("jti").primaryKey(),
+  expiresAt: integer("expires_at").notNull(),
+});

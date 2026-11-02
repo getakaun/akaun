@@ -87,16 +87,18 @@ export function createRequestHandle(
       if (!actor) {
         return withSecurityHeaders(
           new Response(
-            isLegacyToken(authorization) ? LEGACY_TOKEN_MESSAGE : "Unauthorized",
+            isLegacyToken(authorization)
+              ? LEGACY_TOKEN_MESSAGE
+              : "Unauthorized",
             {
-            status: 401,
-            headers: {
-              "WWW-Authenticate": mcpChallenge(
-                config,
-                event.request.headers.has("Authorization"),
-              ),
-              "Cache-Control": "no-store",
-            },
+              status: 401,
+              headers: {
+                "WWW-Authenticate": mcpChallenge(
+                  config,
+                  event.request.headers.has("Authorization"),
+                ),
+                "Cache-Control": "no-store",
+              },
             },
           ),
         );
@@ -104,6 +106,11 @@ export function createRequestHandle(
       Object.assign(event.locals, actor);
       return withSecurityHeaders(await resolveAudited(event, resolve));
     }
+
+    // File capabilities authenticate themselves. Never put the token-bearing
+    // pathname into resolveAudited's operation (or any log entry).
+    if (/^\/api\/mcp-files\/[^/]+\/?$/.test(pathname))
+      return withSecurityHeaders(await resolve(event));
 
     if (pathname.startsWith("/api/")) {
       const header = event.request.headers.get("Authorization");

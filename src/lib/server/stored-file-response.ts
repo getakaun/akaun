@@ -7,10 +7,8 @@ import type { BlobStore } from "./storage/blob-store.js";
  * carries the real name.
  */
 function contentDisposition(mode: string, name: string): string {
-  const asciiFallback =
-    // eslint-disable-next-line no-control-regex
-    name.replace(/[\u0000-\u001f"\\]/g, "_") || "file";
-  return `${mode}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+  const asciiFallback = name.replace(/[^\x20-\x7e]|["\\]/g, "_") || "file";
+  return `${mode}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(name.toWellFormed()).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)}`;
 }
 
 /**
@@ -28,6 +26,7 @@ export async function storedFileResponse(
   request: Request,
   key: string,
   downloadName: string,
+  options: { download?: boolean } = {},
 ): Promise<Response> {
   const stat = await store.stat(key).catch(() => null);
   if (!stat) return new Response("Not found", { status: 404 });
@@ -35,9 +34,9 @@ export async function storedFileResponse(
   const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.modifiedMs).toString(16)}"`;
   const headers: Record<string, string> = {
     ETag: etag,
-    "Cache-Control": "private, no-cache",
+    "Cache-Control": options.download ? "no-store" : "private, no-cache",
   };
-  if (request.headers.get("if-none-match") === etag) {
+  if (!options.download && request.headers.get("if-none-match") === etag) {
     return new Response(null, { status: 304, headers });
   }
 
@@ -47,7 +46,7 @@ export async function storedFileResponse(
   // app's address. Anything else is downloaded too.
   const { kind, mime } = await storedFileType(store, key);
   const mode =
-    kind === "pdf" || kind === "jpeg" || kind === "png"
+    !options.download && (kind === "pdf" || kind === "jpeg" || kind === "png")
       ? "inline"
       : "attachment";
 

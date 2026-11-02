@@ -1,3 +1,11 @@
+import type { RequestEvent } from "@sveltejs/kit";
+import { createRequestHandle } from "../request-hook.js";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  downloadMcpFile,
+  signFileToken,
+  fileLinkConfig,
+} from "./file-links.js";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
@@ -503,12 +511,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         }
       };
       expect(tools).toHaveLength(16);
-      // get_attachment returns file content blocks, not structured data, so it
-      // is the one tool with no output schema.
-      for (const tool of tools)
-        if (tool.name === "get_attachment")
-          expect(tool.outputSchema).toBeUndefined();
-        else checkSchema(tool.outputSchema);
+      for (const tool of tools) checkSchema(tool.outputSchema);
       // Exercise client-side validation of real nested rows, scalar fields and nulls.
       expect(await call(client, "list_records")).not.toMatchObject({
         isError: true,
@@ -818,79 +821,222 @@ for (const era of ["legacy", "modern", "auto"] as const) {
       return row.id;
     }
 
-    beforeEach(() => reset("mcp-attachment:1"));
-
-    it("returns an image as image content and a PDF as an embedded document", async () => {
-      const initialAudit = db.select().from(auditLog).all().length;
-      const image = await attachFile(
-        expense.id,
-        "records/2026/08/a_photo.png",
-        PNG,
-      );
-      const pdf = await attachFile(
-        expense.id,
-        "records/2026/08/b_receipt.pdf",
-        PDF,
-      );
-      const client = await connect();
-
-      const imageResult = await call(client, "get_attachment", {
-        recordId: expense.id,
-        attachmentId: image,
+    // Exercise the same token-authenticated hook bypass and route logic as GET,
+    // with no browser session or Authorization header.
+    async function redeem(
+      token: string,
+      request = new Request(`${origin}/api/mcp-files/${token}`),
+    ) {
+      const handle = createRequestHandle(db, null, null);
+      return handle({
+        event: {
+          request,
+          url: new URL(request.url),
+          locals: { user: null, permissions: null },
+          cookies: { get: () => undefined },
+          getClientAddress: () => "127.0.0.1",
+        } as unknown as RequestEvent,
+        resolve: () => downloadMcpFile(db, store, token, request),
       });
-      expect(imageResult.isError).toBeFalsy();
-      expect(imageResult.content).toMatchObject([
-        { type: "text" },
-        { type: "image", mimeType: "image/png", data: PNG.toString("base64") },
-      ]);
-      const about = JSON.parse(
-        (imageResult.content as { text: string }[])[0].text,
-      );
-      expect(about).toMatchObject({
-        attachmentId: image,
-        recordId: expense.id,
-        displayName: "a_photo.png",
-        sizeBytes: PNG.length,
-      });
-      expect(about.warning).toContain("untrusted");
+    }
 
-      const pdfResult = await call(client, "get_attachment", {
-        recordId: expense.id,
-        attachmentId: pdf,
-      });
-      expect(pdfResult.content).toMatchObject([
-        { type: "text" },
-        {
-          type: "resource",
-          resource: {
-            uri: `akaun://records/${expense.id}/attachments/${pdf}`,
-            mimeType: "application/pdf",
-            blob: PDF.toString("base64"),
-          },
-        },
-      ]);
-
-      for (const result of [imageResult, pdfResult]) {
-        expect(JSON.stringify(result)).not.toContain("records/2026");
-        expect(JSON.stringify(result)).not.toContain(storageRoot);
-      }
-      expect(db.select().from(auditLog).all()).toHaveLength(initialAudit);
+    beforeEach(() => {
+      reset("mcp-attachment:1");
+      reset("mcp-file-download:1");
+      reset("mcp-file-download:2");
     });
 
-    it("returns a CSV file as text", async () => {
-      const csv = await attachFile(
-        expense.id,
-        "records/2026/08/c_export.csv",
-        Buffer.from("Date,Amount\n2026-08-01,12.50\n"),
-      );
+    it("returns only signed metadata and downloads exact PDF/image/CSV/unknown bytes once", async () => {
       const client = await connect();
-      const result = await call(client, "get_attachment", {
+      for (const [name, bytes, mime] of [
+        ["photo.png", PNG, "image/png"],
+        ["receipt.pdf", PDF, "application/pdf"],
+        [
+          "export.csv",
+          Buffer.from("Date,Amount\n2026-08-01,12.50\n"),
+          "text/csv",
+        ],
+        ["raw.bin", Buffer.from([0, 1, 2, 3]), "application/octet-stream"],
+      ] as const) {
+        const attachmentId = await attachFile(
+          expense.id,
+          `records/${name}`,
+          bytes,
+        );
+        const result = await call(client, "get_attachment", {
+          recordId: expense.id,
+          attachmentId,
+        });
+        expect(result.isError).toBeFalsy();
+        expect(result.content).toHaveLength(1);
+        const data = JSON.parse((result.content as { text: string }[])[0].text);
+        expect(result.structuredContent).toEqual(data);
+        expect(Object.keys(data).sort()).toEqual(
+          [
+            "recordId",
+            "attachmentId",
+            "filename",
+            "mimeType",
+            "size",
+            "sha256",
+            "downloadUrl",
+            "expiresAt",
+          ].sort(),
+        );
+        expect(data).toMatchObject({
+          recordId: expense.id,
+          attachmentId,
+          filename: name,
+          mimeType: mime,
+          size: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        });
+        expect(Date.parse(data.expiresAt) - Date.now()).toBeGreaterThan(
+          115_000,
+        );
+        expect(new URL(data.downloadUrl).origin).toBe(origin);
+        expect(JSON.stringify(result)).not.toContain(storageRoot);
+        const token = new URL(data.downloadUrl).pathname.split("/").pop()!;
+        sqlite.exec("PRAGMA query_only = OFF");
+        const responses = await Promise.all(
+          [0, 1].map(() =>
+            redeem(
+              token,
+              new Request(data.downloadUrl, {
+                headers: { "if-none-match": "*" },
+              }),
+            ),
+          ),
+        );
+        expect(responses.map((r) => r.status).sort()).toEqual([200, 410]);
+        const response = responses.find((r) => r.status === 200)!;
+        expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+        expect(response.headers.get("Content-Type")).toBe(mime);
+        expect(response.headers.get("Content-Length")).toBe(
+          String(bytes.length),
+        );
+        expect(response.headers.get("Content-Disposition")).toContain(
+          `attachment; filename="${name}"`,
+        );
+        expect(response.headers.get("Content-Disposition")).toContain(
+          "filename*=UTF-8''",
+        );
+        expect(response.headers.get("Cache-Control")).toBe("no-store");
+        expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
+        expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+        sqlite.exec("PRAGMA query_only = ON");
+      }
+    });
+
+    it("rejects expired, tampered, wrong-user, missing-user, revoked-permission and deleted-attachment links", async () => {
+      const attachmentId = await attachFile(
+        expense.id,
+        "records/private.pdf",
+        PDF,
+      );
+      const claims = {
+        userId: 1,
         recordId: expense.id,
-        attachmentId: csv,
+        attachmentId,
+        exp: Math.floor(Date.now() / 1000) + 120,
+        jti: randomUUID(),
+      };
+      const request = new Request(`${origin}/api/mcp-files/redacted`);
+      const download = (token: string) => redeem(token, request);
+      const token = signFileToken(claims);
+      sqlite.exec("PRAGMA query_only = OFF");
+      expect(
+        (await download(signFileToken({ ...claims, exp: 1 }))).status,
+      ).toBe(410);
+      expect((await download(`${token.slice(0, -2)}xx`)).status).toBe(403);
+      // Changing the bound user without signing cannot impersonate another user.
+      const [payload, signature] = token.split(".");
+      const changed = JSON.parse(Buffer.from(payload, "base64url").toString());
+      changed.userId = 2;
+      expect(
+        (
+          await download(
+            `${Buffer.from(JSON.stringify(changed)).toString("base64url")}.${signature}`,
+          )
+        ).status,
+      ).toBe(403);
+      expect(
+        (await download(signFileToken({ ...claims, userId: 2 }))).status,
+      ).toBe(403);
+      expect(
+        (await download(signFileToken({ ...claims, userId: 999 }))).status,
+      ).toBe(403);
+      db.delete(groupGrants)
+        .where(eq(groupGrants.permission, "records.read"))
+        .run();
+      expect((await download(token)).status).toBe(403);
+      grantGroup(db, {
+        name: "restored",
+        userIds: [1],
+        grants: ["records.read"],
       });
-      const [, body] = result.content as { type: string; text: string }[];
-      expect(body.type).toBe("text");
-      expect(body.text).toContain("12.50");
+      db.delete(recordAttachments)
+        .where(eq(recordAttachments.id, attachmentId))
+        .run();
+      expect((await download(token)).status).toBe(404);
+    });
+
+    it("uses RFC 5987 filenames and enforces a separate download budget", async () => {
+      const attachmentId = await attachFile(
+        expense.id,
+        "records/named.pdf",
+        PDF,
+      );
+      sqlite.exec("PRAGMA query_only = OFF");
+      const filename = "收据\r\n\"'()*.pdf";
+      db.update(recordAttachments)
+        .set({ displayName: filename })
+        .where(eq(recordAttachments.id, attachmentId))
+        .run();
+      const claims = {
+        userId: 1,
+        recordId: expense.id,
+        attachmentId,
+        exp: Math.floor(Date.now() / 1000) + 120,
+        jti: randomUUID(),
+      };
+      const request = new Request(`${origin}/api/mcp-files/redacted`);
+      const response = await downloadMcpFile(
+        db,
+        store,
+        signFileToken(claims),
+        request,
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("Content-Disposition")).toContain(
+        "%E6%94%B6%E6%8D%AE%0D%0A%22%27%28%29%2A.pdf",
+      );
+      await response.arrayBuffer();
+      for (let i = 0; i < 60; i++) hit("mcp-file-download:1", 60, 600_000);
+      expect(
+        (
+          await downloadMcpFile(
+            db,
+            store,
+            signFileToken({ ...claims, jti: randomUUID() }),
+            request,
+          )
+        ).status,
+      ).toBe(403);
+    });
+
+    it("requires a production secret and validates TTL configuration", () => {
+      expect(() => fileLinkConfig({ NODE_ENV: "production" })).toThrow();
+      expect(() =>
+        fileLinkConfig({ MCP_FILE_LINK_TTL_SECONDS: "0" }),
+      ).toThrow();
+      expect(
+        fileLinkConfig({
+          NODE_ENV: "production",
+          MCP_FILE_LINK_SECRET: "s".repeat(32),
+          MCP_FILE_LINK_TTL_SECONDS: "30",
+        }).ttl,
+      ).toBe(30);
     });
 
     it("refuses a file over the size cap, another record's file and a file outside storage", async () => {

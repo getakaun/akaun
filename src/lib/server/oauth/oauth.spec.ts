@@ -621,6 +621,7 @@ describe("OAuth authorization and persistence", () => {
     ] as const)
       expect(can(auth, permission)).toBe(true);
     expect(can(auth, "records.delete")).toBe(false);
+    expect(can(auth, "records.correctContact")).toBe(false);
     expect(can(auth, "records.adjust")).toBe(false);
     const old = (await oauth.authenticate(
       bearer(
@@ -645,6 +646,11 @@ describe("OAuth authorization and persistence", () => {
     expect(can(adjust, "records.create")).toBe(true);
   });
   it.each([
+    [
+      "records:correct-contact",
+      "records.correctContact",
+      "records.correctDate",
+    ],
     [
       "records:correct-date",
       "records.correctDate",

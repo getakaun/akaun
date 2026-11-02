@@ -57,6 +57,7 @@ export const DELETE_SCOPES = [
 export const ADJUST_SCOPES = ["records:adjust"] as const;
 export const CORRECTION_SCOPES = [
   "records:correction",
+  "records:correct-contact",
   "records:correct-date",
   "records:correct-reimbursement-amount",
 ] as const;
@@ -81,6 +82,7 @@ export const SCOPE_PERMISSIONS: Record<OAuthScope, readonly LeafPermission[]> =
       "records.correctDate",
       "records.correctReimbursementAmount",
     ],
+    "records:correct-contact": ["records.correctContact"],
     "records:correct-date": ["records.correctDate"],
     "records:correct-reimbursement-amount": [
       "records.correctReimbursementAmount",
@@ -162,6 +164,8 @@ export const SCOPE_LABELS: Record<OAuthScope, string> = {
   "invoices:delete": "Delete draft invoices",
   "quotations:delete": "Delete quotations",
   "import:delete": "Discard import jobs",
+  "records:correct-contact":
+    "Correct expense suppliers or personal payers, which can move outstanding amounts between contacts",
   "records:correct-date":
     "Correct settled expense and income dates, which can change historical reports",
   "records:correction":

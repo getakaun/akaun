@@ -92,7 +92,7 @@ describe("OAuth scopes", () => {
 
   it("never offers settings, users or the dashboard to an app", () => {
     const offered = new Set(expandScopes(OAUTH_SCOPES));
-    expect(offered.has("records.correctContact")).toBe(false);
+    expect(offered.has("records.correctContact")).toBe(true);
 
     for (const leaf of offered)
       expect(leaf.split(".")[0]).not.toMatch(/^(settings|users|dashboard)$/);
@@ -105,6 +105,14 @@ describe("OAuth scopes", () => {
       "records:delete",
       "records:adjust",
     ]);
+    expect(ordinary).not.toContain("records.correctContact");
+    expect(expandScopes(["records:correct-contact"])).toEqual([
+      "records.correctContact",
+    ]);
+    expect(expandScopes(["records:correction"])).not.toContain(
+      "records.correctContact",
+    );
+    expect(scopeTier("records:correct-contact")).toBe("correct");
     expect(ordinary).not.toContain("records.correctDate");
     expect(ordinary).not.toContain("records.correctReimbursementAmount");
     expect(expandScopes(["records:correct-date"])).toEqual([

@@ -102,8 +102,8 @@ export const PERMISSION_CATALOG = {
         phrase: "correct expense contacts",
         explicit: true,
         sensitive: true,
-        // Available to explicitly granted sessions/PATs. No OAuth scope or MCP
-        // tool exposes this new operation; existing credentials gain nothing.
+        // Requires an explicit grant, including the independent OAuth scope
+        // records:correct-contact; grouped correction access excludes it.
       },
       correctAllocations: {
         label: "Correct allocations",

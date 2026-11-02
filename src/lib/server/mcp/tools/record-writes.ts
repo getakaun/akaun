@@ -1,4 +1,10 @@
 import {
+  prepareExpenseContactCorrection,
+  correctExpenseContact,
+  expenseContactCorrectionSchema,
+} from "../../application/expense-contact-correction.js";
+import { searchContactCorrectionContacts } from "../../application/contact-correction-search.js";
+import {
   prepareRecordDateCorrection,
   correctRecordDate,
   dateCorrectionSchema,
@@ -95,6 +101,41 @@ function written(result: AppResult<RecordWritten>, dryRun = false) {
 }
 
 export function registerRecordWrites(server: McpServer, context: McpContext) {
+  registerRead(
+    server,
+    context,
+    "get_expense_contact_correction",
+    "Preview an expense contact correction. Returns current supplier/personal payer fields, blocked reasons, paid/outstanding amounts and the required version. Use search_expense_contact_correction_contacts to find an existing replacement contact.",
+    { recordId: id },
+    ({ recordId }) => {
+      const result = prepareExpenseContactCorrection(context, recordId);
+      if (!result.ok) throw new McpToolError(result.code, result.reason);
+      return result.value;
+    },
+  );
+  registerRead(
+    server,
+    context,
+    "search_expense_contact_correction_contacts",
+    "Find up to 50 existing contacts by name for an authorized expense contact correction, without requiring general contact-directory access. Preview the expense first; use field supplier or paidBy only when offered by the preview.",
+    { recordId: id, search: z.string().trim().min(1).max(200) },
+    ({ recordId, search }) => {
+      const prepared = prepareExpenseContactCorrection(context, recordId);
+      if (!prepared.ok) throw new McpToolError(prepared.code, prepared.reason);
+      const result = searchContactCorrectionContacts(context, recordId, search);
+      if (!result.ok) throw new McpToolError(result.code, result.reason);
+      return { contacts: result.value };
+    },
+  );
+  registerWrite(
+    server,
+    context,
+    "correct_expense_contact",
+    "Correct an expense supplier or personal payer using the version from get_expense_contact_correction, an existing contactId and a 10–2000 character reason. Use only fields offered by the preview. Preserves movement IDs, amounts, dates, bank matches and allocation history; refuses incompatible ownership or reimbursement links. Present the expense, old and new contacts, paid/outstanding amounts and effect on who is owed, and obtain reviewed confirmation before calling. If the version is stale, preview again and obtain renewed confirmation.",
+    { recordId: id, ...expenseContactCorrectionSchema.shape },
+    ({ recordId, ...input }) => correctExpenseContact(context, recordId, input),
+    { destructive: true, ids: (input) => ({ recordId: input.recordId }) },
+  );
   registerRead(
     server,
     context,

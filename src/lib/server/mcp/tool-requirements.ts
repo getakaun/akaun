@@ -81,6 +81,18 @@ export const TOOL_REQUIREMENTS: Record<string, ToolRequirement> = {
   ),
   get_reimbursement_candidates: read(["records:read"]),
   create_reimbursement: write(["records:write"], ["records.create"]),
+  get_expense_contact_correction: read(
+    ["records:read", "records:write", "records:correct-contact"],
+    ["records.read", "records.update", "records.correctContact"],
+  ),
+  search_expense_contact_correction_contacts: read(
+    ["records:read", "records:write", "records:correct-contact"],
+    ["records.read", "records.update", "records.correctContact"],
+  ),
+  correct_expense_contact: write(
+    ["records:read", "records:write", "records:correct-contact"],
+    ["records.read", "records.update", "records.correctContact"],
+  ),
   get_record_date_correction: either(
     read(
       ["records:read", "records:write", "records:correct-date"],

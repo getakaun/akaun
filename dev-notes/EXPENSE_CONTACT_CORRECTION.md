@@ -33,7 +33,7 @@
   Write the field changes and reason in the same transaction, then emit record
   updates for the expense and linked records after commit.
 - Keep ordinary settled/reconciled expense contact edits locked, including
-  supplier and personal-payer aliases. New MCP tools are outside this change.
+  supplier and personal-payer aliases.
 
 ## Verification
 
@@ -46,3 +46,24 @@ accounting behavior. The record action fixture and assertions use the new label.
 
 Run type checking and lint. Browser verification is left to the user under the
 repository's verification policy.
+
+## OAuth and MCP
+
+Agents can use `get_expense_contact_correction`,
+`search_expense_contact_correction_contacts` and `correct_expense_contact` with
+`records:read`, `records:write` and the independent opt-in
+`records:correct-contact` scope. All three require `records.read`, `records.update`
+and `records.correctContact`, bounded by role, delegation ceiling and credential.
+The scope appears unchecked under Corrections. Existing grouped correction grants
+remain unchanged and do not include expense-contact correction; reconnect and
+select the new scope explicitly. PATs still select individual permissions.
+
+Preview returns fields, blocked reasons, the record and its version. Search takes
+`recordId` and a nonempty `search`, returns up to 50 existing contacts and needs no
+separate `contacts.read` permission. Correction takes `recordId`, `field`
+(`supplier` or `paidBy`, as offered in preview), `contactId`, `reason` and
+`expectedVersion`, reusing the REST operation and all accounting safeguards.
+Agents must present old/new contacts, paid/outstanding amounts and ownership effects
+and obtain reviewed confirmation before writing, including renewed review after
+stale-version failures. MCP annotations describe this as a destructive,
+non-idempotent write; confirmation remains client-guided.

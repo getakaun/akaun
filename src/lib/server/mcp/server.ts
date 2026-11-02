@@ -136,6 +136,7 @@ export function createServer(context: McpContext) {
                 "undo_settlement",
                 "correct_payment_allocations",
                 "correct_payment_recipient",
+                "correct_expense_contact",
                 "correct_record_date",
                 "correct_reimbursement_amount",
               ].map((name) => {

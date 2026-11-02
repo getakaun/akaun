@@ -216,6 +216,7 @@ const ALL_WRITE: OAuthScope[] = [
   "records:read",
   "records:write",
   "records:delete",
+  "records:correct-contact",
   "records:correct-date",
   "records:correct-reimbursement-amount",
   "accounts:read",
@@ -261,6 +262,8 @@ const READ_TOOLS = [
   "get_reimbursement_reversal",
   "get_reimbursement_candidates",
   "get_payment_recipient_correction",
+  "get_expense_contact_correction",
+  "search_expense_contact_correction_contacts",
   "get_record_date_correction",
   "get_reimbursement_amount_correction",
   "get_payment_allocations",
@@ -279,6 +282,7 @@ const ADDITIVE_TOOLS = [
   "record_transfer_from_line",
 ];
 const OVERWRITE_TOOLS = [
+  "correct_expense_contact",
   "update_account",
   "delete_account",
   "set_opening_balance",
@@ -319,6 +323,7 @@ const IDEMPOTENT_WRITES = [
   "set_movement_matches",
 ];
 const REVIEWED_TOOLS = [
+  "correct_expense_contact",
   "correct_record_date",
   "correct_reimbursement_amount",
   "correct_payment_recipient",
@@ -421,7 +426,7 @@ for (const era of ["legacy", "modern"] as const) {
           ...ADDITIVE_TOOLS,
           ...OVERWRITE_TOOLS,
         ];
-        expect(new Set(expectedNames).size).toBe(63);
+        expect(new Set(expectedNames).size).toBe(66);
         expect(listed.map((tool) => tool.name).sort()).toEqual(
           expectedNames.sort(),
         );
@@ -1203,8 +1208,139 @@ for (const era of ["legacy", "modern"] as const) {
       }
     });
 
+    describe("expense contact corrections", () => {
+      const scopes: OAuthScope[] = [
+        "records:read",
+        "records:write",
+        "records:correct-contact",
+      ];
+
+      it("keeps existing grouped grants excluded and gates contact search", async () => {
+        for (const granted of [
+          ["records:read", "records:write"],
+          ["records:read", "records:write", "records:correction"],
+        ] as OAuthScope[][]) {
+          const names = await tools(
+            await connect({ token: writerToken, scopes: granted }),
+          );
+          for (const name of [
+            "get_expense_contact_correction",
+            "search_expense_contact_correction_contacts",
+            "correct_expense_contact",
+          ])
+            expect(names).not.toContain(name);
+        }
+        const client = await connect({ token: writerToken, scopes });
+        expect(await tools(client)).toContain(
+          "search_expense_contact_correction_contacts",
+        );
+        expect(await tools(client)).not.toContain("list_contacts");
+        db.delete(groupDelegations)
+          .where(eq(groupDelegations.permission, "records.correctContact"))
+          .run();
+        expect(await tools(client)).not.toContain(
+          "search_expense_contact_correction_contacts",
+        );
+      });
+
+      for (const via of ["oauth", "pat"] as const) {
+        it(`corrects expense contacts with preserved movements and audit attribution through ${via}`, async () => {
+          const setup = await connect();
+          const bill = data(
+            await call(setup, "create_record", {
+              ...expenseArgs,
+              fromAccountId: payable,
+              toAccountId: software,
+              contactId: supplier,
+            }),
+          );
+          const replacement = data(
+            await call(setup, "create_contact", {
+              entityType: EntityType.Business,
+              legalName: "Replacement supplier",
+            }),
+          ).contact.id;
+          const client = await connect({
+            token: writerToken,
+            ...(via === "oauth" ? { scopes } : {}),
+          });
+          const preview = data(
+            await call(client, "get_expense_contact_correction", {
+              recordId: bill.record.id,
+            }),
+          );
+          expect(preview.fields).toContainEqual(
+            expect.objectContaining({ field: "supplier", contactId: supplier }),
+          );
+          expect(
+            data(
+              await call(client, "search_expense_contact_correction_contacts", {
+                recordId: bill.record.id,
+                search: "Replacement",
+              }),
+            ).contacts,
+          ).toEqual([{ id: replacement, legalName: "Replacement supplier" }]);
+          const input = {
+            recordId: bill.record.id,
+            field: "supplier",
+            contactId: replacement,
+            reason: "Correct supplier according to original receipt",
+            expectedVersion: preview.version,
+          };
+          expect(
+            errorOf(
+              await call(client, "correct_expense_contact", {
+                ...input,
+                expectedVersion: "stale",
+              }),
+            ).code,
+          ).toBe("CONFLICT");
+          const invalidReason = await call(client, "correct_expense_contact", {
+            ...input,
+            reason: "short",
+          });
+          expect(invalidReason.isError).toBe(true);
+          expect(invalidReason.content?.[0].text).toMatch(
+            /Input validation error/,
+          );
+          const corrected = data(
+            await call(client, "correct_expense_contact", input),
+          );
+          expect(corrected.record.contactId).toBe(replacement);
+          expect(corrected.record.supplierContactId).toBe(replacement);
+          expect(corrected.record.movements).toEqual(preview.record.movements);
+          expect(corrected.record.outstandingMinor).toBe(
+            preview.record.outstandingMinor,
+          );
+          const audit = db
+            .select()
+            .from(auditLog)
+            .all()
+            .filter(
+              (entry) => entry.operation === "mcp:correct_expense_contact",
+            );
+          expect(audit.length).toBeGreaterThan(0);
+          expect(
+            audit.every((entry) => entry.via === via && entry.userId === 1),
+          ).toBe(true);
+          expect(
+            audit.some((entry) => JSON.stringify(entry).includes(input.reason)),
+          ).toBe(true);
+          expect(
+            errorOf(await call(client, "correct_expense_contact", input)).code,
+          ).toBe("CONFLICT");
+        });
+      }
+    });
+
     describe("historical corrections", () => {
       const corrections = [
+        {
+          scope: "records:correct-contact",
+          permission: "records.correctContact",
+          read: "get_expense_contact_correction",
+          write: "correct_expense_contact",
+        },
         {
           scope: "records:correct-date",
           permission: "records.correctDate",
@@ -1333,7 +1469,9 @@ for (const era of ["legacy", "modern"] as const) {
           const input =
             correction.scope === "records:correct-date"
               ? { date: "2026-08-31", acknowledgePeriodChange: true }
-              : { amountMinor: 500, allocations: [] };
+              : correction.scope === "records:correct-contact"
+                ? { field: "supplier", contactId: supplier }
+                : { amountMinor: 500, allocations: [] };
           expect(
             errorOf(
               await call(client, correction.write, {

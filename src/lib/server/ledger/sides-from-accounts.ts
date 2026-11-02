@@ -129,7 +129,7 @@ function isOwedAccount(account: SidesAccount, ctx: SidesContext): boolean {
  *
  * Returns the kind to file it under, or null when it is a real adjustment.
  */
-function everydayKindFor(
+export function everydayKindFor(
   sides: SidesAccount[],
   ctx: SidesContext,
 ): LedgerRecordKindCode | null {

@@ -76,6 +76,14 @@ export async function extractText(absPath: string, mimeType: string): Promise<st
 	throw new Error(`Unsupported file type. Please upload a PDF, JPG, or PNG.`);
 }
 
+/** Reads only a PDF's text layer, without OCR. Keeps the caller's bytes intact. */
+export async function extractPdfPagesText(
+	bytes: Uint8Array
+): Promise<{ pages: string[]; totalPages: number }> {
+	const { text: pages, totalPages } = await pdfExtractText(bytes.slice(), { mergePages: false });
+	return { pages, totalPages };
+}
+
 async function extractFromPdf(absPath: string): Promise<string> {
 	const buffer = readFileSync(absPath);
 	const { text, totalPages } = await pdfExtractText(new Uint8Array(buffer), { mergePages: true });

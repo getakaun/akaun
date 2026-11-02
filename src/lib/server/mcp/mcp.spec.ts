@@ -805,6 +805,32 @@ for (const era of ["legacy", "modern", "auto"] as const) {
     ]);
     const PDF = Buffer.from("%PDF-1.7 receipt");
 
+    /** A one-page PDF with byte-accurate stream length and xref offsets. */
+    function textPdf(text: string) {
+      const stream = `BT /F1 12 Tf 50 750 Td (${text}) Tj ET\n`;
+      const objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`,
+      ];
+      let pdf = "%PDF-1.4\n";
+      const offsets = [0];
+      objects.forEach((object, index) => {
+        offsets.push(Buffer.byteLength(pdf));
+        pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+      });
+      const xrefOffset = Buffer.byteLength(pdf);
+      pdf += `xref\n0 ${offsets.length}\n0000000000 65535 f \n`;
+      pdf += offsets
+        .slice(1)
+        .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+        .join("");
+      pdf += `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+      return Buffer.from(pdf);
+    }
+
     /** Stores a file under the test store and attaches it to `recordId`. */
     async function attachFile(recordId: number, key: string, bytes: Buffer) {
       await store.put(key, bytes);
@@ -858,8 +884,15 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         recordId: expense.id,
         attachmentId: pdf,
       });
+      expect(pdfResult.isError).toBeFalsy();
       expect(pdfResult.content).toMatchObject([
         { type: "text" },
+        {
+          type: "text",
+          text: expect.stringContaining(
+            "The PDF text could not be read (it may be encrypted or damaged).",
+          ),
+        },
         {
           type: "resource",
           resource: {
@@ -875,6 +908,80 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         expect(JSON.stringify(result)).not.toContain(storageRoot);
       }
       expect(db.select().from(auditLog).all()).toHaveLength(initialAudit);
+    });
+
+    it("returns PDF text with page headers and the original embedded document", async () => {
+      const bytes = textPdf("Monthly report total 123.45");
+      const pdf = await attachFile(expense.id, "records/report.pdf", bytes);
+      const client = await connect();
+      const result = await call(client, "get_attachment", {
+        recordId: expense.id,
+        attachmentId: pdf,
+      });
+      expect(result.isError).toBeFalsy();
+      expect((result.content as { text: string }[])[1].text).toContain(
+        "--- Page 1 ---",
+      );
+      expect(result.content).toMatchObject([
+        { type: "text" },
+        {
+          type: "text",
+          text: expect.stringContaining("Monthly report total 123.45"),
+        },
+        {
+          type: "resource",
+          resource: {
+            mimeType: "application/pdf",
+            blob: bytes.toString("base64"),
+          },
+        },
+      ]);
+    });
+
+    it("includes labelled stored source text even when PDF text cannot be read", async () => {
+      const pdf = await attachFile(expense.id, "records/stored.pdf", PDF);
+      sqlite.exec("PRAGMA query_only = OFF");
+      db.update(ledgerRecords)
+        .set({ extractedText: "Stored receipt total 67.89" })
+        .where(eq(ledgerRecords.id, expense.id))
+        .run();
+      sqlite.exec("PRAGMA query_only = ON");
+      const client = await connect();
+      const result = await call(client, "get_attachment", {
+        recordId: expense.id,
+        attachmentId: pdf,
+      });
+      expect(result.isError).toBeFalsy();
+      const [, body] = result.content as { type: string; text: string }[];
+      expect(body.type).toBe("text");
+      expect(body.text).toContain("The PDF text could not be read");
+      expect(body.text).toContain(
+        "Stored source text\nStored receipt total 67.89",
+      );
+    });
+
+    it("explains an empty PDF text layer without performing OCR", async () => {
+      const pdf = await attachFile(
+        expense.id,
+        "records/empty.pdf",
+        textPdf(""),
+      );
+      const client = await connect();
+      const result = await call(client, "get_attachment", {
+        recordId: expense.id,
+        attachmentId: pdf,
+      });
+      expect(result.isError).toBeFalsy();
+      expect(result.content).toMatchObject([
+        { type: "text" },
+        {
+          type: "text",
+          text: expect.stringContaining(
+            "This PDF has no text layer (it may be scanned); no OCR is performed here.",
+          ),
+        },
+        { type: "resource" },
+      ]);
     });
 
     it("returns a CSV file as text", async () => {

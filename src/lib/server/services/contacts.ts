@@ -60,17 +60,26 @@ export function createContact(
   db: Db,
   actingUserId: number,
   data: ContactCreate,
+  deferredEmits?: (() => void)[],
 ) {
-  const contact = _create(db, actingUserId, data);
-  syncPartnerAccounts(
-    db,
-    contact.id,
-    contact.legalName,
-    actingUserId,
-    [],
-    contact.roles,
+  const contact = db.transaction(
+    (tx) => {
+      const created = _create(tx, actingUserId, data);
+      syncPartnerAccounts(
+        tx,
+        created.id,
+        created.legalName,
+        actingUserId,
+        [],
+        created.roles,
+      );
+      return created;
+    },
+    { behavior: "immediate" },
   );
-  contactEvents.emit("contact-update", { item: contact });
+  const emit = () => contactEvents.emit("contact-update", { item: contact });
+  if (deferredEmits) deferredEmits.push(emit);
+  else emit();
   return contact;
 }
 
@@ -113,18 +122,27 @@ export function patchContact(
   id: number,
   actingUserId: number,
   patch: ContactPatch,
+  deferredEmits?: (() => void)[],
 ) {
-  const before = db
-    .select({ legalName: contacts.legalName })
-    .from(contacts)
-    .where(eq(contacts.id, id))
-    .get();
-  const contact = _update(db, id, actingUserId, patch);
-  // The name is the only part of a contact that other documents' search text
-  // carries, so any other edit leaves them alone.
-  if (contact && before && contact.legalName !== before.legalName)
-    reindexContactDocuments(db, id);
-  if (contact) contactEvents.emit("contact-update", { item: contact });
+  const contact = db.transaction(
+    (tx) => {
+      const before = tx
+        .select({ legalName: contacts.legalName })
+        .from(contacts)
+        .where(eq(contacts.id, id))
+        .get();
+      const updated = _update(tx, id, actingUserId, patch);
+      if (updated && before && updated.legalName !== before.legalName)
+        reindexContactDocuments(tx, id);
+      return updated;
+    },
+    { behavior: "immediate" },
+  );
+  if (contact) {
+    const emit = () => contactEvents.emit("contact-update", { item: contact });
+    if (deferredEmits) deferredEmits.push(emit);
+    else emit();
+  }
   return contact;
 }
 
@@ -133,20 +151,38 @@ export function replaceContactRoles(
   id: number,
   actingUserId: number,
   roles: number[],
+  deferredEmits?: (() => void)[],
 ) {
-  const before = getContactRoles(db, id);
-  const after = _setRoles(db, id, roles);
-  const contact = getContact(db, id);
-  if (contact)
-    syncPartnerAccounts(db, id, contact.legalName, actingUserId, before, after);
-  recordAudit(db, {
-    recordType: "contact",
-    recordId: id,
-    userId: actingUserId,
-    action: "update",
-    changes: diffRecords({ roles: before }, { roles: after }),
-  });
-  if (contact) contactEvents.emit("contact-update", { item: contact });
+  const contact = db.transaction(
+    (tx) => {
+      const before = getContactRoles(tx, id);
+      const after = _setRoles(tx, id, roles);
+      const updated = getContact(tx, id);
+      if (updated)
+        syncPartnerAccounts(
+          tx,
+          id,
+          updated.legalName,
+          actingUserId,
+          before,
+          after,
+        );
+      recordAudit(tx, {
+        recordType: "contact",
+        recordId: id,
+        userId: actingUserId,
+        action: "update",
+        changes: diffRecords({ roles: before }, { roles: after }),
+      });
+      return updated;
+    },
+    { behavior: "immediate" },
+  );
+  if (contact) {
+    const emit = () => contactEvents.emit("contact-update", { item: contact });
+    if (deferredEmits) deferredEmits.push(emit);
+    else emit();
+  }
   return contact;
 }
 
@@ -173,15 +209,24 @@ export function mergeContacts(
   survivorId: number,
   loserIds: number[],
   actingUserId: number,
+  deferredEmits?: (() => void)[],
 ) {
-  const survivor = _merge(db, survivorId, loserIds, actingUserId);
-  // The losers' documents now name the survivor, but their search text still
-  // holds the name they were written with.
-  if (survivor && loserIds.some((id) => id !== survivorId))
-    reindexContactDocuments(db, survivorId);
-  for (const id of loserIds) {
-    if (id !== survivorId) contactEvents.emit("contact-delete", { id });
-  }
-  if (survivor) contactEvents.emit("contact-update", { item: survivor });
+  const survivor = db.transaction(
+    (tx) => {
+      const merged = _merge(tx, survivorId, loserIds, actingUserId);
+      if (merged && loserIds.some((id) => id !== survivorId))
+        reindexContactDocuments(tx, survivorId);
+      return merged;
+    },
+    { behavior: "immediate" },
+  );
+  const emit = () => {
+    for (const id of loserIds) {
+      if (id !== survivorId) contactEvents.emit("contact-delete", { id });
+    }
+    if (survivor) contactEvents.emit("contact-update", { item: survivor });
+  };
+  if (deferredEmits) deferredEmits.push(emit);
+  else emit();
   return survivor;
 }

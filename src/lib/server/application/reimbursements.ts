@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { reimbursementEntryDescription } from "$lib/reimbursement-labels.js";
 import { z } from "zod";
 import { eq, inArray } from "drizzle-orm";
@@ -267,6 +268,13 @@ export function transferClaim(
 }
 
 export function createReimbursement(ctx: AppContext, raw: ReimbursementInput) {
+  return withClosingRefusal(() => createReimbursementOperation(ctx, raw));
+}
+
+function createReimbursementOperation(
+  ctx: AppContext,
+  raw: ReimbursementInput,
+) {
   const denied = requirePermissions(ctx, ["records.create"]);
   if (denied) return denied;
   const parsed = reimbursementSchema.safeParse(raw);

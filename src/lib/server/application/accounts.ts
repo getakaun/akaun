@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { z } from "zod";
 import {
   AccountSubTypesByType,
@@ -111,6 +112,17 @@ export function updateAccount(
   patch: z.output<z.ZodObject<typeof updateAccountShape>>,
   expectedVersion?: string,
 ): AppResult<AccountWritten> {
+  return withClosingRefusal(() =>
+    updateAccountOperation(ctx, id, patch, expectedVersion),
+  );
+}
+
+function updateAccountOperation(
+  ctx: AppContext,
+  id: number,
+  patch: z.output<z.ZodObject<typeof updateAccountShape>>,
+  expectedVersion?: string,
+): AppResult<AccountWritten> {
   const refused = requirePermissions(ctx, ["accounts.update"]);
   if (refused) return refused;
   if (!getAccount(ctx.db, id)) return missing(NOT_FOUND);
@@ -159,6 +171,17 @@ export function openingBalanceVersion(
  * alone, and the records screen never heard about the record it wrote.
  */
 export function setOpeningBalance(
+  ctx: AppContext,
+  accountId: number,
+  input: { date: string; amountMinor: number },
+  expectedVersion?: string,
+): AppResult<{ accountId: number; recordId: number | null; version: string }> {
+  return withClosingRefusal(() =>
+    setOpeningBalanceOperation(ctx, accountId, input, expectedVersion),
+  );
+}
+
+function setOpeningBalanceOperation(
   ctx: AppContext,
   accountId: number,
   input: { date: string; amountMinor: number },

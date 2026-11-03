@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { z } from "zod";
 import { DefaultAccountPurpose } from "$lib/enums.js";
 import { can } from "../permissions.js";
@@ -359,6 +360,14 @@ export function createRecord(
   input: CreateInput,
   opts: { dryRun?: boolean } = {},
 ): AppResult<RecordWritten> {
+  return withClosingRefusal(() => createRecordOperation(ctx, input, opts));
+}
+
+function createRecordOperation(
+  ctx: AppContext,
+  input: CreateInput,
+  opts: { dryRun?: boolean } = {},
+): AppResult<RecordWritten> {
   const refused = requirePermissions(ctx, ["records.create"]);
   if (refused) return refused;
 
@@ -522,6 +531,17 @@ export function updateRecord(
   patch: RecordPatch,
   expectedVersion?: string,
 ): AppResult<RecordWritten> {
+  return withClosingRefusal(() =>
+    updateRecordOperation(ctx, id, patch, expectedVersion),
+  );
+}
+
+function updateRecordOperation(
+  ctx: AppContext,
+  id: number,
+  patch: RecordPatch,
+  expectedVersion?: string,
+): AppResult<RecordWritten> {
   const refused = requirePermissions(ctx, ["records.update"]);
   if (refused) return refused;
   if (patch.paidByContactId !== undefined)
@@ -647,6 +667,16 @@ export function updateRecord(
 }
 
 export function deleteRecord(
+  ctx: AppContext,
+  id: number,
+  expectedVersion?: string,
+): AppResult<{ id: number }> {
+  return withClosingRefusal(() =>
+    deleteRecordOperation(ctx, id, expectedVersion),
+  );
+}
+
+function deleteRecordOperation(
   ctx: AppContext,
   id: number,
   expectedVersion?: string,

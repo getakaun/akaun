@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { z } from "zod";
 import { EntityType, Role } from "$lib/enums.js";
 import { getContact } from "../queries/contacts.js";
@@ -6,9 +7,10 @@ import {
   deleteContact as deleteContactService,
   patchContact,
   replaceContactRoles,
+  mergeContacts as mergeContactsService,
 } from "../services/contacts.js";
 import { actor, requirePermissions, type AppContext } from "./context.js";
-import { fail, missing, ok, type AppResult } from "./result.js";
+import { fail, invalid, missing, ok, type AppResult } from "./result.js";
 import { checkVersion, contactVersion } from "./version.js";
 
 /**
@@ -75,7 +77,49 @@ export type ContactWritten = { contact: Contact; version: string };
 
 const NOT_FOUND = "That contact no longer exists.";
 
+const mergeContactsSchema = z
+  .object({
+    survivorId: z.number().int().positive(),
+    loserIds: z.array(z.number().int().positive()).min(1).max(500),
+  })
+  .strict()
+  .refine((input) => !input.loserIds.includes(input.survivorId), {
+    message: "Choose different contacts to keep and merge.",
+  });
+
+export function mergeContacts(
+  ctx: AppContext,
+  input: unknown,
+): AppResult<ContactWritten> {
+  return withClosingRefusal(() => {
+    const refused = requirePermissions(ctx, [
+      "contacts.merge",
+      "contacts.update",
+      "contacts.delete",
+    ]);
+    if (refused) return refused;
+    const parsed = mergeContactsSchema.safeParse(input);
+    if (!parsed.success) return invalid(parsed.error);
+    const contact = mergeContactsService(
+      ctx.db,
+      parsed.data.survivorId,
+      parsed.data.loserIds,
+      actor(ctx),
+    );
+    return contact
+      ? ok({ contact, version: contactVersion(ctx.db, contact.id) })
+      : missing(NOT_FOUND);
+  });
+}
+
 export function createContact(
+  ctx: AppContext,
+  input: z.output<z.ZodObject<typeof createContactShape>>,
+): AppResult<ContactWritten> {
+  return withClosingRefusal(() => createContactOperation(ctx, input));
+}
+
+function createContactOperation(
   ctx: AppContext,
   input: z.output<z.ZodObject<typeof createContactShape>>,
 ): AppResult<ContactWritten> {
@@ -91,25 +135,54 @@ export function updateContact(
   input: z.output<z.ZodObject<typeof updateContactShape>>,
   expectedVersion?: string,
 ): AppResult<ContactWritten> {
+  return withClosingRefusal(() =>
+    updateContactOperation(ctx, id, input, expectedVersion),
+  );
+}
+
+function updateContactOperation(
+  ctx: AppContext,
+  id: number,
+  input: z.output<z.ZodObject<typeof updateContactShape>>,
+  expectedVersion?: string,
+): AppResult<ContactWritten> {
   const refused = requirePermissions(ctx, ["contacts.update"]);
   if (refused) return refused;
-  if (!getContact(ctx.db, id)) return missing(NOT_FOUND);
-  const stale = checkVersion(contactVersion(ctx.db, id), expectedVersion);
-  if (stale) return stale;
-
-  const { roles, ...fields } = input;
-  const patch = Object.fromEntries(
-    Object.entries(fields).filter(([, value]) => value !== undefined),
+  const emits: (() => void)[] = [];
+  const result = ctx.db.transaction(
+    () => {
+      if (!getContact(ctx.db, id)) return missing(NOT_FOUND);
+      const stale = checkVersion(contactVersion(ctx.db, id), expectedVersion);
+      if (stale) return stale;
+      const { roles, ...fields } = input;
+      const patch = Object.fromEntries(
+        Object.entries(fields).filter(([, value]) => value !== undefined),
+      );
+      if (Object.keys(patch).length > 0)
+        patchContact(ctx.db, id, actor(ctx), patch, emits);
+      if (roles !== undefined)
+        replaceContactRoles(ctx.db, id, actor(ctx), roles, emits);
+      const contact = getContact(ctx.db, id);
+      if (!contact) return missing(NOT_FOUND);
+      return ok({ contact, version: contactVersion(ctx.db, id) });
+    },
+    { behavior: "immediate" },
   );
-  if (Object.keys(patch).length > 0)
-    patchContact(ctx.db, id, actor(ctx), patch);
-  if (roles !== undefined) replaceContactRoles(ctx.db, id, actor(ctx), roles);
-  const contact = getContact(ctx.db, id);
-  if (!contact) return missing(NOT_FOUND);
-  return ok({ contact, version: contactVersion(ctx.db, id) });
+  if (result.ok) for (const emit of emits) emit();
+  return result;
 }
 
 export function deleteContact(
+  ctx: AppContext,
+  id: number,
+  expectedVersion?: string,
+): AppResult<{ id: number }> {
+  return withClosingRefusal(() =>
+    deleteContactOperation(ctx, id, expectedVersion),
+  );
+}
+
+function deleteContactOperation(
   ctx: AppContext,
   id: number,
   expectedVersion?: string,

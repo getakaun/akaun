@@ -1,5 +1,12 @@
+import { assertDatesOpen, closedPeriodReason } from "../closing/policy.js";
 import { eq, sql } from "drizzle-orm";
-import { accountDefaults, accounts, bankStatements, ledgerMovements } from "../db/schema.js";
+import {
+  accountDefaults,
+  accounts,
+  bankStatements,
+  ledgerMovements,
+  ledgerRecords,
+} from "../db/schema.js";
 import {
   AccountSubTypesByType,
   DefaultAccountPurpose,
@@ -11,8 +18,14 @@ import { diffRecords, recordAudit } from "../audit.js";
 import { accountEvents } from "../ledger/events.js";
 import { buildMovements } from "../ledger/entry-builder.js";
 import { rankAfter } from "../ledger/rank.js";
-import { accountCodeRangeFor, lowestFreeAccountCode } from "../ledger/account-code.js";
-import { legacyRoleForAccountType, NEEDS_REVIEW_TYPES } from "../ledger/account-type.js";
+import {
+  accountCodeRangeFor,
+  lowestFreeAccountCode,
+} from "../ledger/account-code.js";
+import {
+  legacyRoleForAccountType,
+  NEEDS_REVIEW_TYPES,
+} from "../ledger/account-type.js";
 import {
   canChangeAccountCode,
   canChangeAccountSubType,
@@ -22,10 +35,27 @@ import {
 } from "../ledger/account-eligibility.js";
 import { fromMinor } from "../ledger/money.js";
 import { mainCurrencyCode } from "../currency/form.js";
-import type { AccountCreate, AccountPatch, AccountView, LedgerDb, Minor, Refusable } from "../ledger/types.js";
-import { accountRefs, getAccount, openingBalanceFor } from "../queries/accounts.js";
+import type {
+  AccountCreate,
+  AccountPatch,
+  AccountView,
+  LedgerDb,
+  Minor,
+  Refusable,
+} from "../ledger/types.js";
+import {
+  accountRefs,
+  getAccount,
+  openingBalanceFor,
+} from "../queries/accounts.js";
 import { requireAccountDefault } from "./account-defaults.js";
-import { deleteRecord, getRecordRow, insertRecord, lockStateFor, updateRecord } from "../queries/ledger.js";
+import {
+  deleteRecord,
+  getRecordRow,
+  insertRecord,
+  lockStateFor,
+  updateRecord,
+} from "../queries/ledger.js";
 
 /**
  * Writing to the chart of accounts.
@@ -43,7 +73,12 @@ function emitAccount(db: LedgerDb, id: number): AccountView | null {
   return account;
 }
 
-export function createAccount(db: LedgerDb, actingUserId: number | null, data: AccountCreate, deferredEmits?: (() => void)[]): Refusable<AccountView> {
+export function createAccount(
+  db: LedgerDb,
+  actingUserId: number | null,
+  data: AccountCreate,
+  deferredEmits?: (() => void)[],
+): Refusable<AccountView> {
   const name = data.name.trim();
   if (!name) return { ok: false, reason: "Give the account a name." };
 
@@ -63,7 +98,10 @@ export function createAccount(db: LedgerDb, actingUserId: number | null, data: A
           reason: "That sub-type does not belong to this account type.",
         };
       }
-      if (data.subType === undefined && NEEDS_REVIEW_TYPES.includes(data.type)) {
+      if (
+        data.subType === undefined &&
+        NEEDS_REVIEW_TYPES.includes(data.type)
+      ) {
         return { ok: false, reason: "Choose what kind of account this is." };
       }
     }
@@ -71,7 +109,11 @@ export function createAccount(db: LedgerDb, actingUserId: number | null, data: A
 
   if (data.code !== undefined) {
     const range = accountCodeRangeFor(data.type);
-    if (!Number.isInteger(data.code) || data.code < range.start || data.code > range.end) {
+    if (
+      !Number.isInteger(data.code) ||
+      data.code < range.start ||
+      data.code > range.end
+    ) {
       return {
         ok: false,
         reason: `Code must be between ${range.start} and ${range.end} for this account type.`,
@@ -95,7 +137,10 @@ export function createAccount(db: LedgerDb, actingUserId: number | null, data: A
         .values({
           role: legacyRoleForAccountType(data.type),
           type: data.type,
-          subType: AccountSubTypesByType[data.type] !== undefined ? (data.subType ?? null) : null,
+          subType:
+            AccountSubTypesByType[data.type] !== undefined
+              ? (data.subType ?? null)
+              : null,
           code: data.code ?? lowestFreeAccountCode(data.type, codes),
           name,
           rank: rankAfter(null),
@@ -113,12 +158,18 @@ export function createAccount(db: LedgerDb, actingUserId: number | null, data: A
       return inserted;
     });
   } catch (error) {
-    if (error instanceof AccountRefusal) return { ok: false, reason: error.message };
+    if (error instanceof AccountRefusal)
+      return { ok: false, reason: error.message };
     throw error;
   }
 
-  if (deferredEmits) deferredEmits.push(() => { emitAccount(db, row.id); });
-  const account = deferredEmits ? getAccount(db, row.id)! : emitAccount(db, row.id)!;
+  if (deferredEmits)
+    deferredEmits.push(() => {
+      emitAccount(db, row.id);
+    });
+  const account = deferredEmits
+    ? getAccount(db, row.id)!
+    : emitAccount(db, row.id)!;
   return { ok: true, value: account };
 }
 
@@ -135,6 +186,37 @@ export function patchAccount(
   actingUserId: number,
   patch: AccountPatch,
 ): Refusable<AccountView> {
+  let typeChanged = false;
+  try {
+    const result = db.transaction(
+      (tx) => {
+        const before = getAccount(tx, id);
+        const written = patchAccountInTransaction(tx, id, actingUserId, patch);
+        typeChanged =
+          written.ok && before !== null && before.type !== written.value.type;
+        return written;
+      },
+      { behavior: "immediate" },
+    );
+    if (result.ok) {
+      emitAccount(db, id);
+      if (typeChanged)
+        accountEvents.emit("accounts-refresh", { reason: "type-change" });
+    }
+    return result;
+  } catch (error) {
+    const reason = closedPeriodReason(error);
+    if (!reason) throw error;
+    return { ok: false, reason };
+  }
+}
+
+function patchAccountInTransaction(
+  db: LedgerDb,
+  id: number,
+  actingUserId: number,
+  patch: AccountPatch,
+): Refusable<AccountView> {
   const existing = db.select().from(accounts).where(eq(accounts.id, id)).get();
   if (!existing) return { ok: false, reason: "That account no longer exists." };
 
@@ -145,7 +227,8 @@ export function patchAccount(
   if (patch.active === false && existing.isSystem) {
     return {
       ok: false,
-      reason: "This is one of the accounts the app needs to work, so it cannot be archived.",
+      reason:
+        "This is one of the accounts the app needs to work, so it cannot be archived.",
     };
   }
 
@@ -175,7 +258,9 @@ export function patchAccount(
     patch.type !== existing.type &&
     patch.subType === undefined &&
     existing.subType !== null &&
-    !(AccountSubTypesByType[effectiveType] ?? []).includes(existing.subType as AccountSubTypeCode);
+    !(AccountSubTypesByType[effectiveType] ?? []).includes(
+      existing.subType as AccountSubTypeCode,
+    );
 
   const state = dependencyState(db, id);
   if (patch.type !== undefined && patch.type !== existing.type) {
@@ -202,7 +287,11 @@ export function patchAccount(
     });
     if (!check.ok) return check;
     const range = accountCodeRangeFor(effectiveType);
-    if (!Number.isInteger(patch.code) || patch.code < range.start || patch.code > range.end) {
+    if (
+      !Number.isInteger(patch.code) ||
+      patch.code < range.start ||
+      patch.code > range.end
+    ) {
       return {
         ok: false,
         reason: `Code must be between ${range.start} and ${range.end} for this account type.`,
@@ -212,6 +301,24 @@ export function patchAccount(
 
   try {
     db.transaction((tx) => {
+      if (
+        (patch.type !== undefined && patch.type !== existing.type) ||
+        (patch.subType !== undefined && patch.subType !== existing.subType)
+      ) {
+        const dates = tx
+          .select({ date: ledgerRecords.date })
+          .from(ledgerMovements)
+          .innerJoin(
+            ledgerRecords,
+            eq(ledgerRecords.id, ledgerMovements.recordId),
+          )
+          .where(eq(ledgerMovements.accountId, id))
+          .all();
+        assertDatesOpen(
+          tx,
+          dates.map((row) => row.date),
+        );
+      }
       let code = existing.code;
       if (patch.code !== undefined && patch.code !== existing.code) {
         const clash = tx
@@ -219,7 +326,8 @@ export function patchAccount(
           .from(accounts)
           .where(eq(accounts.code, patch.code))
           .get();
-        if (clash && clash.id !== id) throw new AccountRefusal("That code is already in use.");
+        if (clash && clash.id !== id)
+          throw new AccountRefusal("That code is already in use.");
         code = patch.code;
       } else if (patch.type !== undefined && patch.type !== existing.type) {
         const codes = tx
@@ -242,8 +350,14 @@ export function patchAccount(
             : patch.code !== undefined && patch.code !== existing.code
               ? { code }
               : {}),
-          ...(patch.subType !== undefined ? { subType: patch.subType } : staleSubType ? { subType: null } : {}),
-          ...(patch.active !== undefined ? { archivedAt: patch.active ? null : new Date().toISOString() } : {}),
+          ...(patch.subType !== undefined
+            ? { subType: patch.subType }
+            : staleSubType
+              ? { subType: null }
+              : {}),
+          ...(patch.active !== undefined
+            ? { archivedAt: patch.active ? null : new Date().toISOString() }
+            : {}),
           updatedBy: actingUserId,
           updatedAt: new Date().toISOString(),
         })
@@ -259,24 +373,26 @@ export function patchAccount(
       });
     });
   } catch (error) {
-    if (error instanceof AccountRefusal) return { ok: false, reason: error.message };
+    if (error instanceof AccountRefusal)
+      return { ok: false, reason: error.message };
     throw error;
   }
 
-  const account = emitAccount(db, id)!;
-  if (patch.type !== undefined && patch.type !== existing.type) {
-    accountEvents.emit("accounts-refresh", { reason: "type-change" });
-  }
-  return { ok: true, value: account };
+  return { ok: true, value: getAccount(db, id)! };
 }
 
-export function removeAccount(db: LedgerDb, id: number, actingUserId: number): Refusable<null> {
+export function removeAccount(
+  db: LedgerDb,
+  id: number,
+  actingUserId: number,
+): Refusable<null> {
   const existing = db.select().from(accounts).where(eq(accounts.id, id)).get();
   if (!existing) return { ok: false, reason: "That account no longer exists." };
   if (existing.isSystem)
     return {
       ok: false,
-      reason: "This is one of the accounts the app needs to work, so it cannot be deleted.",
+      reason:
+        "This is one of the accounts the app needs to work, so it cannot be deleted.",
     };
   const check = deletionEligibility(dependencyState(db, id));
   if (!check.ok) {
@@ -340,12 +456,38 @@ export function setOpeningBalance(
   actingUserId: number,
   data: { date: string; amountMinor: Minor },
 ): Refusable<null> {
+  try {
+    const result = db.transaction(
+      (tx) => setOpeningBalanceInTransaction(tx, accountId, actingUserId, data),
+      { behavior: "immediate" },
+    );
+    if (result.ok) emitAccount(db, accountId);
+    return result;
+  } catch (error) {
+    const reason = closedPeriodReason(error);
+    if (!reason) throw error;
+    return { ok: false, reason };
+  }
+}
+
+function setOpeningBalanceInTransaction(
+  db: LedgerDb,
+  accountId: number,
+  actingUserId: number,
+  data: { date: string; amountMinor: Minor },
+): Refusable<null> {
   const account = getAccount(db, accountId);
   if (!account) return { ok: false, reason: "That account no longer exists." };
 
-  const opening = requireAccountDefault(db, DefaultAccountPurpose.OpeningBalances);
+  const opening = requireAccountDefault(
+    db,
+    DefaultAccountPurpose.OpeningBalances,
+  );
   if (!opening.ok) return opening;
-  const receivable = requireAccountDefault(db, DefaultAccountPurpose.Receivable);
+  const receivable = requireAccountDefault(
+    db,
+    DefaultAccountPurpose.Receivable,
+  );
   if (!receivable.ok) return receivable;
   const payable = requireAccountDefault(db, DefaultAccountPurpose.Payable);
   if (!payable.ok) return payable;
@@ -356,7 +498,8 @@ export function setOpeningBalance(
     if (lock.settled || lock.reconciled) {
       return {
         ok: false,
-        reason: "This account's opening balance is already settled or matched to a bank line, so it cannot be changed.",
+        reason:
+          "This account's opening balance is already settled or matched to a bank line, so it cannot be changed.",
       };
     }
   }
@@ -373,7 +516,6 @@ export function setOpeningBalance(
         action: "delete",
       });
     }
-    emitAccount(db, accountId);
     return { ok: true, value: null };
   }
 
@@ -400,7 +542,13 @@ export function setOpeningBalance(
 
   if (existing !== null) {
     const before = getRecordRow(db, existing);
-    updateRecord(db, existing, actingUserId, { date: data.date, amount, description }, built.value);
+    updateRecord(
+      db,
+      existing,
+      actingUserId,
+      { date: data.date, amount, description },
+      built.value,
+    );
     recordAudit(db, {
       recordType: "record",
       recordId: existing,
@@ -430,7 +578,6 @@ export function setOpeningBalance(
     });
   }
 
-  emitAccount(db, accountId);
   return { ok: true, value: null };
 }
 
@@ -456,7 +603,11 @@ export function ensurePartnerAccounts(
  * Removing the partner role: archive the pair when it holds movements, delete
  * it when it does not (FR-008b). History is never thrown away.
  */
-export function retirePartnerAccounts(db: LedgerDb, contactId: number, actingUserId: number): void {
+export function retirePartnerAccounts(
+  db: LedgerDb,
+  contactId: number,
+  actingUserId: number,
+): void {
   // Removing a contact's Partner role must not mutate the independent chart.
   void db;
   void contactId;

@@ -223,3 +223,69 @@ describe("no partners at all", () => {
     expect(report.partners).toEqual([]);
   });
 });
+
+describe("stable rounding when partner labels or display order change", () => {
+  it.each([101, -101])(
+    "keeps each contact's share of %s cents after a rename changes alphabetical order",
+    (resultMinor) => {
+      const base = {
+        dateFrom: "2026-10-01",
+        dateTo: "2026-10-31",
+        totals: [],
+        resultMinor,
+      };
+      const original = partnerStatement({
+        ...base,
+        partners: PARTNERS,
+      }).partners;
+      const renamed = partnerStatement({
+        ...base,
+        partners: [PARTNERS[1], { contactId: ALEX, contactName: "Zach Tan" }],
+      }).partners;
+      expect(renamed.map((p) => p.contactName)).toEqual([
+        "Sam Lee",
+        "Zach Tan",
+      ]);
+      for (const partner of original) {
+        expect(
+          renamed.find((p) => p.contactId === partner.contactId)
+            ?.shareOfResultMinor,
+        ).toBe(partner.shareOfResultMinor);
+      }
+      expect(renamed.reduce((sum, p) => sum + p.shareOfResultMinor, 0)).toBe(
+        resultMinor,
+      );
+    },
+  );
+
+  it("assigns the rounding remainder by numeric contact id and preserves caller display order", () => {
+    const partners = [
+      { contactId: 10, contactName: "Amy" },
+      { contactId: 2, contactName: "Ben" },
+    ];
+    const base = {
+      dateFrom: "2026-10-01",
+      dateTo: "2026-10-31",
+      totals: [],
+      resultMinor: 101,
+    };
+    const report = partnerStatement({ ...base, partners });
+    const reordered = partnerStatement({
+      ...base,
+      partners: [...partners].reverse(),
+    });
+    expect(
+      report.partners.map((p) => [p.contactId, p.shareOfResultMinor]),
+    ).toEqual([
+      [10, 50],
+      [2, 51],
+    ]);
+    expect(
+      reordered.partners.map((p) => [p.contactId, p.shareOfResultMinor]),
+    ).toEqual([
+      [2, 51],
+      [10, 50],
+    ]);
+    expect(partners.map((p) => p.contactId)).toEqual([10, 2]);
+  });
+});

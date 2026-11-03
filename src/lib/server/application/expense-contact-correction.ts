@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { createHash } from "node:crypto";
 import { and, asc, eq, inArray, or } from "drizzle-orm";
 import { z } from "zod";
@@ -171,6 +172,14 @@ export function prepareExpenseContactCorrection(ctx: AppContext, id: number) {
 
 /** A narrow contact-only write: movements, matches and allocation history survive. */
 export function correctExpenseContact(
+  ctx: AppContext,
+  id: number,
+  raw: unknown,
+) {
+  return withClosingRefusal(() => correctExpenseContactOperation(ctx, id, raw));
+}
+
+function correctExpenseContactOperation(
   ctx: AppContext,
   id: number,
   raw: unknown,

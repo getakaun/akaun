@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { activeAllocation } from "../queries/allocation-state.js";
 import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
@@ -160,6 +161,16 @@ export function prepareRecipientCorrection(ctx: AppContext, recordId: number) {
 }
 
 export function correctPaymentRecipient(
+  ctx: AppContext,
+  raw: z.output<z.ZodObject<typeof recipientCorrectionShape>>,
+  deferredEmits?: DeferredEmits,
+) {
+  return withClosingRefusal(() =>
+    correctPaymentRecipientOperation(ctx, raw, deferredEmits),
+  );
+}
+
+function correctPaymentRecipientOperation(
   ctx: AppContext,
   raw: z.output<z.ZodObject<typeof recipientCorrectionShape>>,
   deferredEmits?: DeferredEmits,

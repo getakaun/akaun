@@ -8,11 +8,14 @@ import {
 import { contactBalances } from "$lib/server/queries/settlements.js";
 import {
   createContact,
-  patchContact,
-  replaceContactRoles,
+  updateContact,
   deleteContact,
   mergeContacts,
-} from "$lib/server/services/contacts.js";
+  createContactShape,
+  updateContactShape,
+} from "$lib/server/application/contacts.js";
+import type { AppFailure } from "$lib/server/application/result.js";
+import { z } from "zod";
 import { fail, redirect } from "@sveltejs/kit";
 import { can } from "$lib/server/permissions.js";
 
@@ -127,27 +130,29 @@ export function loadContactDetail(locals: App.Locals, id: number) {
 }
 
 function parseRoles(data: FormData): number[] {
-  return data
-    .getAll("roles")
-    .map((r) => parseInt(String(r)))
-    .filter((n) => !Number.isNaN(n));
+  return data.getAll("roles").map((role) => Number(String(role)));
+}
+
+function actionFailure(result: AppFailure) {
+  const status =
+    result.code === "FORBIDDEN"
+      ? 403
+      : result.code === "NOT_FOUND"
+        ? 404
+        : result.code === "INVALID_INPUT"
+          ? 400
+          : 409;
+  return fail(status, { error: result.reason });
 }
 
 export const contactsActions: Actions = {
   create: async ({ locals, request }) => {
     if (!can(locals, "contacts.create"))
       return fail(403, { error: "Forbidden" });
-    const userId = locals.user!.id;
     const data = await request.formData();
-
-    const entityType = parseInt(String(data.get("entityType") ?? "0"));
-    const legalName = String(data.get("legalName") ?? "").trim();
-    if (!entityType) return fail(400, { error: "Entity type is required" });
-    if (!legalName) return fail(400, { error: "Legal name is required" });
-
-    const contact = createContact(db, userId, {
-      entityType,
-      legalName,
+    const parsed = z.object(createContactShape).safeParse({
+      entityType: Number(data.get("entityType")),
+      legalName: String(data.get("legalName") ?? ""),
       registrationNo: String(data.get("registrationNo") ?? "").trim() || null,
       email: String(data.get("email") ?? "").trim() || null,
       phone: String(data.get("phone") ?? "").trim() || null,
@@ -155,44 +160,50 @@ export const contactsActions: Actions = {
       remark: String(data.get("remark") ?? "").trim() || null,
       roles: parseRoles(data),
     });
-
-    return { success: true, id: contact.id };
+    if (!parsed.success)
+      return fail(400, {
+        error: parsed.error.issues[0]?.message ?? "Invalid contact",
+      });
+    const result = createContact({ db, locals }, parsed.data);
+    if (!result.ok) return actionFailure(result);
+    return { success: true, id: result.value.contact.id };
   },
 
   update: async ({ locals, request }) => {
     if (!can(locals, "contacts.update"))
       return fail(403, { error: "Forbidden" });
-    const userId = locals.user!.id;
     const data = await request.formData();
-    const id = parseInt(String(data.get("id") ?? "0"));
-    if (!id) return fail(400, { error: "Invalid contact" });
-
-    const legalName = String(data.get("legalName") ?? "").trim();
-    if (!legalName) return fail(400, { error: "Legal name is required" });
-
-    patchContact(db, id, userId, {
-      entityType: parseInt(String(data.get("entityType") ?? "0")) || undefined,
-      legalName,
+    const id = Number(data.get("id"));
+    if (!Number.isSafeInteger(id) || id <= 0)
+      return fail(400, { error: "Invalid contact" });
+    const parsed = z.object(updateContactShape).safeParse({
+      entityType: Number(data.get("entityType")) || undefined,
+      legalName: String(data.get("legalName") ?? ""),
       registrationNo: String(data.get("registrationNo") ?? "").trim() || null,
       email: String(data.get("email") ?? "").trim() || null,
       phone: String(data.get("phone") ?? "").trim() || null,
       address: String(data.get("address") ?? "").trim() || null,
       remark: String(data.get("remark") ?? "").trim() || null,
+      roles: parseRoles(data),
     });
-    replaceContactRoles(db, id, userId, parseRoles(data));
-
+    if (!parsed.success)
+      return fail(400, {
+        error: parsed.error.issues[0]?.message ?? "Invalid contact",
+      });
+    const result = updateContact({ db, locals }, id, parsed.data);
+    if (!result.ok) return actionFailure(result);
     return { success: true, id };
   },
 
   delete: async ({ locals, request }) => {
     if (!can(locals, "contacts.delete"))
       return fail(403, { error: "Forbidden" });
-    const userId = locals.user!.id;
     const data = await request.formData();
-    const id = parseInt(String(data.get("id") ?? "0"));
-    if (!id) return fail(400, { error: "Invalid contact" });
-    const result = deleteContact(db, id, userId);
-    if (!result.ok) return fail(409, { error: result.reason });
+    const id = Number(data.get("id"));
+    if (!Number.isSafeInteger(id) || id <= 0)
+      return fail(400, { error: "Invalid contact" });
+    const result = deleteContact({ db, locals }, id);
+    if (!result.ok) return actionFailure(result);
     return { success: true };
   },
 
@@ -201,20 +212,16 @@ export const contactsActions: Actions = {
       !can(locals, "contacts.merge") ||
       !can(locals, "contacts.update") ||
       !can(locals, "contacts.delete")
-    ) {
+    )
       return fail(403, { error: "Forbidden" });
-    }
-    const userId = locals.user!.id;
     const data = await request.formData();
-    const survivorId = parseInt(String(data.get("survivorId") ?? "0"));
+    const survivorId = Number(data.get("survivorId"));
     const loserIds = String(data.get("loserIds") ?? "")
       .split(",")
-      .map(Number)
-      .filter(Boolean);
-    if (!survivorId || loserIds.length === 0 || loserIds.includes(survivorId)) {
-      return fail(400, { error: "Invalid survivor/loser selection" });
-    }
-    mergeContacts(db, survivorId, loserIds, userId);
+      .filter((id) => id.trim())
+      .map(Number);
+    const result = mergeContacts({ db, locals }, { survivorId, loserIds });
+    if (!result.ok) return actionFailure(result);
     return { success: true };
   },
 };

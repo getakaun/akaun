@@ -1,3 +1,4 @@
+import { closedPeriodReason } from "../closing/policy.js";
 import { isMoneyPotAccount } from "../ledger/account-type.js";
 import {
   allocationHistoryDeletionReason,
@@ -190,6 +191,30 @@ function emitRecord(db: LedgerDb, id: number): RecordView | null {
 export type DeferredEmits = (() => void)[];
 
 export function createRecord(
+  ...args: Parameters<typeof createRecordInTransaction>
+): Refusable<RecordView> {
+  const [db, actingUserId, data, deferredEmits, auditUserId] = args;
+  const pending: DeferredEmits = [];
+  try {
+    const result = db.transaction(
+      (tx) =>
+        createRecordInTransaction(tx, actingUserId, data, pending, auditUserId),
+      { behavior: "immediate" },
+    );
+    if (result.ok) {
+      if (deferredEmits) deferredEmits.push(...pending);
+      else for (const emit of pending) emit();
+    }
+    return result;
+  } catch (error) {
+    // A compound caller must roll back its earlier writes as well.
+    const reason = closedPeriodReason(error);
+    if (deferredEmits || !reason) throw error;
+    return { ok: false, reason };
+  }
+}
+
+function createRecordInTransaction(
   db: LedgerDb,
   actingUserId: number,
   data: RecordCreate & {
@@ -374,6 +399,28 @@ export function patchRecord(
   id: number,
   actingUserId: number,
   patch: RecordPatch,
+): Refusable<RecordView> {
+  const pending: DeferredEmits = [];
+  try {
+    const result = db.transaction(
+      (tx) => patchRecordInTransaction(tx, id, actingUserId, patch, pending),
+      { behavior: "immediate" },
+    );
+    if (result.ok) for (const emit of pending) emit();
+    return result;
+  } catch (error) {
+    const reason = closedPeriodReason(error);
+    if (!reason) throw error;
+    return { ok: false, reason };
+  }
+}
+
+function patchRecordInTransaction(
+  db: LedgerDb,
+  id: number,
+  actingUserId: number,
+  patch: RecordPatch,
+  deferredEmits: DeferredEmits,
 ): Refusable<RecordView> {
   if (
     db
@@ -609,12 +656,15 @@ export function patchRecord(
     changes: diffRecords(before, snapshotForAudit(db, id)),
   });
 
-  const updated = emitRecord(db, id)!;
-  // The accounts it moved *away* from need their balances refreshed too.
-  touchAccounts(
-    db,
-    existing.movements.map((m) => m.accountId),
-  );
+  const updated = getRecord(db, id)!;
+  deferredEmits.push(() => {
+    emitRecord(db, id);
+    // The accounts it moved away from need their balances refreshed too.
+    touchAccounts(
+      db,
+      existing.movements.map((m) => m.accountId),
+    );
+  });
   return { ok: true, value: updated };
 }
 
@@ -898,6 +948,32 @@ function sidesFor(
  * transaction (see `DeferredEmits`).
  */
 export function removeRecord(
+  ...args: Parameters<typeof removeRecordInTransaction>
+): Refusable<null> {
+  const [db, id, actingUserId, opts = {}] = args;
+  const pending: DeferredEmits = [];
+  try {
+    const result = db.transaction(
+      (tx) =>
+        removeRecordInTransaction(tx, id, actingUserId, {
+          ...opts,
+          deferredEmits: pending,
+        }),
+      { behavior: "immediate" },
+    );
+    if (result.ok) {
+      if (opts.deferredEmits) opts.deferredEmits.push(...pending);
+      else for (const emit of pending) emit();
+    }
+    return result;
+  } catch (error) {
+    const reason = closedPeriodReason(error);
+    if (opts.deferredEmits || !reason) throw error;
+    return { ok: false, reason };
+  }
+}
+
+function removeRecordInTransaction(
   db: LedgerDb,
   id: number,
   actingUserId: number,

@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { eq } from "drizzle-orm";
 import { reimbursementEntries } from "../db/schema.js";
 import { z } from "zod";
@@ -85,6 +86,14 @@ export function prepareRecordDateCorrection(
  * allocations are undone. Eligibility, version, mutation and audit are atomic.
  */
 export function correctRecordDate(
+  ctx: AppContext,
+  id: number,
+  input: unknown,
+): AppResult<RecordWritten> {
+  return withClosingRefusal(() => correctRecordDateOperation(ctx, id, input));
+}
+
+function correctRecordDateOperation(
   ctx: AppContext,
   id: number,
   input: unknown,

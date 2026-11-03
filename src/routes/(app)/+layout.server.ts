@@ -6,6 +6,7 @@ import { LedgerRecordKind } from "$lib/enums.js";
 import { getUserNavOrder } from "$lib/server/navPreferences.js";
 import { DEFAULT_CURRENCY } from "$lib/currency.js";
 import { can } from "$lib/server/permissions.js";
+import { closedThrough } from "$lib/server/closing/policy.js";
 
 export const load: LayoutServerLoad = async ({ locals }) => {
   const mainCurrency =
@@ -33,6 +34,8 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 
   return {
     user: locals.user,
+    closedThrough: closedThrough(db),
+    canReadReports: can(locals, "reports.read"),
     mainCurrency,
     unpaidCount,
     // What the shell offers. Never a superuser flag: a page decides what it

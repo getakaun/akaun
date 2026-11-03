@@ -64,6 +64,7 @@ import {
   upsertSearchText,
 } from "../search-text.js";
 import type { SequenceDocumentType } from "../db/schema.js";
+import { assertDatesOpen } from "../closing/policy.js";
 
 /**
  * Every read and write of the one record store.
@@ -908,42 +909,49 @@ export function insertRecord(
   },
   movements: MovementDraft[],
 ): LedgerRecordRow {
-  const sequence = sequenceFor(data.kind);
-  const recordNumber =
-    data.recordNumber !== undefined
-      ? data.recordNumber
-      : sequence
-        ? nextNumber(db, sequence, data.date)
-        : null;
+  return db.transaction(
+    (transaction) => {
+      const tx = transaction as unknown as LedgerDb;
+      assertDatesOpen(tx, [data.date]);
+      const sequence = sequenceFor(data.kind);
+      const recordNumber =
+        data.recordNumber !== undefined
+          ? data.recordNumber
+          : sequence
+            ? nextNumber(tx, sequence, data.date)
+            : null;
 
-  const row = db
-    .insert(ledgerRecords)
-    .values({
-      ...(data.id !== undefined ? { id: data.id } : {}),
-      kind: data.kind,
-      date: data.date,
-      recordNumber,
-      description: data.description,
-      contactId: data.contactId ?? null,
-      supplierContactId: data.supplierContactId ?? null,
-      expensePaymentSource: data.expensePaymentSource ?? null,
-      reference: data.reference ?? "",
-      remark: data.remark ?? "",
-      currency: data.currency,
-      exchangeRate: data.exchangeRate,
-      amount: data.amount,
-      extractedText: data.extractedText ?? null,
-      legacyKind: data.legacyKind ?? null,
-      legacyId: data.legacyId ?? null,
-      createdBy: actingUserId,
-      updatedBy: actingUserId,
-    })
-    .returning()
-    .get()!;
+      const row = tx
+        .insert(ledgerRecords)
+        .values({
+          ...(data.id !== undefined ? { id: data.id } : {}),
+          kind: data.kind,
+          date: data.date,
+          recordNumber,
+          description: data.description,
+          contactId: data.contactId ?? null,
+          supplierContactId: data.supplierContactId ?? null,
+          expensePaymentSource: data.expensePaymentSource ?? null,
+          reference: data.reference ?? "",
+          remark: data.remark ?? "",
+          currency: data.currency,
+          exchangeRate: data.exchangeRate,
+          amount: data.amount,
+          extractedText: data.extractedText ?? null,
+          legacyKind: data.legacyKind ?? null,
+          legacyId: data.legacyId ?? null,
+          createdBy: actingUserId,
+          updatedBy: actingUserId,
+        })
+        .returning()
+        .get()!;
 
-  replaceMovements(db, row.id, movements);
-  reindexRecord(db, row.id);
-  return toRecordRow(row);
+      replaceMovements(tx, row.id, movements);
+      reindexRecord(tx, row.id);
+      return toRecordRow(row);
+    },
+    { behavior: "immediate" },
+  );
 }
 
 export function updateRecord(
@@ -965,29 +973,74 @@ export function updateRecord(
   }>,
   movements?: MovementDraft[],
 ): LedgerRecordRow | null {
-  if (movements && wouldRemoveAllocationHistory(db, id, movements))
-    throw new Error(ALLOCATION_HISTORY_EDIT_REASON);
-  const existing = db
-    .select()
-    .from(ledgerRecords)
-    .where(eq(ledgerRecords.id, id))
-    .get();
-  if (!existing) return null;
+  return db.transaction(
+    (transaction) => {
+      const tx = transaction as unknown as LedgerDb;
+      if (movements && wouldRemoveAllocationHistory(tx, id, movements))
+        throw new Error(ALLOCATION_HISTORY_EDIT_REASON);
+      const existing = tx
+        .select()
+        .from(ledgerRecords)
+        .where(eq(ledgerRecords.id, id))
+        .get();
+      if (!existing) return null;
 
-  const updated = db
-    .update(ledgerRecords)
-    .set({
-      ...patch,
-      updatedBy: actingUserId,
-      updatedAt: new Date().toISOString(),
-    })
-    .where(eq(ledgerRecords.id, id))
-    .returning()
-    .get()!;
+      // A form may resend unchanged financial values while editing an annotation.
+      // Compare the actual proposed accounting values, not the presence of a key.
+      const financialFields = [
+        "date",
+        "amount",
+        "currency",
+        "exchangeRate",
+        "contactId",
+        "supplierContactId",
+        "expensePaymentSource",
+      ] as const;
+      let financialChange = financialFields.some(
+        (field) =>
+          patch[field] !== undefined && patch[field] !== existing[field],
+      );
+      if (movements) {
+        const before = tx
+          .select({
+            accountId: ledgerMovements.accountId,
+            amountMinor: ledgerMovements.amountMinor,
+            sortOrder: ledgerMovements.sortOrder,
+          })
+          .from(ledgerMovements)
+          .where(eq(ledgerMovements.recordId, id))
+          .orderBy(asc(ledgerMovements.sortOrder), asc(ledgerMovements.id))
+          .all();
+        const after = [...movements].sort((a, b) => a.sortOrder - b.sortOrder);
+        financialChange ||=
+          before.length !== after.length ||
+          before.some(
+            (row, index) =>
+              row.accountId !== after[index].accountId ||
+              row.amountMinor !== after[index].amountMinor ||
+              row.sortOrder !== after[index].sortOrder,
+          );
+      }
+      if (financialChange)
+        assertDatesOpen(tx, [existing.date, patch.date ?? existing.date]);
 
-  if (movements) replaceMovements(db, id, movements);
-  reindexRecord(db, id);
-  return toRecordRow(updated);
+      const updated = tx
+        .update(ledgerRecords)
+        .set({
+          ...patch,
+          updatedBy: actingUserId,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(ledgerRecords.id, id))
+        .returning()
+        .get()!;
+
+      if (movements) replaceMovements(tx, id, movements);
+      reindexRecord(tx, id);
+      return toRecordRow(updated);
+    },
+    { behavior: "immediate" },
+  );
 }
 
 /** The row before a change, for the audit diff. */
@@ -1010,13 +1063,26 @@ export function snapshotForAudit(
 }
 
 export function deleteRecord(db: LedgerDb, id: number): boolean {
-  // Movements, attachments and search text all cascade from the record.
-  const result = db
-    .delete(ledgerRecords)
-    .where(eq(ledgerRecords.id, id))
-    .returning({ id: ledgerRecords.id })
-    .get();
-  return result !== undefined;
+  return db.transaction(
+    (transaction) => {
+      const tx = transaction as unknown as LedgerDb;
+      const existing = tx
+        .select({ date: ledgerRecords.date })
+        .from(ledgerRecords)
+        .where(eq(ledgerRecords.id, id))
+        .get();
+      if (!existing) return false;
+      assertDatesOpen(tx, [existing.date]);
+      // Movements, attachments and search text all cascade from the record.
+      const result = tx
+        .delete(ledgerRecords)
+        .where(eq(ledgerRecords.id, id))
+        .returning({ id: ledgerRecords.id })
+        .get();
+      return result !== undefined;
+    },
+    { behavior: "immediate" },
+  );
 }
 
 // ---------------------------------------------------------------------------

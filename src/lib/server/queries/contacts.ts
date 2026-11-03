@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import type { LedgerDb } from "../ledger/types.js";
 import * as schema from "../db/schema.js";
 import {
   contacts,
@@ -9,11 +10,13 @@ import {
   importItems,
   importQueue,
   ledgerRecords,
+  ledgerMovements,
   quotations,
   invoices,
 } from "../db/schema.js";
 import {
   EntityType,
+  Role,
   LedgerRecordKind,
   RoleLabels,
   EntityTypeLabels,
@@ -24,6 +27,7 @@ import {
   joinSearchText,
 } from "../search-text.js";
 import { recordAudit, diffRecords } from "../audit.js";
+import { assertDatesOpen, assertNoClosedHistory } from "../closing/policy.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = BunSQLiteDatabase<typeof schema> | BunSQLiteDatabase<any>;
@@ -180,14 +184,22 @@ export function getContactRoles(db: Db, id: number): number[] {
 
 /** Replace a contact's full role set with the given codes (may be empty). */
 export function setContactRoles(db: Db, id: number, roles: number[]) {
-  const unique = [...new Set(roles)];
-  db.delete(contactRoles).where(eq(contactRoles.contactId, id)).run();
-  if (unique.length > 0) {
-    db.insert(contactRoles)
-      .values(unique.map((role) => ({ contactId: id, role })))
-      .run();
-  }
-  return unique.sort((a, b) => a - b);
+  return db.transaction(
+    (tx) => {
+      const unique = [...new Set(roles)];
+      const before = getContactRoles(tx, id);
+      if (before.includes(Role.Partner) !== unique.includes(Role.Partner))
+        assertNoClosedHistory(tx as LedgerDb);
+      tx.delete(contactRoles).where(eq(contactRoles.contactId, id)).run();
+      if (unique.length > 0) {
+        tx.insert(contactRoles)
+          .values(unique.map((role) => ({ contactId: id, role })))
+          .run();
+      }
+      return unique.sort((a, b) => a - b);
+    },
+    { behavior: "immediate" },
+  );
 }
 
 export function createContact(
@@ -195,31 +207,36 @@ export function createContact(
   actingUserId: number,
   data: ContactCreate,
 ) {
-  const row = db
-    .insert(contacts)
-    .values({
-      entityType: data.entityType,
-      legalName: data.legalName,
-      registrationNo: data.registrationNo ?? null,
-      email: data.email ?? null,
-      phone: data.phone ?? null,
-      address: data.address ?? null,
-      remark: data.remark ?? null,
-      createdBy: actingUserId,
-      updatedBy: actingUserId,
-    })
-    .returning()
-    .get()!;
+  return db.transaction(
+    (tx) => {
+      const row = tx
+        .insert(contacts)
+        .values({
+          entityType: data.entityType,
+          legalName: data.legalName,
+          registrationNo: data.registrationNo ?? null,
+          email: data.email ?? null,
+          phone: data.phone ?? null,
+          address: data.address ?? null,
+          remark: data.remark ?? null,
+          createdBy: actingUserId,
+          updatedBy: actingUserId,
+        })
+        .returning()
+        .get()!;
 
-  const roles = setContactRoles(db, row.id, data.roles ?? []);
-  reindexContact(db, row.id, row);
-  recordAudit(db, {
-    recordType: "contact",
-    recordId: row.id,
-    userId: actingUserId,
-    action: "create",
-  });
-  return withLabels(row, roles);
+      const roles = setContactRoles(tx, row.id, data.roles ?? []);
+      reindexContact(tx, row.id, row);
+      recordAudit(tx, {
+        recordType: "contact",
+        recordId: row.id,
+        userId: actingUserId,
+        action: "create",
+      });
+      return withLabels(row, roles);
+    },
+    { behavior: "immediate" },
+  );
 }
 
 export function updateContact(
@@ -403,21 +420,28 @@ export function hardDeleteContact(
   id: number,
   actingUserId: number,
 ): boolean {
-  if (isContactReferenced(db, id)) return false;
-  const result = db
-    .delete(contacts)
-    .where(eq(contacts.id, id))
-    .returning()
-    .get();
-  if (!result) return false;
-  recordAudit(db, {
-    recordType: "contact",
-    recordId: id,
-    userId: actingUserId,
-    action: "delete",
-    changes: diffRecords(result, null),
-  });
-  return true;
+  return db.transaction(
+    (tx) => {
+      if (getContactRoles(tx, id).includes(Role.Partner))
+        assertNoClosedHistory(tx as LedgerDb);
+      if (isContactReferenced(tx, id)) return false;
+      const result = tx
+        .delete(contacts)
+        .where(eq(contacts.id, id))
+        .returning()
+        .get();
+      if (!result) return false;
+      recordAudit(tx, {
+        recordType: "contact",
+        recordId: id,
+        userId: actingUserId,
+        action: "delete",
+        changes: diffRecords(result, null),
+      });
+      return true;
+    },
+    { behavior: "immediate" },
+  );
 }
 
 type MatchSignal = "name" | "email" | "phone" | "registrationNo";
@@ -536,130 +560,162 @@ export function mergeContacts(
   loserIds: number[],
   actingUserId: number,
 ) {
-  const losers = loserIds.filter((id) => id !== survivorId);
-  if (losers.length === 0) return getContact(db, survivorId);
+  return db.transaction(
+    (tx) => {
+      const losers = loserIds.filter((id) => id !== survivorId);
+      if (losers.length === 0) return getContact(tx, survivorId);
 
-  const before = getContact(db, survivorId);
-  const loserSnapshots = losers
-    .map((id) => db.select().from(contacts).where(eq(contacts.id, id)).get())
-    .filter((r): r is typeof contacts.$inferSelect => !!r);
+      // A merge rewrites attribution directly, so it cannot bypass ledger guards.
+      if (losers.some((id) => getContactRoles(tx, id).includes(Role.Partner)))
+        assertNoClosedHistory(tx as LedgerDb);
+      const attributedDates = tx
+        .select({ date: ledgerRecords.date })
+        .from(ledgerRecords)
+        .where(
+          or(
+            inArray(ledgerRecords.contactId, losers),
+            inArray(ledgerRecords.supplierContactId, losers),
+          ),
+        )
+        .all();
+      const ownedAccountDates = tx
+        .select({ date: ledgerRecords.date })
+        .from(ledgerMovements)
+        .innerJoin(
+          ledgerRecords,
+          eq(ledgerRecords.id, ledgerMovements.recordId),
+        )
+        .innerJoin(accounts, eq(accounts.id, ledgerMovements.accountId))
+        .where(inArray(accounts.contactId, losers))
+        .all();
+      assertDatesOpen(
+        tx as LedgerDb,
+        [...attributedDates, ...ownedAccountDates].map((row) => row.date),
+      );
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (db as any).transaction((tx: Db) => {
-    // a/b. Repoint references — extend this block per new contact FK.
-    tx.update(ledgerRecords)
-      .set({ contactId: survivorId })
-      .where(inArray(ledgerRecords.contactId, losers))
-      .run();
-    tx.update(ledgerRecords)
-      .set({ supplierContactId: survivorId })
-      .where(inArray(ledgerRecords.supplierContactId, losers))
-      .run();
-    for (const table of [importQueue, importItems]) {
-      tx.update(table)
+      const before = getContact(tx, survivorId);
+      const loserSnapshots = losers
+        .map((id) =>
+          tx.select().from(contacts).where(eq(contacts.id, id)).get(),
+        )
+        .filter((r): r is typeof contacts.$inferSelect => !!r);
+
+      // a/b. Repoint references — extend this block per new contact FK.
+      tx.update(ledgerRecords)
+        .set({ contactId: survivorId })
+        .where(inArray(ledgerRecords.contactId, losers))
+        .run();
+      tx.update(ledgerRecords)
         .set({ supplierContactId: survivorId })
-        .where(inArray(table.supplierContactId, losers))
+        .where(inArray(ledgerRecords.supplierContactId, losers))
         .run();
-      tx.update(table)
-        .set({ paidByContactId: survivorId })
-        .where(inArray(table.paidByContactId, losers))
+      for (const table of [importQueue, importItems]) {
+        tx.update(table)
+          .set({ supplierContactId: survivorId })
+          .where(inArray(table.supplierContactId, losers))
+          .run();
+        tx.update(table)
+          .set({ paidByContactId: survivorId })
+          .where(inArray(table.paidByContactId, losers))
+          .run();
+      }
+      tx.update(importQueue)
+        .set({ matchedContactId: survivorId })
+        .where(inArray(importQueue.matchedContactId, losers))
         .run();
-    }
-    tx.update(importQueue)
-      .set({ matchedContactId: survivorId })
-      .where(inArray(importQueue.matchedContactId, losers))
-      .run();
-    tx.update(importItems)
-      .set({ matchedContactId: survivorId })
-      .where(inArray(importItems.matchedContactId, losers))
-      .run();
-    // A partner's capital and drawings accounts (002 FR-008b). Left alone, the
-    // delete below would set them to nobody's.
-    tx.update(accounts)
-      .set({ contactId: survivorId })
-      .where(inArray(accounts.contactId, losers))
-      .run();
-    tx.update(quotations)
-      .set({ contactId: survivorId })
-      .where(inArray(quotations.contactId, losers))
-      .run();
-    tx.update(invoices)
-      .set({ contactId: survivorId })
-      .where(inArray(invoices.contactId, losers))
-      .run();
+      tx.update(importItems)
+        .set({ matchedContactId: survivorId })
+        .where(inArray(importItems.matchedContactId, losers))
+        .run();
+      // A partner's capital and drawings accounts (002 FR-008b). Left alone, the
+      // delete below would set them to nobody's.
+      tx.update(accounts)
+        .set({ contactId: survivorId })
+        .where(inArray(accounts.contactId, losers))
+        .run();
+      tx.update(quotations)
+        .set({ contactId: survivorId })
+        .where(inArray(quotations.contactId, losers))
+        .run();
+      tx.update(invoices)
+        .set({ contactId: survivorId })
+        .where(inArray(invoices.contactId, losers))
+        .run();
 
-    // c. Union losers' roles into survivor BEFORE the delete (cascade would wipe them).
-    tx.run(
-      sql`INSERT OR IGNORE INTO ${contactRoles} (contact_id, role)
+      // c. Union losers' roles into survivor BEFORE the delete (cascade would wipe them).
+      tx.run(
+        sql`INSERT OR IGNORE INTO ${contactRoles} (contact_id, role)
 			    SELECT ${survivorId}, role FROM ${contactRoles} WHERE contact_id IN (${sql.join(
             losers.map((id) => sql`${id}`),
             sql`, `,
           )})`,
-    );
+      );
 
-    // d. Backfill survivor's blank descriptive fields from a loser (survivor's values win).
-    const survivor = tx
-      .select()
-      .from(contacts)
-      .where(eq(contacts.id, survivorId))
-      .get();
-    if (survivor) {
-      const fill: Record<string, unknown> = {};
-      const fields = ["registrationNo", "email", "phone", "address"] as const;
-      for (const id of losers) {
-        const loser = tx
-          .select()
-          .from(contacts)
-          .where(eq(contacts.id, id))
-          .get();
-        if (!loser) continue;
-        for (const f of fields) {
-          if (!survivor[f] && !fill[f] && loser[f]) fill[f] = loser[f];
+      // d. Backfill survivor's blank descriptive fields from a loser (survivor's values win).
+      const survivor = tx
+        .select()
+        .from(contacts)
+        .where(eq(contacts.id, survivorId))
+        .get();
+      if (survivor) {
+        const fill: Record<string, unknown> = {};
+        const fields = ["registrationNo", "email", "phone", "address"] as const;
+        for (const id of losers) {
+          const loser = tx
+            .select()
+            .from(contacts)
+            .where(eq(contacts.id, id))
+            .get();
+          if (!loser) continue;
+          for (const f of fields) {
+            if (!survivor[f] && !fill[f] && loser[f]) fill[f] = loser[f];
+          }
+        }
+        if (Object.keys(fill).length > 0) {
+          tx.update(contacts)
+            .set({
+              ...fill,
+              updatedBy: actingUserId,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(contacts.id, survivorId))
+            .run();
         }
       }
-      if (Object.keys(fill).length > 0) {
-        tx.update(contacts)
-          .set({
-            ...fill,
-            updatedBy: actingUserId,
-            updatedAt: new Date().toISOString(),
-          })
-          .where(eq(contacts.id, survivorId))
-          .run();
+
+      // e. Delete losers — their contact_roles + search_text cascade away.
+      tx.delete(contacts).where(inArray(contacts.id, losers)).run();
+
+      // Re-index survivor name in case a backfill changed searchable fields.
+      const survivorRow = tx
+        .select()
+        .from(contacts)
+        .where(eq(contacts.id, survivorId))
+        .get();
+      if (survivorRow) reindexContact(tx, survivorId, survivorRow);
+
+      const after = getContact(tx, survivorId);
+      recordAudit(tx, {
+        recordType: "contact",
+        recordId: survivorId,
+        userId: actingUserId,
+        action: "update",
+        changes: diffRecords(before, after),
+      });
+      for (const loser of loserSnapshots) {
+        recordAudit(tx, {
+          recordType: "contact",
+          recordId: loser.id,
+          userId: actingUserId,
+          action: "delete",
+          changes: diffRecords(loser, null),
+        });
       }
-    }
 
-    // e. Delete losers — their contact_roles + search_text cascade away.
-    tx.delete(contacts).where(inArray(contacts.id, losers)).run();
-  });
-
-  // Re-index survivor name in case a backfill changed searchable fields.
-  const survivor = db
-    .select()
-    .from(contacts)
-    .where(eq(contacts.id, survivorId))
-    .get();
-  if (survivor) reindexContact(db, survivorId, survivor);
-
-  const after = getContact(db, survivorId);
-  recordAudit(db, {
-    recordType: "contact",
-    recordId: survivorId,
-    userId: actingUserId,
-    action: "update",
-    changes: diffRecords(before, after),
-  });
-  for (const loser of loserSnapshots) {
-    recordAudit(db, {
-      recordType: "contact",
-      recordId: loser.id,
-      userId: actingUserId,
-      action: "delete",
-      changes: diffRecords(loser, null),
-    });
-  }
-
-  return after;
+      return after;
+    },
+    { behavior: "immediate" },
+  );
 }
 
 // ---------------------------------------------------------------------------

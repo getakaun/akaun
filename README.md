@@ -27,6 +27,7 @@ Instead of typing every receipt in by hand, you can snap a photo or upload a sca
 - **Reimbursement Claims** — group a batch of expenses into a claim for approval and repayment.
 - **Quotations & Invoices** — draft quotations, convert accepted ones straight into invoices, and track their status (draft/sent/accepted/paid/etc.) through to payment.
 - **Contacts Directory** — one shared list of suppliers, customers, and employees, reused across expenses and income.
+- **Month closing** — review a completed month, protect entries through month end, and reopen earlier months deliberately with an audit trail. Open **Reports → Month closing**.
 - **Roles & Permissions** — invite teammates and control exactly what each person/group can view, add, edit, or delete.
 - **Real-time Updates** — changes made by one person (or in another browser tab) show up instantly for everyone else, no refresh needed.
 - **PDF Export** — customizable document templates (with your own company logo) drive printable/downloadable quotations, invoices, and claim summaries.
@@ -47,6 +48,16 @@ Once a payment has settled an expense or income, or a bank statement line has be
 | It's matched to a bank line    | Same as above                                                                | Same as above — plus unmatch the bank line before any of it applies again          |
 
 **To unlock:** undo the payment (remove the settlement) or unmatch the bank statement line from the account's reconciliation screen. The record then goes back to fully editable.
+
+## Month closing
+
+Open **Reports → Month closing** to prepare a review, acknowledge the checklist and warnings, and close through a completed calendar month end. The first close includes all earlier accounting history. Closing and reopening require their own permissions, available to Administrators by default; delegated API tokens and connected apps cannot perform these actions.
+
+After closing, accounting entries through the boundary cannot be added, deleted, backdated, recategorized or financially corrected. This protection also applies to imports, invoice issue/void, opening balances, account classification and contact changes that would alter historical results. Descriptions, references, remarks and attachments remain editable under their existing permissions. Payments dated in a later open month can still settle earlier invoices.
+
+To correct October in a book closed through December, **Reopen from October** opens October through December. Supply a reason, make the corrections, review the affected months and close again. Partner roster changes require reopening all affected history because partner results use the current roster.
+
+Paid and bank-matched statuses remain live when matching or allocation changes no accounting posting. Closing does not create a frozen report copy, reset accounts, or transfer monthly profit. Export reports when you need an approved copy. See [the implementation notes](dev-notes/MONTH_CLOSING.md) for the protection boundaries.
 
 ## Screenshots
 

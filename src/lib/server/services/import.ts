@@ -1,4 +1,5 @@
 import { isContraRevenueAccount } from "$lib/account-classification.js";
+import { closedPeriodReason } from "../closing/policy.js";
 import { and, eq, isNull } from "drizzle-orm";
 import {
   DefaultAccountPurpose,
@@ -215,6 +216,8 @@ export function confirmImportRow(
   } catch (err) {
     if (file.moved) returnToTemp(file.moved.to, file.moved.from, root);
     if (err instanceof Refused) return { ok: false, reason: err.reason };
+    const reason = closedPeriodReason(err);
+    if (reason) return { ok: false, reason };
     throw err;
   }
 

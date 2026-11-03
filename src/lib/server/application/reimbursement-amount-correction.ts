@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { createHash } from "node:crypto";
 import { and, eq, inArray, or } from "drizzle-orm";
 import { z } from "zod";
@@ -256,6 +257,16 @@ export type ReimbursementAmountCorrectionSnapshot = NonNullable<
 >;
 
 export function correctReimbursementAmount(
+  ctx: AppContext,
+  id: number,
+  raw: unknown,
+) {
+  return withClosingRefusal(() =>
+    correctReimbursementAmountOperation(ctx, id, raw),
+  );
+}
+
+function correctReimbursementAmountOperation(
   ctx: AppContext,
   id: number,
   raw: unknown,

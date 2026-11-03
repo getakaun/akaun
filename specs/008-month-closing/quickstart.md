@@ -17,3 +17,5 @@ Maintainer UI review using a disposable book: review October, acknowledge checkl
 - `bun run lint`: fails on existing formatting debt, 237 files in the feature branch versus 242 in unchanged main. A separate full ESLint run also identifies 62 existing errors in unchanged files. See the plan's validation-baseline exception; these are not feature-code failures.
 - New financial protection tests were exercised against isolated databases, including a real two-connection WAL race. A missed import refusal, partial contact-profile update, classification warning and partner rounding instability were reproduced and corrected with regression tests.
 - Independent source review completed with no remaining financial-correctness blockers. Live visual review remains with the maintainer under repository policy.
+
+Pull request: [getakaun/akaun#62](https://github.com/getakaun/akaun/pull/62).

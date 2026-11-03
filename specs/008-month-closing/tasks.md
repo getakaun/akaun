@@ -43,7 +43,7 @@
 
 - [x] T016 Update README.md and dev-notes with closing behavior, operational-state limits and manual UI validation.
 - [x] T017 Run required check/lint/test gates, verify changed files, review diff and record existing repository lint failures in specs/008-month-closing/quickstart.md.
-- [ ] T018 Commit, push 008-month-closing and open a PR against current main.
+- [x] T018 Commit, push 008-month-closing and open a PR against current main.
 
 ## Dependencies and parallel execution
 

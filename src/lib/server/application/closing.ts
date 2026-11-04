@@ -43,6 +43,8 @@ import { setSetting, SETTING_KEYS } from "../settings.js";
 import { checkIntegrity } from "../ledger/integrity.js";
 import { NEEDS_REVIEW_TYPES } from "../ledger/account-type.js";
 import { integrityInputs } from "../queries/ledger.js";
+import { notVoided } from "../queries/void-state.js";
+import type { LedgerDb } from "../ledger/types.js";
 import {
   balanceSheetReport,
   cashFlowReport,
@@ -97,14 +99,24 @@ function capped(items: ClosingItem[]): Pick<ClosingWarning, "items" | "total"> {
     : { items };
 }
 
-function review(ctx: AppContext, monthEnd: string): ClosingPreview {
-  const db = ctx.db;
-  const current = closedThrough(db);
-  const earliest =
+/**
+ * The date of the first record that happened. A voided record and its reversal
+ * did not happen, so neither one starts the book's history.
+ */
+function earliestRecordDate(db: LedgerDb): string | null {
+  return (
     db
       .select({ date: sql<string | null>`min(${ledgerRecords.date})` })
       .from(ledgerRecords)
-      .get()?.date ?? null;
+      .where(notVoided(ledgerRecords.id))
+      .get()?.date ?? null
+  );
+}
+
+function review(ctx: AppContext, monthEnd: string): ClosingPreview {
+  const db = ctx.db;
+  const current = closedThrough(db);
+  const earliest = earliestRecordDate(db);
   const dateFrom =
     current === null
       ? earliest && earliest <= monthEnd
@@ -351,6 +363,8 @@ function review(ctx: AppContext, monthEnd: string): ClosingPreview {
           AccountType.Revenue,
         ]),
         lte(ledgerRecords.date, monthEnd),
+        // A void pair cancels on every account, so it needs no classification.
+        notVoided(ledgerRecords.id),
       ),
     )
     .groupBy(accounts.id)
@@ -619,11 +633,7 @@ export function reopenMonths(
             "REFUSED",
             "Choose a month within the closed accounting history.",
           );
-        const earliest =
-          tx
-            .select({ date: sql<string | null>`min(${ledgerRecords.date})` })
-            .from(ledgerRecords)
-            .get()?.date ?? null;
+        const earliest = earliestRecordDate(tx);
         const preceding = previousMonthEnd(data.fromMonth);
         const after =
           !earliest || preceding === null || preceding < earliest

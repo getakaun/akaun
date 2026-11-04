@@ -1,5 +1,6 @@
 import { assertDatesOpen, closedPeriodReason } from "../closing/policy.js";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { notVoided } from "../queries/void-state.js";
 import {
   accountDefaults,
   accounts,
@@ -312,7 +313,11 @@ function patchAccountInTransaction(
             ledgerRecords,
             eq(ledgerRecords.id, ledgerMovements.recordId),
           )
-          .where(eq(ledgerMovements.accountId, id))
+          // A void pair cancels on this account on one date, so reclassifying
+          // it changes no closed figure (and Closing does not ask for it).
+          .where(
+            and(eq(ledgerMovements.accountId, id), notVoided(ledgerRecords.id)),
+          )
           .all();
         assertDatesOpen(
           tx,

@@ -13,7 +13,13 @@ import {
 import * as schema from "../db/schema.js";
 import type { LedgerDb } from "../ledger/types.js";
 import { createAccount, patchAccount, setOpeningBalance } from "./accounts.js";
-import { createRecord, patchRecord, removeRecord } from "./ledger.js";
+import {
+  createRecord,
+  patchRecord,
+  removeRecord,
+  voidRecordInTransaction,
+} from "./ledger.js";
+import { hasAnyRecord } from "../queries/dashboard.js";
 import {
   createContact,
   getContact,
@@ -180,6 +186,19 @@ describe("closed history at service boundaries", () => {
 
   it("allows classification changes for an account used only after the close", () => {
     purchase("2026-11-01");
+    close();
+    expect(patchAccount(db, bank, 1, { subType: AccountSubType.Cash }).ok).toBe(
+      true,
+    );
+  });
+
+  it("allows classification changes for an account whose closed records are all voided", () => {
+    const record = purchase();
+    const voided = db.transaction((tx) =>
+      voidRecordInTransaction(tx, record.id, 1, "Entered twice by mistake", []),
+    );
+    expect(voided.ok).toBe(true);
+    expect(hasAnyRecord(db)).toBe(false);
     close();
     expect(patchAccount(db, bank, 1, { subType: AccountSubType.Cash }).ok).toBe(
       true,

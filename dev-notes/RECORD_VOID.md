@@ -19,11 +19,28 @@ R itself is not edited. "Voided" is derived from V existing — no status column
 the same rule as payment state.
 
 Because the pair nets to zero on every account on one date, **no balance, report,
-contact total or closing figure needed a change**. Only screens that list
-individual items hide the pair, all through `queries/void-state.ts`
-(`notVoided` / `inVoidPair`): the records list (`voided` filter, default exclude),
-outstanding / contact balances, account history and statement, reconciliation
-candidates and matching, import duplicate checks, contact expense/income counts.
+contact total or closing figure needed a change**. Reports also drop zero lines
+and take their period from the URL, never from the data, so a void leaves no
+trace on them. The pair is handled by one rule in three parts, always through
+`queries/void-state.ts` (`notVoided` / `inVoidPair`):
+
+1. **Totals need nothing.** Sums net the pair to zero. Do not filter them.
+2. **Lists and facts about what happened exclude the pair.** A voided record did
+   not happen, so it must not show as an item, start the book's history, or make
+   an account look used:
+   - the records list (`voided` filter, default exclude), outstanding / contact
+     balances, account history and statement, reconciliation candidates and
+     matching, import duplicate checks, contact expense/income counts;
+   - the Closing period start and the reopen boundary (`earliestRecordDate` in
+     `application/closing.ts`), the Closing "no report classification" check,
+     and the matching type/sub-type change guard in `patchAccount`. These two go
+     together: if Closing does not ask for a classification, the closed month must
+     not refuse it;
+   - the dashboard's new-book empty state (`hasAnyRecord`).
+3. **Integrity and referential checks include the pair.** The rows exist and
+   hold foreign keys: account delete / merge / migration counts, the
+   currency and number-format lock (`hasAnyDocuments`), the integrity invariants,
+   the contact delete count, and the partner closed-history guard.
 
 ## Rules
 

@@ -17,7 +17,9 @@ let raw: Database;
 afterEach(() => raw?.close());
 function fixture() {
   raw = new Database(":memory:");
-  applyMigrationRange(raw, 0, 38);
+  // Every migration: client.ts runs this repair after `migrate`, and the
+  // fixture below inserts through the current schema. Raise with each new one.
+  applyMigrationRange(raw, 0, 40);
   const db = drizzle(raw, { schema });
   for (const [id, name, type, role, subType] of [
     [

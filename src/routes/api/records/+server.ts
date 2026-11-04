@@ -132,6 +132,8 @@ const querySchema = z.object({
   /** FR-043 — the running balance is only offered in date order. */
   sort: z.enum(["date", "amount"]).optional(),
   search: z.string().optional(),
+  /** Voided records and their reversals are hidden unless asked for. */
+  voided: z.enum(["exclude", "include", "only"]).optional(),
   limit: numeric,
   offset: numeric,
 });
@@ -169,6 +171,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
       cleared: q.cleared,
       sort: q.sort,
       search: q.search,
+      voided: q.voided,
       limit: q.limit,
       offset: q.offset,
     }),

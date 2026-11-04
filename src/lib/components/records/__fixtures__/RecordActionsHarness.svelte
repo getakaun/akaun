@@ -3,9 +3,10 @@
 	import ContactCorrectionDialog from '../ContactCorrectionDialog.svelte';
 	import DateCorrectionDialog from '../DateCorrectionDialog.svelte';
 	import ReimbursementAmountCorrectionDialog from '../ReimbursementAmountCorrectionDialog.svelte';
+	import VoidRecordDialog from '../VoidRecordDialog.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 
-	let action = $state<'contact' | 'date' | 'amount' | 'delete' | null>(null);
+	let action = $state<'contact' | 'date' | 'amount' | 'void' | null>(null);
 	let deleting = $state(false);
 </script>
 
@@ -13,6 +14,7 @@
 	canCorrectContact
 	canCorrectDate
 	canCorrectAmount
+	canVoid
 	canDelete
 	dialogOpen={action !== null || deleting}
 	onaction={(selected) => {
@@ -36,6 +38,8 @@
 		onclose={() => (action = null)}
 		oncorrected={() => {}}
 	/>
+{:else if action === 'void'}
+	<VoidRecordDialog recordId={219} onclose={() => (action = null)} ondone={() => {}} />
 {:else if action === 'date'}
 	<DateCorrectionDialog
 		recordId={219}

@@ -94,6 +94,7 @@ export function createServer(context: McpContext) {
               "opening_balance",
               "invoice_issue",
               "journal",
+              "reversal",
             ],
             permissions: Object.fromEntries(
               (
@@ -139,6 +140,7 @@ export function createServer(context: McpContext) {
                 "correct_expense_contact",
                 "correct_record_date",
                 "correct_reimbursement_amount",
+                "void_record",
               ].map((name) => {
                 const requirement = TOOL_REQUIREMENTS[name];
                 return [

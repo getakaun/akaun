@@ -266,6 +266,7 @@ const READ_TOOLS = [
   "search_expense_contact_correction_contacts",
   "get_record_date_correction",
   "get_reimbursement_amount_correction",
+  "get_record_void",
   "get_payment_allocations",
 ];
 const ADDITIVE_TOOLS = [
@@ -294,6 +295,7 @@ const OVERWRITE_TOOLS = [
   "discard_import_job",
   "correct_record_date",
   "correct_reimbursement_amount",
+  "void_record",
   "reverse_reimbursement",
   "correct_payment_recipient",
   "update_record",
@@ -326,6 +328,7 @@ const REVIEWED_TOOLS = [
   "correct_expense_contact",
   "correct_record_date",
   "correct_reimbursement_amount",
+  "void_record",
   "correct_payment_recipient",
   "reverse_reimbursement",
   "delete_record",
@@ -426,7 +429,7 @@ for (const era of ["legacy", "modern"] as const) {
           ...ADDITIVE_TOOLS,
           ...OVERWRITE_TOOLS,
         ];
-        expect(new Set(expectedNames).size).toBe(66);
+        expect(new Set(expectedNames).size).toBe(68);
         expect(listed.map((tool) => tool.name).sort()).toEqual(
           expectedNames.sort(),
         );
@@ -593,7 +596,7 @@ for (const era of ["legacy", "modern"] as const) {
           storageRoot,
           locals: localsFor({
             token: writerToken,
-            scopes: [...ALL_WRITE, "reports:read"],
+            scopes: [...ALL_WRITE, "reports:read", "records:void"],
           }),
         } as never) as McpServer;
         const registered = (

@@ -4,11 +4,17 @@ import {
   allocationHistoryDeletionReason,
   ALLOCATION_HISTORY_EDIT_REASON,
 } from "../queries/allocation-state.js";
-import { eq } from "drizzle-orm";
-import { contacts, reimbursementEntries } from "../db/schema.js";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import {
+  contacts,
+  reimbursementEntries,
+  reimbursementItems,
+  reimbursements,
+} from "../db/schema.js";
+import { VOIDED_RECORD_REASON } from "../queries/void-state.js";
 import { DefaultAccountPurpose, LedgerRecordKind } from "$lib/enums.js";
 import { diffRecords, recordAudit } from "../audit.js";
-import { buildMovements } from "../ledger/entry-builder.js";
+import { buildMovements, buildReversal } from "../ledger/entry-builder.js";
 import { ledgerEvents } from "../ledger/events.js";
 import { canDeleteRecord, canEditField } from "../ledger/locking.js";
 import { isReadOnlyKind } from "../ledger/record-permissions.js";
@@ -436,6 +442,8 @@ function patchRecordInTransaction(
     };
   const existing = getRecord(db, id);
   if (!existing) return { ok: false, reason: "That record no longer exists." };
+  if (existing.voidedByRecordId !== null || existing.reversesRecordId !== null)
+    return { ok: false, reason: VOIDED_RECORD_REASON };
   const effectiveSource =
     patch.expensePaymentSource !== undefined
       ? patch.expensePaymentSource
@@ -993,6 +1001,10 @@ function removeRecordInTransaction(
     };
   const existing = getRecord(db, id);
   if (!existing) return { ok: false, reason: "That record no longer exists." };
+  // A void is final: deleting the reversal would bring the original back, and
+  // the original cannot go while its reversal points at it.
+  if (existing.voidedByRecordId !== null || existing.reversesRecordId !== null)
+    return { ok: false, reason: VOIDED_RECORD_REASON };
 
   if (isReadOnlyKind(existing.kind) && !opts.allowReadOnlyKind) {
     return {
@@ -1028,6 +1040,161 @@ function removeRecordInTransaction(
   if (opts.deferredEmits) opts.deferredEmits.push(emit);
   else emit();
   return { ok: true, value: null };
+}
+
+/**
+ * Why this record cannot be voided right now, or null when it can.
+ *
+ * A void means "this never happened", so nothing else may still rely on the
+ * record: no active payment allocation, no bank line, no reimbursement group.
+ * Reversed allocations are fine — they are history, and the void keeps it.
+ * The month-close boundary is checked by `insertRecord` when the reversal is
+ * written, because the reversal carries the original's date.
+ */
+export function voidRefusal(db: LedgerDb, id: number): string | null {
+  const existing = getRecord(db, id);
+  if (!existing) return "That record no longer exists.";
+  if (existing.reversesRecordId !== null)
+    return "This is the reversal of a voided record. A void is final.";
+  if (existing.voidedByRecordId !== null)
+    return "This record is already voided.";
+  if (
+    db
+      .select()
+      .from(reimbursementEntries)
+      .where(eq(reimbursementEntries.recordId, id))
+      .get()
+  )
+    return "Reimbursement transfer entries are read-only. Correct the reimbursement payment instead.";
+  if (existing.kind === LedgerRecordKind.InvoiceIssue)
+    return "This record was created by issuing an invoice. Void the invoice instead.";
+  if (existing.kind === LedgerRecordKind.OpeningBalance)
+    return "Change the opening balance from its account instead.";
+  const movementIds = existing.movements.map((m) => m.id);
+  const inGroup = db
+    .select({ id: reimbursements.id })
+    .from(reimbursements)
+    .where(
+      and(
+        isNull(reimbursements.reversedAt),
+        or(
+          eq(reimbursements.payableRecordId, id),
+          eq(reimbursements.paymentRecordId, id),
+          movementIds.length
+            ? inArray(
+                reimbursements.id,
+                db
+                  .select({ id: reimbursementItems.groupId })
+                  .from(reimbursementItems)
+                  .where(
+                    inArray(reimbursementItems.sourceMovementId, movementIds),
+                  ),
+              )
+            : undefined,
+        ),
+      ),
+    )
+    .get();
+  if (inGroup)
+    return "This record is part of a reimbursement. Reverse the reimbursement before you void it.";
+  const lock = lockStateFor(db, id);
+  if (lock.settled && lock.reconciled)
+    return "This record is settled by a payment and reconciled to a bank statement line. Reverse the allocation and unmatch the bank statement line before you void it.";
+  if (lock.settled)
+    return "This record is settled by a payment. Reverse the allocation (Correct allocation) before you void it.";
+  if (lock.reconciled)
+    return "This record is reconciled to a bank statement line. Unmatch it from that line before you void it.";
+  return null;
+}
+
+/**
+ * `voidRefusal`, plus the closed-month boundary: the one answer every screen
+ * shows for "why can't I void this?" (the record page on load and on every
+ * settlement refresh, the void dialog, MCP's preview). The write itself is
+ * still refused by `insertRecord` if the month closes in between.
+ */
+export function voidBlockedReason(db: LedgerDb, id: number): string | null {
+  const refused = voidRefusal(db, id);
+  if (refused) return refused;
+  const record = getRecord(db, id);
+  return record?.periodClosedThrough
+    ? `This record is in a closed month (closed through ${record.periodClosedThrough}). Reopen the month before you void it.`
+    : null;
+}
+
+/**
+ * Voids a record: writes a Reversal record that negates it on the same date.
+ *
+ * The original is not edited, so its history, attachments and reversed
+ * allocations stay exactly as they were. Both records become read-only, and
+ * every list of individual items hides the pair (`queries/void-state.ts`).
+ * There is no undo: a mistaken void is fixed by entering the record again.
+ */
+export function voidRecordInTransaction(
+  db: LedgerDb,
+  id: number,
+  actingUserId: number,
+  reason: string,
+  deferredEmits: DeferredEmits,
+): Refusable<{ original: RecordView; reversal: RecordView }> {
+  const refused = voidRefusal(db, id);
+  if (refused) return { ok: false, reason: refused };
+  const original = getRecord(db, id)!;
+  const built = buildReversal(
+    original.movements.map((m) => ({
+      accountId: m.accountId,
+      amountMinor: m.amountMinor,
+      label: m.label,
+    })),
+  );
+  if (!built.ok) return built;
+
+  const row = insertRecord(
+    db,
+    actingUserId,
+    {
+      kind: LedgerRecordKind.Reversal,
+      date: original.date,
+      description: `Void of ${original.recordNumber ?? `#${original.id}`}${original.description ? ` — ${original.description}` : ""}`,
+      amount: original.amount,
+      currency: original.currency,
+      exchangeRate: original.exchangeRate,
+      contactId: original.contactId,
+      supplierContactId: original.supplierContactId ?? null,
+      remark: reason,
+      reversesRecordId: original.id,
+    },
+    built.value,
+  );
+
+  recordAudit(db, {
+    recordType: "record",
+    recordId: row.id,
+    userId: actingUserId,
+    action: "create",
+  });
+  recordAudit(db, {
+    recordType: "record",
+    recordId: original.id,
+    userId: actingUserId,
+    action: "update",
+    changes: [
+      { field: "voidedByRecordId", before: null, after: row.id },
+      { field: "voidReason", before: null, after: reason },
+    ],
+  });
+
+  deferredEmits.push(() => {
+    emitRecord(db, row.id);
+    emitRecord(db, original.id);
+  });
+  return {
+    ok: true,
+    value: {
+      original: getRecord(db, original.id)!,
+      reversal: getRecord(db, row.id)!,
+    },
+  };
 }
 
 /**

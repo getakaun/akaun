@@ -10,6 +10,7 @@ import {
   updateRecord as writeRecord,
 } from "../queries/ledger.js";
 import { emitRecordUpdate } from "../services/ledger.js";
+import { VOIDED_RECORD_REASON } from "../queries/void-state.js";
 import { actor, requirePermissions, type AppContext } from "./context.js";
 import {
   fail,
@@ -56,6 +57,8 @@ export function prepareRecordDateCorrection(
     return fail("REFUSED", "Reimbursement transfer dates are read-only.");
   const record = getRecord(ctx.db, id);
   if (!record) return missing("That record no longer exists.");
+  if (record.voidedByRecordId !== null || record.reversesRecordId !== null)
+    return fail("REFUSED", VOIDED_RECORD_REASON);
   if (
     record.kind !== LedgerRecordKind.Expense &&
     record.kind !== LedgerRecordKind.Income

@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { CalendarDays, Banknote, ChevronDown, Trash2, UserRoundPen } from '@lucide/svelte';
+	import { Ban, CalendarDays, Banknote, ChevronDown, Trash2, UserRoundPen } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
+
+	type RecordAction = 'contact' | 'date' | 'amount' | 'void' | 'delete';
 
 	let {
 		canCorrectContact = false,
@@ -11,6 +13,8 @@
 		amountBlockedReason = null,
 		canDelete = false,
 		deleteBlockedReason = null,
+		canVoid = false,
+		voidBlockedReason = null,
 		blockedReason = null,
 		dirty = false,
 		saving = false,
@@ -23,22 +27,25 @@
 		amountBlockedReason?: string | null;
 		canDelete?: boolean;
 		deleteBlockedReason?: string | null;
+		canVoid?: boolean;
+		/** Why the server would refuse a void (settled, reconciled, closed month, …). */
+		voidBlockedReason?: string | null;
 		/** A closed period blocks corrections without changing the original action eligibility. */
 		blockedReason?: string | null;
 		dirty?: boolean;
 		saving?: boolean;
 		dialogOpen?: boolean;
-		onaction: (action: 'contact' | 'date' | 'amount' | 'delete') => void;
+		onaction: (action: RecordAction) => void;
 	} = $props();
 
 	let open = $state(false);
 	let trigger = $state<HTMLButtonElement | null>(null);
-	let pendingAction: 'contact' | 'date' | 'amount' | 'delete' | null = null;
+	let pendingAction: RecordAction | null = null;
 	// Keep the closing menu from stealing focus from the dialog it opens.
 	let handingOff = false;
 	let hadDialog = false;
 
-	function selectAction(action: 'contact' | 'date' | 'amount' | 'delete') {
+	function selectAction(action: RecordAction) {
 		pendingAction = action;
 		handingOff = true;
 		open = false;
@@ -60,7 +67,7 @@
 	});
 </script>
 
-{#if canCorrectContact || canCorrectDate || canCorrectAmount || canDelete}
+{#if canCorrectContact || canCorrectDate || canCorrectAmount || canVoid || canDelete}
 	<DropdownMenu.Root
 		bind:open
 		onOpenChange={(isOpen) => {
@@ -116,8 +123,26 @@
 					Save or discard your changes before correcting this record.
 				</p>
 			{/if}
-			{#if canDelete}
+			{#if canVoid || canDelete}
 				{#if canCorrectContact || canCorrectDate || canCorrectAmount}<DropdownMenu.Separator />{/if}
+			{/if}
+			{#if canVoid}
+				<DropdownMenu.Item
+					variant="destructive"
+					disabled={dirty || saving || voidBlockedReason !== null}
+					onSelect={() => selectAction('void')}
+				>
+					<Ban aria-hidden="true" /> Void…
+				</DropdownMenu.Item>
+				{#if voidBlockedReason !== null}
+					<p class="text-muted-foreground px-2 py-1.5 text-xs">{voidBlockedReason}</p>
+				{:else if dirty && !(canCorrectContact || canCorrectDate || canCorrectAmount)}
+					<p class="text-muted-foreground px-2 py-1.5 text-xs">
+						Save or discard your changes before voiding this record.
+					</p>
+				{/if}
+			{/if}
+			{#if canDelete}
 				<DropdownMenu.Item
 					variant="destructive"
 					disabled={saving || deleteBlockedReason !== null}

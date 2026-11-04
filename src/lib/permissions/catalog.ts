@@ -137,6 +137,14 @@ export const PERMISSION_CATALOG = {
         explicit: true,
         sensitive: true,
       },
+      void: {
+        label: "Void records",
+        description:
+          "Void a record so the books read as if it never happened. Posts a reversal on the original date, which changes that period's reports. A void cannot be undone.",
+        phrase: "void records",
+        explicit: true,
+        sensitive: true,
+      },
       adjust: {
         label: "Adjustments",
         description:

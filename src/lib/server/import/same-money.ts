@@ -41,6 +41,7 @@ import {
   deletedProfileName,
   getImportProfile,
 } from "../services/import-profiles.js";
+import { notVoided } from "../queries/void-state.js";
 
 const MONTHS = [
   "January",
@@ -85,10 +86,14 @@ export function monthsCoveredBy(
     ),
     ne(importQueue.id, exceptJobId),
   );
-  const moneyKinds = inArray(ledgerRecords.kind, [
-    LedgerRecordKind.Expense,
-    LedgerRecordKind.Income,
-  ]);
+  // A voided record never happened, so it does not cover its month.
+  const moneyKinds = and(
+    inArray(ledgerRecords.kind, [
+      LedgerRecordKind.Expense,
+      LedgerRecordKind.Income,
+    ]),
+    notVoided(ledgerRecords.id),
+  );
   const month = sql<string>`substr(${ledgerRecords.date}, 1, 7)`;
   // A group's records are its items' results; a reading that found one item
   // made its record from the queue row itself.

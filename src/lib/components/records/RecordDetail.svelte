@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { ChevronRight, FileText, Scale, Users } from '@lucide/svelte';
+	import { Ban, ChevronRight, FileText, Scale, Undo2, Users } from '@lucide/svelte';
 	import { toast } from 'svelte-sonner';
 	import DetailPage from '$lib/components/ui/DetailPage.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
@@ -22,6 +22,7 @@
 	import AllocationCorrectionDialog from './AllocationCorrectionDialog.svelte';
 	import DateCorrectionDialog from './DateCorrectionDialog.svelte';
 	import ReimbursementAmountCorrectionDialog from './ReimbursementAmountCorrectionDialog.svelte';
+	import VoidRecordDialog from './VoidRecordDialog.svelte';
 	import SettlementList, {
 		type SettlementLink
 	} from '$lib/components/ledger/SettlementList.svelte';
@@ -72,6 +73,7 @@
 	let dateCorrectionOpen = $state(false);
 	let amountCorrectionOpen = $state(false);
 	let recipientCorrectionOpen = $state(false);
+	let voidDialogOpen = $state(false);
 	let reversalGroupId = $state<number | null>(null);
 	let correctionSettlementId = $state<number | null>(null);
 	let auditTrailRef = $state<{ refresh: () => Promise<void> } | null>(null);
@@ -81,6 +83,7 @@
 		amountCorrectionOpen = false;
 		recipientCorrectionOpen = false;
 		deleteDialogOpen = false;
+		voidDialogOpen = false;
 		reversalGroupId = null;
 	});
 
@@ -91,7 +94,8 @@
 		[LedgerRecordKind.Payment]: 'Payment',
 		[LedgerRecordKind.OpeningBalance]: 'Opening balance',
 		[LedgerRecordKind.InvoiceIssue]: 'Invoice',
-		[LedgerRecordKind.Journal]: 'Journal entry'
+		[LedgerRecordKind.Journal]: 'Journal entry',
+		[LedgerRecordKind.Reversal]: 'Void reversal'
 	};
 
 	const kindLabel = $derived(
@@ -111,10 +115,33 @@
 	 * removed by cancelling it. The server refuses both here too.
 	 */
 	const fromInvoice = $derived(record.kind === LedgerRecordKind.InvoiceIssue);
+	/**
+	 * A voided record and the reversal that voids it are both final: nothing on
+	 * either is edited, corrected, deleted or voided again. The server refuses
+	 * every one of those; the page stops offering them.
+	 */
+	const voided = $derived(record.voidedByRecordId !== null);
+	const isReversal = $derived(record.reversesRecordId !== null);
+	const inVoidPair = $derived(voided || isReversal);
+	const voidRelation = $derived(data.voidRelation);
+	const voidRelationTitle = $derived(
+		voidRelation
+			? [voidRelation.recordNumber, voidRelation.description].filter(Boolean).join(' · ') ||
+					`Record #${voidRelation.id}`
+			: ''
+	);
+	// Loaded with the page, then re-read by every `refreshSettlements()` — after a
+	// Correct allocation here, or a settlement change from another tab — because
+	// reversing the allocation is exactly what unblocks a void.
+	let liveVoidBlockedReason = $derived(data.voidBlockedReason ?? null);
+	const voidBlockedReason = $derived(
+		periodClosed ? MONTH_CLOSED_REASON : liveVoidBlockedReason
+	);
 	const canCorrectDate = $derived(
 		data.perms.change &&
 			!reimbursement.generated &&
 			data.perms.correctDate &&
+			!inVoidPair &&
 			record.locked &&
 			!record.reconciled &&
 			(record.kind === LedgerRecordKind.Expense || record.kind === LedgerRecordKind.Income)
@@ -146,11 +173,12 @@
 			data.perms.add
 	);
 	const canCorrectContact = $derived(
-		canCorrectPayee ||
-			(record.kind === LedgerRecordKind.Expense &&
-				!reimbursement.generated &&
-				data.perms.change &&
-				data.perms.correctContact)
+		!inVoidPair &&
+			(canCorrectPayee ||
+				(record.kind === LedgerRecordKind.Expense &&
+					!reimbursement.generated &&
+					data.perms.change &&
+					data.perms.correctContact))
 	);
 	const creditPayment = $derived(
 		!!paymentControl &&
@@ -159,7 +187,9 @@
 				? paymentControl.amountMinor > 0
 				: paymentControl.amountMinor < 0)
 	);
-	const creditAvailable = $derived(creditPayment && record.outstandingMinor > 0);
+	const creditAvailable = $derived(
+		!inVoidPair && creditPayment && record.outstandingMinor > 0
+	);
 	const refundHref = $derived(
 		`${resolve('/(app)/records/new/payment')}?contactId=${record.contactId}&settlementAccountId=${paymentControl?.accountId}&direction=${paymentControl?.accountSubType === AccountSubType.AccountsPayable ? 'refund-received' : 'refund-paid'}`
 	);
@@ -207,6 +237,16 @@
 		correctionSettlementId = link.settlementId;
 	}
 
+	/**
+	 * After a void: the loader carries the relation, the reason and the blocked
+	 * reasons, so it is read again rather than patched here.
+	 */
+	async function afterVoid() {
+		toast('The record was voided.');
+		await invalidateAll();
+		void auditTrailRef?.refresh();
+	}
+
 	async function refreshSettlements() {
 		const requestedId = record.id;
 		const version = ++refreshVersion;
@@ -223,6 +263,7 @@
 			reimbursement = body.reimbursement;
 			historicalLinks = body.historicalLinks;
 			historyDeleteReason = body.allocationHistoryDeleteReason;
+			liveVoidBlockedReason = body.voidBlockedReason ?? null;
 			relationsError = '';
 		} catch (cause) {
 			if (version === refreshVersion && record.id === requestedId)
@@ -241,7 +282,11 @@
 		recordIds?: number[];
 	}>('/api/records/stream', (m) => {
 		if (m.type === 'record-update' && m.record?.id === record.id) {
+			// Voided from another tab or an MCP client: the relation card and the
+			// banner's reason come from the loader, so read it again.
+			const newlyVoided = m.record.voidedByRecordId !== record.voidedByRecordId;
 			record = m.record;
+			if (newlyVoided) void invalidateAll();
 			void refreshSettlements();
 		} else if (m.type === 'record-deleted' && m.id === record.id) {
 			// Staying on the page of a record that is gone is worse than a drawer
@@ -311,7 +356,7 @@
 		defaultAccountId={data.defaultAccountId}
 		lastForeignCurrencyExpense={data.lastForeignCurrencyExpense}
 		lastForeignCurrencyIncome={data.lastForeignCurrencyIncome}
-		canChange={data.perms.change && !fromInvoice && !reimbursement.generated}
+		canChange={data.perms.change && !fromInvoice && !reimbursement.generated && !inVoidPair}
 		canAdjust={data.perms.adjustments}
 	/>
 {/snippet}
@@ -328,24 +373,28 @@
 >
 	{#snippet actions()}
 		<RecordActions
-			canCorrectAmount={data.reimbursementAmountCorrection !== null}
+			canCorrectAmount={data.reimbursementAmountCorrection !== null && !inVoidPair}
 			amountBlockedReason={data.reimbursementAmountCorrection?.blockedReason ?? null}
 			blockedReason={periodClosed ? MONTH_CLOSED_REASON : null}
 			{canCorrectContact}
 			{canCorrectDate}
-			canDelete={data.perms.delete && !reimbursement.generated}
+			canDelete={data.perms.delete && !reimbursement.generated && !inVoidPair}
 			{deleteBlockedReason}
+			canVoid={data.perms.void && !inVoidPair}
+			{voidBlockedReason}
 			{dirty}
 			{saving}
 			dialogOpen={recipientCorrectionOpen ||
 				dateCorrectionOpen ||
 				amountCorrectionOpen ||
+				voidDialogOpen ||
 				deleteDialogOpen}
 			onaction={(action) => {
 				if (periodClosed) return;
 				if (action === 'contact') recipientCorrectionOpen = true;
 				else if (action === 'date') dateCorrectionOpen = true;
 				else if (action === 'amount') amountCorrectionOpen = true;
+				else if (action === 'void') voidDialogOpen = true;
 				else deleteDialogOpen = true;
 			}}
 		/>
@@ -371,9 +420,9 @@
 			<span class="detail-hero-amount">{formatMinor(record.amountMinor)}</span>
 			<!-- Moving money between two accounts you hold owes nobody anything, so
 			     "paid" is not a state it can be in (FR-007). -->
-			{#if record.kind !== LedgerRecordKind.Transfer}
+			{#if record.kind !== LedgerRecordKind.Transfer || inVoidPair}
 				<StatusBadge status={statusLabelFor(record)} />
-				{#if record.outstandingMinor > 0}
+				{#if record.outstandingMinor > 0 && !inVoidPair}
 					<span class="detail-hero-note">
 						{formatMinor(record.outstandingMinor)}
 						{creditAvailable ? 'available credit' : 'outstanding'}
@@ -392,6 +441,32 @@
 		{/if}
 		{#if reimbursement.groups.some((group) => group.reversedAt)}
 			<p class="mt-2 text-sm font-semibold">Reimbursement reversed · see details below</p>
+		{/if}
+		{#if inVoidPair}
+			<div class="void-banner" role="status">
+				<Ban size={16} aria-hidden="true" />
+				<div>
+					<p class="void-banner-title">
+						{#if voided}
+							Voided. A reversal on the same date cancels this record, so reports read as if it
+							never happened.
+						{:else}
+							This reversal voids another record. Together they net to zero in every report.
+						{/if}
+					</p>
+					{#if voidRelation?.reason}
+						<p class="void-banner-reason">Reason: {voidRelation.reason}</p>
+					{/if}
+					{#if voidRelation}
+						<a
+							class="void-banner-link"
+							href={resolve('/(app)/records/[id]', { id: String(voidRelation.id) })}
+							>{voided ? 'View the reversal' : 'View the voided record'}</a
+						>
+					{/if}
+					<p class="void-banner-reason">Both records are read-only. A void cannot be undone.</p>
+				</div>
+			</div>
 		{/if}
 		{#if error}<p class="hero-error">{error}</p>{/if}
 	{/snippet}
@@ -501,7 +576,7 @@
 				{/if}
 				<SettlementList
 					links={settlementLinks}
-					onundo={data.perms.correctAllocations ? undoPayment : undefined}
+					onundo={data.perms.correctAllocations && !inVoidPair ? undoPayment : undefined}
 					emptyLabel={isPayment
 						? 'This payment is not allocated to a record yet.'
 						: 'No payments are applied yet.'}
@@ -523,7 +598,7 @@
 		<ReimbursementDetails
 			{reimbursement}
 			recordId={record.id}
-			canReverse={data.perms.add && data.perms.delete}
+			canReverse={data.perms.add && data.perms.delete && !inVoidPair}
 			disabled={dirty || saving || periodClosed}
 			onreverse={(groupId) => (reversalGroupId = groupId)}
 		/>
@@ -532,9 +607,11 @@
 			<AttachmentManager
 				apiBase="/api/records/{record.id}"
 				bind:attachments
-				canDelete={data.perms.delete && !reimbursement.generated}
-				readOnly={periodClosed}
-				readOnlyReason={MONTH_CLOSED_REASON}
+				canDelete={data.perms.delete && !reimbursement.generated && !inVoidPair}
+				readOnly={periodClosed || inVoidPair}
+				readOnlyReason={periodClosed
+					? MONTH_CLOSED_REASON
+					: 'A voided record and its reversal are read-only.'}
 			/>
 		</section>
 
@@ -562,6 +639,31 @@
 				</span>
 			</div>
 		</section>
+
+		{#if voidRelation}
+			{@const otherId = voidRelation.id}
+			<section class="detail-card">
+				<div class="detail-card-head">
+					<span class="detail-card-title">{voided ? 'Voided by' : 'Reverses'}</span>
+				</div>
+				<button
+					type="button"
+					class="related-link ob-card"
+					onclick={() => goto(resolve('/(app)/records/[id]', { id: String(otherId) }))}
+				>
+					<span class="ob-icon"><Undo2 size={15} /></span>
+					<span class="ob-main">
+						<span class="ob-title">{voidRelationTitle}</span>
+						<span class="ob-sub"
+							>{voided ? 'The reversal' : 'The voided record'} · {formatDate(
+								voidRelation.date
+							)}</span
+						>
+					</span>
+					<ChevronRight size={14} color="var(--muted-foreground)" />
+				</button>
+			</section>
+		{/if}
 
 		{#if fromInvoice && data.invoiceId !== null}
 			{@const invoiceId = data.invoiceId}
@@ -615,6 +717,14 @@
 	/>
 {/if}
 
+{#if voidDialogOpen}
+	<VoidRecordDialog
+		recordId={record.id}
+		onclose={() => (voidDialogOpen = false)}
+		ondone={() => void afterVoid()}
+	/>
+{/if}
+
 <ConfirmDialog
 	bind:open={deleteDialogOpen}
 	title="Delete this record?"
@@ -632,6 +742,33 @@
 		padding: 8px 12px;
 		font-size: 13px;
 		margin: 8px 0 0;
+	}
+	.void-banner {
+		display: flex;
+		gap: 10px;
+		align-items: flex-start;
+		margin: 12px 0 0;
+		padding: 10px 12px;
+		border-radius: 8px;
+		background: var(--muted);
+		border: 1px solid var(--border);
+		font-size: 13px;
+	}
+	.void-banner-title {
+		font-weight: 600;
+		margin: 0;
+	}
+	.void-banner-reason {
+		color: var(--muted-foreground);
+		margin: 4px 0 0;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	.void-banner-link {
+		display: inline-block;
+		margin-top: 4px;
+		color: var(--primary);
+		text-decoration: underline;
 	}
 	.ob-card-static {
 		cursor: default;

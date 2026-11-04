@@ -4,6 +4,13 @@ import {
   ALLOCATION_HISTORY_EDIT_REASON,
 } from "./allocation-state.js";
 import {
+  inVoidPair,
+  notVoided,
+  voidLinksFor,
+  VOIDED_RECORD_REASON,
+  type VoidLink,
+} from "./void-state.js";
+import {
   and,
   asc,
   desc,
@@ -57,6 +64,7 @@ import type {
   RecordView,
   SettlementSide,
 } from "../ledger/types.js";
+import type { VoidPairInput } from "../ledger/integrity.js";
 import { nextNumber } from "../running-number.js";
 import {
   joinSearchText,
@@ -288,6 +296,7 @@ type DerivedState = {
   allocatedMinor: Map<number, Minor>;
   attachmentCount: Map<number, number>;
   supplierNames?: Map<number, string>;
+  voidLinks: Map<number, VoidLink>;
 };
 
 /**
@@ -387,6 +396,7 @@ function deriveFor(db: LedgerDb, recordIds: number[]): DerivedState {
     lockState: new Map(),
     allocatedMinor: new Map(),
     attachmentCount: new Map(),
+    voidLinks: new Map(),
   };
   if (recordIds.length === 0) return empty;
 
@@ -475,8 +485,16 @@ function deriveFor(db: LedgerDb, recordIds: number[]): DerivedState {
     number,
     { paid: boolean; outstandingMinor: Minor }
   >();
+  // A voided record and its reversal owe nothing: the pair nets to zero on the
+  // owed account, so neither is an open item, whatever its settlements say.
+  const voidLinks = voidLinksFor(db, recordIds);
   for (const id of recordIds) {
-    paidState.set(id, recordSettlementState(owedSides.get(id) ?? []));
+    paidState.set(
+      id,
+      voidLinks.has(id)
+        ? { paid: true, outstandingMinor: 0 }
+        : recordSettlementState(owedSides.get(id) ?? []),
+    );
   }
 
   // What bank lines cover, per record. Summed from the movement allocations
@@ -529,6 +547,7 @@ function deriveFor(db: LedgerDb, recordIds: number[]): DerivedState {
     lockState,
     allocatedMinor,
     attachmentCount: new Map(attachmentRows.map((r) => [r.recordId, r.n])),
+    voidLinks,
   };
 }
 
@@ -578,6 +597,8 @@ function toRecordView(
       ],
     }),
     attachmentCount: derived.attachmentCount.get(row.id) ?? 0,
+    voidedByRecordId: derived.voidLinks.get(row.id)?.voidedByRecordId ?? null,
+    reversesRecordId: row.reversesRecordId ?? null,
   };
 }
 
@@ -603,6 +624,11 @@ function recordConditions(filters: RecordListFilters): SQL[] {
   const conditions: SQL[] = [
     sql`not exists (select 1 from reimbursement_entries re where re.record_id = ${ledgerRecords.id})`,
   ];
+  // A voided record and its reversal are history, not something that
+  // happened: hidden unless asked for.
+  const voided = filters.voided ?? "exclude";
+  if (voided === "exclude") conditions.push(notVoided(ledgerRecords.id));
+  if (voided === "only") conditions.push(inVoidPair(ledgerRecords.id));
 
   if (filters.kind !== undefined) {
     conditions.push(
@@ -681,7 +707,7 @@ function recordConditions(filters: RecordListFilters): SQL[] {
     // Paid means: no side on a shared owed account is still uncovered. Asked of
     // the database rather than of the page, so `paid=false` can be paged
     // through without loading everything first (D-10).
-    const stillOwed = sql`EXISTS (
+    const stillOwed = sql`${notVoided(ledgerRecords.id)} AND EXISTS (
       SELECT 1 FROM ${ledgerMovements}
       INNER JOIN ${accounts} ON ${accounts.id} = ${ledgerMovements.accountId}
       WHERE ${ledgerMovements.recordId} = ${ledgerRecords.id}
@@ -928,6 +954,8 @@ export function insertRecord(
     id?: number;
     legacyKind?: LegacyKind | null;
     legacyId?: number | null;
+    /** Set only by `voidRecord`: the record this reversal voids. */
+    reversesRecordId?: number | null;
   },
   movements: MovementDraft[],
 ): LedgerRecordRow {
@@ -962,6 +990,7 @@ export function insertRecord(
           extractedText: data.extractedText ?? null,
           legacyKind: data.legacyKind ?? null,
           legacyId: data.legacyId ?? null,
+          reversesRecordId: data.reversesRecordId ?? null,
           createdBy: actingUserId,
           updatedBy: actingUserId,
         })
@@ -1009,6 +1038,9 @@ export function updateRecord(
       // Check both dates so moving a closed entry out (or an open entry in)
       // cannot bypass the boundary.
       assertDatesOpen(tx, [existing.date, patch.date ?? existing.date]);
+      // Backstop for every write path: a voided record and its reversal are
+      // frozen, or the pair would stop netting to zero.
+      if (voidLinksFor(tx, [id]).has(id)) throw new Error(VOIDED_RECORD_REASON);
       if (movements && wouldRemoveAllocationHistory(tx, id, movements))
         throw new Error(ALLOCATION_HISTORY_EDIT_REASON);
 
@@ -1088,6 +1120,7 @@ export function deleteRecord(db: LedgerDb, id: number): boolean {
 export function integrityInputs(db: LedgerDb): {
   records: RecordBalanceInput[];
   wholeBooksSumMinor: Minor;
+  voidPairs: VoidPairInput[];
 } {
   const rows = db
     .select({
@@ -1134,7 +1167,58 @@ export function integrityInputs(db: LedgerDb): {
       missingContact: row.touchesSharedOwed === 1 && row.contactId === null,
     })),
     wholeBooksSumMinor,
+    voidPairs: voidPairInputs(db),
   };
+}
+
+/** Every reversal and what it voids, for invariant 7. Two small aggregates. */
+function voidPairInputs(db: LedgerDb): VoidPairInput[] {
+  const pairs = db.all<{
+    reversalId: number;
+    reversalKind: number;
+    originalId: number | null;
+    targetId: number | null;
+    targetKind: number | null;
+    targetReverses: number | null;
+    reversalDate: string;
+    targetDate: string | null;
+  }>(sql`
+    SELECT v.id AS reversalId, v.kind AS reversalKind,
+           v.reverses_record_id AS originalId,
+           r.id AS targetId, r.kind AS targetKind,
+           r.reverses_record_id AS targetReverses,
+           v.date AS reversalDate, r.date AS targetDate
+    FROM ledger_records v
+    LEFT JOIN ledger_records r ON r.id = v.reverses_record_id
+    WHERE v.reverses_record_id IS NOT NULL OR v.kind = ${LedgerRecordKind.Reversal}
+  `);
+  if (pairs.length === 0) return [];
+  const imbalance = new Map(
+    db
+      .all<{ reversalId: number; imbalance: number }>(
+        sql`
+        SELECT reversalId, sum(abs(net)) AS imbalance FROM (
+          SELECT v.id AS reversalId, m.account_id, sum(m.amount_minor) AS net
+          FROM ledger_records v
+          JOIN ledger_movements m
+            ON m.record_id = v.id OR m.record_id = v.reverses_record_id
+          WHERE v.reverses_record_id IS NOT NULL
+          GROUP BY v.id, m.account_id
+        ) GROUP BY reversalId
+      `,
+      )
+      .map((r) => [r.reversalId, r.imbalance]),
+  );
+  return pairs.map((p) => ({
+    reversalId: p.reversalId,
+    reversalKind: p.reversalKind as LedgerRecordKindCode,
+    originalId: p.originalId,
+    originalExists: p.targetId !== null,
+    originalIsReversal:
+      p.targetKind === LedgerRecordKind.Reversal || p.targetReverses !== null,
+    sameDate: p.targetDate === p.reversalDate,
+    accountImbalanceMinor: imbalance.get(p.reversalId) ?? 0,
+  }));
 }
 
 // ---------------------------------------------------------------------------

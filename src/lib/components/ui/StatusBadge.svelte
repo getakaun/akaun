@@ -25,6 +25,10 @@
     settled: { label: "Settled", tone: "green" },
     allocated: { label: "Allocated", tone: "green" },
     unallocated: { label: "Unallocated credit", tone: "amber" },
+    // A void pair: the voided record and the reversal that negates it. Neither
+    // is paid or owed — the pair nets to zero — so both read neutral.
+    voided: { label: "Voided", tone: "gray" },
+    reversal: { label: "Void reversal", tone: "gray" },
     // Whether the bank agrees the money moved — a different question from
     // whether it is paid, so a different chip (FR-056).
     cleared: { label: "Reconciled", tone: "blue" },

@@ -17,6 +17,7 @@ import { requireAccountDefault } from "../services/account-defaults.js";
 import { createSettlements, undoSettlement } from "../services/settlements.js";
 import { emitRecordUpdate, type DeferredEmits } from "../services/ledger.js";
 import { recordAudit } from "../audit.js";
+import { VOIDED_RECORD_REASON } from "../queries/void-state.js";
 import { transferClaim } from "./reimbursements.js";
 import {
   actor,
@@ -34,6 +35,15 @@ export const recipientCorrectionShape = {
   reason: z.string().trim().min(10).max(2000),
   expectedVersion: z.string().min(1),
 };
+
+/** A voided payment and a reversal are frozen (`queries/void-state.ts`). */
+function isVoidPairRecord(ctx: AppContext, id: number): boolean {
+  const record = getRecord(ctx.db, id);
+  return (
+    !!record &&
+    (record.voidedByRecordId !== null || record.reversesRecordId !== null)
+  );
+}
 
 function snapshot(ctx: AppContext, id: number) {
   const record = getRecord(ctx.db, id);
@@ -154,6 +164,8 @@ function snapshot(ctx: AppContext, id: number) {
 export function prepareRecipientCorrection(ctx: AppContext, recordId: number) {
   const denied = requirePermissions(ctx, ["records.read"]);
   if (denied) return denied;
+  if (isVoidPairRecord(ctx, recordId))
+    return fail("REFUSED", VOIDED_RECORD_REASON);
   const data = snapshot(ctx, recordId);
   return data
     ? ok(data)
@@ -192,6 +204,8 @@ function correctPaymentRecipientOperation(
   const emits: DeferredEmits = [];
   try {
     const value = ctx.db.transaction(() => {
+      if (isVoidPairRecord(ctx, input.recordId))
+        throw new Rollback(fail("REFUSED", VOIDED_RECORD_REASON));
       const before = snapshot(ctx, input.recordId);
       if (!before)
         throw new Rollback(

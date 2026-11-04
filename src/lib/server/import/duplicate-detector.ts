@@ -3,6 +3,7 @@ import type { BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 import { ledgerRecords, importQueue, importItems, contacts } from '../db/schema.js';
 import { ImportState, DocumentType, LedgerRecordKind } from '$lib/enums.js';
 import { normalizeName } from '../queries/contacts.js';
+import { notVoided } from '../queries/void-state.js';
 import { getSetting, SETTING_KEYS } from '../settings.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -91,7 +92,9 @@ export function detectDuplicate(db: Db, job: JobSnapshot): DuplicateResult {
 					and(
 						eq(importQueue.fileHash, job.fileHash),
 						eq(importQueue.state, ImportState.Imported),
-						isNotNull(importQueue.resultId)
+						isNotNull(importQueue.resultId),
+						// A voided record never happened, so entering it again is not a duplicate.
+						notVoided(importQueue.resultId)
 					)
 				)
 				.get() ??
@@ -103,7 +106,8 @@ export function detectDuplicate(db: Db, job: JobSnapshot): DuplicateResult {
 					and(
 						eq(importQueue.fileHash, job.fileHash),
 						eq(importItems.state, ImportState.Imported),
-						isNotNull(importItems.resultId)
+						isNotNull(importItems.resultId),
+						notVoided(importItems.resultId)
 					)
 				)
 				.get();
@@ -142,7 +146,7 @@ export function detectDuplicate(db: Db, job: JobSnapshot): DuplicateResult {
 					eq(importQueue.state, ImportState.Imported)
 				)
 			)
-			.where(extra ? and(eq(ledgerRecords.kind, kind), extra) : eq(ledgerRecords.kind, kind));
+			.where(and(eq(ledgerRecords.kind, kind), notVoided(ledgerRecords.id), extra));
 	}
 
 	// Bounded candidate pool — never a full-table scan. Union of: the most recent N

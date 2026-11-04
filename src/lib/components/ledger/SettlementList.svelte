@@ -83,7 +83,8 @@
 		[LedgerRecordKind.Payment]: 'Payment',
 		[LedgerRecordKind.OpeningBalance]: 'Opening balance',
 		[LedgerRecordKind.InvoiceIssue]: 'Invoice',
-		[LedgerRecordKind.Journal]: 'Journal entry'
+		[LedgerRecordKind.Journal]: 'Journal entry',
+		[LedgerRecordKind.Reversal]: 'Void reversal'
 	};
 
 	function titleOf(link: SettlementLink): string {

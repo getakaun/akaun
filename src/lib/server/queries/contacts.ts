@@ -28,6 +28,7 @@ import {
 } from "../search-text.js";
 import { recordAudit, diffRecords } from "../audit.js";
 import { assertDatesOpen, assertNoClosedHistory } from "../closing/policy.js";
+import { inVoidPair } from "./void-state.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = BunSQLiteDatabase<typeof schema> | BunSQLiteDatabase<any>;
@@ -375,6 +376,7 @@ export function getContactUsageCounts(
       contactId: ledgerRecords.contactId,
       supplierContactId: ledgerRecords.supplierContactId,
       kind: ledgerRecords.kind,
+      voided: sql<number>`${inVoidPair(ledgerRecords.id)}`,
     })
     .from(ledgerRecords)
     .where(
@@ -387,7 +389,11 @@ export function getContactUsageCounts(
   for (const r of recordRows) {
     for (const id of new Set([r.contactId, r.supplierContactId])) {
       if (id == null || !out[id]) continue;
+      // `records` still counts a voided record and its reversal: they name the
+      // contact, so it cannot be deleted (`isContactReferenced` agrees). The
+      // per-kind counts are what the contact did, and a void never happened.
       out[id].records++;
+      if (r.voided) continue;
       if (r.kind === LedgerRecordKind.Expense) out[id].expenses++;
       else if (r.kind === LedgerRecordKind.Income) out[id].incomes++;
     }

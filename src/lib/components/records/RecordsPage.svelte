@@ -204,6 +204,17 @@
    * account it belongs to, and nothing here offers to start it.
    */
   let clearedFilter = $state<"all" | "not-cleared">("all");
+  /**
+   * Whether voided records and their reversals are on the list.
+   *
+   * Off by default, and off means *never*: the server hides a void pair from
+   * `/api/records` unless asked, and this screen drops one that arrives on the
+   * stream — which is how a record disappears the moment it is voided. A void
+   * pair nets to zero, so leaving it out changes no total; it is history, and
+   * this is where to look it up.
+   */
+  let showVoided = $state(false);
+  let voidedLoaded = false;
   let amountMin = $state("");
   let amountMax = $state("");
   let dateFrom = $state("");
@@ -274,10 +285,23 @@
     return KIND_LABELS[kind] ?? "Record";
   }
 
-  const KIND_FILTERS = Object.entries(KIND_LABELS).map(([code, label]) => ({
-    code: Number(code),
-    label,
-  }));
+  /** A voided record or the reversal that voids it. */
+  function inVoidPair(record: RecordView): boolean {
+    return record.voidedByRecordId !== null || record.reversesRecordId !== null;
+  }
+
+  // A reversal exists only as half of a void pair, so the kind is offered only
+  // while void pairs are on the list.
+  const KIND_FILTERS = $derived(
+    Object.entries(KIND_LABELS)
+      .map(([code, label]) => ({ code: Number(code), label }))
+      .filter((k) => showVoided || k.code !== LedgerRecordKind.Reversal),
+  );
+
+  /** The rows the screen works over: void pairs only while they are asked for. */
+  const visibleRecords = $derived(
+    showVoided ? records : records.filter((r) => !inVoidPair(r)),
+  );
 
   const STATUS_TABS = [
     ["all", "All"],
@@ -288,17 +312,17 @@
 
   const counts = $derived.by(() => {
     const out: Record<string, number> = {
-      all: records.length,
+      all: visibleRecords.length,
       owed: 0,
       "part-paid": 0,
       paid: 0,
     };
-    for (const r of records) out[statusLabelFor(r)]++;
+    for (const r of visibleRecords) out[statusLabelFor(r)]++;
     return out;
   });
 
   const filtered = $derived.by(() => {
-    let rows = records.slice();
+    let rows = visibleRecords.slice();
     if (statusTab !== "all") {
       rows = rows.filter((r) => statusLabelFor(r) === statusTab);
     }
@@ -399,7 +423,9 @@
     let inCount = 0;
     let outTotal = 0;
     let outCount = 0;
-    for (const r of filtered) {
+    // A void pair nets to zero, so it adds nothing here even while it is shown.
+    const counted = filtered.filter((r) => !inVoidPair(r));
+    for (const r of counted) {
       const direction = directionOf(r);
       if (direction === "in") {
         inTotal += r.amountMinor;
@@ -409,7 +435,7 @@
         outCount++;
       }
     }
-    const unpaid = filtered.filter((r) => !r.paid);
+    const unpaid = counted.filter((r) => !r.paid);
     return {
       inTotal,
       inCount,
@@ -459,6 +485,7 @@
     selectedAccountId = null;
     selectedContactId = null;
     clearedFilter = "all";
+    showVoided = false;
     amountMin = "";
     amountMax = "";
     dateFrom = "";
@@ -527,6 +554,38 @@
     const last = names[names.length - 1];
     return `Nothing matches ${names.slice(0, -1).join(", ")} and ${last}.`;
   });
+
+  /**
+   * Void pairs are not in the first load, so turning them on fetches them once
+   * and merges them in; later voids arrive on the stream.
+   */
+  async function loadVoided() {
+    if (voidedLoaded) return;
+    voidedLoaded = true;
+    try {
+      const res = await fetch("/api/records?voided=only&limit=1000");
+      if (!res.ok) throw new Error("Voided records request failed");
+      const body: { records: RecordView[] } = await res.json();
+      records = mergeById(records, body.records);
+    } catch {
+      voidedLoaded = false;
+    }
+  }
+
+  function toggleVoided() {
+    showVoided = !showVoided;
+    if (showVoided) void loadVoided();
+    else {
+      selectedKinds = selectedKinds.filter(
+        (code) => code !== LedgerRecordKind.Reversal,
+      );
+      records = records.filter((r) => !inVoidPair(r));
+      voidedLoaded = false;
+      for (const id of [...selected]) {
+        if (!records.some((r) => r.id === id)) selected.delete(id);
+      }
+    }
+  }
 
   function toggleKind(code: number) {
     selectedKinds = selectedKinds.includes(code)
@@ -633,7 +692,15 @@
   // is; there is no longer a kind this screen would have to drop.
   createResourceStream<LedgerStreamMsg>("/api/records/stream", (msg) => {
     if (msg.type === "record-update") {
-      records = mergeById(records, [msg.record]);
+      // A record just voided arrives here with `voidedByRecordId` set, and its
+      // reversal arrives as a new record. With void pairs off, both leave the
+      // list rather than being merged in.
+      if (!showVoided && inVoidPair(msg.record)) {
+        records = records.filter((r) => r.id !== msg.record.id);
+        selected.delete(msg.record.id);
+      } else {
+        records = mergeById(records, [msg.record]);
+      }
     } else if (msg.type === "record-deleted") {
       records = records.filter((r) => r.id !== msg.id);
       selected.delete(msg.id);
@@ -826,6 +893,10 @@
     }
     if (q.get("status")) statusTab = q.get("status")!;
     if (q.get("cleared") === "false") clearedFilter = "not-cleared";
+    if (q.get("voided") === "1") {
+      showVoided = true;
+      void loadVoided();
+    }
     if (q.get("dateFrom")) dateFrom = q.get("dateFrom")!;
     if (q.get("dateTo")) dateTo = q.get("dateTo")!;
     if (q.get("amountMin")) amountMin = q.get("amountMin")!;
@@ -848,6 +919,7 @@
     if (selectedCats.length) q.set("category", selectedCats.join(","));
     if (statusTab !== "all") q.set("status", statusTab);
     if (clearedFilter !== "all") q.set("cleared", "false");
+    if (showVoided) q.set("voided", "1");
     if (dateFrom) q.set("dateFrom", dateFrom);
     if (dateTo) q.set("dateTo", dateTo);
     if (amountMin) q.set("amountMin", amountMin);
@@ -1101,6 +1173,17 @@
                 clearedFilter === "not-cleared" ? "all" : "not-cleared")}
           >
             Unreconciled
+          </button>
+          <!-- Widens the list rather than narrowing it, so it is not counted
+               as a filter: it adds voided records and their reversals. -->
+          <button
+            type="button"
+            class="clearfilter"
+            class:active={showVoided}
+            aria-pressed={showVoided}
+            onclick={toggleVoided}
+          >
+            Show voided
           </button>
 
           <FilterDropdown label="Kind" active={selectedKinds.length > 0}>
@@ -1572,7 +1655,7 @@
                 </td>
                 <td class="td-status">
                   <StatusBadge status={statusLabelFor(e)} />
-                  {#if !e.cleared}
+                  {#if !e.cleared && !inVoidPair(e)}
                     <span
                       class="row-uncleared"
                       title="Not reconciled to a bank statement."

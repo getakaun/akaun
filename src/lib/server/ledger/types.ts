@@ -232,6 +232,13 @@ export type RecordView = LedgerRecordRow & {
   /** How many sides this record has — a row shows the count instead of two accounts when > 2. */
   sideCount: number;
   attachmentCount: number;
+  /**
+   * On a voided record: the Reversal record that voids it. Derived from the
+   * reversal's `reverses_record_id`; nothing on the voided row itself changes.
+   */
+  voidedByRecordId: number | null;
+  /** On a Reversal record: the record it voids. */
+  reversesRecordId: number | null;
 };
 
 export type RecordAttachmentRow = {
@@ -412,6 +419,11 @@ export type RecordListFilters = {
   /** FR-043 — which sort is in force, because the running balance depends on date order. */
   sort?: "date" | "amount";
   search?: string;
+  /**
+   * Voided records and their reversals. Hidden unless asked for: the pair nets
+   * to zero, so it is history, not something that happened. Default "exclude".
+   */
+  voided?: "exclude" | "include" | "only";
   limit?: number;
   offset?: number;
 };

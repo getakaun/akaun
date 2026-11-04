@@ -19,6 +19,7 @@ import type {
   StatementWithAccount,
 } from "../reconciliation/types.js";
 import { round2 } from "../reconciliation/types.js";
+import { inVoidPair, notVoided } from "./void-state.js";
 
 export type ReconciliationDb = BunSQLiteDatabase<typeof schema>;
 
@@ -308,6 +309,9 @@ export function listMovementCandidates(
     .where(
       and(
         inArray(ledgerMovements.accountId, accountIds),
+        // A voided record and its reversal never moved money, so no bank line
+        // can be either of them.
+        notVoided(ledgerMovements.recordId),
         from ? gte(ledgerRecords.date, from) : undefined,
         to ? lte(ledgerRecords.date, to) : undefined,
       ),
@@ -334,6 +338,23 @@ export function getMovementCandidate(
     .get() as CandidateRow | undefined;
   if (!row) return undefined;
   return withCoverage(toCandidate(row), coverageByMovement(db));
+}
+
+/** Whether this movement belongs to a voided record or to a reversal. */
+export function movementInVoidPair(
+  db: ReconciliationDb,
+  movementId: number,
+): boolean {
+  return !!db
+    .select({ id: ledgerMovements.id })
+    .from(ledgerMovements)
+    .where(
+      and(
+        eq(ledgerMovements.id, movementId),
+        inVoidPair(ledgerMovements.recordId),
+      ),
+    )
+    .get();
 }
 
 /** The bank movement a record has on one account, or nothing if it has none. */

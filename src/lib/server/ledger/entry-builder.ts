@@ -99,6 +99,36 @@ function validate(
   return accept(movements);
 }
 
+/**
+ * The sides of a void: every side of the original, negated, against the same
+ * account and in the same order. Dated with the original, the pair nets every
+ * account to zero in every period, so no report has to know about voids.
+ *
+ * Not run through `validate`: the original already passed it, and an archived
+ * account on the original must not stop the record being voided. The zero-sum
+ * rule is still checked, because that is the one this builder exists to keep.
+ */
+export function buildReversal(
+  original: { accountId: number; amountMinor: Minor; label: string | null }[],
+): Refusable<MovementDraft[]> {
+  if (original.length < 2)
+    return refuse("This record has no sides to reverse.");
+  const movements = original.map((m, i) => ({
+    accountId: m.accountId,
+    amountMinor: -m.amountMinor,
+    sortOrder: i,
+    label: m.label,
+  }));
+  if (movements.some((m) => m.amountMinor === 0))
+    return refuse("A line amount cannot be zero.");
+  const difference = movements.reduce((sum, m) => sum + m.amountMinor, 0);
+  if (difference !== 0)
+    return refuse(
+      `The record being voided does not balance. Difference: ${money(difference)}.`,
+    );
+  return accept(movements);
+}
+
 export function buildMovements(
   input: BuildInput,
   ctx: BuildContext,

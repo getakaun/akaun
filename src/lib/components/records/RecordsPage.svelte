@@ -5,7 +5,6 @@
   import {
     Calendar,
     ChevronRight,
-    Lock,
     Plus,
     Search,
     SlidersHorizontal,
@@ -15,6 +14,11 @@
     X,
   } from "@lucide/svelte";
   import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
+  import RecordLock from "$lib/components/ledger/RecordLock.svelte";
+  import {
+    getClosingBoundary,
+    periodClosedThroughFor,
+  } from "$lib/closing-context.js";
   import EmptyState from "$lib/components/ui/EmptyState.svelte";
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -72,6 +76,17 @@
    * payable, reconciled), with a short ASD-STE100 hint where a hint helps.
    */
   type PageData = ReturnType<typeof loadRecordsPage>;
+  const closingBoundary = getClosingBoundary();
+  function recordPeriodClosed(record: {
+    date: string;
+    periodClosedThrough: string | null;
+  }): string | null {
+    return periodClosedThroughFor(
+      record.date,
+      record.periodClosedThrough,
+      closingBoundary,
+    );
+  }
   type ActionData = {
     error?: string;
     success?: boolean;
@@ -189,6 +204,17 @@
    * account it belongs to, and nothing here offers to start it.
    */
   let clearedFilter = $state<"all" | "not-cleared">("all");
+  /**
+   * Whether voided records and their reversals are on the list.
+   *
+   * Off by default, and off means *never*: the server hides a void pair from
+   * `/api/records` unless asked, and this screen drops one that arrives on the
+   * stream — which is how a record disappears the moment it is voided. A void
+   * pair nets to zero, so leaving it out changes no total; it is history, and
+   * this is where to look it up.
+   */
+  let showVoided = $state(false);
+  let voidedLoaded = false;
   let amountMin = $state("");
   let amountMax = $state("");
   let dateFrom = $state("");
@@ -259,10 +285,23 @@
     return KIND_LABELS[kind] ?? "Record";
   }
 
-  const KIND_FILTERS = Object.entries(KIND_LABELS).map(([code, label]) => ({
-    code: Number(code),
-    label,
-  }));
+  /** A voided record or the reversal that voids it. */
+  function inVoidPair(record: RecordView): boolean {
+    return record.voidedByRecordId !== null || record.reversesRecordId !== null;
+  }
+
+  // A reversal exists only as half of a void pair, so the kind is offered only
+  // while void pairs are on the list.
+  const KIND_FILTERS = $derived(
+    Object.entries(KIND_LABELS)
+      .map(([code, label]) => ({ code: Number(code), label }))
+      .filter((k) => showVoided || k.code !== LedgerRecordKind.Reversal),
+  );
+
+  /** The rows the screen works over: void pairs only while they are asked for. */
+  const visibleRecords = $derived(
+    showVoided ? records : records.filter((r) => !inVoidPair(r)),
+  );
 
   const STATUS_TABS = [
     ["all", "All"],
@@ -273,17 +312,17 @@
 
   const counts = $derived.by(() => {
     const out: Record<string, number> = {
-      all: records.length,
+      all: visibleRecords.length,
       owed: 0,
       "part-paid": 0,
       paid: 0,
     };
-    for (const r of records) out[statusLabelFor(r)]++;
+    for (const r of visibleRecords) out[statusLabelFor(r)]++;
     return out;
   });
 
   const filtered = $derived.by(() => {
-    let rows = records.slice();
+    let rows = visibleRecords.slice();
     if (statusTab !== "all") {
       rows = rows.filter((r) => statusLabelFor(r) === statusTab);
     }
@@ -384,7 +423,9 @@
     let inCount = 0;
     let outTotal = 0;
     let outCount = 0;
-    for (const r of filtered) {
+    // A void pair nets to zero, so it adds nothing here even while it is shown.
+    const counted = filtered.filter((r) => !inVoidPair(r));
+    for (const r of counted) {
       const direction = directionOf(r);
       if (direction === "in") {
         inTotal += r.amountMinor;
@@ -394,7 +435,7 @@
         outCount++;
       }
     }
-    const unpaid = filtered.filter((r) => !r.paid);
+    const unpaid = counted.filter((r) => !r.paid);
     return {
       inTotal,
       inCount,
@@ -444,6 +485,7 @@
     selectedAccountId = null;
     selectedContactId = null;
     clearedFilter = "all";
+    showVoided = false;
     amountMin = "";
     amountMax = "";
     dateFrom = "";
@@ -512,6 +554,38 @@
     const last = names[names.length - 1];
     return `Nothing matches ${names.slice(0, -1).join(", ")} and ${last}.`;
   });
+
+  /**
+   * Void pairs are not in the first load, so turning them on fetches them once
+   * and merges them in; later voids arrive on the stream.
+   */
+  async function loadVoided() {
+    if (voidedLoaded) return;
+    voidedLoaded = true;
+    try {
+      const res = await fetch("/api/records?voided=only&limit=1000");
+      if (!res.ok) throw new Error("Voided records request failed");
+      const body: { records: RecordView[] } = await res.json();
+      records = mergeById(records, body.records);
+    } catch {
+      voidedLoaded = false;
+    }
+  }
+
+  function toggleVoided() {
+    showVoided = !showVoided;
+    if (showVoided) void loadVoided();
+    else {
+      selectedKinds = selectedKinds.filter(
+        (code) => code !== LedgerRecordKind.Reversal,
+      );
+      records = records.filter((r) => !inVoidPair(r));
+      voidedLoaded = false;
+      for (const id of [...selected]) {
+        if (!records.some((r) => r.id === id)) selected.delete(id);
+      }
+    }
+  }
 
   function toggleKind(code: number) {
     selectedKinds = selectedKinds.includes(code)
@@ -618,7 +692,15 @@
   // is; there is no longer a kind this screen would have to drop.
   createResourceStream<LedgerStreamMsg>("/api/records/stream", (msg) => {
     if (msg.type === "record-update") {
-      records = mergeById(records, [msg.record]);
+      // A record just voided arrives here with `voidedByRecordId` set, and its
+      // reversal arrives as a new record. With void pairs off, both leave the
+      // list rather than being merged in.
+      if (!showVoided && inVoidPair(msg.record)) {
+        records = records.filter((r) => r.id !== msg.record.id);
+        selected.delete(msg.record.id);
+      } else {
+        records = mergeById(records, [msg.record]);
+      }
     } else if (msg.type === "record-deleted") {
       records = records.filter((r) => r.id !== msg.id);
       selected.delete(msg.id);
@@ -678,7 +760,13 @@
   type Statement = {
     account: { id: number; name: string; role: number };
     entries: StatementEntry[];
-    selectionRecords: { id: number; amountMinor: number; locked: boolean }[];
+    selectionRecords: {
+      id: number;
+      date: string;
+      amountMinor: number;
+      locked: boolean;
+      periodClosedThrough: string | null;
+    }[];
     openingBalanceMinor: number;
     closingBalanceMinor: number;
     total: number;
@@ -709,7 +797,10 @@
   );
   // A record a settlement or a bank line still points at refuses deletion, so
   // the bar says so up front rather than after the fact.
-  const lockedSelected = $derived(selectedList.filter((r) => r.locked).length);
+  const lockedSelected = $derived(
+    selectedList.filter((r) => r.locked || recordPeriodClosed(r) !== null)
+      .length,
+  );
 
   $effect(() => {
     // A selection belongs to the account and date range the user selected in.
@@ -802,6 +893,10 @@
     }
     if (q.get("status")) statusTab = q.get("status")!;
     if (q.get("cleared") === "false") clearedFilter = "not-cleared";
+    if (q.get("voided") === "1") {
+      showVoided = true;
+      void loadVoided();
+    }
     if (q.get("dateFrom")) dateFrom = q.get("dateFrom")!;
     if (q.get("dateTo")) dateTo = q.get("dateTo")!;
     if (q.get("amountMin")) amountMin = q.get("amountMin")!;
@@ -824,6 +919,7 @@
     if (selectedCats.length) q.set("category", selectedCats.join(","));
     if (statusTab !== "all") q.set("status", statusTab);
     if (clearedFilter !== "all") q.set("cleared", "false");
+    if (showVoided) q.set("voided", "1");
     if (dateFrom) q.set("dateFrom", dateFrom);
     if (dateTo) q.set("dateTo", dateTo);
     if (amountMin) q.set("amountMin", amountMin);
@@ -1077,6 +1173,17 @@
                 clearedFilter === "not-cleared" ? "all" : "not-cleared")}
           >
             Unreconciled
+          </button>
+          <!-- Widens the list rather than narrowing it, so it is not counted
+               as a filter: it adds voided records and their reversals. -->
+          <button
+            type="button"
+            class="clearfilter"
+            class:active={showVoided}
+            aria-pressed={showVoided}
+            onclick={toggleVoided}
+          >
+            Show voided
           </button>
 
           <FilterDropdown label="Kind" active={selectedKinds.length > 0}>
@@ -1364,7 +1471,17 @@
                       </td>
                       <td class="td-date">{formatDateShort(entry.date)}</td>
                       <td class="td-primary">
-                        <span class="cell-itemname">{entry.description}</span>
+                        <span class="cell-itemname"
+                          >{entry.description}<RecordLock
+                            periodClosedThrough={periodClosedThroughFor(
+                              entry.date,
+                              statement.selectionRecords.find(
+                                (r) => r.id === entry.recordId,
+                              )?.periodClosedThrough ?? null,
+                              closingBoundary,
+                            )}
+                          /></span
+                        >
                         {#if entry.contactName}<span class="cell-contact"
                             >{entry.contactName}</span
                           >{/if}
@@ -1503,10 +1620,11 @@
                   <a class="cell-item row-link" href={recordHref(e.id)}>
                     <span class="cell-itemname">
                       {e.description}
-                      {#if e.locked}<span
-                          class="row-lock"
-                          title={e.lockedReason}><Lock size={11} /></span
-                        >{/if}
+                      <RecordLock
+                        periodClosedThrough={recordPeriodClosed(e)}
+                        locked={e.locked}
+                        lockedReason={e.lockedReason}
+                      />
                     </span>
                     <span class="cell-itemnum">{e.recordNumber ?? ""}</span>
                   </a>
@@ -1537,7 +1655,7 @@
                 </td>
                 <td class="td-status">
                   <StatusBadge status={statusLabelFor(e)} />
-                  {#if !e.cleared}
+                  {#if !e.cleared && !inVoidPair(e)}
                     <span
                       class="row-uncleared"
                       title="Not reconciled to a bank statement."
@@ -1644,7 +1762,7 @@
   bind:open={deleteDialogOpen}
   title={selected.size === 1 ? "Delete this record?" : "Delete these records?"}
   description={lockedSelected > 0
-    ? `${lockedSelected} of the ${selected.size} selected are settled or reconciled and cannot be deleted. The others will be removed. This can't be undone.`
+    ? `${lockedSelected} of the ${selected.size} selected are settled, reconciled or in a closed month and cannot be deleted. The others will be removed. This can't be undone.`
     : `This removes ${selected.size} ${selected.size === 1 ? "record" : "records"} and all their journal lines. It can't be undone.`}
   confirmLabel="Delete"
   danger
@@ -2082,13 +2200,6 @@
   .cat-option.on .cat-box {
     border-color: var(--primary);
     background: var(--primary);
-  }
-
-  .row-lock {
-    display: inline-flex;
-    vertical-align: middle;
-    margin-left: 5px;
-    color: var(--muted-foreground);
   }
 
   /* Who is owed, and how much is left — a fixed-height banner; the full

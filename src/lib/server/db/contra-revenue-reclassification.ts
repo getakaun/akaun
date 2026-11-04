@@ -1,3 +1,4 @@
+import { closedThrough } from "../closing/policy.js";
 import type { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { eq, sql } from "drizzle-orm";
@@ -37,6 +38,7 @@ export function applyContraRevenueReclassification(
     recordNumber: string | null;
     settled: boolean;
     reconciled: boolean;
+    closed: boolean;
   }[] = [];
   const changed = db.transaction(
     (tx) => {
@@ -60,6 +62,7 @@ export function applyContraRevenueReclassification(
           defaults.get(DefaultAccountPurpose.OpeningBalances) ?? -1,
       };
       let count = 0;
+      const boundary = closedThrough(tx);
       const records = tx
         .select()
         .from(schema.ledgerRecords)
@@ -106,11 +109,13 @@ export function applyContraRevenueReclassification(
         if (everydayKindFor(oldAccounts, ctx) !== LedgerRecordKind.Income)
           continue;
         const lock = lockStateFor(tx, record.id);
-        if (lock.settled || lock.reconciled) {
+        const closed = boundary !== null && record.date <= boundary;
+        if (lock.settled || lock.reconciled || closed) {
           skipped.push({
             recordId: record.id,
             recordNumber: record.recordNumber,
             ...lock,
+            closed,
           });
           continue;
         }

@@ -4,6 +4,13 @@ import {
   ALLOCATION_HISTORY_EDIT_REASON,
 } from "./allocation-state.js";
 import {
+  inVoidPair,
+  notVoided,
+  voidLinksFor,
+  VOIDED_RECORD_REASON,
+  type VoidLink,
+} from "./void-state.js";
+import {
   and,
   asc,
   desc,
@@ -57,6 +64,7 @@ import type {
   RecordView,
   SettlementSide,
 } from "../ledger/types.js";
+import type { VoidPairInput } from "../ledger/integrity.js";
 import { nextNumber } from "../running-number.js";
 import {
   joinSearchText,
@@ -64,6 +72,7 @@ import {
   upsertSearchText,
 } from "../search-text.js";
 import type { SequenceDocumentType } from "../db/schema.js";
+import { assertDatesOpen, closedThrough } from "../closing/policy.js";
 
 /**
  * Every read and write of the one record store.
@@ -254,11 +263,24 @@ export function setExtractedText(
   recordId: number,
   text: string | null,
 ): void {
-  db.update(ledgerRecords)
-    .set({ extractedText: text })
-    .where(eq(ledgerRecords.id, recordId))
-    .run();
-  reindexRecord(db, recordId);
+  db.transaction(
+    (transaction) => {
+      const tx = transaction as unknown as LedgerDb;
+      const record = getRecordRow(tx, recordId);
+      if (!record) return;
+      const boundary = closedThrough(tx);
+      // OCR may finish after a close. Keep the stored entry untouched; rebuilding
+      // a derived search index is safe and uses the existing frozen text.
+      if (!boundary || record.date > boundary) {
+        tx.update(ledgerRecords)
+          .set({ extractedText: text })
+          .where(eq(ledgerRecords.id, recordId))
+          .run();
+      }
+      reindexRecord(tx, recordId);
+    },
+    { behavior: "immediate" },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -266,6 +288,7 @@ export function setExtractedText(
 // ---------------------------------------------------------------------------
 
 type DerivedState = {
+  closedThrough: string | null;
   movements: Map<number, MovementView[]>;
   paidState: Map<number, { paid: boolean; outstandingMinor: Minor }>;
   lockState: Map<number, LockState>;
@@ -273,6 +296,7 @@ type DerivedState = {
   allocatedMinor: Map<number, Minor>;
   attachmentCount: Map<number, number>;
   supplierNames?: Map<number, string>;
+  voidLinks: Map<number, VoidLink>;
 };
 
 /**
@@ -366,11 +390,13 @@ function allocatedByMovement(
 /** Everything derived, for a whole page of records, in a fixed number of queries. */
 function deriveFor(db: LedgerDb, recordIds: number[]): DerivedState {
   const empty: DerivedState = {
+    closedThrough: closedThrough(db),
     movements: new Map(),
     paidState: new Map(),
     lockState: new Map(),
     allocatedMinor: new Map(),
     attachmentCount: new Map(),
+    voidLinks: new Map(),
   };
   if (recordIds.length === 0) return empty;
 
@@ -459,8 +485,16 @@ function deriveFor(db: LedgerDb, recordIds: number[]): DerivedState {
     number,
     { paid: boolean; outstandingMinor: Minor }
   >();
+  // A voided record and its reversal owe nothing: the pair nets to zero on the
+  // owed account, so neither is an open item, whatever its settlements say.
+  const voidLinks = voidLinksFor(db, recordIds);
   for (const id of recordIds) {
-    paidState.set(id, recordSettlementState(owedSides.get(id) ?? []));
+    paidState.set(
+      id,
+      voidLinks.has(id)
+        ? { paid: true, outstandingMinor: 0 }
+        : recordSettlementState(owedSides.get(id) ?? []),
+    );
   }
 
   // What bank lines cover, per record. Summed from the movement allocations
@@ -488,6 +522,7 @@ function deriveFor(db: LedgerDb, recordIds: number[]): DerivedState {
     .all();
 
   return {
+    closedThrough: empty.closedThrough,
     supplierNames: new Map(
       db
         .select({ id: contacts.id, name: contacts.legalName })
@@ -512,6 +547,7 @@ function deriveFor(db: LedgerDb, recordIds: number[]): DerivedState {
     lockState,
     allocatedMinor,
     attachmentCount: new Map(attachmentRows.map((r) => [r.recordId, r.n])),
+    voidLinks,
   };
 }
 
@@ -541,6 +577,10 @@ function toRecordView(
     movements,
     paid: paidState.paid,
     outstandingMinor: paidState.outstandingMinor,
+    periodClosedThrough:
+      derived.closedThrough && row.date <= derived.closedThrough
+        ? derived.closedThrough
+        : null,
     locked: lock.locked,
     lockedReason: lock.reason,
     reconciled: lockState.reconciled,
@@ -557,6 +597,8 @@ function toRecordView(
       ],
     }),
     attachmentCount: derived.attachmentCount.get(row.id) ?? 0,
+    voidedByRecordId: derived.voidLinks.get(row.id)?.voidedByRecordId ?? null,
+    reversesRecordId: row.reversesRecordId ?? null,
   };
 }
 
@@ -582,6 +624,11 @@ function recordConditions(filters: RecordListFilters): SQL[] {
   const conditions: SQL[] = [
     sql`not exists (select 1 from reimbursement_entries re where re.record_id = ${ledgerRecords.id})`,
   ];
+  // A voided record and its reversal are history, not something that
+  // happened: hidden unless asked for.
+  const voided = filters.voided ?? "exclude";
+  if (voided === "exclude") conditions.push(notVoided(ledgerRecords.id));
+  if (voided === "only") conditions.push(inVoidPair(ledgerRecords.id));
 
   if (filters.kind !== undefined) {
     conditions.push(
@@ -660,7 +707,7 @@ function recordConditions(filters: RecordListFilters): SQL[] {
     // Paid means: no side on a shared owed account is still uncovered. Asked of
     // the database rather than of the page, so `paid=false` can be paged
     // through without loading everything first (D-10).
-    const stillOwed = sql`EXISTS (
+    const stillOwed = sql`${notVoided(ledgerRecords.id)} AND EXISTS (
       SELECT 1 FROM ${ledgerMovements}
       INNER JOIN ${accounts} ON ${accounts.id} = ${ledgerMovements.accountId}
       WHERE ${ledgerMovements.recordId} = ${ledgerRecords.id}
@@ -749,6 +796,8 @@ export function recordSelectionDetails(db: LedgerDb, recordIds: number[]) {
       id: record.id,
       amountMinor: record.amountMinor,
       locked: record.locked,
+      date: record.date,
+      periodClosedThrough: record.periodClosedThrough,
     };
   });
 }
@@ -905,45 +954,55 @@ export function insertRecord(
     id?: number;
     legacyKind?: LegacyKind | null;
     legacyId?: number | null;
+    /** Set only by `voidRecord`: the record this reversal voids. */
+    reversesRecordId?: number | null;
   },
   movements: MovementDraft[],
 ): LedgerRecordRow {
-  const sequence = sequenceFor(data.kind);
-  const recordNumber =
-    data.recordNumber !== undefined
-      ? data.recordNumber
-      : sequence
-        ? nextNumber(db, sequence, data.date)
-        : null;
+  return db.transaction(
+    (transaction) => {
+      const tx = transaction as unknown as LedgerDb;
+      assertDatesOpen(tx, [data.date]);
+      const sequence = sequenceFor(data.kind);
+      const recordNumber =
+        data.recordNumber !== undefined
+          ? data.recordNumber
+          : sequence
+            ? nextNumber(tx, sequence, data.date)
+            : null;
 
-  const row = db
-    .insert(ledgerRecords)
-    .values({
-      ...(data.id !== undefined ? { id: data.id } : {}),
-      kind: data.kind,
-      date: data.date,
-      recordNumber,
-      description: data.description,
-      contactId: data.contactId ?? null,
-      supplierContactId: data.supplierContactId ?? null,
-      expensePaymentSource: data.expensePaymentSource ?? null,
-      reference: data.reference ?? "",
-      remark: data.remark ?? "",
-      currency: data.currency,
-      exchangeRate: data.exchangeRate,
-      amount: data.amount,
-      extractedText: data.extractedText ?? null,
-      legacyKind: data.legacyKind ?? null,
-      legacyId: data.legacyId ?? null,
-      createdBy: actingUserId,
-      updatedBy: actingUserId,
-    })
-    .returning()
-    .get()!;
+      const row = tx
+        .insert(ledgerRecords)
+        .values({
+          ...(data.id !== undefined ? { id: data.id } : {}),
+          kind: data.kind,
+          date: data.date,
+          recordNumber,
+          description: data.description,
+          contactId: data.contactId ?? null,
+          supplierContactId: data.supplierContactId ?? null,
+          expensePaymentSource: data.expensePaymentSource ?? null,
+          reference: data.reference ?? "",
+          remark: data.remark ?? "",
+          currency: data.currency,
+          exchangeRate: data.exchangeRate,
+          amount: data.amount,
+          extractedText: data.extractedText ?? null,
+          legacyKind: data.legacyKind ?? null,
+          legacyId: data.legacyId ?? null,
+          reversesRecordId: data.reversesRecordId ?? null,
+          createdBy: actingUserId,
+          updatedBy: actingUserId,
+        })
+        .returning()
+        .get()!;
 
-  replaceMovements(db, row.id, movements);
-  reindexRecord(db, row.id);
-  return toRecordRow(row);
+      replaceMovements(tx, row.id, movements);
+      reindexRecord(tx, row.id);
+      return toRecordRow(row);
+    },
+    { behavior: "immediate" },
+  );
 }
 
 export function updateRecord(
@@ -965,29 +1024,43 @@ export function updateRecord(
   }>,
   movements?: MovementDraft[],
 ): LedgerRecordRow | null {
-  if (movements && wouldRemoveAllocationHistory(db, id, movements))
-    throw new Error(ALLOCATION_HISTORY_EDIT_REASON);
-  const existing = db
-    .select()
-    .from(ledgerRecords)
-    .where(eq(ledgerRecords.id, id))
-    .get();
-  if (!existing) return null;
+  return db.transaction(
+    (transaction) => {
+      const tx = transaction as unknown as LedgerDb;
+      const existing = tx
+        .select()
+        .from(ledgerRecords)
+        .where(eq(ledgerRecords.id, id))
+        .get();
+      if (!existing) return null;
 
-  const updated = db
-    .update(ledgerRecords)
-    .set({
-      ...patch,
-      updatedBy: actingUserId,
-      updatedAt: new Date().toISOString(),
-    })
-    .where(eq(ledgerRecords.id, id))
-    .returning()
-    .get()!;
+      // Closed entries are immutable, including notes, labels and no-op saves.
+      // Check both dates so moving a closed entry out (or an open entry in)
+      // cannot bypass the boundary.
+      assertDatesOpen(tx, [existing.date, patch.date ?? existing.date]);
+      // Backstop for every write path: a voided record and its reversal are
+      // frozen, or the pair would stop netting to zero.
+      if (voidLinksFor(tx, [id]).has(id)) throw new Error(VOIDED_RECORD_REASON);
+      if (movements && wouldRemoveAllocationHistory(tx, id, movements))
+        throw new Error(ALLOCATION_HISTORY_EDIT_REASON);
 
-  if (movements) replaceMovements(db, id, movements);
-  reindexRecord(db, id);
-  return toRecordRow(updated);
+      const updated = tx
+        .update(ledgerRecords)
+        .set({
+          ...patch,
+          updatedBy: actingUserId,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(ledgerRecords.id, id))
+        .returning()
+        .get()!;
+
+      if (movements) replaceMovements(tx, id, movements);
+      reindexRecord(tx, id);
+      return toRecordRow(updated);
+    },
+    { behavior: "immediate" },
+  );
 }
 
 /** The row before a change, for the audit diff. */
@@ -1010,13 +1083,26 @@ export function snapshotForAudit(
 }
 
 export function deleteRecord(db: LedgerDb, id: number): boolean {
-  // Movements, attachments and search text all cascade from the record.
-  const result = db
-    .delete(ledgerRecords)
-    .where(eq(ledgerRecords.id, id))
-    .returning({ id: ledgerRecords.id })
-    .get();
-  return result !== undefined;
+  return db.transaction(
+    (transaction) => {
+      const tx = transaction as unknown as LedgerDb;
+      const existing = tx
+        .select({ date: ledgerRecords.date })
+        .from(ledgerRecords)
+        .where(eq(ledgerRecords.id, id))
+        .get();
+      if (!existing) return false;
+      assertDatesOpen(tx, [existing.date]);
+      // Movements, attachments and search text all cascade from the record.
+      const result = tx
+        .delete(ledgerRecords)
+        .where(eq(ledgerRecords.id, id))
+        .returning({ id: ledgerRecords.id })
+        .get();
+      return result !== undefined;
+    },
+    { behavior: "immediate" },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1034,6 +1120,7 @@ export function deleteRecord(db: LedgerDb, id: number): boolean {
 export function integrityInputs(db: LedgerDb): {
   records: RecordBalanceInput[];
   wholeBooksSumMinor: Minor;
+  voidPairs: VoidPairInput[];
 } {
   const rows = db
     .select({
@@ -1080,7 +1167,58 @@ export function integrityInputs(db: LedgerDb): {
       missingContact: row.touchesSharedOwed === 1 && row.contactId === null,
     })),
     wholeBooksSumMinor,
+    voidPairs: voidPairInputs(db),
   };
+}
+
+/** Every reversal and what it voids, for invariant 7. Two small aggregates. */
+function voidPairInputs(db: LedgerDb): VoidPairInput[] {
+  const pairs = db.all<{
+    reversalId: number;
+    reversalKind: number;
+    originalId: number | null;
+    targetId: number | null;
+    targetKind: number | null;
+    targetReverses: number | null;
+    reversalDate: string;
+    targetDate: string | null;
+  }>(sql`
+    SELECT v.id AS reversalId, v.kind AS reversalKind,
+           v.reverses_record_id AS originalId,
+           r.id AS targetId, r.kind AS targetKind,
+           r.reverses_record_id AS targetReverses,
+           v.date AS reversalDate, r.date AS targetDate
+    FROM ledger_records v
+    LEFT JOIN ledger_records r ON r.id = v.reverses_record_id
+    WHERE v.reverses_record_id IS NOT NULL OR v.kind = ${LedgerRecordKind.Reversal}
+  `);
+  if (pairs.length === 0) return [];
+  const imbalance = new Map(
+    db
+      .all<{ reversalId: number; imbalance: number }>(
+        sql`
+        SELECT reversalId, sum(abs(net)) AS imbalance FROM (
+          SELECT v.id AS reversalId, m.account_id, sum(m.amount_minor) AS net
+          FROM ledger_records v
+          JOIN ledger_movements m
+            ON m.record_id = v.id OR m.record_id = v.reverses_record_id
+          WHERE v.reverses_record_id IS NOT NULL
+          GROUP BY v.id, m.account_id
+        ) GROUP BY reversalId
+      `,
+      )
+      .map((r) => [r.reversalId, r.imbalance]),
+  );
+  return pairs.map((p) => ({
+    reversalId: p.reversalId,
+    reversalKind: p.reversalKind as LedgerRecordKindCode,
+    originalId: p.originalId,
+    originalExists: p.targetId !== null,
+    originalIsReversal:
+      p.targetKind === LedgerRecordKind.Reversal || p.targetReverses !== null,
+    sameDate: p.targetDate === p.reversalDate,
+    accountImbalanceMinor: imbalance.get(p.reversalId) ?? 0,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1147,16 +1285,25 @@ export function addAttachment(
   displayName: string,
   options: { groupDocument?: boolean } = {},
 ): RecordAttachmentRow {
-  return db
-    .insert(recordAttachments)
-    .values({
-      recordId,
-      filename,
-      displayName,
-      groupDocument: options.groupDocument ?? false,
-    })
-    .returning()
-    .get()!;
+  return db.transaction(
+    (transaction) => {
+      const tx = transaction as unknown as LedgerDb;
+      const record = getRecordRow(tx, recordId);
+      if (!record) throw new Error("Record not found");
+      assertDatesOpen(tx, [record.date]);
+      return tx
+        .insert(recordAttachments)
+        .values({
+          recordId,
+          filename,
+          displayName,
+          groupDocument: options.groupDocument ?? false,
+        })
+        .returning()
+        .get()!;
+    },
+    { behavior: "immediate" },
+  );
 }
 
 export function getAttachment(
@@ -1173,10 +1320,22 @@ export function getAttachment(
 }
 
 export function deleteAttachment(db: LedgerDb, attachmentId: number): boolean {
-  const row = db
-    .delete(recordAttachments)
-    .where(eq(recordAttachments.id, attachmentId))
-    .returning({ id: recordAttachments.id })
-    .get();
-  return row !== undefined;
+  return db.transaction(
+    (transaction) => {
+      const tx = transaction as unknown as LedgerDb;
+      const attachment = getAttachment(tx, attachmentId);
+      if (!attachment) return false;
+      const record = getRecordRow(tx, attachment.recordId);
+      if (!record) return false;
+      assertDatesOpen(tx, [record.date]);
+      return (
+        tx
+          .delete(recordAttachments)
+          .where(eq(recordAttachments.id, attachmentId))
+          .returning({ id: recordAttachments.id })
+          .get() !== undefined
+      );
+    },
+    { behavior: "immediate" },
+  );
 }

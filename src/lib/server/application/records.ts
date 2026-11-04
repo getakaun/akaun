@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { z } from "zod";
 import { DefaultAccountPurpose } from "$lib/enums.js";
 import { can } from "../permissions.js";
@@ -16,6 +17,8 @@ import {
   createRecord as createRecordService,
   patchRecord,
   removeRecord,
+  voidBlockedReason,
+  voidRecordInTransaction,
   type DeferredEmits,
 } from "../services/ledger.js";
 import { createSettlements } from "../services/settlements.js";
@@ -359,6 +362,14 @@ export function createRecord(
   input: CreateInput,
   opts: { dryRun?: boolean } = {},
 ): AppResult<RecordWritten> {
+  return withClosingRefusal(() => createRecordOperation(ctx, input, opts));
+}
+
+function createRecordOperation(
+  ctx: AppContext,
+  input: CreateInput,
+  opts: { dryRun?: boolean } = {},
+): AppResult<RecordWritten> {
   const refused = requirePermissions(ctx, ["records.create"]);
   if (refused) return refused;
 
@@ -522,6 +533,17 @@ export function updateRecord(
   patch: RecordPatch,
   expectedVersion?: string,
 ): AppResult<RecordWritten> {
+  return withClosingRefusal(() =>
+    updateRecordOperation(ctx, id, patch, expectedVersion),
+  );
+}
+
+function updateRecordOperation(
+  ctx: AppContext,
+  id: number,
+  patch: RecordPatch,
+  expectedVersion?: string,
+): AppResult<RecordWritten> {
   const refused = requirePermissions(ctx, ["records.update"]);
   if (refused) return refused;
   if (patch.paidByContactId !== undefined)
@@ -651,6 +673,16 @@ export function deleteRecord(
   id: number,
   expectedVersion?: string,
 ): AppResult<{ id: number }> {
+  return withClosingRefusal(() =>
+    deleteRecordOperation(ctx, id, expectedVersion),
+  );
+}
+
+function deleteRecordOperation(
+  ctx: AppContext,
+  id: number,
+  expectedVersion?: string,
+): AppResult<{ id: number }> {
   const refused = requirePermissions(ctx, ["records.delete"]);
   if (refused) return refused;
   const existing = getRecord(ctx.db, id);
@@ -666,6 +698,95 @@ export function deleteRecord(
   const result = removeRecord(ctx.db, id, actor(ctx));
   if (!result.ok) return fail("REFUSED", result.reason);
   return ok({ id });
+}
+
+export const voidShape = {
+  reason: z.string().trim().min(10).max(2000),
+  expectedVersion: z.string().min(1),
+};
+
+export type VoidPreview = {
+  record: RecordView;
+  version: string;
+  /** Why it cannot be voided now, or null. */
+  blockedReason: string | null;
+};
+
+/** What voiding this record would do, and whether it can be done now. */
+export function prepareVoidRecord(
+  ctx: AppContext,
+  id: number,
+): AppResult<VoidPreview> {
+  const refused = requirePermissions(ctx, ["records.read"]);
+  if (refused) return refused;
+  const record = getRecord(ctx.db, id);
+  if (!record) return missing(NOT_FOUND);
+  return ok({
+    record,
+    version: recordVersion(ctx.db, id),
+    blockedReason: voidBlockedReason(ctx.db, id),
+  });
+}
+
+/**
+ * Voids a record, so the books read as if it never happened.
+ *
+ * Writes a Reversal record that negates it on the same date (see
+ * `voidRecordInTransaction`). Needs `records.void`, an explicit, sensitive
+ * leaf: a void changes a period's reported figures, like a date correction.
+ */
+export function voidRecord(
+  ctx: AppContext,
+  id: number,
+  input: z.output<z.ZodObject<typeof voidShape>>,
+): AppResult<{ record: RecordView; reversal: RecordView; version: string }> {
+  return withClosingRefusal(() => voidRecordOperation(ctx, id, input));
+}
+
+function voidRecordOperation(
+  ctx: AppContext,
+  id: number,
+  input: z.output<z.ZodObject<typeof voidShape>>,
+): AppResult<{ record: RecordView; reversal: RecordView; version: string }> {
+  const refused = requirePermissions(ctx, ["records.read", "records.void"]);
+  if (refused) return refused;
+  const reason = input.reason.trim();
+  if (reason.length < 10 || reason.length > 2000)
+    return fail("INVALID_INPUT", "Explain the void in 10 to 2000 characters.");
+  if (!input.expectedVersion)
+    return fail("INVALID_INPUT", "Reload the record and provide its version.");
+  if (!getRecord(ctx.db, id)) return missing(NOT_FOUND);
+  const emits: DeferredEmits = [];
+  try {
+    const result = ctx.db.transaction(
+      () => {
+        const stale = checkVersion(
+          recordVersion(ctx.db, id),
+          input.expectedVersion,
+        );
+        if (stale) throw new Rollback(stale);
+        const done = voidRecordInTransaction(
+          ctx.db,
+          id,
+          actor(ctx),
+          reason,
+          emits,
+        );
+        if (!done.ok) throw new Rollback(fail("REFUSED", done.reason));
+        return done.value;
+      },
+      { behavior: "immediate" },
+    );
+    for (const emit of emits) emit();
+    return ok({
+      record: result.original,
+      reversal: result.reversal,
+      version: recordVersion(ctx.db, id),
+    });
+  } catch (error) {
+    if (error instanceof Rollback) return error.failure;
+    throw error;
+  }
 }
 
 export const settleShape = {

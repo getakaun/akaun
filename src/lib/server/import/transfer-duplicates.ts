@@ -25,6 +25,7 @@ import { and, between, eq, sql } from "drizzle-orm";
 import { DocumentType, LedgerRecordKind } from "$lib/enums.js";
 import { ledgerMovements, ledgerRecords } from "../db/schema.js";
 import type { LedgerDb, Minor } from "../ledger/types.js";
+import { notVoided } from "../queries/void-state.js";
 
 /** How far apart, in days, a transfer and an item may be dated. */
 export const TRANSFER_DUPLICATE_DAYS = 7;
@@ -103,6 +104,8 @@ export function detectTransferDuplicates(
       .where(
         and(
           eq(ledgerRecords.kind, LedgerRecordKind.Transfer),
+          // A voided transfer never happened, so it is not a duplicate.
+          notVoided(ledgerRecords.id),
           between(
             ledgerRecords.date,
             isoDay(day - TRANSFER_DUPLICATE_DAYS),

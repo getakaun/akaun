@@ -1,3 +1,4 @@
+import { withAsyncClosingRefusal } from "./closing-refusal.js";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { ImportState } from "$lib/enums.js";
@@ -66,6 +67,21 @@ function selection(input: { itemIds?: string[]; all?: boolean }) {
  * or items of a group (their corrections were saved with update_import_item).
  */
 export async function confirmImport(
+  ctx: AppContext,
+  jobId: string,
+  input: {
+    itemIds?: string[];
+    all?: boolean;
+    overrides?: z.output<typeof reviewOverridesSchema>;
+  },
+  expectedVersion?: string,
+): Promise<AppResult<Record<string, unknown>>> {
+  return withAsyncClosingRefusal(() =>
+    confirmImportOperation(ctx, jobId, input, expectedVersion),
+  );
+}
+
+async function confirmImportOperation(
   ctx: AppContext,
   jobId: string,
   input: {

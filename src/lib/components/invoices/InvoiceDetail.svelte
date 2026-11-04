@@ -20,6 +20,13 @@
 	import SalesDocForm from '$lib/components/sales/SalesDocForm.svelte';
 	import SalesDocLines from '$lib/components/sales/SalesDocLines.svelte';
 	import SettlementList from '$lib/components/ledger/SettlementList.svelte';
+	import RecordLock from '$lib/components/ledger/RecordLock.svelte';
+	import {
+		getClosingBoundary,
+		periodClosedThroughFor,
+		MONTH_CLOSED_REASON
+	} from '$lib/closing-context.js';
+	import { createResourceStream } from '$lib/sse.js';
 	import { mainCurrency, mainCurrencySymbol } from '$lib/currency-state.svelte.js';
 	import { formatCurrencyAmount } from '$lib/currency.js';
 	import { formatDate, formatMinor, formatMoney } from '$lib/format.js';
@@ -48,6 +55,15 @@
 	// Writable-derived: a fresh server load replaces it, and saving or sending
 	// patches it in place from the response.
 	let invoice = $derived<Invoice>(data.invoice);
+	const closingBoundary = getClosingBoundary();
+	const periodClosedThrough = $derived(
+		periodClosedThroughFor(
+			invoice.ledgerRecordId === null ? null : invoice.issueDate,
+			invoice.periodClosedThrough,
+			closingBoundary
+		)
+	);
+	const periodClosed = $derived(periodClosedThrough !== null);
 
 	let isEditing = $state(false);
 	let formRef = $state<{
@@ -68,13 +84,33 @@
 	let reissuing = $state(false);
 	let reissueConfirmOpen = $state(false);
 	let auditTrailRef = $state<{ refresh: () => Promise<void> } | null>(null);
+	$effect(() => {
+		if (!periodClosed) return;
+		isEditing = false;
+		deleteDialogOpen = false;
+		issueConfirmOpen = false;
+		cancelConfirmOpen = false;
+		reissueConfirmOpen = false;
+	});
+
+	createResourceStream<
+		{ type: 'invoice-update'; item: Invoice } | { type: 'invoice-delete'; id: number }
+	>('/api/invoices/stream', (message) => {
+		if (message.type === 'invoice-update' && message.item.id === invoice.id) {
+			invoice = message.item;
+		} else if (message.type === 'invoice-delete' && message.id === invoice.id) {
+			void goto(resolve('/(app)/invoices'), { replaceState: true });
+		}
+	});
 
 	// Only actually dirty while the form is mounted: leaving edit mode discards
 	// whatever the form held, the same way closing the drawer this replaced did.
 	const dirty = $derived(isEditing && formDirty);
 
 	const isDraft = $derived(invoice.status === InvoiceStatus.Draft);
-	const canEdit = $derived(data.perms.change && invoice.status !== InvoiceStatus.Cancelled);
+	const canEdit = $derived(
+		!periodClosed && data.perms.change && invoice.status !== InvoiceStatus.Cancelled
+	);
 	/** Only a draft can be sent, and only once — sending it twice would owe it twice. */
 	const canIssue = $derived(data.perms.issue && isDraft && invoice.ledgerRecordId === null);
 	/**
@@ -82,14 +118,16 @@
 	 * amount is already in the books — and a cancelled one keeps its number.
 	 */
 	const deleteBlockedReason = $derived(
-		invoice.status === InvoiceStatus.Cancelled
-			? 'A cancelled invoice keeps its number, so it cannot be deleted.'
-			: invoice.ledgerRecordId !== null || !isDraft
-				? 'This invoice has been sent, so it cannot be deleted. Cancel it instead.'
-				: null
+		periodClosed
+			? MONTH_CLOSED_REASON
+			: invoice.status === InvoiceStatus.Cancelled
+				? 'A cancelled invoice keeps its number, so it cannot be deleted.'
+				: invoice.ledgerRecordId !== null || !isDraft
+					? 'This invoice has been sent, so it cannot be deleted. Cancel it instead.'
+					: null
 	);
 	/** Sent and nothing paid yet — the same rule the server applies (`$lib/sales/status.ts`). */
-	const canCancel = $derived(data.perms.void && canCancelInvoice(invoice));
+	const canCancel = $derived(!periodClosed && data.perms.void && canCancelInvoice(invoice));
 	/**
 	 * Cancelled before cancelling took the amount out of the books: the status
 	 * already says Cancelled, so all that is left to do is the books.
@@ -109,11 +147,13 @@
 	);
 
 	function startEdit() {
+		if (!canEdit) return;
 		saveError = '';
 		isEditing = true;
 	}
 
 	async function saveEdit() {
+		if (periodClosed) return;
 		const saved = await formRef?.submit();
 		if (saved) {
 			invoice = saved;
@@ -149,6 +189,7 @@
 	// leaves the books. The server refuses once anything has been paid, and its
 	// sentence is what shows.
 	async function cancelInvoice() {
+		if (periodClosed) return;
 		// The dialog does not close itself on confirm; any refusal shows in the hero.
 		cancelConfirmOpen = false;
 		cancelling = true;
@@ -157,8 +198,7 @@
 		try {
 			const res = await fetch(`/api/invoices/${invoice.id}/cancel`, { method: 'POST' });
 			if (!res.ok) {
-				cancelError =
-					(await res.json().catch(() => ({}))).error ?? 'Could not cancel the invoice.';
+				cancelError = (await res.json().catch(() => ({}))).error ?? 'Could not cancel the invoice.';
 				return;
 			}
 			invoice = await res.json();
@@ -173,6 +213,7 @@
 	// Void this one and open a draft copy of it, with the next number, to
 	// correct and send. The server refuses on the same terms as a cancel.
 	async function reissue() {
+		if (periodClosed) return;
 		// The dialog does not close itself on confirm; any refusal shows in the hero.
 		reissueConfirmOpen = false;
 		reissuing = true;
@@ -210,6 +251,7 @@
 	{dirty}
 	editing={isEditing}
 	{saving}
+	saveDisabled={periodClosed}
 	saveLabel="Save"
 	dirtyNote={formRef?.blockedBy() ?? 'Editing this invoice'}
 	onsave={saveEdit}
@@ -255,7 +297,8 @@
 		{/if}
 		{#if canIssue && !isEditing}
 			<button class="sheet-btn" onclick={() => (issueConfirmOpen = true)} disabled={issuing}>
-				<Send size={14} /> {issuing ? 'Marking…' : 'Mark as sent'}
+				<Send size={14} />
+				{issuing ? 'Marking…' : 'Mark as sent'}
 			</button>
 		{/if}
 		{#if canRecordPayment && !isEditing}
@@ -270,7 +313,7 @@
 
 	{#snippet hero()}
 		<div class="detail-hero-eyebrow">
-			<span>{invoice.invoiceNumber}</span>
+			<span>{invoice.invoiceNumber}<RecordLock {periodClosedThrough} /></span>
 			<span>·</span>
 			<span>{formatDate(invoice.issueDate)}</span>
 		</div>
@@ -293,6 +336,11 @@
 	{/snippet}
 
 	{#snippet main()}
+		{#if periodClosed}
+			<p class="text-muted-foreground mb-3 text-sm">
+				{MONTH_CLOSED_REASON}. This invoice is read-only.
+			</p>
+		{/if}
 		{#if isEditing}
 			<SalesDocForm
 				bind:this={formRef}
@@ -333,10 +381,7 @@
 		{#if invoice.settlements.length > 0 || invoice.ledgerRecordId !== null}
 			<section class="detail-card">
 				<div class="detail-card-head"><span class="detail-card-title">Payments</span></div>
-				<SettlementList
-					links={invoice.settlements}
-					emptyLabel="No payments are received yet."
-				/>
+				<SettlementList links={invoice.settlements} emptyLabel="No payments are received yet." />
 			</section>
 		{/if}
 

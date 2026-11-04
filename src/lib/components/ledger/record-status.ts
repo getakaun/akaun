@@ -11,7 +11,14 @@ import type { RecordView } from "$lib/server/ledger/types.js";
 // time. This does no arithmetic of its own — it only names the state the server
 // already worked out, so the two cannot drift on the figures. Keep the labels in
 // step with StatusBadge's `byLabel` map (CLAUDE.md § Gotchas).
+//
+// A void pair comes first: a voided record and its reversal net to zero and owe
+// nothing, so "paid" or "owed" would describe money that, as far as the books
+// are concerned, never moved. The link itself is derived on the server
+// (`voidedByRecordId` / `reversesRecordId`, src/lib/server/queries/void-state.ts).
 export function statusLabelFor(record: RecordView): string {
+  if (record.voidedByRecordId !== null) return "voided";
+  if (record.reversesRecordId !== null) return "reversal";
   if (record.kind === LedgerRecordKind.Payment)
     return record.paid ? "allocated" : "unallocated";
   if (record.paid) return "paid";

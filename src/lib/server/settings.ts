@@ -9,6 +9,8 @@ import {
 } from "./db/schema.js";
 
 export const SETTING_KEYS = {
+  // Inclusive book-wide accounting lock; empty or absent means no closed months.
+  accountingClosedThrough: "accounting.closedThrough",
   // Which account new records pre-select as the one that paid or received
   // (FR-011). Written by the ledger upgrade's account seeding, changeable in
   // Settings once more than one account exists.

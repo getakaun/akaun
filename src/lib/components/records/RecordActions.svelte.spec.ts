@@ -105,6 +105,7 @@ it('opens each existing dialog and returns focus to Actions after cancellation',
 	for (const [item, title, role] of [
 		['Correct contact…', 'Correct contact', 'dialog'],
 		['Correct date…', 'Correct settled record date', 'dialog'],
+		['Void…', 'Void this record', 'dialog'],
 		['Delete…', 'Delete this record?', 'alertdialog']
 	] as const) {
 		await page.getByRole('button', { name: 'Actions' }).click();
@@ -207,4 +208,31 @@ it('hands keyboard focus to reimbursement correction and returns it after closin
 	await expect
 		.element(page.getByRole('button', { name: 'Actions' }))
 		.toHaveFocus();
+});
+
+it('offers Void beside Delete and explains why it is blocked', async () => {
+	const onaction = vi.fn();
+	render(RecordActions, {
+		canVoid: true,
+		canDelete: true,
+		voidBlockedReason: 'This record is settled by a payment.',
+		onaction
+	});
+	await page.getByRole('button', { name: 'Actions' }).click();
+	await expect
+		.element(page.getByRole('menuitem', { name: 'Void…' }))
+		.toHaveAttribute('aria-disabled', 'true');
+	await expect
+		.element(page.getByText('This record is settled by a payment.'))
+		.toBeVisible();
+	await page.getByRole('menuitem', { name: 'Delete…' }).click();
+	await expect.poll(() => onaction.mock.calls).toEqual([['delete']]);
+});
+
+it('sends the void action when Void is available', async () => {
+	const onaction = vi.fn();
+	render(RecordActions, { canVoid: true, onaction });
+	await page.getByRole('button', { name: 'Actions' }).click();
+	await page.getByRole('menuitem', { name: 'Void…' }).click();
+	await expect.poll(() => onaction.mock.calls).toEqual([['void']]);
 });

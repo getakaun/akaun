@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { eq } from "drizzle-orm";
 import { reimbursementEntries } from "../db/schema.js";
 import { z } from "zod";
@@ -9,6 +10,7 @@ import {
   updateRecord as writeRecord,
 } from "../queries/ledger.js";
 import { emitRecordUpdate } from "../services/ledger.js";
+import { VOIDED_RECORD_REASON } from "../queries/void-state.js";
 import { actor, requirePermissions, type AppContext } from "./context.js";
 import {
   fail,
@@ -55,6 +57,8 @@ export function prepareRecordDateCorrection(
     return fail("REFUSED", "Reimbursement transfer dates are read-only.");
   const record = getRecord(ctx.db, id);
   if (!record) return missing("That record no longer exists.");
+  if (record.voidedByRecordId !== null || record.reversesRecordId !== null)
+    return fail("REFUSED", VOIDED_RECORD_REASON);
   if (
     record.kind !== LedgerRecordKind.Expense &&
     record.kind !== LedgerRecordKind.Income
@@ -85,6 +89,14 @@ export function prepareRecordDateCorrection(
  * allocations are undone. Eligibility, version, mutation and audit are atomic.
  */
 export function correctRecordDate(
+  ctx: AppContext,
+  id: number,
+  input: unknown,
+): AppResult<RecordWritten> {
+  return withClosingRefusal(() => correctRecordDateOperation(ctx, id, input));
+}
+
+function correctRecordDateOperation(
   ctx: AppContext,
   id: number,
   input: unknown,

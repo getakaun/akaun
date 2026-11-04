@@ -11,6 +11,11 @@
 	import { AccountSubType, EntityType, LedgerRecordKind, Role } from '$lib/enums.js';
 	import { everydayCategoryKind } from '$lib/account-classification.js';
 	import EntryBlock from './EntryBlock.svelte';
+	import {
+		getClosingBoundary,
+		periodClosedThroughFor,
+		MONTH_CLOSED_REASON
+	} from '$lib/closing-context.js';
 	// The running difference itself is drawn by `EntryBlock`, which owns the
 	// lines it is computed from.
 	import { sideMinor, whyNotSaveable, type SideDraft } from './journal-rules.js';
@@ -72,6 +77,15 @@
 	const isNew = $derived(record === null);
 	const locked = $derived(record?.locked ?? false);
 	const lockedReason = $derived(record?.lockedReason ?? '');
+	const closingBoundary = getClosingBoundary();
+	const periodClosed = $derived(
+		periodClosedThroughFor(
+			record?.date ?? null,
+			record?.periodClosedThrough ?? null,
+			closingBoundary
+		) !== null
+	);
+	const annotationReadOnly = $derived(periodClosed || (!canChange && !isNew));
 
 	// --- Form state ---------------------------------------------------------
 	let date = $state('');
@@ -216,12 +230,18 @@
 	 *
 	 * Keyed on the id, not the object: the stream hands over a fresh object every
 	 * time anything about the record changes, and re-seeding on that would throw
-	 * away whatever the user was in the middle of typing.
+	 * away whatever the user was in the middle of typing. A newly closed period
+	 * discards that draft so the read-only fields show the saved transaction.
 	 */
 	let seededId = $state<number | null | undefined>(undefined);
+	let seededClosed = false;
 	$effect(() => {
 		const id = record?.id ?? null;
-		if (id === seededId) return;
+		const closed = periodClosed;
+		const changedRecord = id !== seededId;
+		const newlyClosed = closed && !seededClosed;
+		seededClosed = closed;
+		if (!changedRecord && !newlyClosed) return;
 		seededId = id;
 		seed(record);
 	});
@@ -328,12 +348,10 @@
 	 * already knows its kind; an unsaved one uses the chosen accounts'
 	 * category classification, shared with the server.
 	 */
-	const categoryKindOf = $derived(
-		(accountId: number | null) => {
-			const account = allAccounts.concat(sideChoices).find((a) => a.id === accountId);
-			return account ? everydayCategoryKind(account) : null;
-		}
-	);
+	const categoryKindOf = $derived((accountId: number | null) => {
+		const account = allAccounts.concat(sideChoices).find((a) => a.id === accountId);
+		return account ? everydayCategoryKind(account) : null;
+	});
 
 	const predictedKind = $derived.by(() => {
 		if (record) return record.kind;
@@ -392,13 +410,13 @@
 	 */
 	const preferredForeignCurrency = $derived(
 		predictedKind === LedgerRecordKind.Income
-			? lastForeignCurrencyIncome ?? lastForeignCurrencyExpense
-			: lastForeignCurrencyExpense ?? lastForeignCurrencyIncome
+			? (lastForeignCurrencyIncome ?? lastForeignCurrencyExpense)
+			: (lastForeignCurrencyExpense ?? lastForeignCurrencyIncome)
 	);
 
 	/** A record created by issuing an invoice is read-only here (FR-013). */
 	const fromInvoice = $derived(record?.kind === LedgerRecordKind.InvoiceIssue);
-	const readOnly = $derived(fromInvoice || locked || (!canChange && !isNew));
+	const readOnly = $derived(periodClosed || fromInvoice || locked || (!canChange && !isNew));
 
 	/** A payment's sides are decided in the payment drawer, not restated here. */
 	const isPayment = $derived(record?.kind === LedgerRecordKind.Payment);
@@ -411,6 +429,7 @@
 	 */
 	const categoryUnlockable = $derived(
 		locked &&
+			!periodClosed &&
 			canChange &&
 			!fromInvoice &&
 			(record?.kind === LedgerRecordKind.Expense || record?.kind === LedgerRecordKind.Income)
@@ -453,17 +472,27 @@
 	 */
 	const typedCategoryAmount = $derived(parseFloat(categoryAmount || '0'));
 	const primaryAmountMinor = $derived(
-		extraSides.length > 0
-			? Math.round(Math.abs(typedCategoryAmount || 0) * 100)
-			: mainAmountMinor
+		extraSides.length > 0 ? Math.round(Math.abs(typedCategoryAmount || 0) * 100) : mainAmountMinor
 	);
 
 	const allSides = $derived.by((): SideDraft[] => {
 		const fromMinor = extraSideDirection === 'out' ? primaryAmountMinor : mainAmountMinor;
 		const toMinor = extraSideDirection === 'in' ? primaryAmountMinor : mainAmountMinor;
 		return [
-			{ key: -1, accountId: fromAccountId, direction: 'out' as const, amount: (fromMinor / 100).toFixed(2), label: '' },
-			{ key: -2, accountId: toAccountId, direction: 'in' as const, amount: (toMinor / 100).toFixed(2), label: '' },
+			{
+				key: -1,
+				accountId: fromAccountId,
+				direction: 'out' as const,
+				amount: (fromMinor / 100).toFixed(2),
+				label: ''
+			},
+			{
+				key: -2,
+				accountId: toAccountId,
+				direction: 'in' as const,
+				amount: (toMinor / 100).toFixed(2),
+				label: ''
+			},
 			...extraSides
 		];
 	});
@@ -475,6 +504,7 @@
 
 	/** What the frame around this form shows above its Save button. */
 	export function blockedBy(): string | null {
+		if (periodClosed) return MONTH_CLOSED_REASON;
 		if (rateMissing) return 'Enter the exchange rate before saving.';
 		return blockedReason;
 	}
@@ -486,7 +516,10 @@
 		// visibly changes until the user actually edits either figure.
 		if (extraSides.length === 0) categoryAmount = (mainAmountMinor / 100).toFixed(2);
 		const direction = canAdjust ? 'in' : (extraSideDirection ?? 'in');
-		extraSides = [...extraSides, { key: nextSideKey++, accountId: null, direction, amount: '', label: '' }];
+		extraSides = [
+			...extraSides,
+			{ key: nextSideKey++, accountId: null, direction, amount: '', label: '' }
+		];
 	}
 
 	function removeSide(key: number) {
@@ -636,6 +669,10 @@
 	/** Saves, and reports whether it went through. The frame decides what to do next. */
 	export async function submit(): Promise<RecordView | null> {
 		if (saving) return null;
+		if (periodClosed) {
+			error = MONTH_CLOSED_REASON;
+			return null;
+		}
 		saving = true;
 		error = '';
 
@@ -681,7 +718,9 @@
 	<div class="form-error">{error}</div>
 {/if}
 
-{#if fromInvoice}
+{#if periodClosed}
+	<p class="locked-note">{MONTH_CLOSED_REASON}. This transaction is read-only.</p>
+{:else if fromInvoice}
 	<!-- A record with no everyday name of its own: it was created by issuing an
 	     invoice, and it changes when that invoice does (FR-013). -->
 	<p class="locked-note">
@@ -701,7 +740,7 @@
 			bind:value={description}
 			required
 			maxlength={500}
-			disabled={!canChange && !isNew}
+			disabled={annotationReadOnly}
 			class="w-full"
 		/>
 	</div>
@@ -791,8 +830,9 @@
 				<label class="field-label" for="rec-currency">Currency</label>
 				<Select.Root
 					type="single"
+					disabled={readOnly}
 					value={entryCurrency}
-					onValueChange={(next) => next && (entryCurrency = next)}
+					onValueChange={(next) => !readOnly && next && (entryCurrency = next)}
 				>
 					<Select.Trigger id="rec-currency" class="w-full justify-between" disabled={readOnly}>
 						{@const c = CURRENCIES.find((c) => c.code === entryCurrency)}
@@ -800,7 +840,7 @@
 					</Select.Trigger>
 					<Select.Content>
 						{#each CURRENCIES as c (c.code)}
-							<Select.Item value={c.code} label={`${c.code} — ${c.name}`} />
+							<Select.Item disabled={readOnly} value={c.code} label={`${c.code} — ${c.name}`} />
 						{/each}
 					</Select.Content>
 				</Select.Root>
@@ -841,8 +881,8 @@
 					{:else if rateError}
 						{rateError}
 					{:else if convertedMain != null}
-						Comes to {formatMoneyRM(convertedMain)}. Looked up for {date} and kept with the
-						record, so it stays right when rates move.
+						Comes to {formatMoneyRM(convertedMain)}. Looked up for {date} and kept with the record, so
+						it stays right when rates move.
 					{:else}
 						The rate on the record's own date. Change the date and it is looked up again.
 					{/if}
@@ -898,7 +938,10 @@
 				bind:value={contactId}
 				bind:newName={contactName}
 				initialLabel={contactInitialLabel}
-				disabled={isPayment || (locked && record?.kind === LedgerRecordKind.Expense) || (!canChange && !isNew)}
+				disabled={periodClosed ||
+					isPayment ||
+					(locked && record?.kind === LedgerRecordKind.Expense) ||
+					(!canChange && !isNew)}
 				placeholder="Search or create a contact…"
 			/>
 			{#if contactId === null && !contactName}
@@ -913,7 +956,9 @@
 				bind:value={contactId}
 				bind:newName={contactName}
 				initialLabel={contactInitialLabel}
-				disabled={(locked && record?.kind === LedgerRecordKind.Expense) || (!canChange && !isNew)}
+				disabled={periodClosed ||
+					(locked && record?.kind === LedgerRecordKind.Expense) ||
+					(!canChange && !isNew)}
 				placeholder="Search or create a contact…"
 			/>
 		</div>
@@ -925,7 +970,7 @@
 			id="rec-reference"
 			bind:value={reference}
 			maxlength={200}
-			disabled={!canChange && !isNew}
+			disabled={annotationReadOnly}
 			class="w-full"
 		/>
 	</div>
@@ -936,7 +981,7 @@
 			id="rec-remark"
 			bind:value={remark}
 			rows={2}
-			disabled={!canChange && !isNew}
+			disabled={annotationReadOnly}
 			class="leading-relaxed"
 		/>
 	</div>

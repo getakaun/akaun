@@ -120,6 +120,14 @@ from grouped correction access and bounded by role and delegation ceiling. Read/
 co-requirements still apply. Neither the new scope nor these leaves grants
 permanent deletion or arbitrary adjustments.
 
+`records:void` independently grants only `records.void` (explicit, sensitive, no
+tier). Voiding posts a reversal on the record's original date, so it changes that
+period's reports and cannot be undone. Like `records:correct-contact` it is its own
+opt-in scope and is deliberately **not** part of `records:correction`: adding it there
+would silently widen every app already granted the grouped scope. The operation also
+needs `records.read`. No data migration: nothing could void before, and a superuser
+holds every leaf.
+
 Allocation and payee operations accept the new explicit leaves or their original
 delete-based permission route. This preserves existing session, PAT and OAuth
 behavior without rewriting any grants or running a data migration. MCP requirements

@@ -13,19 +13,29 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  * real one.
  */
 
-vi.mock("$lib/server/db/client.js", () => ({ db: {} }));
+vi.mock("$lib/server/db/client.js", () => ({
+  db: { transaction: (write: (tx: unknown) => unknown) => write({}) },
+}));
 vi.mock("$lib/server/permissions.js", () => ({
   can: () => true,
   canAll: () => true,
 }));
 
 const record = { id: 42, kind: 1, date: "2026-01-01" };
-const attachment = { id: 7, recordId: 42, filename: "records/2026/08/receipt.pdf", displayName: "receipt.pdf" };
+const attachment = {
+  id: 7,
+  recordId: 42,
+  filename: "records/2026/08/receipt.pdf",
+  displayName: "receipt.pdf",
+};
 const existingAttachments = [{ filename: "records/2026/08/older.pdf" }];
 
 const getRecord = vi.fn(() => record);
 const addAttachment = vi.fn(() => attachment);
-const listAttachments = vi.fn(() => [...existingAttachments, { filename: attachment.filename }]);
+const listAttachments = vi.fn(() => [
+  ...existingAttachments,
+  { filename: attachment.filename },
+]);
 const setExtractedText = vi.fn();
 vi.mock("$lib/server/queries/ledger.js", () => ({
   getRecord: (...args: unknown[]) => getRecord(...(args as [])),
@@ -48,7 +58,8 @@ vi.mock("$lib/server/services/ledger.js", () => ({
 
 const extractAttachmentsText = vi.fn();
 vi.mock("$lib/server/extraction/attachment-text.js", () => ({
-  extractAttachmentsText: (...args: unknown[]) => extractAttachmentsText(...(args as [])),
+  extractAttachmentsText: (...args: unknown[]) =>
+    extractAttachmentsText(...(args as [])),
 }));
 
 vi.mock("$lib/server/file-storage.js", () => ({
@@ -100,7 +111,11 @@ describe("POST /api/records/[id]/attachments", () => {
       "records/2026/08/older.pdf",
       attachment.filename,
     ]);
-    expect(setExtractedText).toHaveBeenCalledWith({}, 42, "Receipt from Acme Hardware");
+    expect(setExtractedText).toHaveBeenCalledWith(
+      expect.any(Object),
+      42,
+      "Receipt from Acme Hardware",
+    );
     // The broadcast reflects the fully-settled state, so it fires after indexing.
     const indexOrder = setExtractedText.mock.invocationCallOrder[0];
     const emitOrder = emitRecordUpdate.mock.invocationCallOrder[0];
@@ -114,7 +129,7 @@ describe("POST /api/records/[id]/attachments", () => {
 
     expect(response.status).toBe(201);
     expect(setExtractedText).not.toHaveBeenCalled();
-    expect(emitRecordUpdate).toHaveBeenCalledWith({}, 42);
+    expect(emitRecordUpdate).toHaveBeenCalledWith(expect.any(Object), 42);
   });
 
   it("still saves the attachment when extraction throws", async () => {
@@ -125,6 +140,6 @@ describe("POST /api/records/[id]/attachments", () => {
     expect(response.status).toBe(201);
     expect(setExtractedText).not.toHaveBeenCalled();
     expect(recordAudit).toHaveBeenCalled();
-    expect(emitRecordUpdate).toHaveBeenCalledWith({}, 42);
+    expect(emitRecordUpdate).toHaveBeenCalledWith(expect.any(Object), 42);
   });
 });

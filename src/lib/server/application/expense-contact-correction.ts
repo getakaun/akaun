@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { createHash } from "node:crypto";
 import { and, asc, eq, inArray, or } from "drizzle-orm";
 import { z } from "zod";
@@ -19,6 +20,7 @@ import { getRecord, updateRecord as writeRecord } from "../queries/ledger.js";
 import { getSide, recordIdsForSettlement } from "../queries/settlements.js";
 import { accountDefaultId } from "../services/account-defaults.js";
 import { emitRecordUpdate } from "../services/ledger.js";
+import { VOIDED_RECORD_REASON } from "../queries/void-state.js";
 import { actor, requirePermissions, type AppContext } from "./context.js";
 import { fail, invalid, missing, ok } from "./result.js";
 import { positiveId } from "./records.js";
@@ -42,6 +44,8 @@ function snapshot(ctx: AppContext, id: number) {
   if (denied) return denied;
   const record = getRecord(ctx.db, id);
   if (!record) return missing("That expense no longer exists.");
+  if (record.voidedByRecordId !== null || record.reversesRecordId !== null)
+    return fail("REFUSED", VOIDED_RECORD_REASON);
   if (
     record.kind !== LedgerRecordKind.Expense ||
     ctx.db
@@ -171,6 +175,14 @@ export function prepareExpenseContactCorrection(ctx: AppContext, id: number) {
 
 /** A narrow contact-only write: movements, matches and allocation history survive. */
 export function correctExpenseContact(
+  ctx: AppContext,
+  id: number,
+  raw: unknown,
+) {
+  return withClosingRefusal(() => correctExpenseContactOperation(ctx, id, raw));
+}
+
+function correctExpenseContactOperation(
   ctx: AppContext,
   id: number,
   raw: unknown,

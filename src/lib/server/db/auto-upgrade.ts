@@ -182,17 +182,41 @@ export function applySubTypeBackfill(db: Database): void {
     [5500, AccountType.Expense, ExpenseSubType.OperatingExpense],
     [5900, AccountType.Expense, ExpenseSubType.OtherExpense],
   ];
-  for (const [code, type, subType] of CODE_TO_SUB_TYPE) {
+  db.transaction(() => {
+    // Startup repairs must not regroup previously reviewed reports. Older
+    // conversion fixtures predate these tables and cannot have a closing boundary.
+    const boundary =
+      tableExists(db, "settings") &&
+      tableExists(db, "ledger_records") &&
+      tableExists(db, "ledger_movements")
+        ? (
+            db
+              .query("SELECT value FROM settings WHERE key = ?")
+              .get("accounting.closedThrough") as { value: string } | null
+          )?.value || null
+        : null;
+    const protection = boundary
+      ? " AND NOT EXISTS (SELECT 1 FROM ledger_movements m JOIN ledger_records r ON r.id = m.record_id WHERE m.account_id = accounts.id AND r.date <= ?)"
+      : "";
+    for (const [code, type, subType] of CODE_TO_SUB_TYPE) {
+      db.query(
+        "UPDATE accounts SET sub_type = ? WHERE type = ? AND sub_type IS NULL AND code = ?" +
+          protection,
+      ).run(subType, type, code, ...(boundary ? [boundary] : []));
+    }
+    // An account already carrying the legacy Equipment role, from an earlier
+    // release's legacy conversion — `subType`, not `role`, is what every live
+    // reader checks going forward (005 research.md §12).
     db.query(
-      "UPDATE accounts SET sub_type = ? WHERE type = ? AND sub_type IS NULL AND code = ?",
-    ).run(subType, type, code);
-  }
-  // An account already carrying the legacy Equipment role, from an earlier
-  // release's legacy conversion — `subType`, not `role`, is what every live
-  // reader checks going forward (005 research.md §12).
-  db.query(
-    "UPDATE accounts SET sub_type = ? WHERE type = ? AND sub_type IS NULL AND role = ?",
-  ).run(AccountSubType.Equipment, AccountType.Asset, AccountRole.Equipment);
+      "UPDATE accounts SET sub_type = ? WHERE type = ? AND sub_type IS NULL AND role = ?" +
+        protection,
+    ).run(
+      AccountSubType.Equipment,
+      AccountType.Asset,
+      AccountRole.Equipment,
+      ...(boundary ? [boundary] : []),
+    );
+  }).immediate();
 }
 
 function consolidate(source: string, destination: string): void {

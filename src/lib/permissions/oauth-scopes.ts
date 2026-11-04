@@ -60,6 +60,7 @@ export const CORRECTION_SCOPES = [
   "records:correct-contact",
   "records:correct-date",
   "records:correct-reimbursement-amount",
+  "records:void",
 ] as const;
 export const OAUTH_SCOPES = [
   ...READ_SCOPES,
@@ -87,6 +88,9 @@ export const SCOPE_PERMISSIONS: Record<OAuthScope, readonly LeafPermission[]> =
     "records:correct-reimbursement-amount": [
       "records.correctReimbursementAmount",
     ],
+    // Its own opt-in scope, never part of records:correction: adding it there
+    // would widen every app already granted the grouped scope.
+    "records:void": ["records.void"],
     "accounts:read": ["accounts.read"],
     "accounts:write": ["accounts.create", "accounts.update"],
     "accounts:delete": ["accounts.delete"],
@@ -172,6 +176,8 @@ export const SCOPE_LABELS: Record<OAuthScope, string> = {
     "Grouped record corrections: payment allocations and payees, settled dates and reimbursement amounts; can change historical reports and balances",
   "records:correct-reimbursement-amount":
     "Correct reimbursement payment amounts and allocations, which changes historical balances",
+  "records:void":
+    "Void records with a reversal on their original date, which changes historical reports and cannot be undone",
   "records:adjust":
     "Make adjustments: journals and records between any accounts, which can change any balance",
 };

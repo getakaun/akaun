@@ -40,6 +40,9 @@ import {
   settlePayment,
   settleShape,
   updateRecord,
+  prepareVoidRecord,
+  voidRecord,
+  voidShape,
   type RecordWritten,
 } from "../../application/records.js";
 import {
@@ -69,14 +72,18 @@ import {
 } from "../common.js";
 import { recordSummary } from "./records.js";
 
+function recordDetail(record: RecordWritten["record"]) {
+  return {
+    ...recordSummary(record),
+    movements: record.movements,
+    locked: record.locked,
+    lockedReason: record.lockedReason,
+  };
+}
+
 function written(result: AppResult<RecordWritten>, dryRun = false) {
   if (!result.ok) return result;
-  const record = {
-    ...recordSummary(result.value.record),
-    movements: result.value.record.movements,
-    locked: result.value.record.locked,
-    lockedReason: result.value.record.lockedReason,
-  };
+  const record = recordDetail(result.value.record);
   // A dry run was rolled back: its id will be given to the next real record
   // and its version describes nothing, so neither is returned, and the result
   // says plainly that nothing was saved.
@@ -178,6 +185,42 @@ export function registerRecordWrites(server: McpServer, context: McpContext) {
     { recordId: id, ...reimbursementAmountCorrectionSchema.shape },
     ({ recordId, ...input }) =>
       written(correctReimbursementAmount(context, recordId, input)),
+    { destructive: true, ids: (input) => ({ recordId: input.recordId }) },
+  );
+  registerRead(
+    server,
+    context,
+    "get_record_void",
+    "Preview voiding a record. Returns the record, the required version and blockedReason (null when it can be voided now). Blocked cases include active settlement allocations (reverse them first), a bank match (remove it first), a closed month (reopen it first), reimbursement and invoice-issue records, opening balances, and records already voided or that are themselves a reversal.",
+    { recordId: id },
+    ({ recordId }) => {
+      const result = prepareVoidRecord(context, recordId);
+      if (!result.ok) throw new McpToolError(result.code, result.reason);
+      return {
+        record: recordDetail(result.value.record),
+        version: result.value.version,
+        blockedReason: result.value.blockedReason,
+      };
+    },
+  );
+  registerWrite(
+    server,
+    context,
+    "void_record",
+    "Void a record so the books read as if it never happened, using the version from get_record_void and a 10–2000 character reason. Posts a reversal record that negates every movement on the original record's date, so that period's reports change; the original stays as history. A void is final and cannot be undone. Refused while the record has active settlement allocations (reverse them first) or a bank match (remove it first), and refused in a closed month. Present the record, its amount, date and accounts, and the report effect of reversing it in that period, and obtain reviewed confirmation before calling. If the version is stale, preview again and obtain renewed confirmation.",
+    { recordId: id, ...voidShape, expectedVersion },
+    ({ recordId, ...input }) => {
+      const result = voidRecord(context, recordId, input);
+      if (!result.ok) return result;
+      return {
+        ok: true as const,
+        value: {
+          record: recordDetail(result.value.record),
+          reversal: recordDetail(result.value.reversal),
+          version: result.value.version,
+        },
+      };
+    },
     { destructive: true, ids: (input) => ({ recordId: input.recordId }) },
   );
   registerRead(

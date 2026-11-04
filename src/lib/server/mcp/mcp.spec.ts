@@ -510,7 +510,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
             checkSchema(child);
         }
       };
-      expect(tools).toHaveLength(16);
+      expect(tools).toHaveLength(17);
       for (const tool of tools) checkSchema(tool.outputSchema);
       // Exercise client-side validation of real nested rows, scalar fields and nulls.
       expect(await call(client, "list_records")).not.toMatchObject({
@@ -538,6 +538,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         "get_payment_allocations",
         "get_payment_recipient_correction",
         "get_record",
+        "get_record_void",
         "get_reimbursement_candidates",
         "get_reimbursement_reversal",
         "list_accounts",
@@ -683,7 +684,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
         "list_contacts",
         "get_audit_history",
       ]);
-      expect(fullTools.tools).toHaveLength(16);
+      expect(fullTools.tools).toHaveLength(17);
       expect(importTools.tools.map((tool) => tool.name)).toEqual([
         "list_import_jobs",
         "get_import_job",
@@ -723,7 +724,7 @@ for (const era of ["legacy", "modern", "auto"] as const) {
 
     it("honors a changed permission on the next HTTP request", async () => {
       const client = await connect();
-      expect((await client.listTools()).tools).toHaveLength(16);
+      expect((await client.listTools()).tools).toHaveLength(17);
       sqlite.exec("PRAGMA query_only = OFF");
       db.delete(groupGrants)
         .where(eq(groupGrants.permission, "records.read"))

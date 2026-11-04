@@ -8,7 +8,7 @@ export function activeAllocation() {
 }
 
 export const ALLOCATION_HISTORY_DELETE_REASON =
-  "This record has allocation history and cannot be deleted. Its payment and expense links must be preserved.";
+  "This record has allocation history and cannot be deleted, because its payment and expense links must be preserved. Void it instead.";
 export const ALLOCATION_HISTORY_EDIT_REASON =
   "This change would remove a movement referenced by allocation history. Keep the existing payment and expense links.";
 

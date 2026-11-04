@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { activeAllocation } from "../queries/allocation-state.js";
 import {
   reimbursementEntryDescription,
@@ -179,6 +180,13 @@ export function prepareReimbursementReversal(ctx: AppContext, id: number) {
 
 /** Reverse the complete transfer, preserving every real cash record and bank match. */
 export function reverseReimbursement(
+  ctx: AppContext,
+  raw: z.output<z.ZodObject<typeof reimbursementReversalShape>>,
+) {
+  return withClosingRefusal(() => reverseReimbursementOperation(ctx, raw));
+}
+
+function reverseReimbursementOperation(
   ctx: AppContext,
   raw: z.output<z.ZodObject<typeof reimbursementReversalShape>>,
 ) {

@@ -1,5 +1,6 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
+  ledgerMovements,
   ledgerRecords,
   reimbursementEntries,
   settlements,
@@ -29,6 +30,7 @@ import {
   recordIdsForSettlement,
 } from "../queries/settlements.js";
 import { emitSettlementChanged, type DeferredEmits } from "./ledger.js";
+import { inVoidPair, VOIDED_RECORD_REASON } from "../queries/void-state.js";
 
 /**
  * Saying that this payment covered those items, and taking it back.
@@ -76,6 +78,24 @@ export function createSettlements(
       reason: "That payment no longer exists. Reload and try again.",
     };
   }
+  // A voided record and its reversal are frozen and owe nothing: allocating
+  // against either would make the pair stop reading as "never happened".
+  if (
+    db
+      .select({ id: ledgerMovements.id })
+      .from(ledgerMovements)
+      .where(
+        and(
+          inArray(ledgerMovements.id, [
+            paymentMovementId,
+            ...allocations.map((a) => a.owedMovementId),
+          ]),
+          inVoidPair(ledgerMovements.recordId),
+        ),
+      )
+      .get()
+  )
+    return { ok: false, reason: VOIDED_RECORD_REASON };
 
   const receivable = requireAccountDefault(
     db,

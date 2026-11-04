@@ -133,6 +133,11 @@ export const TOOL_REQUIREMENTS: Record<string, ToolRequirement> = {
       ["records.read", "records.update", "records.correctReimbursementAmount"],
     ),
   ),
+  get_record_void: read(["records:read"]),
+  void_record: write(
+    ["records:read", "records:void"],
+    ["records.read", "records.void"],
+  ),
   get_payment_recipient_correction: read(["records:read"]),
   correct_payment_recipient: either(
     write(

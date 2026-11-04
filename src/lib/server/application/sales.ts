@@ -1,3 +1,5 @@
+import { withClosingRefusal } from "./closing-refusal.js";
+import { ClosedPeriodError } from "../closing/policy.js";
 import { z } from "zod";
 import {
   AccountType,
@@ -187,10 +189,23 @@ export function updateInvoice(
   raw: unknown,
   expectedVersion?: string,
 ): AppResult<InvoiceWritten> {
+  return withClosingRefusal(() =>
+    updateInvoiceOperation(ctx, id, raw, expectedVersion),
+  );
+}
+
+function updateInvoiceOperation(
+  ctx: AppContext,
+  id: number,
+  raw: unknown,
+  expectedVersion?: string,
+): AppResult<InvoiceWritten> {
   const refused = requirePermissions(ctx, ["invoices.update"]);
   if (refused) return refused;
   const invoice = getInvoice(ctx.db, id);
   if (!invoice) return missing("That invoice no longer exists.");
+  if (invoice.periodClosedThrough)
+    throw new ClosedPeriodError(invoice.periodClosedThrough);
   if (invoice.status === InvoiceStatus.Cancelled)
     return fail(
       "REFUSED",
@@ -239,6 +254,17 @@ export function issueInvoice(
   input: { incomeAccountId?: number },
   expectedVersion?: string,
 ): AppResult<InvoiceWritten> {
+  return withClosingRefusal(() =>
+    issueInvoiceOperation(ctx, id, input, expectedVersion),
+  );
+}
+
+function issueInvoiceOperation(
+  ctx: AppContext,
+  id: number,
+  input: { incomeAccountId?: number },
+  expectedVersion?: string,
+): AppResult<InvoiceWritten> {
   // Sending puts a record in the books, so it also needs records.create.
   const refused = requirePermissions(ctx, ["invoices.issue", "records.create"]);
   if (refused) return refused;
@@ -250,10 +276,7 @@ export function issueInvoice(
       account.type !== AccountType.Revenue ||
       account.archivedAt !== null
     )
-      return fail(
-        "REFUSED",
-        "Select an active revenue account for this sale.",
-      );
+      return fail("REFUSED", "Select an active revenue account for this sale.");
   }
   const stale = checkVersion(invoiceVersion(ctx.db, id), expectedVersion);
   if (stale) return stale;
@@ -268,6 +291,17 @@ export function issueInvoice(
  * With `reissue`, a corrected draft copy is made in its place (`invoices:add`).
  */
 export function voidInvoice(
+  ctx: AppContext,
+  id: number,
+  input: { reissue: boolean },
+  expectedVersion?: string,
+): AppResult<InvoiceWritten & { reissued: InvoiceWritten | null }> {
+  return withClosingRefusal(() =>
+    voidInvoiceOperation(ctx, id, input, expectedVersion),
+  );
+}
+
+function voidInvoiceOperation(
   ctx: AppContext,
   id: number,
   input: { reissue: boolean },

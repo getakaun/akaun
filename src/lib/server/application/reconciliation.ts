@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { z } from "zod";
 import {
   autoMatchMovements,
@@ -110,6 +111,17 @@ export function autoMatch(
  * accounts, and matches it, in one transaction (FR-023).
  */
 export function recordTransferFromLine(
+  ctx: AppContext,
+  lineId: number,
+  input: { otherAccountId: number; description?: string },
+  expectedVersion?: string,
+) {
+  return withClosingRefusal(() =>
+    recordTransferFromLineOperation(ctx, lineId, input, expectedVersion),
+  );
+}
+
+function recordTransferFromLineOperation(
   ctx: AppContext,
   lineId: number,
   input: { otherAccountId: number; description?: string },

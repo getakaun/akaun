@@ -12,6 +12,7 @@ import {
   suggestionsForMovements,
 } from "$lib/server/reconciliation/suggestions.js";
 import { EPSILON, round2 } from "$lib/server/reconciliation/types.js";
+import { VOIDED_RECORD_REASON } from "$lib/server/queries/void-state.js";
 import type {
   MovementCandidate,
   StatementSummary,
@@ -31,6 +32,7 @@ import {
   listLines,
   listMovementAllocations,
   listMovementCandidates,
+  movementInVoidPair,
   listStatements,
   replaceMovementAllocations as replaceMovementAllocationsQuery,
   updateLine as updateLineQuery,
@@ -448,6 +450,7 @@ export function autoMatchMovements(
     // allocation is somebody's decision and is never overwritten here.
     if (
       !movement ||
+      movementInVoidPair(db, movementId) ||
       initialSuggestions.get(movementId)?.suggestionConflict ||
       (movement.allocatedAmount ?? 0) >= EPSILON ||
       remainingOf(movement) < EPSILON
@@ -547,6 +550,10 @@ export function replaceMovementAllocations(
   const movement = getMovementCandidate(db, movementId);
   if (!movement)
     throw new ReconciliationError("Reconciliation record not found", 404);
+  // A voided record and its reversal never moved money. Clearing is still
+  // allowed, so nothing can be left stuck on one.
+  if (inputs.length > 0 && movementInVoidPair(db, movementId))
+    throw new ReconciliationError(VOIDED_RECORD_REASON, 409);
   const seen = new Set<number>();
   const all = listAllocations(db);
   const direction = directionFor(movement.amountMinor);

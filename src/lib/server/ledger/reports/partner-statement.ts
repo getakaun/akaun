@@ -71,27 +71,34 @@ export function partnerStatement(
     }
   }
 
+  // Contact names determine presentation, not who receives a rounding cent.
+  // A rename must not redistribute a closed period's result. Allocate by the
+  // permanent numeric contact id, then retain the caller's display order.
+  const allocationOrder = [...input.partners].sort(
+    (a, b) => a.contactId - b.contactId,
+  );
   const shares = allocateMinor(
     input.resultMinor,
-    input.partners.map(() => 1),
+    allocationOrder.map(() => 1),
+  );
+  const sharesByContact = new Map(
+    allocationOrder.map((partner, index) => [partner.contactId, shares[index]]),
   );
 
-  const partners: PartnerStatementBlock[] = input.partners.map(
-    (partner, index) => {
-      const contributionsMinor =
-        contributionsByContact.get(partner.contactId) ?? 0;
-      const drawingsMinor = drawingsByContact.get(partner.contactId) ?? 0;
-      const shareOfResultMinor = shares[index] ?? 0;
-      return {
-        contactId: partner.contactId,
-        contactName: partner.contactName,
-        contributionsMinor,
-        shareOfResultMinor,
-        drawingsMinor,
-        netMinor: contributionsMinor + shareOfResultMinor - drawingsMinor,
-      };
-    },
-  );
+  const partners: PartnerStatementBlock[] = input.partners.map((partner) => {
+    const contributionsMinor =
+      contributionsByContact.get(partner.contactId) ?? 0;
+    const drawingsMinor = drawingsByContact.get(partner.contactId) ?? 0;
+    const shareOfResultMinor = sharesByContact.get(partner.contactId) ?? 0;
+    return {
+      contactId: partner.contactId,
+      contactName: partner.contactName,
+      contributionsMinor,
+      shareOfResultMinor,
+      drawingsMinor,
+      netMinor: contributionsMinor + shareOfResultMinor - drawingsMinor,
+    };
+  });
 
   return {
     dateFrom: input.dateFrom,

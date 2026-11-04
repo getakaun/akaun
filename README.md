@@ -27,6 +27,7 @@ Instead of typing every receipt in by hand, you can snap a photo or upload a sca
 - **Reimbursement Claims** — group a batch of expenses into a claim for approval and repayment.
 - **Quotations & Invoices** — draft quotations, convert accepted ones straight into invoices, and track their status (draft/sent/accepted/paid/etc.) through to payment.
 - **Contacts Directory** — one shared list of suppliers, customers, and employees, reused across expenses and income.
+- **Month closing** — review a completed month, protect entries through month end, and reopen earlier months deliberately with an audit trail. Open **Accounts → Month closing**.
 - **Roles & Permissions** — invite teammates and control exactly what each person/group can view, add, edit, or delete.
 - **Real-time Updates** — changes made by one person (or in another browser tab) show up instantly for everyone else, no refresh needed.
 - **PDF Export** — customizable document templates (with your own company logo) drive printable/downloadable quotations, invoices, and claim summaries.
@@ -35,7 +36,7 @@ Instead of typing every receipt in by hand, you can snap a photo or upload a sca
 
 Once a payment has settled an expense or income, or a bank statement line has been matched to it during reconciliation, that record **locks** — this protects the numbers other records (the payment, the bank match) now depend on from being pulled out from under them.
 
-- **Always editable, locked or not:** description, contact, reference, remark, and attachments.
+- **Editable under settlement/reconciliation locks:** description, contact, reference, remark, and attachments. A month close freezes the entire transaction until reopening.
 - **Still editable once locked:** the **category** — what an expense or income was actually for. Fixing a miscategorized record (it was filed under the wrong expense/income account) never touches the money that was already paid or matched, so this stays open even after settlement or reconciliation.
 - **Locked once settled or reconciled:** the amount, the date, the currency, and the account the money actually moved through (what it was paid from, or received into). Changing any of these after a payment or a bank line points at the record would make that payment or bank match wrong.
 - **Deleting** a settled or reconciled record is blocked outright.
@@ -46,7 +47,17 @@ Once a payment has settled an expense or income, or a bank statement line has be
 | A payment has settled it       | Fix the category, edit description/contact/reference/remark, add attachments | Change the amount, date, currency, or the account it was paid from/into; delete it |
 | It's matched to a bank line    | Same as above                                                                | Same as above — plus unmatch the bank line before any of it applies again          |
 
-**To unlock:** undo the payment (remove the settlement) or unmatch the bank statement line from the account's reconciliation screen. The record then goes back to fully editable.
+**To unlock:** undo the payment (remove the settlement) or unmatch the bank statement line from the account's reconciliation screen. The record then goes back to fully editable unless its month is closed. Reopen the month to remove the orange month-close lock.
+
+## Month closing
+
+Open **Accounts → Month closing** to select a month, let the automatic checks run, and close through a completed calendar month end with one confirmation. The first close includes all earlier accounting history. Closing and reopening require their own permissions, available to Administrators by default; delegated API tokens and connected apps cannot perform these actions.
+
+After closing, accounting entries through the boundary cannot be added, deleted, backdated, recategorized or financially corrected. This protection also applies to imports, invoice issue/void, opening balances, account classification and contact changes that would alter historical results. Every transaction field, movement label, attachment addition/removal and linked posted-invoice field is frozen until reopening. Orange lock icons identify month-close protection; gray locks retain their existing settlement/reconciliation meaning. Payments dated in a later open month can still settle earlier invoices.
+
+To correct October in a book closed through December, **Reopen from October** opens October through December. Supply a reason, make the corrections, review the affected months and close again. Partner roster changes require reopening all affected history because partner results use the current roster.
+
+Paid and bank-matched statuses remain live when matching or allocation changes no accounting posting. Closing does not create a frozen report copy, reset accounts, or transfer monthly profit. Export reports when you need an approved copy. See [the implementation notes](dev-notes/MONTH_CLOSING.md) for the protection boundaries.
 
 ## Screenshots
 

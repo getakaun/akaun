@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { createHash } from "node:crypto";
 import { and, eq, inArray, or } from "drizzle-orm";
 import { z } from "zod";
@@ -15,6 +16,7 @@ import { buildMovements } from "../ledger/entry-builder.js";
 import { fromMinor, toMinor } from "../ledger/money.js";
 import { accountRefs, getAccount } from "../queries/accounts.js";
 import { activeAllocation } from "../queries/allocation-state.js";
+import { VOIDED_RECORD_REASON } from "../queries/void-state.js";
 import { getRecord, updateRecord } from "../queries/ledger.js";
 import { getSide } from "../queries/settlements.js";
 import { accountDefaultId } from "../services/account-defaults.js";
@@ -116,7 +118,9 @@ function snapshot(ctx: AppContext, id: number) {
     )
     .all();
   let blockedReason: string | null = null;
-  if (entries.length || groups.length || payment.accountId !== payableId)
+  if (record.voidedByRecordId !== null || record.reversesRecordId !== null)
+    blockedReason = VOIDED_RECORD_REASON;
+  else if (entries.length || groups.length || payment.accountId !== payableId)
     blockedReason =
       "This older reimbursement has linked payable or clearing entries. Use its existing correction flow.";
   else if (
@@ -256,6 +260,16 @@ export type ReimbursementAmountCorrectionSnapshot = NonNullable<
 >;
 
 export function correctReimbursementAmount(
+  ctx: AppContext,
+  id: number,
+  raw: unknown,
+) {
+  return withClosingRefusal(() =>
+    correctReimbursementAmountOperation(ctx, id, raw),
+  );
+}
+
+function correctReimbursementAmountOperation(
   ctx: AppContext,
   id: number,
   raw: unknown,

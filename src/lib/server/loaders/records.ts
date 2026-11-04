@@ -21,7 +21,11 @@ import {
   invoiceIdsForLedgerRecords,
 } from "$lib/server/queries/invoices.js";
 import { LedgerRecordKind } from "$lib/enums.js";
-import { removeRecord } from "$lib/server/services/ledger.js";
+import type { RecordView } from "$lib/server/ledger/types.js";
+import {
+  removeRecord,
+  voidBlockedReason,
+} from "$lib/server/services/ledger.js";
 import {
   getUserPreference,
   USER_PREF_KEYS,
@@ -103,7 +107,37 @@ export function loadRecordDetail(locals: App.Locals, id: number) {
       record.kind === LedgerRecordKind.InvoiceIssue
         ? (invoiceIdsForLedgerRecords(db, [id])[0] ?? null)
         : null,
+    voidBlockedReason: voidBlockedReason(db, id),
+    voidRelation: voidRelationFor(record),
     ...recordFormOptions(locals, [record.contactId, record.supplierContactId]),
+  };
+}
+
+/**
+ * The other half of a void pair, for the relation card and the Voided banner.
+ *
+ * On a voided record it is the reversal, whose `remark` holds the reason given
+ * for the void; on a reversal it is the record it voids. Null for a record that
+ * is in no pair. Kept beside the record rather than on `RecordView`, which is
+ * frozen.
+ */
+function voidRelationFor(
+  record: Pick<RecordView, "voidedByRecordId" | "reversesRecordId" | "remark">,
+) {
+  const otherId = record.voidedByRecordId ?? record.reversesRecordId;
+  if (otherId === null) return null;
+  const other = getRecord(db, otherId);
+  if (!other) return null;
+  return {
+    role:
+      record.voidedByRecordId !== null
+        ? ("voided-by" as const)
+        : ("reverses" as const),
+    id: other.id,
+    recordNumber: other.recordNumber,
+    description: other.description,
+    date: other.date,
+    reason: record.voidedByRecordId !== null ? other.remark : record.remark,
   };
 }
 
@@ -254,6 +288,9 @@ function recordFormOptions(
         !locals.oauth &&
         can(locals, "records.correctDate"),
       delete: can(locals, "records.delete"),
+      // Voiding posts a reversal against a record the user can see; the
+      // server asks for both again inside `voidRecord`.
+      void: can(locals, "records.read") && can(locals, "records.void"),
       correctAllocations: canAny(locals, [
         ["records.correctAllocations"],
         ["records.delete"],

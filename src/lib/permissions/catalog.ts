@@ -137,6 +137,14 @@ export const PERMISSION_CATALOG = {
         explicit: true,
         sensitive: true,
       },
+      void: {
+        label: "Void records",
+        description:
+          "Void a record so the books read as if it never happened. Posts a reversal on the original date, which changes that period's reports. A void cannot be undone.",
+        phrase: "void records",
+        explicit: true,
+        sensitive: true,
+      },
       adjust: {
         label: "Adjustments",
         description:
@@ -265,6 +273,32 @@ export const PERMISSION_CATALOG = {
     noun: "reports",
     description: "Profit & Loss, Balance Sheet and the other statements.",
     children: { read: read("reports") },
+  },
+  closing: {
+    label: "Month closing",
+    noun: "accounting periods",
+    description:
+      "Protect reviewed months and reopen them deliberately for corrections.",
+    children: {
+      close: {
+        label: "Close",
+        description:
+          "Close reviewed months. Also requires permission to view reports.",
+        phrase: "close accounting periods",
+        explicit: true,
+        sensitive: true,
+        delegable: false,
+      },
+      reopen: {
+        label: "Reopen",
+        description:
+          "Reopen closed months with a reason. Later months reopen too.",
+        phrase: "reopen accounting periods",
+        explicit: true,
+        sensitive: true,
+        delegable: false,
+      },
+    },
   },
   settings: {
     label: "Settings",

@@ -1,4 +1,5 @@
 import { activeAllocation } from "./allocation-state.js";
+import { notVoided } from "./void-state.js";
 import {
   and,
   asc,
@@ -161,6 +162,10 @@ function collectOutstanding(
       : owedIds.filter((id) => id === filters.accountId);
   const conditions: SQL[] = [
     inArray(ledgerMovements.accountId, selectedIds.length ? selectedIds : [-1]),
+    // A voided record and its reversal net to zero on the owed account, so
+    // neither is an open item. A payment whose allocation was reversed before
+    // the void is not in the pair and stays as the contact's credit.
+    notVoided(ledgerMovements.recordId),
   ];
   if (filters.contactId !== undefined) {
     conditions.push(eq(ledgerRecords.contactId, filters.contactId));
@@ -651,6 +656,7 @@ export function owedWithNoContact(db: LedgerDb): number[] {
       and(
         inArray(ledgerMovements.accountId, owedAccountIds),
         isNull(ledgerRecords.contactId),
+        notVoided(ledgerMovements.recordId),
       ),
     )
     .all()

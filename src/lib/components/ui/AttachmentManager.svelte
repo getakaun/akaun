@@ -7,13 +7,17 @@
 	let {
 		apiBase,
 		attachments = $bindable(),
-		canDelete = true
+		canDelete = true,
+		readOnly = false,
+		readOnlyReason = 'Attachments are read-only'
 	}: {
 		/** Base URL of the owning record, e.g. `/api/records/123`. */
 		apiBase: string;
 		attachments: Attachment[];
 		/** Removing a file needs the delete ability for records, not only change. */
 		canDelete?: boolean;
+		readOnly?: boolean;
+		readOnlyReason?: string;
 	} = $props();
 
 	let drag = $state(false);
@@ -21,20 +25,31 @@
 	let error = $state('');
 	let expanded = $state(false);
 	const shown = $derived(visibleItems(attachments, expanded));
+	$effect(() => {
+		if (readOnly) drag = false;
+	});
 
 	async function upload(files: FileList) {
+		if (readOnly) return;
+		error = '';
 		for (const file of Array.from(files)) {
+			if (readOnly) return;
 			const fd = new FormData();
 			fd.append('file', file);
 			const res = await fetch(`${apiBase}/attachments`, { method: 'POST', body: fd });
 			if (res.ok) {
 				const att: Attachment = await res.json();
 				attachments = [...attachments, att];
+			} else {
+				const body = await res.json().catch(() => null);
+				error = body?.error ?? 'Failed to add attachment';
+				return;
 			}
 		}
 	}
 
 	async function remove(attachmentId: number) {
+		if (readOnly || !canDelete) return;
 		error = '';
 		const res = await fetch(`${apiBase}/attachments/${attachmentId}`, { method: 'DELETE' });
 		if (res.ok) {
@@ -48,30 +63,43 @@
 	function onDrop(e: DragEvent) {
 		e.preventDefault();
 		drag = false;
-		if (e.dataTransfer?.files) upload(e.dataTransfer.files);
+		if (!readOnly && e.dataTransfer?.files) upload(e.dataTransfer.files);
 	}
 	function onFileInput(e: Event) {
 		const input = e.target as HTMLInputElement;
-		if (input.files) upload(input.files);
+		if (!readOnly && input.files) upload(input.files);
 		input.value = '';
 	}
 </script>
 
 <div class="detail-card-head">
 	<span class="detail-card-title">Attachments</span>
-	<button type="button" class="attach-add-btn" onclick={() => fileInput?.click()}>
+	<button
+		type="button"
+		class="attach-add-btn"
+		disabled={readOnly}
+		title={readOnly ? readOnlyReason : undefined}
+		onclick={() => fileInput?.click()}
+	>
 		<Plus size={11} /> Add
 	</button>
 </div>
 {#if error}
-	<div style="background:var(--red-soft); color:var(--red); border-radius:8px; padding:8px 12px; font-size:12.5px; margin-bottom:8px;">{error}</div>
+	<div
+		style="background:var(--red-soft); color:var(--red); border-radius:8px; padding:8px 12px; font-size:12.5px; margin-bottom:8px;"
+	>
+		{error}
+	</div>
 {/if}
 <div
 	class="attach-drop-area"
 	class:drag
 	role="group"
 	aria-label="Attachments"
-	ondragover={(e) => { e.preventDefault(); drag = true; }}
+	ondragover={(e) => {
+		e.preventDefault();
+		if (!readOnly) drag = true;
+	}}
 	ondragleave={() => (drag = false)}
 	ondrop={onDrop}
 >
@@ -79,8 +107,9 @@
 		<div class="attach-list">
 			{#each shown as att (att.id)}
 				<div class="attach-item related-link">
-					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- an API endpoint under apiBase that serves the file, not an app page. -->
-					<a href="{apiBase}/attachments/{att.id}"
+					<!-- eslint-disable svelte/no-navigation-without-resolve -- an API endpoint under apiBase that serves the file, not an app page. -->
+					<a
+						href="{apiBase}/attachments/{att.id}"
 						target="_blank"
 						rel="noopener"
 						class="attach-link-area"
@@ -92,11 +121,16 @@
 							<div class="attach-sub">{att.addedDate}</div>
 						</div>
 					</a>
+					<!-- eslint-enable svelte/no-navigation-without-resolve -->
 					<button
 						type="button"
 						class="attach-del"
-						disabled={!canDelete}
-						title={canDelete ? undefined : 'You do not have permission to delete records'}
+						disabled={readOnly || !canDelete}
+						title={readOnly
+							? readOnlyReason
+							: canDelete
+								? undefined
+								: 'You do not have permission to delete records'}
 						onclick={() => remove(att.id)}
 					>
 						<X size={14} />
@@ -105,16 +139,40 @@
 			{/each}
 		</div>
 		<ListExpand total={attachments.length} bind:expanded />
+	{:else if readOnly}
+		<p class="card-empty">No attachments.</p>
 	{:else}
 		<div
 			class="attach-empty attach-empty-drop"
 			role="button"
 			tabindex="0"
 			onclick={() => fileInput?.click()}
-			onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput?.click(); } }}
+			onkeydown={(e) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					fileInput?.click();
+				}
+			}}
 		>
 			<Paperclip size={14} /> Drop files here or click to add
 		</div>
 	{/if}
 </div>
-<input bind:this={fileInput} type="file" accept=".pdf,.jpg,.jpeg,.png" multiple style="display:none" onchange={onFileInput} />
+<input
+	bind:this={fileInput}
+	type="file"
+	accept=".pdf,.jpg,.jpeg,.png"
+	multiple
+	disabled={readOnly}
+	style="display:none"
+	onchange={onFileInput}
+/>
+
+<style>
+	.attach-add-btn:disabled {
+		cursor: not-allowed;
+		opacity: 0.4;
+		border-color: var(--border);
+		color: var(--muted-foreground);
+	}
+</style>

@@ -422,6 +422,9 @@ export const LedgerRecordKind = {
   OpeningBalance: 5,
   InvoiceIssue: 6,
   Journal: 7,
+  // Voids another record: its movements negate that record's on the same date,
+  // and `ledger_records.reverses_record_id` names it. Never created directly.
+  Reversal: 8,
 } as const;
 
 export type AccountRoleCode = (typeof AccountRole)[keyof typeof AccountRole];
@@ -598,6 +601,7 @@ export const LedgerRecordKindLabels: Record<number, string> = {
   [LedgerRecordKind.OpeningBalance]: "opening_balance",
   [LedgerRecordKind.InvoiceIssue]: "invoice_issue",
   [LedgerRecordKind.Journal]: "journal",
+  [LedgerRecordKind.Reversal]: "reversal",
 };
 
 /**
@@ -613,6 +617,7 @@ export const LedgerRecordKindDisplayLabels: Record<number, string> = {
   [LedgerRecordKind.OpeningBalance]: "Opening balance",
   [LedgerRecordKind.InvoiceIssue]: "Invoice",
   [LedgerRecordKind.Journal]: "Journal entry",
+  [LedgerRecordKind.Reversal]: "Void reversal",
 };
 
 export const accountTypeEnum = makeEnum(AccountTypeLabels);

@@ -38,6 +38,7 @@ import type {
   Minor,
 } from "../ledger/types.js";
 import { resolveMovementLabel } from "../ledger/movement-label.js";
+import { inVoidPair, notVoided } from "./void-state.js";
 
 /**
  * Reading the chart of accounts.
@@ -314,7 +315,13 @@ export function lastPaymentAccountForContact(
     .select({ id: ledgerRecords.id })
     .from(ledgerRecords)
     .where(
-      and(eq(ledgerRecords.contactId, contactId), eq(ledgerRecords.kind, kind)),
+      and(
+        eq(ledgerRecords.contactId, contactId),
+        eq(ledgerRecords.kind, kind),
+        // A voided record never happened; it may have been voided for this
+        // very account.
+        notVoided(ledgerRecords.id),
+      ),
     )
     .orderBy(desc(ledgerRecords.date), desc(ledgerRecords.id))
     .limit(1)
@@ -366,12 +373,21 @@ export function accountHistory(
     dateFrom?: string;
     dateTo?: string;
     limit?: number;
+    /** Voided records and their reversals: hidden by default (`exclude`). */
+    voided?: "exclude" | "include" | "only";
   } = {},
 ): AccountHistoryReport | null {
   const account = getAccount(db, accountId);
   if (!account) return null;
 
+  // A voided record and its reversal are hidden by default. They carry the
+  // same date and net to zero on every account, so the balance at the end of
+  // any day is the same with or without them — which is also why the opening
+  // aggregate below need not ask.
   const window: SQL[] = [eq(ledgerMovements.accountId, accountId)];
+  const voided = options.voided ?? "exclude";
+  if (voided === "exclude") window.push(notVoided(ledgerMovements.recordId));
+  if (voided === "only") window.push(inVoidPair(ledgerMovements.recordId));
   if (options.dateFrom) window.push(gte(ledgerRecords.date, options.dateFrom));
   if (options.dateTo) window.push(lte(ledgerRecords.date, options.dateTo));
 

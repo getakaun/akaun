@@ -39,13 +39,17 @@ const statementQuery = accountHistoryQuery.extend({
   // balance from the wrong starting point. `total` says when the caller has not
   // seen everything, and the answer to that is narrower dates, not a page two.
   limit: z.coerce.number().int().positive().max(5000).optional(),
+  // Voided records and their reversals are hidden unless asked for. Including
+  // them keeps the running balance true (each pair nets to zero on its date);
+  // showing only them does not, so `only` drops it like any other filter.
+  voided: z.enum(["exclude", "include", "only"]).optional(),
 });
 
 export const GET: RequestHandler = async ({ locals, url }) => {
   if (!can(locals, "records.read")) return forbidden();
 
   const parsed = statementQuery.safeParse(
-    queryValues(url, ["accountId", "dateFrom", "dateTo", "limit"]),
+    queryValues(url, ["accountId", "dateFrom", "dateTo", "limit", "voided"]),
   );
   if (!parsed.success) return badRequest(parsed.error);
 
@@ -65,7 +69,8 @@ export const GET: RequestHandler = async ({ locals, url }) => {
    */
   const extraFilters = [...url.searchParams.keys()].filter(
     (key) =>
-      !["accountId", "dateFrom", "dateTo", "limit", "format"].includes(key),
+      !["accountId", "dateFrom", "dateTo", "limit", "format"].includes(key) &&
+      !(key === "voided" && options.voided !== "only"),
   );
   const sort = url.searchParams.get("sort");
   const runningBalanceHolds =

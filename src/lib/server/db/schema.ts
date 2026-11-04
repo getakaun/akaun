@@ -1156,6 +1156,15 @@ export const ledgerRecords = sqliteTable(
     // and the row's id in that old table (D-14).
     legacyKind: text("legacy_kind"),
     legacyId: integer("legacy_id"),
+    // Set only on a Reversal record: the record it voids. A void is a second
+    // record whose movements negate the first on the same date, so every
+    // balance and report nets to zero with no query aware of it. "Voided" is
+    // derived from this link existing; nothing on the voided record changes.
+    // Restrict: a voided record cannot be deleted from under its reversal.
+    reversesRecordId: integer("reverses_record_id").references(
+      (): AnySQLiteColumn => ledgerRecords.id,
+      { onDelete: "restrict" },
+    ),
     createdBy: integer("created_by").references(() => users.id),
     updatedBy: integer("updated_by").references(() => users.id),
     createdAt: text("created_at")
@@ -1166,6 +1175,8 @@ export const ledgerRecords = sqliteTable(
       .default(sql`(datetime('now'))`),
   },
   (t) => [
+    // One void per record.
+    uniqueIndex("ledger_records_reverses_idx").on(t.reversesRecordId),
     // Every list screen.
     index("ledger_records_kind_date_idx").on(t.kind, t.date),
     index("ledger_records_contact_idx").on(t.contactId),

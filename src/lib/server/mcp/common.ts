@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { closedPeriodReason } from "../closing/policy.js";
 import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import type { LedgerDb } from "../ledger/types.js";
 import type { BlobStore } from "../storage/blob-store.js";
@@ -429,16 +430,19 @@ export function registerWrite<S extends z.ZodRawShape>(
           });
         }
       } catch (error) {
-        const code =
-          error instanceof McpToolError
+        const closingReason = closedPeriodReason(error);
+        const code = closingReason
+          ? "REFUSED"
+          : error instanceof McpToolError
             ? error.code
             : error instanceof z.ZodError
               ? "INVALID_INPUT"
               : "INTERNAL_ERROR";
         const message =
-          error instanceof McpToolError || error instanceof z.ZodError
+          closingReason ??
+          (error instanceof McpToolError || error instanceof z.ZodError
             ? error.message
-            : "The change could not be completed. Read the item again before retrying, in case part of it was saved.";
+            : "The change could not be completed. Read the item again before retrying, in case part of it was saved.");
         if (code === "INTERNAL_ERROR")
           // The error's name only: a database message can quote what was sent.
           log.error(

@@ -1,10 +1,8 @@
 import { z } from "zod";
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
-import {
-  createTransferForLine,
-  ReconciliationError,
-} from "$lib/server/services/reconciliation.js";
+import { recordTransferFromLine } from "$lib/server/application/reconciliation.js";
+import { toResponse } from "$lib/server/application/http.js";
 
 /**
  * The statement already says which account the line moved, so the only thing
@@ -23,14 +21,13 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       { error: "Choose the other account for this transfer" },
       { status: 400 },
     );
-  try {
-    return Response.json(
-      createTransferForLine(db, locals, lineId, parsed.data),
-      { status: 201 },
-    );
-  } catch (e) {
-    if (e instanceof ReconciliationError)
-      return Response.json({ error: e.message }, { status: e.status });
-    throw e;
-  }
+  return toResponse(
+    recordTransferFromLine({ db, locals }, lineId, parsed.data),
+    201,
+    (value) => ({
+      record: value.record,
+      movement: value.movement,
+      allocation: value.allocation,
+    }),
+  );
 };

@@ -1,3 +1,4 @@
+import { withClosingRefusal } from "./closing-refusal.js";
 import { createHash } from "node:crypto";
 import {
   prepareRecipientCorrection,
@@ -15,6 +16,16 @@ export type RecipientRepairManifest = {
 
 /** Explicit operator operation; never run at startup or exposed through a route. */
 export function repairPaymentRecipients(
+  ctx: AppContext,
+  manifest: RecipientRepairManifest,
+  deferredEmits?: DeferredEmits,
+) {
+  return withClosingRefusal(() =>
+    repairPaymentRecipientsOperation(ctx, manifest, deferredEmits),
+  );
+}
+
+function repairPaymentRecipientsOperation(
   ctx: AppContext,
   manifest: RecipientRepairManifest,
   deferredEmits?: DeferredEmits,

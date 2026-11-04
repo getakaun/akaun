@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LedgerRecordKind } from "$lib/enums.js";
-import { checkIntegrity } from "./integrity.js";
+import { checkIntegrity, type VoidPairInput } from "./integrity.js";
 import type { RecordBalanceInput } from "./types.js";
 
 /** A record whose sides cancel out and whose figure agrees with them. */
@@ -151,5 +151,66 @@ describe("the whole-books check", () => {
     });
     expect(report.unbalancedRecords).toEqual([]);
     expect(report.ok).toBe(false);
+  });
+});
+
+describe("a void (invariant 7)", () => {
+  function pair(overrides: Partial<VoidPairInput> = {}): VoidPairInput {
+    return {
+      reversalId: 2,
+      reversalKind: LedgerRecordKind.Reversal,
+      originalId: 1,
+      originalExists: true,
+      originalIsReversal: false,
+      sameDate: true,
+      accountImbalanceMinor: 0,
+      ...overrides,
+    };
+  }
+  const reversal = { ...sound(2, 5000), kind: LedgerRecordKind.Reversal };
+  function check(p: VoidPairInput) {
+    return checkIntegrity({
+      records: [sound(1, 5000), reversal],
+      wholeBooksSumMinor: 0,
+      voidPairs: [p],
+    });
+  }
+
+  it("passes when the reversal cancels the original on its date", () => {
+    expect(check(pair()).ok).toBe(true);
+  });
+
+  it("exempts a reversal from the entered-figure rule, as it copies the original's", () => {
+    const report = checkIntegrity({
+      records: [{ ...reversal, expectedMinor: 0 }],
+      wholeBooksSumMinor: 0,
+      voidPairs: [pair()],
+    });
+    expect(report.ok).toBe(true);
+  });
+
+  it.each([
+    ["a missing target", pair({ originalExists: false }), "no longer exists"],
+    ["a void of a void", pair({ originalIsReversal: true }), "voids a reversal"],
+    ["a different date", pair({ sameDate: false }), "same day"],
+    ["no target at all", pair({ originalId: null }), "does not say"],
+    [
+      "a link on a record that is not a reversal",
+      pair({ reversalKind: LedgerRecordKind.Expense }),
+      "not a reversal",
+    ],
+  ])("reports %s against the reversal", (_label, p, phrase) => {
+    const report = check(p);
+    expect(report.ok).toBe(false);
+    expect(report.unbalancedRecords).toHaveLength(1);
+    expect(report.unbalancedRecords[0].recordId).toBe(2);
+    expect(report.unbalancedRecords[0].problem).toContain(phrase);
+  });
+
+  it("reports a pair that does not net to zero on every account, with how far out", () => {
+    const report = check(pair({ accountImbalanceMinor: 400 }));
+    expect(report.ok).toBe(false);
+    expect(report.unbalancedRecords[0].differenceMinor).toBe(400);
+    expect(report.totalDifferenceMinor).toBe(400);
   });
 });

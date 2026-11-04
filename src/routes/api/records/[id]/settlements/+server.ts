@@ -6,6 +6,7 @@ import { forbidden, notFound } from "$lib/server/api-response.js";
 import { getRecord } from "$lib/server/queries/ledger.js";
 import { recordRelations } from "$lib/server/queries/reimbursements.js";
 import { permissionForKind } from "$lib/server/ledger/record-permissions.js";
+import { voidBlockedReason } from "$lib/server/services/ledger.js";
 
 /**
  * What paid this record, or — on a payment — what this record paid off.
@@ -33,5 +34,9 @@ export const GET: RequestHandler = async ({ locals, params }) => {
     record,
     ...recordRelations(db, id),
     allocationHistoryDeleteReason: allocationHistoryDeletionReason(db, id),
+    // Reversing an allocation is what unblocks a void, and it happens on this
+    // page: the page reads the reason again here rather than keep the one it
+    // loaded with.
+    voidBlockedReason: voidBlockedReason(db, id),
   });
 };

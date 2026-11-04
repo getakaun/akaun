@@ -36,9 +36,8 @@ docker build -f deploy/Dockerfile -t akaun .
 
 - `.dockerignore` stays at the repo root — Docker only honours it at the build
   context root.
-- `server.js` also stays at the repo root: it's the application entry point,
-  shared by this Dockerfile's `CMD` and by the Tauri desktop sidecar
-  (`src-tauri/src/lib.rs` runs `bun server.js` with the staged payload as cwd).
+- `server.js` also stays at the repo root: it's the application entry point
+  that this Dockerfile's `CMD` runs.
 - `docker-compose.prod.yml` is a standalone template meant to be copied to a
   server, so its `./data` volume is intentionally relative to wherever the user
   puts it. The self-hosting guide in the root `README.md` inlines this content.

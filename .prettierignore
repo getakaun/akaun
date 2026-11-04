@@ -1,6 +1,5 @@
 # Prettier walks the whole tree unless told otherwise, and without this file
-# `bun run lint` reports ~3,900 files — 3,624 of them build output under
-# `src-tauri/`. The check was unrunnable long before anyone noticed.
+# `bun run lint` reports thousands of files of build output and vendored code.
 #
 # `.gitignore` is NOT consulted by Prettier, so anything ignored there that is
 # still on disk has to be repeated here.
@@ -12,13 +11,6 @@ build/
 package/
 .vercel/
 coverage/
-
-# Tauri: `target/` is Rust build output and `gen/` is generated; neither is ours
-# to format. The hand-written `src-tauri/*.json`/`*.toml` are left in.
-src-tauri/target/
-src-tauri/gen/
-# A bundled copy of the whole built app, shipped as the desktop sidecar.
-src-tauri/resources/
 
 # The public Docusaurus site: its own package, formatted in its own (template) style
 docs/

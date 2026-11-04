@@ -28,7 +28,7 @@ Set `AKAUN_MCP_TOKEN` in the client's environment without committing its value. 
 
 A personal access token carries its own permissions, chosen when it is made and always bounded by its owner's role and their groups' delegation ceiling (dev-notes/PERMISSIONS.md). It sees exactly the tools those permissions allow, and the same permissions bound it on the REST API.
 
-Use HTTPS for remote connections. For a desktop sidecar, use its actual local server address/port while the app is running; do not assume the Docker or desktop ports are identical.
+Use HTTPS for remote connections.
 
 ## Available tools
 

@@ -39,7 +39,6 @@ It is not developer documentation.
 - Admonitions: `:::tip` for a faster way, `:::caution` for an action you cannot undo
   (sending an invoice, merging contacts, deleting), and `:::info` for "needs the permission X".
 - Text only. Add no screenshots and no image references for now.
-- Desktop app: do not document it. The guide covers the self-hosted server only.
 - Link to other pages with relative file links (`../02-concepts/records.md`), so
   `onBrokenLinks: 'throw'` catches a broken link.
 - Never copy wording from the README. Parts of it are out of date (Claims, "Settings →

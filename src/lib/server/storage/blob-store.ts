@@ -14,7 +14,7 @@ import { dirname, resolve, sep } from "path";
  * (`records/2026/03/<uuid>_receipt.pdf`). The key is what the database keeps.
  *
  * Local disk is the only backend, and the right one for a single-node SQLite
- * install that also ships as a desktop app. The interface is async so that an
+ * install. The interface is async so that an
  * object-store driver (S3, R2, Garage) could be added later without changing
  * the callers, but nothing more than that is promised yet: the import pipeline,
  * the text extraction and the ledger upgrade still read and move files on disk

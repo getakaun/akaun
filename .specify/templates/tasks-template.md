@@ -26,8 +26,8 @@ tests to hit a coverage number — there is no coverage target.
 
 ## Path Conventions
 
-This is a single SvelteKit codebase serving web, PWA, desktop (Tauri), and mobile
-(Constitution Principle I). There is no backend/frontend split.
+This is a single SvelteKit codebase serving web, PWA, and mobile (Constitution
+Principle I). There is no backend/frontend split.
 
 - **Routes & pages**: `src/routes/(app)/<feature>/`, API at `src/routes/api/<feature>/`
 - **Shared page components**: `src/lib/components/<feature>/`

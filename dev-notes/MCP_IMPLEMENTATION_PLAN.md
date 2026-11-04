@@ -113,7 +113,7 @@ For remote use, require HTTPS and validate Origin against configured allowed ori
 
 For clients requiring OAuth discovery, add a supported OAuth authorization-server integration and protected-resource metadata under the appropriate `/.well-known/` routes, with explicit hook exemptions for public discovery. Static bearer setup is not universally compatible with remote MCP clients. Avoid hand-building an OAuth server for the MVP. Exact discovery paths follow the chosen auth integration and protected-resource URL.
 
-For local desktop clients, offer an optional stdio bridge forwarding to this same authenticated backend; no separate SQLite connection or duplicated business rules. Confirm the Tauri sidecar's port/lifecycle before documenting a desktop connection URL. Only move MCP to a separate process when deployment constraints justify it; retain the shared authorized operation layer.
+For local clients, offer an optional stdio bridge forwarding to this same authenticated backend; no separate SQLite connection or duplicated business rules. Only move MCP to a separate process when deployment constraints justify it; retain the shared authorized operation layer.
 
 ## Description standardization
 

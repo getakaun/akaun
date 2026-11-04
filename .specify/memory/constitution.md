@@ -1,6 +1,24 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 2.0.0 → 3.0.0
+Bump rationale: MAJOR — a target surface is dropped. The Tauri desktop app is no longer
+supported: `src-tauri/`, its build scripts, its release workflow and the `server.js` shutdown
+hook it used are removed. Principle I now names three surfaces (browser, installable PWA,
+mobile web), and the Desktop line is removed from the fixed technology constraints.
+
+Modified principles:
+  - I. One Codebase, Four Surfaces → I. One Codebase, Three Surfaces
+
+Removed sections:
+  - Technology Constraints → Desktop (Tauri 2)
+
+Templates requiring updates:
+  ✅ .specify/templates/tasks-template.md — Path Conventions no longer list desktop (Tauri)
+  ✅ CLAUDE.md — the Prettier note no longer cites `src-tauri/` build output
+
+==================
+
 Version change: 1.2.0 → 2.0.0
 Bump rationale: MAJOR — Principle VII is redefined incompatibly for one class of prose. It used
 to require the everyday word everywhere, UI labels included ("What the business owes" over
@@ -69,23 +87,21 @@ Are Binding) plus Technology & Platform Constraints and Development Workflow & Q
 
 ## Core Principles
 
-### I. One Codebase, Four Surfaces
+### I. One Codebase, Three Surfaces
 
-Akaun ships to four surfaces — browser, installable PWA, desktop (Tauri), and mobile web —
-from a single SvelteKit application. There is one source tree, one router, one data model.
+Akaun ships to three surfaces — browser, installable PWA, and mobile web — from a single
+SvelteKit application. There is one source tree, one router, one data model.
 
 - Platform-specific forks of a route, component, or service are FORBIDDEN. Where a surface
-  genuinely differs, branch on capability (viewport, `navigator.standalone`, presence of the
-  Tauri IPC bridge), never on a duplicated file.
-- Desktop MUST remain a packaging concern: Tauri wraps the same built server as a sidecar.
-  Features MUST NOT depend on Tauri APIs unless the same feature degrades cleanly on the web.
+  genuinely differs, branch on capability (viewport, `navigator.standalone`), never on a
+  duplicated file.
 - Every UI surface MUST be usable at mobile viewport widths. A feature that only works on a
   wide screen is incomplete, not "desktop-first".
 - Offline/installability behavior belongs in the service worker layer, not scattered through
   feature code.
 
-**Rationale**: Four surfaces multiply maintenance cost only if the code multiplies with them.
-Keeping divergence at the edges is what makes supporting all four affordable for a small team.
+**Rationale**: Several surfaces multiply maintenance cost only if the code multiplies with them.
+Keeping divergence at the edges is what makes supporting all three affordable for a small team.
 
 ### II. Lightweight by Default
 
@@ -276,7 +292,6 @@ The following are fixed and MUST NOT change without a MAJOR amendment:
 - **Database**: SQLite accessed exclusively through Drizzle ORM. Schema changes go through
   `drizzle-kit generate` with the migration committed alongside the schema change — never a
   hand-edited or hand-applied schema mutation.
-- **Desktop**: Tauri 2, bundling the built Node server as a sidecar.
 - **PWA**: `vite-plugin-pwa`; the app MUST remain installable with a valid manifest and icons.
 - **Styling**: Tailwind 4 plus the shared classes in `src/routes/layout.css`;
   `bits-ui` primitives for interactive components.
@@ -342,4 +357,4 @@ document, no unexplained domain term and a glossary where it needs more than a f
 the standard accounting label with the plain wording beneath it, and the same words in any export
 of that screen.
 
-**Version**: 2.0.0 | **Ratified**: 2026-08-10 | **Last Amended**: 2026-08-22
+**Version**: 3.0.0 | **Ratified**: 2026-08-10 | **Last Amended**: 2026-11-04

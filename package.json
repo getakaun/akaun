@@ -18,9 +18,6 @@
     "test:mcp": "bun test --preload ./scripts/mcp-test-preload.ts src/lib/server/mcp/mcp.spec.ts src/lib/server/mcp/mcp-write.spec.ts src/lib/server/application/records.spec.ts src/lib/server/queries/settlements.spec.ts src/lib/server/queries/accounts.spec.ts src/lib/server/services/ledger.spec.ts src/lib/server/services/settlements.spec.ts src/lib/server/import/providers/shared.spec.ts",
     "test:chart": "bun run test:unit -- --run --project server src/lib/server/ledger/account-type.spec.ts src/lib/server/ledger/account-code.spec.ts src/lib/server/ledger/account-eligibility.spec.ts src/lib/server/services/accounts.spec.ts src/lib/server/services/account-defaults.spec.ts src/lib/server/services/account-migration.spec.ts src/lib/server/db/auto-upgrade.spec.ts",
     "db:generate": "drizzle-kit generate",
-    "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build",
-    "desktop:dmg": "bash scripts/build-desktop-dmg.sh",
     "admin:create": "bun run scripts/create-admin.ts",
     "icons:maskable": "bun run scripts/gen-maskable-icon.ts",
     "test:oauth": "bun test --preload ./scripts/mcp-test-preload.ts src/lib/server/oauth/oauth.spec.ts"
@@ -36,7 +33,6 @@
     "@sveltejs/kit": "^2.63.0",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tailwindcss/vite": "^4.3.0",
-    "@tauri-apps/cli": "^2.11.4",
     "@types/basic-auth": "1.1.8",
     "@types/bun": "^1.3.11",
     "@types/node": "^24",

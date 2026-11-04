@@ -174,7 +174,6 @@ See [Backups and upgrades](../09-administration/backups-and-upgrades.md).
 - If you use a reverse proxy, for example nginx, disable buffering for the paths that end in
   `/stream`, and give them a long read timeout. Akaun sends live updates on these paths. If the
   proxy buffers them, other users' changes do not show until a reload.
-- This guide does not cover the desktop app.
 
 ## Next step
 

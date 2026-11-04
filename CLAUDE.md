@@ -577,8 +577,8 @@ Two more results of the Bun half:
   import statements.
 
 **Prettier needs `.prettierignore` to be usable.** Without it, Prettier reads the whole tree
-and reports about 3,900 files. About 3,600 of them are build output under `src-tauri/`, so
-`bun run lint` can never pass. Prettier does not read `.gitignore`, so repeat there each path
+and reports thousands of files of build output and vendored code, so `bun run lint` can
+never pass. Prettier does not read `.gitignore`, so repeat there each path
 that git ignores but that is still on the disk. There is still no Prettier config, so
 `prettier-plugin-svelte` never loads and Prettier skips all `.svelte` files. The other ~200
 failures in `src` are an old mix of tabs and spaces. Fix them as their own chore, not inside

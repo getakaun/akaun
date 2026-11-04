@@ -2,7 +2,12 @@ import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AccountSubType, AccountType, ImportState } from "$lib/enums.js";
+import {
+  AccountSubType,
+  AccountType,
+  ImportState,
+  LedgerRecordKind,
+} from "$lib/enums.js";
 import { monthEndFor, previousMonthEnd } from "$lib/closing.js";
 import { LEAF_PERMISSIONS, isDelegable } from "$lib/permissions/catalog.js";
 import * as schema from "../db/schema.js";
@@ -45,6 +50,75 @@ function close(monthEnd = "2024-10-31") {
     revision: review.revision,
   });
 }
+/** A record and the reversal that voids it, on one date across two accounts. */
+function voidPair(date: string, debit: number, credit: number) {
+  const values = {
+    date,
+    description: "Voided",
+    amount: 5,
+    currency: "USD",
+    exchangeRate: 1,
+  };
+  const original = db
+    .insert(ledgerRecords)
+    .values({ kind: 1, ...values })
+    .returning()
+    .get();
+  const reversal = db
+    .insert(ledgerRecords)
+    .values({
+      kind: LedgerRecordKind.Reversal,
+      reversesRecordId: original.id,
+      ...values,
+    })
+    .returning()
+    .get();
+  db.insert(ledgerMovements)
+    .values([
+      { recordId: original.id, accountId: debit, amountMinor: 500 },
+      { recordId: original.id, accountId: credit, amountMinor: -500 },
+      { recordId: reversal.id, accountId: debit, amountMinor: -500 },
+      { recordId: reversal.id, accountId: credit, amountMinor: 500 },
+    ])
+    .run();
+}
+function plainRecord(date: string) {
+  db.insert(ledgerRecords)
+    .values({
+      kind: 1,
+      date,
+      description: "History",
+      amount: 5,
+      currency: "USD",
+      exchangeRate: 1,
+    })
+    .run();
+}
+function twoAccounts() {
+  const [bank, category] = db
+    .insert(accounts)
+    .values([
+      {
+        name: "Bank",
+        rank: "a",
+        type: AccountType.Asset,
+        role: 1,
+        subType: AccountSubType.Bank,
+        code: 1000,
+      },
+      {
+        name: "Unclassified expense",
+        rank: "b",
+        type: AccountType.Expense,
+        role: 5,
+        code: 6000,
+      },
+    ])
+    .returning()
+    .all();
+  return { bank: bank.id, category: category.id };
+}
+
 beforeEach(() => {
   sqlite = new Database(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
@@ -417,6 +491,33 @@ describe("month closing", () => {
         fromMonth: "2024-01",
         expectedClosedThrough: "2024-12-31",
         reason: "Reopen all history for corrections",
+      }),
+    ).toEqual({ ok: true, value: { closedThrough: null } });
+  });
+  it("does not start the history at a voided record", () => {
+    const { bank, category } = twoAccounts();
+    voidPair("2024-01-05", category, bank);
+    expect(preview().dateFrom).toBeNull();
+    plainRecord("2024-03-10");
+    expect(preview().dateFrom).toBe("2024-03-10");
+  });
+  it("does not ask to classify an account used only by a voided record", () => {
+    const { bank, category } = twoAccounts();
+    voidPair("2024-10-01", category, bank);
+    const review = preview();
+    expect(review.integrity.ok).toBe(true);
+    expect(review.warnings.some((w) => w.id === "classification")).toBe(false);
+  });
+  it("clears the boundary when only voided records come before the reopened month", () => {
+    const { bank, category } = twoAccounts();
+    voidPair("2024-01-05", category, bank);
+    plainRecord("2024-06-01");
+    setSetting(db, "accounting.closedThrough", "2024-12-31");
+    expect(
+      reopenMonths(ctx(), {
+        fromMonth: "2024-03",
+        expectedClosedThrough: "2024-12-31",
+        reason: "Reopen all real history",
       }),
     ).toEqual({ ok: true, value: { closedThrough: null } });
   });

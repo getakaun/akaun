@@ -129,7 +129,9 @@ own.
   record (`reverses_record_id`) that negates the original on its date, so every total nets
   to zero untouched. A screen that lists individual items hides the pair through
   `queries/void-state.ts` (`notVoided`); a new per-item list must too. Totals need nothing.
-  See `dev-notes/RECORD_VOID.md`.
+  A fact about what *happened* (the first record date, "account used", "N records, last on D",
+  an empty book) excludes the pair too. A delete, merge, lock or integrity check includes it,
+  because the rows still exist. See `dev-notes/RECORD_VOID.md`.
 
 **Which screen an account appears on.** One rule, and it is the balance-sheet /
 income-statement line every accounting system draws: things with a balance a reader looks for

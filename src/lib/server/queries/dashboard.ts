@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { ledgerRecords } from "../db/schema.js";
+import { notVoided } from "./void-state.js";
 import { profitLoss } from "../ledger/reports/profit-loss.js";
 import type {
   AccountTotal,
@@ -153,11 +154,15 @@ export function cashBridge(
   };
 }
 
-/** Whether the book has any records at all — a new book gets one empty state. */
+/**
+ * Whether the book has any records at all — a new book gets one empty state.
+ * A voided record and its reversal did not happen, so they do not count.
+ */
 export function hasAnyRecord(db: LedgerDb): boolean {
   const row = db
     .select({ one: sql<number>`1` })
     .from(ledgerRecords)
+    .where(notVoided(ledgerRecords.id))
     .limit(1)
     .get();
   return row !== undefined;

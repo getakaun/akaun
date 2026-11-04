@@ -2,28 +2,35 @@
   import { onMount, untrack } from "svelte";
   import { invalidate } from "$app/navigation";
   import { resolve } from "$app/paths";
+  import { toast } from "svelte-sonner";
   import {
-    CircleCheck,
+    ChevronRight,
     CircleAlert,
+    CircleCheck,
     Info,
     LockKeyhole,
     RefreshCw,
     RotateCcw,
+    X,
   } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
+  import * as Sheet from "$lib/components/ui/sheet/index.js";
   import MonthPicker from "$lib/components/ui/month-picker/MonthPicker.svelte";
-  import BackLink from "$lib/components/ui/BackLink.svelte";
+  import DetailPage from "$lib/components/ui/DetailPage.svelte";
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
   import ListExpand, {
     visibleItems,
   } from "$lib/components/ui/ListExpand.svelte";
+  import { useIsMobile } from "$lib/hooks/useIsMobile.svelte.js";
   import { createResourceStream } from "$lib/sse.js";
   import { addDaysISO } from "$lib/local-date.js";
-  import { formatDate } from "$lib/format.js";
+  import { formatDate, formatMinor } from "$lib/format.js";
   import {
     monthEndFor,
+    type ClosingItem,
+    type ClosingItemRef,
     type ClosingPreview,
     type ClosingStatus,
   } from "$lib/closing.js";
@@ -39,12 +46,18 @@
   let checking = $state(false);
   let saving = $state(false);
   let error = $state("");
-  let notice = $state("");
+  let reopenError = $state("");
   let confirmClose = $state(false);
   let confirmReopen = $state(false);
+  let reopenOpen = $state(false);
   let expandedHistory = $state(false);
+  // One fold per item list, keyed by check, so opening one leaves the rest.
+  let expandedItems = $state<Record<string, boolean>>({});
   let knownBoundary = untrack(() => data.closedThrough);
   let reviewRequest = 0;
+
+  const screen = useIsMobile();
+  const isMobile = $derived(screen.current);
 
   const monthEnd = $derived(monthEndFor(month));
   const firstOpenMonth = $derived(
@@ -73,9 +86,91 @@
     ) ?? [],
   );
   const history = $derived(visibleItems(data.history, expandedHistory));
+  // The month still in progress: the one that cannot be closed yet.
+  const currentMonth = $derived(
+    addDaysISO(data.latestMonthEnd, 1).slice(0, 7),
+  );
+  const reopenValid = $derived(
+    !!data.closedThrough &&
+      reason.trim().length >= 10 &&
+      monthEndFor(fromMonth) !== null &&
+      fromMonth <= data.closedThrough.slice(0, 7),
+  );
+  const reviewFrom = $derived(review?.dateFrom ?? `${month}-01`);
+  const reports = $derived(
+    review
+      ? [
+          {
+            name: "Profit & Loss",
+            period: `${formatDate(reviewFrom)} – ${formatDate(review.monthEnd)}`,
+            href: resolve(
+              `/(app)/reports/[view]?from=${reviewFrom}&to=${review.monthEnd}`,
+              { view: "profit-loss" },
+            ),
+          },
+          {
+            name: "Balance Sheet",
+            period: `As at ${formatDate(review.monthEnd)}`,
+            href: resolve(`/(app)/reports/[view]?asAt=${review.monthEnd}`, {
+              view: "balance-sheet",
+            }),
+          },
+          {
+            name: "Cash Flow Statement",
+            period: `${formatDate(reviewFrom)} – ${formatDate(review.monthEnd)}`,
+            href: resolve(
+              `/(app)/reports/[view]?from=${reviewFrom}&to=${review.monthEnd}`,
+              { view: "cash-flow" },
+            ),
+          },
+        ]
+      : [],
+  );
+
+  const monthNames = new Intl.DateTimeFormat(undefined, {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+  function monthLabel(value: string): string {
+    return monthNames.format(new Date(`${value}-01T00:00:00Z`));
+  }
+
+  /** Where each kind of item is fixed. Ids come from the server; routes stay here. */
+  function itemHref(ref: ClosingItemRef): string {
+    switch (ref.kind) {
+      case "record":
+        return resolve("/(app)/records/[id]", { id: String(ref.id) });
+      case "account":
+        return resolve("/(app)/accounts/[id]", { id: String(ref.id) });
+      case "invoice":
+        return resolve("/(app)/invoices/[id]", { id: String(ref.id) });
+      case "import-group":
+        return resolve("/(app)/import/[id]", { id: ref.id });
+      case "import-queue":
+        return resolve("/(app)/import");
+      case "statement":
+        return resolve("/(app)/accounts/[id]/reconcile/[statementId]", {
+          id: String(ref.accountId),
+          statementId: String(ref.statementId),
+        });
+      case "statements":
+        return resolve("/(app)/accounts/[id]/reconcile", {
+          id: String(ref.accountId),
+        });
+    }
+  }
+
+  /** The full list behind a check that holds more than its first items. */
+  const fullListHref: Record<string, string> = {
+    "pending-imports": resolve("/(app)/import"),
+    "draft-invoices": resolve("/(app)/invoices"),
+    classification: resolve("/(app)/accounts"),
+  };
 
   function clearReview() {
     reviewRequest++;
+    expandedItems = {};
     review = null;
     checking = false;
     confirmClose = false;
@@ -115,7 +210,6 @@
 
   function selectMonth(value: string) {
     month = value;
-    notice = "";
     void prepareReview(value);
   }
 
@@ -124,6 +218,13 @@
     month = data.defaultMonth;
     fromMonth = data.closedThrough?.slice(0, 7) ?? data.defaultMonth;
     await prepareReview(month);
+  }
+
+  function openReopen() {
+    fromMonth = data.closedThrough?.slice(0, 7) ?? data.defaultMonth;
+    reason = "";
+    reopenError = "";
+    reopenOpen = true;
   }
 
   onMount(() => {
@@ -135,6 +236,10 @@
   createResourceStream<ClosingStatus>("/api/closing/stream", (status) => {
     if (status.closedThrough !== knownBoundary) {
       knownBoundary = status.closedThrough;
+      // Another tab moved the boundary: a half-filled reopen form now names
+      // a range that no longer exists.
+      reopenOpen = false;
+      confirmReopen = false;
       clearReview();
       void refreshWorkspace();
     }
@@ -144,7 +249,6 @@
     if (!review || !ready || saving) return;
     saving = true;
     error = "";
-    notice = "";
     try {
       const response = await fetch("/api/closing/close", {
         method: "POST",
@@ -167,11 +271,13 @@
         return;
       }
       knownBoundary = body.closedThrough;
-      notice = `Accounting is closed through ${formatDate(body.closedThrough)}.`;
+      toast.success(
+        `Month closed. Accounting is closed through ${formatDate(body.closedThrough)}.`,
+      );
       await refreshWorkspace();
     } catch {
       error =
-        "Closing could not be confirmed. Refresh the status before trying again.";
+        "Closing could not be confirmed. Refresh the page before trying again.";
     } finally {
       saving = false;
     }
@@ -180,8 +286,7 @@
   async function reopen() {
     if (!data.closedThrough || saving) return;
     saving = true;
-    error = "";
-    notice = "";
+    reopenError = "";
     try {
       const response = await fetch("/api/closing/reopen", {
         method: "POST",
@@ -194,432 +299,602 @@
       });
       const body = await response.json();
       if (!response.ok) {
-        error = body.error ?? "The months could not be reopened.";
+        reopenError = body.error ?? "The months could not be reopened.";
         return;
       }
       knownBoundary = body.closedThrough;
+      reopenOpen = false;
       reason = "";
-      notice = body.closedThrough
-        ? `Months reopened. Accounting remains closed through ${formatDate(body.closedThrough)}.`
-        : "All recorded accounting history is open.";
+      toast.success(
+        body.closedThrough
+          ? `Months reopened. Accounting is closed through ${formatDate(body.closedThrough)}.`
+          : "Months reopened. No months are closed.",
+      );
       await refreshWorkspace();
     } catch {
-      error =
-        "Reopening could not be confirmed. Refresh the status before trying again.";
+      reopenError =
+        "Reopening could not be confirmed. Refresh the page before trying again.";
     } finally {
       saving = false;
     }
   }
 
+  const historyTimeFormat = new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
   function historyTime(value: string): string {
-    return new Date(`${value.replace(" ", "T")}Z`).toLocaleString();
+    return historyTimeFormat.format(new Date(`${value.replace(" ", "T")}Z`));
   }
 </script>
 
 <svelte:head><title>Month closing - Akaun</title></svelte:head>
 
-<div class="screen">
-  <header class="topbar">
-    <div class="topbar-left">
-      <BackLink href={resolve("/(app)/accounts")} label="Accounts" />
-      <h1 class="page-title">Month closing</h1>
-      <p class="page-sub">
-        All accounts · Protect a completed accounting month
-      </p>
-    </div>
-  </header>
-  <div class="page-scroll">
-    <div class="page-inner closing-workspace">
-      {#if error}<div class="closing-message error" role="alert">
-          {error}
-        </div>{/if}
-      {#if notice}<div class="closing-message success" role="status">
-          {notice}
-        </div>{/if}
-      <div class="closing-layout">
-        <div class="closing-main">
-          <section class="detail-card" aria-labelledby="close-period-title">
-            <div class="detail-card-head">
-              <h2 class="detail-card-title" id="close-period-title">
-                Close period
-              </h2>
-              {#if checking}<StatusBadge
-                  status="checks-running"
-                />{:else if review}<StatusBadge
-                  status={review.integrity.ok ? "checks-passed" : "failed"}
-                />{/if}
-            </div>
-            {#if canReviewAny}
-              <p class="section-note">
-                Select a month. Checks run automatically before you confirm the
-                close.
-              </p>
-              <div class="field month-field">
-                <span class="field-label" id="close-month-label">Month</span>
-                <MonthPicker
-                  bind:value={month}
-                  min={firstOpenMonth}
-                  max={data.latestMonthEnd.slice(0, 7)}
-                  disabled={saving}
-                  labelledBy="close-month-label"
-                  onchange={selectMonth}
-                />
-              </div>
-              {#if checking}
-                <p class="section-note" role="status">
-                  Checking recorded entries…
-                </p>
-              {:else if review}
-                <div class="check-results" aria-label="Automatic checks">
-                  <div class="check-result">
-                    <CircleCheck size={16} class="check-pass" />
-                    <div>
-                      <strong>Completed calendar month</strong><span
-                        >Period ends {formatDate(review.monthEnd)}.</span
-                      >
-                    </div>
-                  </div>
-                  <div class="check-result">
-                    {#if review.integrity.ok}<CircleCheck
-                        size={16}
-                        class="check-pass"
-                      />{:else}<CircleAlert
-                        size={16}
-                        class="text-destructive"
-                      />{/if}
-                    <div>
-                      <strong>Ledger integrity</strong><span
-                        >{review.integrity.ok
-                          ? `${review.integrity.recordsChecked} records checked. Debits and credits balance.`
-                          : `${review.integrity.problemCount} problems found. Resolve the accounting errors before closing.`}</span
-                      >
-                    </div>
-                  </div>
-                </div>
-                <p class="scope-note">
-                  This protects entries across <strong>all accounts</strong> on
-                  or before {formatDate(review.monthEnd)}{!data.closedThrough
-                    ? ", including all earlier history"
-                    : ""}.
-                </p>
-                <div class="report-links">
-                  <a
-                    class="detail-card-action"
-                    href={resolve(
-                      `/(app)/reports/[view]?from=${review.dateFrom ?? `${month}-01`}&to=${review.monthEnd}`,
-                      { view: "profit-loss" },
-                    )}>Profit & Loss</a
-                  >
-                  <a
-                    class="detail-card-action"
-                    href={resolve(
-                      `/(app)/reports/[view]?asAt=${review.monthEnd}`,
-                      { view: "balance-sheet" },
-                    )}>Balance Sheet</a
-                  >
-                  <a
-                    class="detail-card-action"
-                    href={resolve(
-                      `/(app)/reports/[view]?from=${review.dateFrom ?? `${month}-01`}&to=${review.monthEnd}`,
-                      { view: "cash-flow" },
-                    )}>Cash Flow Statement</a
-                  >
-                </div>
-              {/if}
-              <div class="period-actions">
-                {#if error || (review && !review.integrity.ok)}<Button
-                    variant="outline"
-                    size="sm"
-                    disabled={checking || saving}
-                    onclick={() => prepareReview()}
-                    ><RefreshCw size={14} /> Run checks again</Button
-                  >{/if}
-                <Button
-                  size="sm"
-                  disabled={!data.canClose || !ready || saving}
-                  onclick={() => (confirmClose = true)}
-                  ><LockKeyhole size={14} /> Close month</Button
-                >
-              </div>
-              {#if !data.canClose}<p class="field-hint">
-                  Closing requires the Close accounting periods permission.
-                </p>{/if}
-            {:else}
-              <p class="section-note">
-                All completed months are closed. You can continue entering the
-                current month’s transactions.
-              </p>
-            {/if}
-          </section>
-          {#if notices.length > 0}
-            <section class="detail-card" aria-labelledby="notices-title">
-              <div class="detail-card-head">
-                <h2 class="detail-card-title" id="notices-title">Notices</h2>
-                <span class="hbadge">{notices.length}</span>
-              </div>
-              <p class="section-note">These items do not block closing.</p>
-              <ul class="notice-list">
-                {#each notices as item (item.id)}<li>
-                    <Info size={15} /><span>{item.message}</span>
-                  </li>{/each}
-              </ul>
-            </section>
+<!-- The exact things behind a check. Each opens where it is fixed; a
+     Cmd-click keeps this review open in its own tab. -->
+{#snippet itemList(key: string, items: ClosingItem[], total: number)}
+  {#if items.length > 0}
+    <ul class="item-list">
+      {#each visibleItems(items, expandedItems[key] ?? false) as item (item.key)}
+        <li>
+          {#if item.ref}
+            <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- itemHref() builds every href with resolve(). -->
+            <a class="related-link item-row" href={itemHref(item.ref)}>
+              {@render itemContent(item)}
+              <ChevronRight size={14} class="item-chevron" />
+            </a>
+          {:else}
+            <div class="item-row">{@render itemContent(item)}</div>
           {/if}
-          <section class="detail-card" aria-labelledby="closing-history-title">
-            <div class="detail-card-head">
-              <h2 class="detail-card-title" id="closing-history-title">
-                Closing history
-              </h2>
-            </div>
-            {#if history.length === 0}<p class="card-empty">
-                No months have been closed or reopened yet.
-              </p>{/if}
-            <div class="history-list">
-              {#each history as entry (entry.id)}
-                <article class="history-entry">
-                  <div class="history-line">
-                    <strong
-                      >{entry.action === "close"
-                        ? "Closed"
-                        : "Reopened"}</strong
-                    ><span class="num"
-                      >{entry.before ? formatDate(entry.before) : "Open"} → {entry.after
-                        ? formatDate(entry.after)
-                        : "Open"}</span
-                    >
-                  </div>
-                  <p>
-                    {entry.actorName ?? "Deleted user"} · {historyTime(
-                      entry.createdAt,
-                    )}
-                  </p>
-                  {#if entry.reason}<p class="history-reason">
-                      {entry.reason}
-                    </p>{/if}
-                </article>
-              {/each}
-            </div>
-            <ListExpand
-              total={data.history.length}
-              bind:expanded={expandedHistory}
-            />
-            {#if data.history.length === 50}<p class="field-hint">
-                The latest 50 actions are shown. Earlier entries remain in the
-                audit log.
-              </p>{/if}
-          </section>
+        </li>
+      {/each}
+    </ul>
+    <!-- A function binding: a list nobody has opened is `undefined` in the map,
+         and binding undefined to a prop with a fallback throws. -->
+    <ListExpand
+      total={items.length}
+      bind:expanded={
+        () => expandedItems[key] ?? false, (open) => (expandedItems[key] = open)
+      }
+    />
+    {#if total > items.length}
+      <span class="check-extra"
+        >{total - items.length} more not shown.{#if fullListHref[key]}
+          <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- fullListHref holds resolve() results. -->
+          <a class="detail-card-action" href={fullListHref[key]}>See all</a
+          >{/if}</span
+      >
+    {/if}
+  {/if}
+{/snippet}
+
+{#snippet itemContent(item: ClosingItem)}
+  <span class="item-main">
+    <span class="item-name">{item.label}</span>
+    <span class="item-sub">{item.detail}</span>
+  </span>
+  {#if item.amountMinor !== undefined}
+    <span class="item-amount num">{formatMinor(item.amountMinor)}</span>
+  {/if}
+{/snippet}
+
+<DetailPage backHref={resolve("/(app)/accounts")} backLabel="Accounts">
+  {#snippet actions()}
+    {#if data.closedThrough}
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={!data.canReopen || saving}
+        title={data.canReopen
+          ? undefined
+          : "Reopening requires the Reopen accounting periods permission."}
+        onclick={openReopen}
+      >
+        <RotateCcw size={14} /> <span class="btn-text">Reopen months</span>
+      </Button>
+    {/if}
+  {/snippet}
+
+  {#snippet hero()}
+    <div class="detail-hero-eyebrow"><span>All accounts</span></div>
+    <div class="hero-title-row">
+      <h1 class="detail-hero-title">
+        {data.closedThrough
+          ? `Closed through ${formatDate(data.closedThrough)}`
+          : "No months closed yet"}
+      </h1>
+      <StatusBadge status={data.closedThrough ? "closed" : "open"} />
+    </div>
+    <p class="detail-hero-note">
+      {data.closedThrough
+        ? "Entries dated on or before this date are read-only in every account. Later transactions stay open."
+        : "Every entry can still be edited. Closing a month makes it and everything before it read-only."}
+    </p>
+    {#if error}<p class="hero-error" role="alert">{error}</p>{/if}
+  {/snippet}
+
+  {#snippet main()}
+    <section class="detail-card" aria-labelledby="close-month-title">
+      <div class="detail-card-head">
+        <h2 class="detail-card-title" id="close-month-title">Close a month</h2>
+        <div class="card-head-end">
+          {#if canReviewAny && (error || (review && (!review.integrity.ok || notices.length > 0)))}
+            <button
+              type="button"
+              class="detail-card-action"
+              disabled={checking || saving}
+              onclick={() => prepareReview()}
+              ><RefreshCw size={12} /> Run checks again</button
+            >
+          {/if}
+          {#if checking}<StatusBadge
+              status="checks-running"
+            />{:else if review}<StatusBadge
+              status={review.integrity.ok ? "checks-passed" : "failed"}
+            />{/if}
         </div>
-        <aside class="closing-rail">
-          <section class="detail-card" aria-labelledby="closing-status-title">
-            <div class="detail-card-head">
-              <h2 class="detail-card-title" id="closing-status-title">
-                Accounting status
-              </h2>
-              <StatusBadge status={data.closedThrough ? "closed" : "open"} />
-            </div>
-            <p class="boundary-value">
-              {data.closedThrough
-                ? formatDate(data.closedThrough)
-                : "No months closed"}
-            </p>
-            <p class="section-note">
-              {data.closedThrough
-                ? "Entries through this date are protected across all accounts."
-                : "Earlier accounting entries remain editable."}
-            </p>
-            <p class="field-hint">
-              Later payments and non-financial notes remain available. Export
-              reports when you need an approved copy.
-            </p>
-          </section>
-          {#if data.closedThrough}
-            <section class="detail-card" aria-labelledby="reopen-title">
-              <div class="detail-card-head">
-                <h2 class="detail-card-title" id="reopen-title">
-                  Reopen for corrections
-                </h2>
+      </div>
+
+      {#if canReviewAny}
+        <div class="close-row">
+          <div class="field month-field">
+            <span class="field-label" id="close-month-label">Month</span>
+            <MonthPicker
+              bind:value={month}
+              min={firstOpenMonth}
+              max={data.latestMonthEnd.slice(0, 7)}
+              disabled={saving}
+              labelledBy="close-month-label"
+              onchange={selectMonth}
+            />
+          </div>
+          <Button
+            disabled={!data.canClose || !ready || saving}
+            title={data.canClose
+              ? undefined
+              : "Closing requires the Close accounting periods permission."}
+            onclick={() => (confirmClose = true)}
+            ><LockKeyhole size={14} /> Close month</Button
+          >
+        </div>
+
+        {#if checking}
+          <p class="card-empty" role="status">Checking recorded entries…</p>
+        {:else if review}
+          <ul class="check-list" aria-label="Automatic checks">
+            <li class="check-row">
+              <CircleCheck size={16} class="check-pass" />
+              <div>
+                <strong>Completed calendar month</strong>
+                <span>Ends {formatDate(review.monthEnd)}.</span>
               </div>
-              <p class="section-note">
-                The selected month and every later closed month will reopen.
-              </p>
-              <div class="field">
-                <span class="field-label" id="reopen-month-label"
-                  >Reopen from</span
-                ><MonthPicker
-                  bind:value={fromMonth}
-                  max={data.closedThrough.slice(0, 7)}
-                  disabled={!data.canReopen || saving}
-                  labelledBy="reopen-month-label"
-                />
+            </li>
+            <li class="check-row">
+              {#if review.integrity.ok}<CircleCheck
+                  size={16}
+                  class="check-pass"
+                />{:else}<CircleAlert size={16} class="check-fail" />{/if}
+              <div class="check-body">
+                <strong>Ledger integrity</strong>
+                <span
+                  >{review.integrity.ok
+                    ? `${review.integrity.recordsChecked} records checked. Debits and credits balance.`
+                    : `${review.integrity.problemCount} ${review.integrity.problemCount === 1 ? "problem blocks" : "problems block"} closing. Open each record and correct it.`}</span
+                >
+                {#if !review.integrity.ok}
+                  {@render itemList(
+                    "integrity",
+                    review.integrity.problems,
+                    review.integrity.problemCount -
+                      (review.integrity.booksBalance ? 0 : 1),
+                  )}
+                  {#if !review.integrity.booksBalance}
+                    <span class="check-extra"
+                      >The book as a whole does not add up to zero, even after
+                      the records above. This needs a closer look at the
+                      database.</span
+                    >
+                  {/if}
+                {/if}
               </div>
-              <div class="field">
-                <label class="field-label" for="reopen-reason">Reason</label
-                ><Textarea
-                  id="reopen-reason"
-                  rows={3}
-                  minlength={10}
-                  maxlength={2000}
-                  bind:value={reason}
-                  disabled={!data.canReopen || saving}
-                  placeholder="Explain the correction needed."
-                />
-              </div>
-              <p class="field-hint">
-                Opens {formatDate(`${fromMonth}-01`)} through {formatDate(
-                  data.closedThrough,
-                )}.
-              </p>
-              <div class="period-actions">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!data.canReopen ||
-                    saving ||
-                    reason.trim().length < 10 ||
-                    !monthEndFor(fromMonth) ||
-                    fromMonth > data.closedThrough.slice(0, 7)}
-                  onclick={() => (confirmReopen = true)}
-                  ><RotateCcw size={14} /> Reopen months</Button
+            </li>
+            {#each notices as item (item.id)}
+              <li class="check-row">
+                <Info size={16} class="check-note" />
+                <div class="check-body">
+                  <strong>{item.message}</strong>
+                  {#if item.hint}<span>{item.hint}</span>{/if}
+                  {#if item.items}
+                    {@render itemList(
+                      item.id,
+                      item.items,
+                      item.total ?? item.items.length,
+                    )}
+                  {/if}
+                  <span class="check-extra">This does not block closing.</span>
+                </div>
+              </li>
+            {/each}
+          </ul>
+
+          <h3 class="sub-title">Review before closing</h3>
+          <div class="review-list">
+            {#each reports as report (report.name)}
+              <a class="related-link review-row" href={report.href}>
+                <span class="review-main">
+                  <span class="review-name">{report.name}</span>
+                  <span class="review-sub">{report.period}</span>
+                </span>
+                <ChevronRight size={14} class="review-chevron" />
+              </a>
+            {/each}
+          </div>
+        {/if}
+
+        <p class="field-hint card-foot">
+          Checks cover recorded entries. They cannot tell whether a receipt or
+          bank statement is missing.
+        </p>
+      {:else}
+        <p class="card-empty">
+          Every completed month is closed. {monthLabel(currentMonth)} can be closed
+          after {formatDate(monthEndFor(currentMonth) ?? "")}.
+        </p>
+      {/if}
+    </section>
+  {/snippet}
+
+  {#snippet rail()}
+    <section class="detail-card" aria-labelledby="closing-history-title">
+      <div class="detail-card-head">
+        <h2 class="detail-card-title" id="closing-history-title">History</h2>
+      </div>
+      {#if history.length === 0}
+        <p class="card-empty">No months have been closed or reopened yet.</p>
+      {:else}
+        <ol class="history-list">
+          {#each history as entry (entry.id)}
+            <li class="history-entry">
+              <div class="history-line">
+                <strong>{entry.action === "close" ? "Closed" : "Reopened"}</strong
+                ><span class="num"
+                  >{entry.before ? formatDate(entry.before) : "Open"} → {entry.after
+                    ? formatDate(entry.after)
+                    : "Open"}</span
                 >
               </div>
-              {#if !data.canReopen}<p class="field-hint">
-                  Reopening requires the Reopen accounting periods permission.
+              <p>
+                {entry.actorName ?? "Deleted user"} · {historyTime(
+                  entry.createdAt,
+                )}
+              </p>
+              {#if entry.reason}<p class="history-reason">
+                  {entry.reason}
                 </p>{/if}
-            </section>
-          {/if}
-          <p class="field-hint completeness-note">
-            Automatic checks cover recorded entries. They cannot detect receipts
-            or bank statements that have not been supplied.
-          </p>
-        </aside>
+            </li>
+          {/each}
+        </ol>
+        <ListExpand
+          total={data.history.length}
+          bind:expanded={expandedHistory}
+        />
+        {#if data.history.length === 50}<p class="field-hint">
+            The latest 50 actions are shown. Earlier entries are in the audit
+            log.
+          </p>{/if}
+      {/if}
+    </section>
+  {/snippet}
+</DetailPage>
+
+<Sheet.Root
+  open={reopenOpen}
+  onOpenChange={(o) => {
+    if (!o && !saving) reopenOpen = false;
+  }}
+>
+  <Sheet.Content
+    side={isMobile ? "bottom" : "right"}
+    style={isMobile
+      ? "height:100dvh; border-radius:0; border-top:none; display:flex; flex-direction:column; overflow:hidden; gap:0;"
+      : "width:500px; max-width:95vw; display:flex; flex-direction:column; overflow:hidden; gap:0;"}
+  >
+    <div class="sheet-head">
+      <div>
+        <div class="sheet-eyebrow">All accounts</div>
+        <div class="sheet-title-text">Reopen months</div>
       </div>
+      <Sheet.Close class="sheet-close"><X size={16} /></Sheet.Close>
     </div>
-  </div>
-</div>
+
+    <form
+      class="sheet-form"
+      onsubmit={(event) => {
+        event.preventDefault();
+        if (reopenValid && !saving) confirmReopen = true;
+      }}
+    >
+      <div class="sheet-body">
+        {#if reopenError}<p class="sheet-error" role="alert">
+            {reopenError}
+          </p>{/if}
+        <div class="field">
+          <span class="field-label" id="reopen-month-label">Reopen from</span>
+          {#if data.closedThrough}
+            <MonthPicker
+              bind:value={fromMonth}
+              max={data.closedThrough.slice(0, 7)}
+              disabled={saving}
+              labelledBy="reopen-month-label"
+            />
+          {/if}
+          <p class="field-hint">
+            This month and every later closed month reopen.
+          </p>
+        </div>
+        <div class="field">
+          <label class="field-label" for="reopen-reason">Reason</label>
+          <Textarea
+            id="reopen-reason"
+            rows={4}
+            minlength={10}
+            maxlength={2000}
+            bind:value={reason}
+            disabled={saving}
+            placeholder="What needs correcting?"
+          />
+          <p class="field-hint">
+            At least 10 characters. Kept in the closing history.
+          </p>
+        </div>
+      </div>
+
+      <div class="sheet-foot">
+        {#if data.closedThrough}
+          <div class="sheet-foot-note">
+            Opens {formatDate(`${fromMonth}-01`)} – {formatDate(
+              data.closedThrough,
+            )} in every account.
+          </div>
+        {/if}
+        <div class="sheet-foot-actions">
+          <button
+            type="button"
+            class="sheet-btn"
+            disabled={saving}
+            onclick={() => (reopenOpen = false)}>Cancel</button
+          >
+          <button
+            type="submit"
+            class="sheet-btn sheet-btn-primary"
+            disabled={!reopenValid || saving}>Reopen months</button
+          >
+        </div>
+      </div>
+    </form>
+  </Sheet.Content>
+</Sheet.Root>
 
 <ConfirmDialog
   bind:open={confirmClose}
   title="Close accounting period?"
-  description={`Entries across all accounts dated on or before ${review ? formatDate(review.monthEnd) : "the selected month end"} will be protected. Later transactions remain available.`}
+  description={review
+    ? `Entries in every account dated on or before ${formatDate(review.monthEnd)}${data.closedThrough ? "" : ", including all earlier history,"} will become read-only. Later transactions stay open.`
+    : "Entries in every account up to the selected month end will become read-only."}
   confirmLabel="Close month"
   onConfirm={close}
 />
 <ConfirmDialog
   bind:open={confirmReopen}
   title="Reopen accounting periods?"
-  description={`This opens ${formatDate(`${fromMonth}-01`)} through ${data.closedThrough ? formatDate(data.closedThrough) : "the closed-through date"} across all accounts. Later closed months reopen too.`}
-  confirmLabel="Reopen periods"
+  description={`This opens ${formatDate(`${fromMonth}-01`)} through ${data.closedThrough ? formatDate(data.closedThrough) : "the closed-through date"} in every account. Later closed months reopen too.`}
+  confirmLabel="Reopen months"
   danger
   onConfirm={reopen}
 />
 
 <style>
-  .page-sub {
-    white-space: normal;
-  }
-  .closing-workspace {
-    max-width: 1200px;
-    margin-inline: auto;
-  }
-  .closing-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
-    align-items: start;
-    gap: 20px;
-  }
-  .closing-main,
-  .closing-rail {
+  .hero-title-row {
     display: flex;
-    flex-direction: column;
-    gap: 16px;
-    min-width: 0;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
   }
-  .section-note {
-    margin: 0 0 16px;
-    color: var(--muted-foreground);
-    font-size: 12.5px;
-    line-height: 1.6;
+  .hero-error {
+    margin: 8px 0 0;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--red-soft);
+    color: var(--red);
+    font-size: 13px;
   }
-  .month-field {
-    max-width: 260px;
+  .card-head-end {
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
-  .check-results {
+  .card-head-end .detail-card-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .close-row {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .close-row .month-field {
+    width: 260px;
+    max-width: 100%;
+    margin-bottom: 0;
+  }
+  .close-row :global(button[data-slot="button"]) {
+    flex-shrink: 0;
+  }
+  .check-list {
     display: grid;
-    gap: 14px;
-    padding-block: 4px 16px;
+    gap: 12px;
+    margin: 0;
+    padding: 16px 0 0;
+    list-style: none;
   }
-  .check-result {
+  .check-row {
     display: flex;
     align-items: flex-start;
     gap: 10px;
     font-size: 13px;
   }
-  .check-result :global(svg) {
-    margin-top: 2px;
+  .check-row :global(svg) {
     flex-shrink: 0;
+    margin-top: 1px;
   }
-  .check-result :global(.check-pass) {
+  .check-row :global(.check-pass) {
     color: var(--green);
   }
-  .check-result strong {
+  .check-row :global(.check-fail) {
+    color: var(--red);
+  }
+  .check-row :global(.check-note) {
+    color: var(--amber);
+  }
+  .check-row strong {
     display: block;
     font-weight: 500;
+    line-height: 1.45;
   }
-  .check-result span {
+  .check-row span {
     display: block;
     margin-top: 2px;
     color: var(--muted-foreground);
     font-size: 12px;
     line-height: 1.5;
   }
-  .scope-note {
-    margin: 0;
-    padding: 12px;
-    background: var(--accent);
-    border-radius: var(--radius-sm);
+  .sub-title {
+    margin: 20px 0 8px;
     font-size: 12.5px;
-    line-height: 1.6;
+    font-weight: 500;
   }
-  .report-links {
+  .review-list {
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px 16px;
-    padding-top: 12px;
-  }
-  .period-actions {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
+    flex-direction: column;
     gap: 8px;
-    margin-top: 18px;
   }
-  .notice-list {
-    display: grid;
-    gap: 12px;
+  .review-row {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--card);
+    color: inherit;
+    text-decoration: none;
+  }
+  .review-row:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .review-main {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .review-name {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .review-sub {
+    color: var(--muted-foreground);
+    font-size: 11.5px;
+  }
+  .review-row :global(.review-chevron) {
+    flex-shrink: 0;
+    color: var(--muted-foreground);
+  }
+  .check-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .check-row .check-extra {
+    margin-top: 8px;
+  }
+  .item-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 10px 0 0;
     padding: 0;
-    margin: 0;
     list-style: none;
   }
-  .notice-list li {
+  .item-row {
     display: flex;
-    align-items: flex-start;
-    gap: 9px;
-    font-size: 12.5px;
-    line-height: 1.6;
+    align-items: center;
+    gap: 11px;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--card);
+    color: inherit;
+    text-decoration: none;
   }
-  .notice-list :global(svg) {
-    color: var(--amber);
+  .item-row:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  /* Beats `.check-row span`, which would otherwise make this a block. */
+  .check-row .item-main {
+    margin: 0;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .check-row .item-name {
+    margin: 0;
+    color: var(--foreground);
+    font-size: 13px;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+  .check-row .item-sub {
+    margin: 0;
+    color: var(--muted-foreground);
+    font-size: 11.5px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+  .check-row .item-amount {
     flex-shrink: 0;
-    margin-top: 3px;
+    margin: 0;
+    color: var(--red);
+    font-size: 12.5px;
   }
-  .boundary-value {
-    margin: 0 0 8px;
-    font-size: 20px;
-    font-weight: 600;
-    letter-spacing: -0.02em;
+  .item-row :global(.item-chevron) {
+    flex-shrink: 0;
+    margin: 0;
+    color: var(--muted-foreground);
+  }
+  .card-foot {
+    margin-top: 16px;
+    line-height: 1.5;
+  }
+  .history-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
   }
   .history-entry {
-    padding-block: 12px;
+    padding-block: 11px;
     border-top: 1px solid var(--border);
     font-size: 12.5px;
     overflow-wrap: anywhere;
@@ -633,62 +908,53 @@
     flex-wrap: wrap;
     align-items: baseline;
     justify-content: space-between;
-    gap: 6px 12px;
+    gap: 4px 12px;
   }
   .history-line strong {
     font-weight: 500;
   }
   .history-entry p {
-    margin: 4px 0 0;
+    margin: 3px 0 0;
     color: var(--muted-foreground);
     font-size: 12px;
   }
   .history-entry .history-reason {
+    margin-top: 6px;
     color: var(--foreground);
-  }
-  .completeness-note {
-    margin: 0;
-    line-height: 1.6;
-  }
-  .closing-message {
-    padding: 12px 14px;
-    margin-bottom: 16px;
-    border-radius: var(--radius);
-    font-size: 13px;
     line-height: 1.5;
   }
-  .closing-message.error {
+  .sheet-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 22px 22px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sheet-form {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .sheet-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 22px;
+  }
+  .sheet-error {
+    margin: 0 0 16px;
+    padding: 10px 14px;
+    border-radius: 8px;
     background: var(--red-soft);
     color: var(--red);
-  }
-  .closing-message.success {
-    background: var(--green-soft);
-    color: var(--green);
-  }
-  @media (max-width: 1050px) {
-    .closing-layout {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .closing-rail {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .completeness-note {
-      grid-column: 1 / -1;
-    }
+    font-size: 13px;
   }
   @media (max-width: 600px) {
-    .closing-rail {
-      grid-template-columns: minmax(0, 1fr);
+    .close-row .month-field {
+      width: 100%;
     }
-    .month-field {
-      max-width: none;
-    }
-    .period-actions :global(button) {
+    .close-row :global(button[data-slot="button"]) {
       flex: 1;
-    }
-    .history-line {
-      flex-direction: column;
     }
   }
 </style>

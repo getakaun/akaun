@@ -13,7 +13,7 @@ All endpoints authenticate; modifying actions also use normal same-origin protec
 
 Failures preserve existing authorization/validation/refusal/conflict status conventions. Do not expose unrelated financial reports/history in status streams. UI /accounts/closing uses the same authorized operations as API actions.
 
-`/closing` redirects to `/accounts/closing`. Month changes automatically prepare the review; a single confirmation submits closing. Notices are non-blocking and are recorded with server-computed checks in the audit.
+`/closing` redirects to `/accounts/closing`. Month changes automatically prepare the review; a single confirmation submits closing. Notices are non-blocking and are recorded with server-computed checks in the audit. Each notice, and a failed integrity check, lists the exact accounts, documents, invoices, statements or records behind it as typed references the page links to (data-model.md).
 
 ## Frozen entry reads and writes
 

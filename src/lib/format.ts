@@ -9,6 +9,9 @@ export {
   formatMoney as formatMoneyRM,
 } from "./currency-state.svelte.js";
 
+// Pure, so server code can name a date the way every screen does.
+export { formatDate } from "./date-format.js";
+
 import {
   formatMoneyAmount as formatMainAmount,
   formatMoney as formatMainMoney,
@@ -69,26 +72,6 @@ export function formatDateShort(iso: string): string {
     "Dec",
   ];
   return `${parseInt(d)} ${months[parseInt(m) - 1]}`;
-}
-
-export function formatDate(iso: string): string {
-  if (!iso) return "";
-  const [y, m, d] = iso.split("-");
-  const months = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
-  return `${parseInt(d)} ${months[parseInt(m) - 1]} ${y}`;
 }
 
 export function monthLabel(iso: string): string {

@@ -219,9 +219,16 @@ describe("month closing", () => {
         date: "2024-10-15",
       })
       .run();
-    expect(preview().warnings.some((w) => w.id === "pending-imports")).toBe(
-      true,
-    );
+    expect(
+      preview().warnings.find((w) => w.id === "pending-imports")?.items,
+    ).toEqual([
+      {
+        key: "import-pending",
+        label: "receipt.pdf",
+        detail: "Waiting for review · dated 15 Oct 2024",
+        ref: { kind: "import-queue" },
+      },
+    ]);
     expect(
       closeMonth(ctx(), {
         monthEnd: review.monthEnd,
@@ -292,9 +299,60 @@ describe("month closing", () => {
       ])
       .run();
     expect(preview().integrity.ok).toBe(true);
-    expect(preview().warnings.some((w) => w.id === "classification")).toBe(
-      true,
+    const warning = preview().warnings.find((w) => w.id === "classification");
+    // The notice names the account, says how it reports today and links to it,
+    // so a reviewer never has to search for it.
+    expect(warning?.message).toBe(
+      "1 account used on or before 31 Oct 2024 has no report classification",
     );
+    expect(warning?.items).toEqual([
+      {
+        key: `account-${category.id}`,
+        label: "6000 Unclassified expense",
+        detail:
+          "Expense · reported as Operating until you choose · 1 record, last on 1 Oct 2024",
+        ref: { kind: "account", id: category.id },
+      },
+    ]);
+    expect(warning?.total).toBeUndefined();
+  });
+  it("names each unbalanced record behind a failed integrity check", () => {
+    const bank = db
+      .insert(accounts)
+      .values({
+        name: "Bank",
+        rank: "a",
+        type: AccountType.Asset,
+        role: 1,
+        subType: AccountSubType.Bank,
+        code: 1000,
+      })
+      .returning()
+      .get();
+    const record = db
+      .insert(ledgerRecords)
+      .values({
+        kind: 1,
+        date: "2024-10-02",
+        recordNumber: "EX20241002-001",
+        description: "One-sided",
+        amount: 5,
+        currency: "USD",
+        exchangeRate: 1,
+      })
+      .returning()
+      .get();
+    db.insert(ledgerMovements)
+      .values({ recordId: record.id, accountId: bank.id, amountMinor: -500 })
+      .run();
+    const { integrity } = preview();
+    expect(integrity.ok).toBe(false);
+    expect(integrity.problems).toHaveLength(1);
+    expect(integrity.problems[0]).toMatchObject({
+      label: "EX20241002-001",
+      ref: { kind: "record", id: record.id },
+    });
+    expect(integrity.problems[0].detail).toContain("2 Oct 2024 · One-sided");
   });
   it("never grants closing controls to delegated credentials", () => {
     expect(isDelegable("closing.close")).toBe(false);

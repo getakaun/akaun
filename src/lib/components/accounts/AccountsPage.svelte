@@ -4,6 +4,7 @@
   import { resolve } from "$app/paths";
   import { fly } from "svelte/transition";
   import {
+    ChevronRight,
     Eye,
     EyeOff,
     Landmark,
@@ -15,7 +16,8 @@
   import EmptyState from "$lib/components/ui/EmptyState.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
-  import { formatMinor } from "$lib/format.js";
+  import { formatDate, formatMinor } from "$lib/format.js";
+  import { getClosingBoundary } from "$lib/closing-context.js";
   import {
     AccountType,
     AccountTypeDisplayLabels,
@@ -34,6 +36,9 @@
   } | null;
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+  // Live over the layout's closing stream, so another tab's close shows here.
+  const closingBoundary = getClosingBoundary();
+  const closedThrough = $derived(closingBoundary?.closedThrough ?? null);
 
   // Writable `$derived`, so a fresh server load replaces the chart and an
   // incoming stream event can still merge into it.
@@ -166,17 +171,6 @@
       </p>
     </div>
     <div class="topbar-right">
-      {#if data.perms.closing}
-        <Button
-          variant="outline"
-          size="sm"
-          href={resolve("/(app)/accounts/closing")}
-          aria-label="Month closing"
-          title="Month closing for all accounts"
-        >
-          <LockKeyhole size={14} /> <span class="btn-text">Month closing</span>
-        </Button>
-      {/if}
       <div class="search-box">
         <div style="position:relative; display:flex; align-items:center;">
           <span
@@ -267,6 +261,23 @@
             </button>
           {/each}
         </div>
+        <!-- Closing is book-wide, not a list control, so it reads as the book's
+             status beside the tabs rather than a button beside the search. -->
+        {#if data.perms.closing}
+          <a
+            class="related-link closing-link"
+            href={resolve("/(app)/accounts/closing")}
+            title="Month closing for all accounts"
+          >
+            <LockKeyhole size={13} />
+            <span
+              >{closedThrough
+                ? `Closed through ${formatDate(closedThrough)}`
+                : "No months closed"}</span
+            >
+            <ChevronRight size={13} class="closing-link-chevron" />
+          </a>
+        {/if}
       </div>
 
       {#if rows.length !== accounts.length}
@@ -404,6 +415,34 @@
 />
 
 <style>
+  .closing-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 34px;
+    padding: 0 10px 0 12px;
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 9px;
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  /* Zero specificity, so the shared .related-link hover border still wins. */
+  :where(.closing-link) {
+    border-color: transparent;
+  }
+  .closing-link:hover {
+    color: var(--foreground);
+  }
+  .closing-link :global(.closing-link-chevron) {
+    color: var(--muted-foreground);
+  }
+  .closing-link:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
   .topbar-right {
     flex-wrap: wrap;
     justify-content: flex-end;

@@ -35,7 +35,6 @@ export const load: LayoutServerLoad = async ({ locals }) => {
   return {
     user: locals.user,
     closedThrough: closedThrough(db),
-    canReadReports: can(locals, "reports.read"),
     mainCurrency,
     unpaidCount,
     // What the shell offers. Never a superuser flag: a page decides what it

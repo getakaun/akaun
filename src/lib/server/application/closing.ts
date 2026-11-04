@@ -3,14 +3,21 @@ import { and, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   AccountType,
+  AccountTypeDisplayLabels,
+  type AccountTypeCode,
   ImportState,
+  ImportStateDisplayLabels,
   InvoiceStatus,
   StatementExtractionState,
+  StatementExtractionStateDisplayLabels,
 } from "$lib/enums.js";
+import { formatDate } from "$lib/date-format.js";
 import { localToday, addDaysISO } from "$lib/local-date.js";
 import {
+  CLOSING_ITEM_LIMIT,
   monthEndFor,
   previousMonthEnd,
+  type ClosingItem,
   type ClosingHistoryEntry,
   type ClosingPageData,
   type ClosingPreview,
@@ -22,6 +29,7 @@ import {
   auditLog,
   bankStatementLines,
   bankStatements,
+  contacts,
   importItems,
   importQueue,
   invoices,
@@ -33,6 +41,7 @@ import { can } from "../permissions.js";
 import { recordAudit, parseChanges } from "../audit.js";
 import { setSetting, SETTING_KEYS } from "../settings.js";
 import { checkIntegrity } from "../ledger/integrity.js";
+import { NEEDS_REVIEW_TYPES } from "../ledger/account-type.js";
 import { integrityInputs } from "../queries/ledger.js";
 import {
   balanceSheetReport,
@@ -77,6 +86,17 @@ function allowedMonth(monthEnd: string, current: string | null): string | null {
   return null;
 }
 
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/** The first items of a check, and how many there are when that is not all. */
+function capped(items: ClosingItem[]): Pick<ClosingWarning, "items" | "total"> {
+  return items.length > CLOSING_ITEM_LIMIT
+    ? { items: items.slice(0, CLOSING_ITEM_LIMIT), total: items.length }
+    : { items };
+}
+
 function review(ctx: AppContext, monthEnd: string): ClosingPreview {
   const db = ctx.db;
   const current = closedThrough(db);
@@ -98,7 +118,7 @@ function review(ctx: AppContext, monthEnd: string): ClosingPreview {
   if (current === null)
     warnings.push({
       id: "first-close",
-      message: `This first close protects all accounting history on or before ${monthEnd}, including earlier months.`,
+      message: `This first close protects all accounting history on or before ${formatDate(monthEnd)}, including earlier months.`,
     });
   warnings.push({
     id: "completeness",
@@ -106,6 +126,7 @@ function review(ctx: AppContext, monthEnd: string): ClosingPreview {
       "Figures include the receipts and bank statements recorded in Akaun. Automatic checks cannot identify documents that have not been supplied.",
   });
 
+  const day = formatDate(monthEnd);
   const pendingStates = [
     ImportState.Queued,
     ImportState.Extracting,
@@ -113,101 +134,249 @@ function review(ctx: AppContext, monthEnd: string): ClosingPreview {
     ImportState.PendingReview,
     ImportState.Failed,
   ];
-  const pendingJobs =
-    db
-      .select({ n: sql<number>`count(*)` })
-      .from(importQueue)
-      .where(
-        and(
-          inArray(importQueue.state, pendingStates),
-          or(isNull(importQueue.date), lte(importQueue.date, monthEnd)),
-        ),
-      )
-      .get()?.n ?? 0;
-  const pendingItems =
-    db
-      .select({ n: sql<number>`count(*)` })
-      .from(importItems)
-      .where(
-        and(
-          eq(importItems.state, ImportState.PendingReview),
-          or(isNull(importItems.date), lte(importItems.date, monthEnd)),
-        ),
-      )
-      .get()?.n ?? 0;
-  if (pendingJobs + pendingItems > 0)
+  // One row per document: a document can be unfinished itself, hold items that
+  // are still waiting, or both.
+  const pendingJobs = db
+    .select({
+      id: importQueue.id,
+      file: importQueue.originalFilename,
+      state: importQueue.state,
+      date: importQueue.date,
+    })
+    .from(importQueue)
+    .where(
+      and(
+        inArray(importQueue.state, pendingStates),
+        or(isNull(importQueue.date), lte(importQueue.date, monthEnd)),
+      ),
+    )
+    .orderBy(importQueue.createdAt)
+    .all();
+  const pendingItems = db
+    .select({
+      jobId: importItems.jobId,
+      file: importQueue.originalFilename,
+      n: sql<number>`count(*)`,
+    })
+    .from(importItems)
+    .innerJoin(importQueue, eq(importQueue.id, importItems.jobId))
+    .where(
+      and(
+        eq(importItems.state, ImportState.PendingReview),
+        or(isNull(importItems.date), lte(importItems.date, monthEnd)),
+      ),
+    )
+    .groupBy(importItems.jobId)
+    .all();
+  const itemCount = pendingItems.reduce((sum, row) => sum + row.n, 0);
+  if (pendingJobs.length + itemCount > 0) {
+    const waiting = new Map(pendingItems.map((row) => [row.jobId, row]));
+    const documents: ClosingItem[] = pendingJobs.map((job) => {
+      const items = waiting.get(job.id)?.n ?? 0;
+      waiting.delete(job.id);
+      return {
+        key: `import-${job.id}`,
+        label: job.file,
+        detail: [
+          ImportStateDisplayLabels[job.state] ?? "Unfinished",
+          job.date ? `dated ${formatDate(job.date)}` : "no date read yet",
+          ...(items > 0 ? [plural(items, "item", "items") + " waiting"] : []),
+        ].join(" · "),
+        ref:
+          items > 0
+            ? { kind: "import-group", id: job.id }
+            : { kind: "import-queue" },
+      };
+    });
+    for (const row of waiting.values())
+      documents.push({
+        key: `import-${row.jobId}`,
+        label: row.file,
+        detail: `${plural(row.n, "item", "items")} waiting for review`,
+        ref: { kind: "import-group", id: row.jobId },
+      });
     warnings.push({
       id: "pending-imports",
-      message: `${pendingJobs} pending or failed import document(s) and ${pendingItems} pending item(s) have dates through ${monthEnd} or an unknown date. Review them before closing.`,
+      message: `${plural(documents.length, "import document is", "import documents are")} not finished and may belong on or before ${day}`,
+      hint: "Confirm or skip each one, so its entry lands in the right month.",
+      ...capped(documents),
     });
-  const drafts =
-    db
-      .select({ n: sql<number>`count(*)` })
-      .from(invoices)
-      .where(
-        and(
-          eq(invoices.status, InvoiceStatus.Draft),
-          lte(invoices.issueDate, monthEnd),
-        ),
-      )
-      .get()?.n ?? 0;
-  if (drafts > 0)
+  }
+
+  const drafts = db
+    .select({
+      id: invoices.id,
+      number: invoices.invoiceNumber,
+      issueDate: invoices.issueDate,
+      contact: contacts.legalName,
+    })
+    .from(invoices)
+    .leftJoin(contacts, eq(contacts.id, invoices.contactId))
+    .where(
+      and(
+        eq(invoices.status, InvoiceStatus.Draft),
+        lte(invoices.issueDate, monthEnd),
+      ),
+    )
+    .orderBy(invoices.issueDate, invoices.id)
+    .all();
+  if (drafts.length > 0)
     warnings.push({
       id: "draft-invoices",
-      message: `${drafts} draft invoice(s) dated on or before ${monthEnd} have not posted. Confirm whether they belong in this close.`,
+      message: `${plural(drafts.length, "draft invoice is", "draft invoices are")} dated on or before ${day}`,
+      hint: "A draft has not posted to the books. Issue it if it belongs in this month.",
+      ...capped(
+        drafts.map((draft) => ({
+          key: `invoice-${draft.id}`,
+          label: draft.number,
+          detail: [
+            draft.contact ?? "No customer",
+            `dated ${formatDate(draft.issueDate)}`,
+          ].join(" · "),
+          ref: { kind: "invoice", id: draft.id } as const,
+        })),
+      ),
     });
-  const unmatched =
-    db
-      .select({ n: sql<number>`count(*)` })
-      .from(bankStatementLines)
-      .where(
-        and(
-          lte(bankStatementLines.date, monthEnd),
-          sql`abs(${bankStatementLines.amount} - coalesce((select sum(${reconciliationAllocations.amount}) from ${reconciliationAllocations} where ${reconciliationAllocations.lineId} = ${bankStatementLines.id}), 0)) > 0.005`,
-        ),
-      )
-      .get()?.n ?? 0;
+
+  // Grouped by statement: the reconcile screen works one statement at a time.
+  const unmatchedLines = db
+    .select({
+      statementId: bankStatementLines.statementId,
+      file: bankStatements.originalFilename,
+      accountId: bankStatements.accountId,
+      account: accounts.name,
+      n: sql<number>`count(*)`,
+    })
+    .from(bankStatementLines)
+    .innerJoin(
+      bankStatements,
+      eq(bankStatements.id, bankStatementLines.statementId),
+    )
+    .leftJoin(accounts, eq(accounts.id, bankStatements.accountId))
+    .where(
+      and(
+        lte(bankStatementLines.date, monthEnd),
+        sql`abs(${bankStatementLines.amount} - coalesce((select sum(${reconciliationAllocations.amount}) from ${reconciliationAllocations} where ${reconciliationAllocations.lineId} = ${bankStatementLines.id}), 0)) > 0.005`,
+      ),
+    )
+    .groupBy(bankStatementLines.statementId)
+    .orderBy(bankStatements.id)
+    .all();
+  const unmatched = unmatchedLines.reduce((sum, row) => sum + row.n, 0);
   if (unmatched > 0)
     warnings.push({
       id: "bank-differences",
-      message: `${unmatched} bank statement line(s) through ${monthEnd} are unmatched, partly matched, or overmatched. Review missing entries and legitimate timing differences.`,
+      message: `${plural(unmatched, "bank statement line", "bank statement lines")} on or before ${day} ${unmatched === 1 ? "is" : "are"} not fully matched`,
+      hint: "Match each line or record what is missing. A timing difference can stay.",
+      ...capped(
+        unmatchedLines.map((row) => ({
+          key: `statement-${row.statementId}`,
+          label: row.file,
+          detail: [
+            row.account ?? "No account",
+            `${plural(row.n, "line", "lines")} unmatched, partly matched or overmatched`,
+          ].join(" · "),
+          ref:
+            row.accountId === null
+              ? null
+              : ({
+                  kind: "statement",
+                  accountId: row.accountId,
+                  statementId: row.statementId,
+                } as const),
+        })),
+      ),
     });
-  const unread =
-    db
-      .select({ n: sql<number>`count(*)` })
-      .from(bankStatements)
-      .where(
-        sql`${bankStatements.extractionState} <> ${StatementExtractionState.Ready}`,
-      )
-      .get()?.n ?? 0;
-  if (unread > 0)
+
+  const unread = db
+    .select({
+      id: bankStatements.id,
+      file: bankStatements.originalFilename,
+      state: bankStatements.extractionState,
+      error: bankStatements.extractionError,
+      accountId: bankStatements.accountId,
+      account: accounts.name,
+    })
+    .from(bankStatements)
+    .leftJoin(accounts, eq(accounts.id, bankStatements.accountId))
+    .where(
+      sql`${bankStatements.extractionState} <> ${StatementExtractionState.Ready}`,
+    )
+    .orderBy(bankStatements.id)
+    .all();
+  if (unread.length > 0)
     warnings.push({
       id: "unread-statements",
-      message: `${unread} bank statement(s) are still reading or failed to read. Their accounting dates cannot yet be checked.`,
+      message: `${plural(unread.length, "bank statement has", "bank statements have")} not been read`,
+      hint:
+        unread.length === 1
+          ? "Its lines and dates cannot be checked until it is read. Read it again or remove it."
+          : "Their lines and dates cannot be checked until they are read. Read each again or remove it.",
+      ...capped(
+        unread.map((row) => ({
+          key: `unread-${row.id}`,
+          label: row.file,
+          detail: [
+            row.account ?? "No account",
+            StatementExtractionStateDisplayLabels[row.state] ?? "Not read",
+            ...(row.error ? [row.error] : []),
+          ].join(" · "),
+          ref:
+            row.accountId === null
+              ? null
+              : ({ kind: "statements", accountId: row.accountId } as const),
+        })),
+      ),
     });
-  const unclassified =
-    db
-      .select({ n: sql<number>`count(distinct ${accounts.id})` })
-      .from(accounts)
-      .innerJoin(ledgerMovements, eq(ledgerMovements.accountId, accounts.id))
-      .innerJoin(ledgerRecords, eq(ledgerRecords.id, ledgerMovements.recordId))
-      .where(
-        and(
-          isNull(accounts.subType),
-          inArray(accounts.type, [
-            AccountType.Asset,
-            AccountType.Liability,
-            AccountType.Expense,
-            AccountType.Revenue,
-          ]),
-          lte(ledgerRecords.date, monthEnd),
-        ),
-      )
-      .get()?.n ?? 0;
-  if (unclassified > 0)
+
+  const unclassified = db
+    .select({
+      id: accounts.id,
+      code: accounts.code,
+      name: accounts.name,
+      type: accounts.type,
+      records: sql<number>`count(distinct ${ledgerRecords.id})`,
+      lastUsed: sql<string>`max(${ledgerRecords.date})`,
+    })
+    .from(accounts)
+    .innerJoin(ledgerMovements, eq(ledgerMovements.accountId, accounts.id))
+    .innerJoin(ledgerRecords, eq(ledgerRecords.id, ledgerMovements.recordId))
+    .where(
+      and(
+        isNull(accounts.subType),
+        inArray(accounts.type, [
+          AccountType.Asset,
+          AccountType.Liability,
+          AccountType.Expense,
+          AccountType.Revenue,
+        ]),
+        lte(ledgerRecords.date, monthEnd),
+      ),
+    )
+    .groupBy(accounts.id)
+    .orderBy(accounts.code)
+    .all();
+  if (unclassified.length > 0)
     warnings.push({
       id: "classification",
-      message: `${unclassified} account(s) used through ${monthEnd} have no report classification. Review report grouping before closing; changing classification afterward requires reopening the affected history.`,
+      message: `${plural(unclassified.length, "account used on or before " + day + " has", "accounts used on or before " + day + " have")} no report classification`,
+      hint: `${unclassified.length === 1 ? "Its" : "Their"} report grouping cannot be changed once this month is closed. Open each account and choose one.`,
+      ...capped(
+        unclassified.map((row) => ({
+          key: `account-${row.id}`,
+          label: row.code === null ? row.name : `${row.code} ${row.name}`,
+          detail: [
+            AccountTypeDisplayLabels[row.type ?? 0] ?? "Account",
+            // Mirrors expenseBucket/revenueBucket vs assetBucket/liabilityBucket
+            // in ledger/account-type.ts: only an asset or liability has no safe default.
+            NEEDS_REVIEW_TYPES.includes(row.type as AccountTypeCode)
+              ? "shown as Unclassified on reports"
+              : "reported as Operating until you choose",
+            `${plural(row.records, "record", "records")}, last on ${formatDate(row.lastUsed)}`,
+          ].join(" · "),
+          ref: { kind: "account", id: row.id } as const,
+        })),
+      ),
     });
   const notes = [
     ...new Set([
@@ -246,8 +415,51 @@ function review(ctx: AppContext, monthEnd: string): ClosingPreview {
       recordsChecked: integrity.recordsChecked,
       problemCount:
         integrity.unbalancedRecords.length + (integrity.booksBalance ? 0 : 1),
+      problems: unbalancedItems(
+        db,
+        integrity.unbalancedRecords.slice(0, CLOSING_ITEM_LIMIT),
+      ),
+      booksBalance: integrity.booksBalance,
     },
   };
+}
+
+/** Names each unbalanced record, so the failed check says which one to open. */
+function unbalancedItems(
+  db: AppContext["db"],
+  problems: { recordId: number; differenceMinor: number; problem: string }[],
+): ClosingItem[] {
+  if (problems.length === 0) return [];
+  const rows = db
+    .select({
+      id: ledgerRecords.id,
+      number: ledgerRecords.recordNumber,
+      date: ledgerRecords.date,
+      description: ledgerRecords.description,
+    })
+    .from(ledgerRecords)
+    .where(
+      inArray(
+        ledgerRecords.id,
+        problems.map((problem) => problem.recordId),
+      ),
+    )
+    .all();
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return problems.map((problem) => {
+    const row = byId.get(problem.recordId);
+    return {
+      key: `record-${problem.recordId}`,
+      label: row?.number ?? `Record ${problem.recordId}`,
+      detail: [
+        ...(row ? [formatDate(row.date)] : []),
+        ...(row?.description ? [row.description] : []),
+        problem.problem,
+      ].join(" · "),
+      amountMinor: problem.differenceMinor,
+      ref: { kind: "record", id: problem.recordId },
+    };
+  });
 }
 
 export function previewClosing(

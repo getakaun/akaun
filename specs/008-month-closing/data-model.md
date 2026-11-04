@@ -6,7 +6,7 @@ Existing settings row: key `accounting.closedThrough`, value a valid `YYYY-MM-DD
 
 ## Review (computed, not stored)
 
-`closedThrough`, `monthEnd`, `dateFrom`, opaque `revision`, warnings `{id,message}[]`, integrity `{ok,recordsChecked,problemCount}`. Based on canonical reports and review queues, scoped to the newly protected range. Drafts and queues remain unposted.
+`closedThrough`, `monthEnd`, `dateFrom`, opaque `revision`, warnings `{id,message,hint?,items?,total?}[]`, integrity `{ok,recordsChecked,problemCount,problems,booksBalance}`. Each item `{key,label,detail,amountMinor?,ref}` names one exact cause: an unclassified account, an unfinished import document, a draft invoice, a statement with unmatched lines, an unread statement, or an unbalanced record. `ref` is a typed id (`record`, `account`, `invoice`, `import-group`, `import-queue`, `statement`, `statements`), never a URL. Each check returns at most `CLOSING_ITEM_LIMIT` (20) items, with `total` when there are more. The items are part of the revision and of the audited notices. Based on canonical reports and review queues, scoped to the newly protected range. Drafts and queues remain unposted.
 
 ## Audit history
 

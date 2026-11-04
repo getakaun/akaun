@@ -1,6 +1,5 @@
 <script lang="ts">
   import { page } from "$app/stores";
-  import { resolve } from "$app/paths";
   import { createResourceStream } from "$lib/sse.js";
   import type { ClosingStatus } from "$lib/closing.js";
   import { provideClosingBoundary } from "$lib/closing-context.js";
@@ -64,17 +63,6 @@
     navItems={data.navItems}
   />
   <main class="main">
-    {#if closingBoundary}
-      <div class="closing-banner" role="status">
-        <span
-          >Accounting closed through <strong>{closingBoundary}</strong>. Earlier
-          accounting entries are protected.</span
-        >
-        {#if data.canReadReports}<a href={resolve("/(app)/accounts/closing")}
-            >Month closing</a
-          >{/if}
-      </div>
-    {/if}
     {@render children()}
   </main>
 </div>
@@ -103,26 +91,6 @@
 />
 
 <style>
-  .closing-banner {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 9px 24px;
-    background: var(--accent);
-    border-bottom: 1px solid var(--border);
-    color: var(--muted-foreground);
-    font-size: 12px;
-    line-height: 1.5;
-    flex-wrap: wrap;
-  }
-  .closing-banner a {
-    color: var(--primary);
-    text-decoration: underline;
-    white-space: nowrap;
-  }
-
   .mobile-menu-btn {
     display: none;
   }

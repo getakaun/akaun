@@ -26,7 +26,7 @@ A bookkeeper reviews transactions, bank differences, adjustments and reports, th
 
 **Acceptance Scenarios**:
 
-1. Given an open book, when an authorized reviewer acknowledges all four review items and warnings, then the selected month end and all earlier dates become protected, with actor/time/review evidence in history.
+1. Given an open book, when automated checks pass and an authorized person confirms closing once, then the selected month end and all earlier dates become protected, with actor/time/review evidence in history.
 2. Given a ledger integrity failure, invalid month end or stale review, when closing is attempted, then nothing changes.
 3. Given outstanding invoices or reimbursements, when closing is attempted, then those normal balances do not prevent closing.
 
@@ -72,15 +72,15 @@ An authorized person reopens from an earlier month with a reason, corrects entri
 ### Functional Requirements
 
 - **FR-001**: Maintain one inclusive book-wide boundary, unset by default; no automatic postings or historical rewriting on rollout.
-- **FR-002**: Permit closing only through an elapsed calendar month end, after four explicit acknowledgments and acknowledgment of current warnings.
-- **FR-003**: Block failed integrity checks; warn about pending relevant imports/drafts, bank differences, incomplete history and classification notes. Never infer completeness from uploaded data alone.
+- **FR-002**: Permit closing only through an elapsed calendar month end, after automated date, integrity and revision checks pass and one close confirmation.
+- **FR-003**: Block failed integrity checks; show non-blocking notices about pending relevant imports/drafts, bank differences, incomplete history and classification notes. Never infer completeness from uploaded data alone.
 - **FR-004**: Require distinct explicit permissions to close and reopen; delegated tokens/apps cannot exercise them in this release.
 - **FR-005**: Atomically protect additions, removals and financial updates through the boundary across all entry points. Check original and proposed dates, dependent postings, account/category, currency/rate and financial attribution.
 - **FR-006**: Protect account classification and partner membership/attribution changes that alter closed-period reports.
 - **FR-007**: Permit non-financial annotations and attachments, non-posting drafts, later payments against closed obligations, and pure matching/allocations, retaining existing permissions and audit history.
 - **FR-008**: Reopening from a month moves the boundary to the preceding month end (or unsets it when all protected history is reopened); require a reason and show the whole affected range.
 - **FR-009**: Keep append-only close/reopen history with actor, time, old/new boundary and review/reason evidence; show narrow history without exposing unrelated administration.
-- **FR-010**: Show the boundary to signed-in entry users and report readers, with live updates and an actionable error for refused writes.
+- **FR-010**: Place month closing under Accounts, reachable from the Accounts main page without placing an action on individual account details, while clearly stating it covers all accounts. Use existing app buttons, cards and a custom popover month picker; preserve old closing links with a redirect. Show the boundary to signed-in entry users and report readers, with live updates and an actionable error for refused writes.
 - **FR-011**: Reject stale reviews and serialize closing with financial writes. Failed operations roll back fully.
 - **FR-012**: Keep current operational status distinct from frozen report evidence. Immutable report bundles, fiscal-year profit transfers, partial holes, module locks and automatic adjustments are deferred.
 
@@ -97,7 +97,7 @@ An authorized person reopens from an earlier month with a reason, corrects entri
 - **SC-001**: Every protected-date financial mutation in the acceptance matrix is refused without changing the book.
 - **SC-002**: Later-period payments and non-financial annotations remain usable in all corresponding scenarios.
 - **SC-003**: Every successful close/reopen has one retained history entry; unauthorized and stale actions have none.
-- **SC-004**: Closing uses one month selection, four review acknowledgments and one confirmation, without configuring fiscal periods or module locks.
+- **SC-004**: Closing uses one custom month selection, automatic checks and one confirmation, with no checklist or notice acknowledgments, without configuring fiscal periods or module locks.
 
 ## Assumptions
 

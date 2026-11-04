@@ -13,12 +13,12 @@
 ## Phase 3: US1 Review and close
 
 **Goal**: Review and protect a completed month without changing ledger amounts.
-**Independent test**: Close through October with warnings acknowledged; reject stale/invalid/unauthorized reviews.
+**Independent test**: Close through October after automated checks and one confirmation; reject stale/invalid/unauthorized reviews.
 
 - [x] T005 [US1] Write isolated state/permission/review tests in src/lib/server/application/closing.spec.ts.
 - [x] T006 [US1] Add permission leaves and audited close/preview operations in src/lib/permissions/catalog.ts and src/lib/server/application/closing.ts.
 - [x] T007 [US1] Add thin authorized APIs and post-commit stream in src/routes/api/closing/ and src/lib/server/closing/events.ts.
-- [x] T008 [US1] Build compact responsive page and shared boundary display in src/routes/(app)/closing/, app layout and src/lib/components/reports/ReportsPage.svelte.
+- [x] T008 [US1] Build compact responsive page and shared boundary display in src/routes/(app)/accounts/closing/, app layout and Accounts entry points.
 
 ## Phase 4: US2 Protect alternate writes and reports
 
@@ -50,3 +50,10 @@
 T001 -> T002 -> T003 -> T004. UI/close T005–T008 and master data T009–T010 can run independently once the shared policy interface is agreed. T011/T012 follow core query guards. T013 integrates all write paths. T014/T015 reuse closing state/permissions. Final verification follows all stories.
 
 Parallel examples: closing page and policy tests edit different files; account/contact guards and closing API edit different files. No simultaneous writers to the same file. Deliver the complete accepted scope; core protection is established before the management UI is considered usable.
+
+## Follow-up: Simplify closing and match Accounts UI
+
+- [x] T019 [US1] Update accepted requirements/contracts and write failing automated-close and server-audit regression tests in src/lib/server/application/closing.spec.ts.
+- [x] T020 [US1] Remove manual acknowledgment inputs, retain automated guards and record server-derived evidence in src/lib/server/application/closing.ts and shared closing DTOs.
+- [x] T021 [US1] Move the workspace to src/routes/(app)/accounts/closing, preserve /closing redirect, add the Accounts main action and replace native month controls with src/lib/components/ui/month-picker/MonthPicker.svelte using existing app styles.
+- [x] T022 Run focused and required checks, update docs/PR description, and push the refinement to PR #62.

@@ -24,7 +24,9 @@ import {
 } from "$lib/enums.js";
 import type { AccountView as AccountApiView } from "$lib/components/accounts/account-types.js";
 
-function toRoleFreeAccount(account: ReturnType<typeof listAccounts>[number]): AccountApiView {
+function toRoleFreeAccount(
+  account: ReturnType<typeof listAccounts>[number],
+): AccountApiView {
   return {
     id: account.id,
     code: account.code!,
@@ -38,7 +40,7 @@ function toRoleFreeAccount(account: ReturnType<typeof listAccounts>[number]): Ac
 
 const LIST_PATH = "/accounts";
 
-/** The four abilities both the chart and one account's page ask about. */
+/** Account actions and the book-wide workspace offered from the chart. */
 function accountPerms(locals: App.Locals) {
   return {
     add: can(locals, "accounts.create"),
@@ -46,13 +48,13 @@ function accountPerms(locals: App.Locals) {
     delete: can(locals, "accounts.delete"),
     // Whether to offer the way in to reconciling at all (FR-049).
     reconcile: can(locals, "reconciliation.read"),
+    closing: can(locals, "reports.read"),
   };
 }
 
 /** The chart of accounts — all five types on one page (FR-022). */
 export function loadAccountsPage(locals: App.Locals) {
-  if (!can(locals, "accounts.read"))
-    throw redirect(302, "/dashboard");
+  if (!can(locals, "accounts.read")) throw redirect(302, "/dashboard");
 
   const accounts = listAccounts(db, { includeArchived: true });
 
@@ -78,8 +80,7 @@ export function loadAccountsPage(locals: App.Locals) {
  * one place that decides which id is the real one.
  */
 export function loadAccountDetail(locals: App.Locals, requestedId: number) {
-  if (!can(locals, "accounts.read"))
-    throw redirect(302, "/dashboard");
+  if (!can(locals, "accounts.read")) throw redirect(302, "/dashboard");
 
   const canonical = canonicalAccountId(db, requestedId);
   if (canonical === null) throw redirect(302, LIST_PATH);
@@ -167,7 +168,9 @@ export const accountsActions: Actions = {
       name: data.has("name")
         ? String(data.get("name") ?? "").trim()
         : undefined,
-      type: data.has("type") ? parseInt(String(data.get("type"))) as AccountTypeCode : undefined,
+      type: data.has("type")
+        ? (parseInt(String(data.get("type"))) as AccountTypeCode)
+        : undefined,
       active: activeRaw === null ? undefined : activeRaw === "true",
       subType: data.has("subType")
         ? (parseInt(String(data.get("subType"))) as AccountSubTypeCode)

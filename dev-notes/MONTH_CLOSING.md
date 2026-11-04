@@ -4,7 +4,7 @@ Akaun stores one inclusive `accounting.closedThrough` boundary in existing setti
 
 ## Using it
 
-Open **Reports → Month closing**, select a completed month, and prepare a review. The review checks ledger integrity and warns about pending imports/items, draft invoices, unresolved/unread bank statements, incomplete history and classification notes. A permanent completeness reminder explains that uploaded data cannot prove every receipt/statement was supplied. Four explicit checklist items and every warning must be acknowledged before closing. Unpaid invoices/bills/reimbursements do not block closing.
+Open **Accounts → Month closing** on the chart’s main page and select a completed month. Checks run automatically, then one dialog confirms the close. The workspace covers all accounts; individual account detail pages do not offer closing. The review checks ledger integrity and warns about pending imports/items, draft invoices, unresolved/unread bank statements, incomplete history and classification notes. A permanent completeness reminder explains that uploaded data cannot prove every receipt/statement was supplied. No checklist or notice acknowledgments are required. Notices are informational; integrity, date, permission and stale-review checks still block invalid closes. Unpaid invoices/bills/reimbursements do not block closing.
 
 The first close protects all earlier history. Later closes can cover several months, with the review covering the newly protected range. Reopening from a month also opens every subsequent closed month; a reason and current boundary are required. All-history reopen clears the boundary. Existing settlement/reconciliation/document restrictions continue to apply.
 
@@ -12,7 +12,7 @@ The first close protects all earlier history. Later closes can cover several mon
 
 `closing.close` and `closing.reopen` are explicit, sensitive, nondelegable leaves. Both require `reports.read`, and both reject token/OAuth credentials even if supplied artificially. Existing Administrators receive new leaves through normal superuser permission resolution. Other users require a deliberate grant. Preview and narrow history require `reports.read`; signed-in users can read only the boundary from status/stream. Unrelated settings/history remain protected by their existing permissions.
 
-Close/reopen use existing append-only audit rows (`settings`, recordId `closing`). Rows contain old/new boundary, actor/time/channel and checklist/warnings or reason. The page shows the latest 50 actions. SSE publishes only the boundary after commit. Existing live paid/matched statuses and report presentation are not archived report snapshots.
+Close/reopen use existing append-only audit rows (`settings`, recordId `closing`). Rows contain old/new boundary, actor/time/channel and server-derived automated checks/notices or reason. The page shows the latest 50 actions. SSE publishes only the boundary after commit. Existing live paid/matched statuses and report presentation are not archived report snapshots.
 
 ## Enforcing the boundary
 
@@ -33,3 +33,5 @@ Closing recomputes the review while holding an immediate write transaction and c
 New isolated tests cover policy boundaries, no-op edits, numbering/transaction rollback, two WAL connections, close/reopen authorization and warnings, master-data/startup protection, invoice/import/correction paths, later settlement, MCP refusals and stable partner rounding. Fixtures migrate temporary/in-memory SQLite databases and use temporary receipt storage. No real book is opened and no application dev server is started.
 
 The plan, contracts and maintainer UI validation scenarios are in [specs/008-month-closing](../specs/008-month-closing/quickstart.md).
+
+The canonical UI address is `/accounts/closing`; `/closing` redirects for existing bookmarks. Month selection uses a custom Popover month grid, styled like the existing DatePicker, and supports constrained months plus year navigation. Shared Button, Textarea, StatusBadge and detail-card/page-scroll primitives supply the app’s sizing, spacing, focus and theme behavior. The close request is only `{monthEnd, revision}`; automated check evidence is recomputed and audited by the server.

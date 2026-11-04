@@ -1,12 +1,6 @@
 /** Small public contracts shared by the closing screen and its endpoints. */
 export type ClosingStatus = { closedThrough: string | null };
 export type ClosingWarning = { id: string; message: string };
-export type ClosingChecks = {
-  transactions: boolean;
-  bank: boolean;
-  adjustments: boolean;
-  reports: boolean;
-};
 export type ClosingPreview = ClosingStatus & {
   monthEnd: string;
   dateFrom: string | null;

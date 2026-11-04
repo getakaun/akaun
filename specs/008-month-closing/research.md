@@ -32,3 +32,7 @@ Official sources: [Xero](https://central.xero.com/0/article/Set-up-and-work-with
 **Rationale**: Existing settlement state is current, not historical aging. NetSuite also reopens subsequent closed periods because earlier changes affect later balances. Open-period reversal postings can remain available when the original closed postings are unchanged.
 
 All implementation unknowns resolved by repository inspection and accepted proposal. Research agents inspected write paths and UI/permission integration; no live books were accessed.
+
+## Approved interaction revision (2026-11-04)
+
+One confirmation replaces manual checklist and notice acknowledgments. Existing automated guards remain. Accounts main is the best current entry because it represents the whole chart; account detail would imply a single-account scope, Reports is read-oriented, and a new Accounting navigation section is unnecessary for one monthly feature. Use `/accounts/closing`, preserve `/closing` as a redirect, and reuse app primitives plus a custom month grid.

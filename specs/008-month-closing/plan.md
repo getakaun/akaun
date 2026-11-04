@@ -28,7 +28,7 @@ Implement the accepted single-boundary close using existing SQLite settings and 
 | SOLID boundaries     | IV               | PASS: policy/query enforcement, service business logic, authorized application operations, thin routes. |
 | Mutation obligations | IV               | PASS: permission, Zod, atomic audit and after-commit SSE planned for every action.                      |
 | TDD scope            | V                | PASS: financial policy, state transitions and permission behavior test-first; no redundant UI tests.    |
-| Established patterns | VI               | PASS: existing shared controls, real /closing URL, SSE only.                                            |
+| Established patterns | VI               | PASS: existing shared controls, real /accounts/closing URL and legacy /closing redirect, SSE only.      |
 | Fixed stack          | Tech constraints | PASS: existing Svelte/Drizzle stack; state needs no schema migration.                                   |
 
 Pre-research gate passed 2026-11-03. Post-design review PASS: shared transactional guards cover specialized writers; explicit master-data guards cover partner membership and merges; typed error conversion happens after rollback. No new unresolved design questions.
@@ -37,7 +37,7 @@ Pre-research gate passed 2026-11-03. Post-design review PASS: shared transaction
 
 Documentation in `specs/008-month-closing/`: spec, plan, research, data-model, contracts, quickstart, tasks and quality checklist.
 
-Source changes: `server/closing/policy.ts`, shared ledger queries, account/contact writers, `server/application/closing.ts`, closing routes/components, permission catalog, audit labels, SSE status, app-shell boundary and report link.
+Source changes: `server/closing/policy.ts`, shared ledger queries, account/contact writers, `server/application/closing.ts`, closing routes/components, permission catalog, audit labels, SSE status, app-shell boundary and Accounts entry points.
 
 ## Complexity Tracking
 
@@ -45,4 +45,10 @@ Explicit source-level query guards are preferred to custom SQL triggers because 
 
 ### Validation baseline exception
 
-The repository-wide lint gate is already failing on main: Prettier reports 242 existing files. The feature branch reports 237 existing files after formatting its changed files. Running ESLint separately found 62 errors in unchanged files (the four initially introduced Svelte findings were corrected). This PR does not bulk-format or rewrite unrelated code to make the existing gate green. Changed files pass their focused formatter and ESLint checks; type-check and the full server/client test suites pass. This is a documented validation-baseline exception, not an unreported passing lint gate.
+The repository-wide lint gate is already failing on main: Prettier reports 242 existing files. The feature branch reports 236 existing files after formatting its changed files. Pre-existing ESLint issues remain in untouched files; focused linting of the changed files passes. This PR does not bulk-format or rewrite unrelated code to make the existing gate green. Changed files pass their focused formatter and ESLint checks; type-check and the full server/client test suites pass. This is a documented validation-baseline exception, not an unreported passing lint gate.
+
+## Approved UI simplification (2026-11-04)
+
+Remove all manual checklist and warning acknowledgments. A selected month triggers automated checks; the single close confirmation submits only the month end and revision. The server recomputes and records checks and notices in the close audit, with unchanged integrity, date, permission, stale-review and transaction protections. Notices remain non-blocking because draft invoices and bank timing differences can be legitimate.
+
+Move the book-wide workspace to `/accounts/closing`, link from the Accounts main page (not individual account details), and redirect `/closing`. Reuse shared Button, Textarea, StatusBadge, BackLink, detail-card and Popover primitives. The custom MonthPicker uses an app-styled trigger and year navigation/month grid for both closing and reopening. Fix missing primary-button base styles by using the shared component. No dependencies, schema changes or extra approval steps.

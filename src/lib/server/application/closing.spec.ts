@@ -30,12 +30,6 @@ import {
 
 let sqlite: Database;
 let db: LedgerDb;
-const checks = {
-  transactions: true,
-  bank: true,
-  adjustments: true,
-  reports: true,
-};
 function ctx(permissions: string[] = [...LEAF_PERMISSIONS]): AppContext {
   return { db, locals: localsFor(permissions) };
 }
@@ -49,8 +43,6 @@ function close(monthEnd = "2024-10-31") {
   return closeMonth(ctx(), {
     monthEnd,
     revision: review.revision,
-    checks,
-    acknowledgedWarnings: review.warnings.map((w) => w.id),
   });
 }
 beforeEach(() => {
@@ -121,26 +113,54 @@ describe("month closing", () => {
     }
     expect(previewClosing(ctx(), { monthEnd: "2024-02-29" }).ok).toBe(true);
   });
-  it("requires every review and warning acknowledgment", () => {
+  it("closes after automatic checks without checklist or notice acknowledgments", () => {
     const review = preview();
     expect(review.warnings.some((w) => w.id === "first-close")).toBe(true);
     expect(
       closeMonth(ctx(), {
         monthEnd: review.monthEnd,
         revision: review.revision,
-        checks,
-        acknowledgedWarnings: [],
-      }).ok,
-    ).toBe(false);
+      }),
+    ).toEqual({ ok: true, value: { closedThrough: review.monthEnd } });
+    expect(db.select().from(auditLog).all()).toHaveLength(1);
+  });
+  it("records automated checks and notices from the server rather than user assertions", () => {
+    db.insert(importQueue)
+      .values({
+        id: "notice",
+        createdBy: 1,
+        originalFilename: "receipt.pdf",
+        tempFilePath: "unused",
+        state: ImportState.PendingReview,
+        date: "2024-10-15",
+      })
+      .run();
+    const review = preview();
+    expect(review.warnings.some((w) => w.id === "pending-imports")).toBe(true);
     expect(
       closeMonth(ctx(), {
         monthEnd: review.monthEnd,
         revision: review.revision,
-        checks: { ...checks, bank: false },
-        acknowledgedWarnings: review.warnings.map((w) => w.id),
       }).ok,
+    ).toBe(true);
+    const changes = JSON.parse(db.select().from(auditLog).get()!.changes!);
+    expect(changes).toContainEqual({
+      field: "automatedChecks",
+      before: null,
+      after: { completedMonth: true, ...review.integrity },
+    });
+    expect(changes).toContainEqual({
+      field: "closingNotices",
+      before: null,
+      after: review.warnings,
+    });
+    expect(
+      changes.some(
+        (change: { field: string }) =>
+          change.field === "reviewChecks" ||
+          change.field === "acknowledgedWarnings",
+      ),
     ).toBe(false);
-    expect(db.select().from(auditLog).all()).toHaveLength(0);
   });
   it("closes once with an audit entry and emits only committed status", () => {
     const events: unknown[] = [];
@@ -163,8 +183,6 @@ describe("month closing", () => {
       closeMonth(ctx(), {
         monthEnd: "2024-10-31",
         revision: "stale",
-        checks,
-        acknowledgedWarnings: [],
       }).ok,
     ).toBe(false);
     expect(db.select().from(auditLog).all()).toHaveLength(1);
@@ -181,8 +199,6 @@ describe("month closing", () => {
     const result = closeMonth(ctx(), {
       monthEnd: review.monthEnd,
       revision: review.revision,
-      checks,
-      acknowledgedWarnings: review.warnings.map((w) => w.id),
     });
     expect(result.ok).toBe(false);
     expect(!result.ok && result.code).toBe("CONFLICT");
@@ -210,12 +226,10 @@ describe("month closing", () => {
       closeMonth(ctx(), {
         monthEnd: review.monthEnd,
         revision: review.revision,
-        checks,
-        acknowledgedWarnings: review.warnings.map((w) => w.id),
       }).ok,
     ).toBe(false);
   });
-  it("refuses closing a broken ledger even after acknowledgment", () => {
+  it("refuses closing when the automated ledger check fails", () => {
     db.insert(ledgerRecords)
       .values({
         kind: 1,
@@ -228,7 +242,11 @@ describe("month closing", () => {
       .run();
     const review = preview();
     expect(review.integrity.ok).toBe(false);
-    expect(close().ok).toBe(false);
+    expect(close()).toMatchObject({
+      ok: false,
+      code: "REFUSED",
+      reason: expect.stringContaining("integrity"),
+    });
     expect(db.select().from(auditLog).all()).toHaveLength(0);
   });
   it("warns when account classification could leave closed reports incomplete", () => {
@@ -288,16 +306,12 @@ describe("month closing", () => {
       closeMonth(request, {
         monthEnd: review.monthEnd,
         revision: review.revision,
-        checks,
-        acknowledgedWarnings: review.warnings.map((w) => w.id),
       }).ok,
     ).toBe(false);
     expect(
       closeMonth(ctx(["reports.read", "records.update"]), {
         monthEnd: review.monthEnd,
         revision: review.revision,
-        checks,
-        acknowledgedWarnings: review.warnings.map((w) => w.id),
       }).ok,
     ).toBe(false);
   });

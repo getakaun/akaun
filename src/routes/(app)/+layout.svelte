@@ -56,7 +56,7 @@
           >Accounting closed through <strong>{closingBoundary}</strong>. Earlier
           accounting entries are protected.</span
         >
-        {#if data.canReadReports}<a href={resolve("/(app)/closing")}
+        {#if data.canReadReports}<a href={resolve("/(app)/accounts/closing")}
             >Month closing</a
           >{/if}
       </div>

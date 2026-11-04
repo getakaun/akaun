@@ -124,7 +124,6 @@
       <p class="page-sub">{DESCRIPTIONS[data.view]}</p>
     </div>
     <div class="topbar-right">
-      <a class="rep-export" href={resolve("/(app)/closing")}>Month closing</a>
       {#if csv}
         <!-- eslint-disable svelte/no-navigation-without-resolve -- an API download, not a page route. -->
         <a

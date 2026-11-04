@@ -51,15 +51,6 @@ const closeSchema = z
   .object({
     monthEnd: z.string(),
     revision: z.string().min(1).max(100),
-    checks: z
-      .object({
-        transactions: z.literal(true),
-        bank: z.literal(true),
-        adjustments: z.literal(true),
-        reports: z.literal(true),
-      })
-      .strict(),
-    acknowledgedWarnings: z.array(z.string().max(100)).max(100),
   })
   .strict();
 const reopenSchema = z
@@ -112,7 +103,7 @@ function review(ctx: AppContext, monthEnd: string): ClosingPreview {
   warnings.push({
     id: "completeness",
     message:
-      "Akaun cannot tell whether every receipt or bank statement has been supplied. Confirm completeness and review any timing differences yourself.",
+      "Figures include the receipts and bank statements recorded in Akaun. Automatic checks cannot identify documents that have not been supplied.",
   });
 
   const pendingStates = [
@@ -351,18 +342,12 @@ export function closeMonth(
         if (current.revision !== data.revision)
           return fail(
             "CONFLICT",
-            "The book changed since this review. Refresh the review and acknowledge the current checks and warnings.",
+            "The book changed since these checks ran. Run the checks again before confirming the close.",
           );
         if (!current.integrity.ok)
           return fail(
             "REFUSED",
             "The ledger integrity check failed. Resolve the accounting errors before closing.",
-          );
-        const acknowledged = new Set(data.acknowledgedWarnings);
-        if (current.warnings.some((warning) => !acknowledged.has(warning.id)))
-          return fail(
-            "REFUSED",
-            "Acknowledge every current warning before closing.",
           );
         setSetting(tx, CLOSED_THROUGH_KEY, data.monthEnd);
         recordAudit(tx, {
@@ -373,9 +358,13 @@ export function closeMonth(
           changes: [
             { field: "closingAction", before: null, after: "close" },
             { field: "closedThrough", before, after: data.monthEnd },
-            { field: "reviewChecks", before: null, after: data.checks },
             {
-              field: "acknowledgedWarnings",
+              field: "automatedChecks",
+              before: null,
+              after: { completedMonth: true, ...current.integrity },
+            },
+            {
+              field: "closingNotices",
               before: null,
               after: current.warnings,
             },

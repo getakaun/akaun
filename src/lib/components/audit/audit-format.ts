@@ -155,6 +155,8 @@ function nameOf(map: NameMap, value: unknown): string {
 const FIELD_LABELS: Record<string, string> = {
   closedThrough: "Closed through",
   closingAction: "Closing action",
+  automatedChecks: "Automatic checks",
+  closingNotices: "Closing notices",
   reviewChecks: "Review acknowledgments",
   acknowledgedWarnings: "Acknowledged warnings",
   dateCorrectionReason: "Date correction reason",

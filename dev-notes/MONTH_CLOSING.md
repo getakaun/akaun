@@ -16,7 +16,7 @@ Close/reopen use existing append-only audit rows (`settings`, recordId `closing`
 
 ## Enforcing the boundary
 
-`server/closing/policy.ts` is the common policy and typed refusal. `queries/ledger.ts` guards insert/update/delete inside immediate SQLite transactions. Updates compare actual old/new financial fields and movements, so forms may resend unchanged values while saving an annotation. Both original and proposed dates are checked. Numbering and movement writes remain inside the transaction.
+`server/closing/policy.ts` is the common policy and typed refusal. `queries/ledger.ts` guards insert/update/delete inside immediate SQLite transactions. Every update checks both original and proposed dates, including metadata-only and unchanged patches. Attachment mutations check the parent entry date; posted-invoice edits check the linked posting date. Delayed OCR leaves closed stored text untouched; derived search indexes can still be rebuilt. Numbering and movement writes remain inside the transaction.
 
 Services retain their original typed refusals while combining financial mutations and audit writes atomically. Compound invoice/import/reimbursement/correction operations let the closed-period exception unwind the outer transaction before application wrappers turn it into REFUSED. Import cleanup restores its original receipt location. Success events are deferred until commit. SQLite BUSY/LOCKED failures are returned as conflicts at the application boundary without automatic retries.
 
@@ -35,3 +35,5 @@ New isolated tests cover policy boundaries, no-op edits, numbering/transaction r
 The plan, contracts and maintainer UI validation scenarios are in [specs/008-month-closing](../specs/008-month-closing/quickstart.md).
 
 The canonical UI address is `/accounts/closing`; `/closing` redirects for existing bookmarks. Month selection uses a custom Popover month grid, styled like the existing DatePicker, and supports constrained months plus year navigation. Shared Button, Textarea, StatusBadge and detail-card/page-scroll primitives supply the app’s sizing, spacing, focus and theme behavior. The close request is only `{monthEnd, revision}`; automated check evidence is recomputed and audited by the server.
+
+The shared read contract explicitly adds `RecordView.periodClosedThrough: string | null`, derived once per batch. Invoice views and statement selection metadata also expose period closure. Existing `locked`/`lockedReason` remain dependency-only, preserving settlement/reconciliation logic. Orange month-close locks take precedence over gray dependency locks, with “Month closed — reopen to edit” as the tooltip. The app layout shares the reactive SSE boundary through per-layout context; a live null boundary means reopened and overrides stale DTO flags. Fields, correction dialogs and attachment upload/delete handlers all respect this state. Viewing/downloading remains available.

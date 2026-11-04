@@ -1,4 +1,5 @@
 import { withClosingRefusal } from "./closing-refusal.js";
+import { ClosedPeriodError } from "../closing/policy.js";
 import { z } from "zod";
 import {
   AccountType,
@@ -188,10 +189,23 @@ export function updateInvoice(
   raw: unknown,
   expectedVersion?: string,
 ): AppResult<InvoiceWritten> {
+  return withClosingRefusal(() =>
+    updateInvoiceOperation(ctx, id, raw, expectedVersion),
+  );
+}
+
+function updateInvoiceOperation(
+  ctx: AppContext,
+  id: number,
+  raw: unknown,
+  expectedVersion?: string,
+): AppResult<InvoiceWritten> {
   const refused = requirePermissions(ctx, ["invoices.update"]);
   if (refused) return refused;
   const invoice = getInvoice(ctx.db, id);
   if (!invoice) return missing("That invoice no longer exists.");
+  if (invoice.periodClosedThrough)
+    throw new ClosedPeriodError(invoice.periodClosedThrough);
   if (invoice.status === InvoiceStatus.Cancelled)
     return fail(
       "REFUSED",

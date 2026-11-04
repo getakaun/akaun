@@ -1,14 +1,10 @@
 <script lang="ts">
 	import { createResourceStream, mergeById } from '$lib/sse.js';
 	import { fly } from 'svelte/transition';
-	import {
-		Search,
-		Plus,
-		SlidersHorizontal,
-		X,
-		FileText
-	} from '@lucide/svelte';
+	import { Search, Plus, SlidersHorizontal, X, FileText } from '@lucide/svelte';
 	import StatusBadge from '$lib/components/ui/StatusBadge.svelte';
+	import RecordLock from '$lib/components/ledger/RecordLock.svelte';
+	import { getClosingBoundary, periodClosedThroughFor } from '$lib/closing-context.js';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import StatCard from '$lib/components/ui/StatCard.svelte';
 	import DateRangeFilter from '$lib/components/ui/DateRangeFilter.svelte';
@@ -26,16 +22,10 @@
 
 	type PageData = ReturnType<typeof loadInvoicesPage>;
 
-	let {
-		data,
-	}: { data: PageData } = $props();
+	let { data }: { data: PageData } = $props();
 
-	// Local reactive list — updated by SSE events and re-synced on SvelteKit data reload
-	// svelte-ignore state_referenced_locally
-	let invoices = $state(data.invoices);
-	$effect(() => {
-		invoices = data.invoices;
-	});
+	// Writable-derived: SSE patches the list and a fresh load replaces it.
+	let invoices = $derived(data.invoices);
 
 	// --- State ---
 	let searchRaw = $state('');
@@ -105,6 +95,14 @@
 	// a draft, a cancelled invoice is cancelled, and everything else is either
 	// paid or still waiting.
 	type Invoice = (typeof data.invoices)[0];
+	const closingBoundary = getClosingBoundary();
+	function invoicePeriodClosed(inv: Invoice): string | null {
+		return periodClosedThroughFor(
+			inv.ledgerRecordId === null ? null : inv.issueDate,
+			inv.periodClosedThrough,
+			closingBoundary
+		);
+	}
 	function isDraft(inv: Invoice): boolean {
 		return inv.status === InvoiceStatus.Draft;
 	}
@@ -218,10 +216,8 @@
 
 	createResourceStream<InvoiceStreamMsg>('/api/invoices/stream', (msg) => {
 		if (msg.type === 'invoice-update') invoices = mergeById(invoices, [msg.item]);
-		else if (msg.type === 'invoice-delete')
-			invoices = invoices.filter((inv) => inv.id !== msg.id);
+		else if (msg.type === 'invoice-delete') invoices = invoices.filter((inv) => inv.id !== msg.id);
 	});
-
 </script>
 
 <div class="screen" style="position:relative;">
@@ -236,7 +232,9 @@
 		<div class="topbar-right">
 			<div class="search-box">
 				<div style="position:relative; display:flex; align-items:center;">
-					<span style="position:absolute; left:10px; color:var(--muted-foreground); display:flex; pointer-events:none;">
+					<span
+						style="position:absolute; left:10px; color:var(--muted-foreground); display:flex; pointer-events:none;"
+					>
 						<Search size={15} />
 					</span>
 					<Input
@@ -317,7 +315,7 @@
 			<!-- Toolbar -->
 			<div class="toolbar">
 				<div class="status-tabs">
-					{#each [['all', 'All'], ['draft', 'Draft'], ['sent', 'Sent'], ['paid', 'Paid'], ['cancelled', 'Cancelled']] as [id, label]}
+					{#each [['all', 'All'], ['draft', 'Draft'], ['sent', 'Sent'], ['paid', 'Paid'], ['cancelled', 'Cancelled']] as [id, label] (id)}
 						<button
 							class="status-tab"
 							class:active={statusTab === id && !overdueOnly}
@@ -397,11 +395,7 @@
 								style="cursor:pointer; user-select:none;"
 							>
 								<span class="th-inner"
-									>Status {sort.key === 'status'
-										? sort.dir === 'asc'
-											? '↑'
-											: '↓'
-										: ''}</span
+									>Status {sort.key === 'status' ? (sort.dir === 'asc' ? '↑' : '↓') : ''}</span
 								>
 							</th>
 							<th
@@ -410,20 +404,12 @@
 								style="cursor:pointer; user-select:none;"
 							>
 								<span class="th-inner"
-									>Date {sort.key === 'issueDate'
-										? sort.dir === 'asc'
-											? '↑'
-											: '↓'
-										: ''}</span
+									>Date {sort.key === 'issueDate' ? (sort.dir === 'asc' ? '↑' : '↓') : ''}</span
 								>
 							</th>
 							<th onclick={() => onSort('dueDate')} style="cursor:pointer; user-select:none;">
 								<span class="th-inner"
-									>Due {sort.key === 'dueDate'
-										? sort.dir === 'asc'
-											? '↑'
-											: '↓'
-										: ''}</span
+									>Due {sort.key === 'dueDate' ? (sort.dir === 'asc' ? '↑' : '↓') : ''}</span
 								>
 							</th>
 							<th
@@ -432,17 +418,13 @@
 								style="cursor:pointer; user-select:none;"
 							>
 								<span class="th-inner"
-									>Amount {sort.key === 'mainAmount'
-										? sort.dir === 'asc'
-											? '↑'
-											: '↓'
-										: ''}</span
+									>Amount {sort.key === 'mainAmount' ? (sort.dir === 'asc' ? '↑' : '↓') : ''}</span
 								>
 							</th>
 						</tr>
 					</thead>
 					<tbody>
-						{#each filtered as inv}
+						{#each filtered as inv (inv.id)}
 							<tr
 								class="exp-row"
 								onclick={(ev) => {
@@ -454,7 +436,11 @@
 								<td class="td-primary">
 									<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the href comes from resolve(); the rule cannot see through the helper call. -->
 									<a class="cell-item row-link" href={invoiceHref(inv.id)}>
-										<span class="cell-itemname">{inv.contactName || '—'}</span>
+										<span class="cell-itemname"
+											>{inv.contactName || '—'}<RecordLock
+												periodClosedThrough={invoicePeriodClosed(inv)}
+											/></span
+										>
 										<span class="cell-itemnum">{inv.invoiceNumber}</span>
 									</a>
 								</td>
@@ -476,7 +462,9 @@
 									{/if}
 								</td>
 								<td class="td-amount" data-label="Amount">
-									<span class="amount-num">{mainCurrencySymbol()} {formatMoney(inv.mainAmount)}</span>
+									<span class="amount-num"
+										>{mainCurrencySymbol()} {formatMoney(inv.mainAmount)}</span
+									>
 									{#if inv.currency !== mainCurrency()}
 										<span class="amount-orig"
 											>{inv.currency} {formatCurrencyAmount(inv.total, inv.currency)}</span
@@ -527,19 +515,19 @@
 
 <!-- Mobile filter sheet -->
 <Sheet.Root bind:open={mobileFilterOpen}>
-		<Sheet.Content
-			side="bottom"
-			style="border-radius:16px 16px 0 0; max-height:85vh; overflow-y:auto; padding:20px 20px calc(20px + var(--safe-bottom));"
+	<Sheet.Content
+		side="bottom"
+		style="border-radius:16px 16px 0 0; max-height:85vh; overflow-y:auto; padding:20px 20px calc(20px + var(--safe-bottom));"
+	>
+		<div
+			style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;"
 		>
-			<div
-				style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;"
-			>
-				<div style="font-size:15px; font-weight:600;">Filters</div>
-				<Sheet.Close class="sheet-close"><X size={16} /></Sheet.Close>
-			</div>
-			<DateRangeFilter variant="sheet" bind:from={dateFrom} bind:to={dateTo} />
-			<Button class="w-full" onclick={() => (mobileFilterOpen = false)}>Show results</Button>
-		</Sheet.Content>
+			<div style="font-size:15px; font-weight:600;">Filters</div>
+			<Sheet.Close class="sheet-close"><X size={16} /></Sheet.Close>
+		</div>
+		<DateRangeFilter variant="sheet" bind:from={dateFrom} bind:to={dateTo} />
+		<Button class="w-full" onclick={() => (mobileFilterOpen = false)}>Show results</Button>
+	</Sheet.Content>
 </Sheet.Root>
 
 <style>

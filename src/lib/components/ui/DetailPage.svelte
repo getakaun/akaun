@@ -23,6 +23,7 @@
 		dirty = false,
 		editing = false,
 		saving = false,
+		saveDisabled = false,
 		saveLabel = 'Save changes',
 		dirtyNote = 'Unsaved changes',
 		onsave,
@@ -42,6 +43,7 @@
 		 */
 		editing?: boolean;
 		saving?: boolean;
+		saveDisabled?: boolean;
 		saveLabel?: string;
 		dirtyNote?: string;
 		onsave?: () => void;
@@ -113,7 +115,7 @@
 						type="button"
 						class="sheet-btn sheet-btn-primary"
 						onclick={() => onsave?.()}
-						disabled={saving || !dirty}
+						disabled={saving || !dirty || saveDisabled}
 					>
 						{saving ? 'Saving…' : saveLabel}
 					</button>

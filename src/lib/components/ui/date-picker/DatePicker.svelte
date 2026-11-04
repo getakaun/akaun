@@ -54,6 +54,9 @@
 
 	let dateValue = $state<DateValue | undefined>(toDateValue(value));
 	let open = $state(false);
+	$effect(() => {
+		if (disabled) open = false;
+	});
 
 	// Sync inward: when parent clears value (e.g. filter reset), clear internal state
 	$effect(() => {
@@ -77,13 +80,14 @@
 	const minValue = $derived(min ? parseDate(min) : undefined);
 
 	function clear() {
+		if (disabled) return;
 		dateValue = undefined;
 		value = '';
 		onchange?.('');
 	}
 
 	function handleSelect(v: DateValue | undefined) {
-		if (!v) return;
+		if (disabled || !v) return;
 		dateValue = v;
 		value = v.toString();
 		onchange?.(value);
@@ -98,7 +102,7 @@
 			{disabled}
 			aria-labelledby={labelledBy}
 			class={cn(
-				"border-input flex h-9 w-full items-center gap-2 rounded-md border bg-card px-3 text-[13.5px] outline-none transition-[color,box-shadow] disabled:cursor-not-allowed disabled:opacity-50",
+				'border-input flex h-9 w-full items-center gap-2 rounded-md border bg-card px-3 text-[13.5px] outline-none transition-[color,box-shadow] disabled:cursor-not-allowed disabled:opacity-50',
 				focusRingClass,
 				focusRingOpenClass
 			)}
@@ -108,12 +112,7 @@
 			{displayLabel}
 		</Popover.Trigger>
 		<Popover.Content align="start" class={cn('w-auto p-0', popoverClass)}>
-			<Calendar
-				type="single"
-				value={dateValue}
-				{minValue}
-				onValueChange={handleSelect}
-			/>
+			<Calendar type="single" value={dateValue} {minValue} onValueChange={handleSelect} />
 		</Popover.Content>
 	</Popover.Root>
 	{#if clearable && dateValue && !disabled}

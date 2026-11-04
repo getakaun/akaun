@@ -19,9 +19,11 @@ import {
   invoiceSearchText,
   contacts,
   ledgerMovements,
+  ledgerRecords,
   quotations,
 } from "../db/schema.js";
 import { nextNumber } from "../running-number.js";
+import { assertDatesOpen, closedThrough } from "../closing/policy.js";
 import { AccountSubType, InvoiceStatus, QuotationStatus } from "$lib/enums.js";
 import { localToday } from "$lib/local-date.js";
 import {
@@ -296,6 +298,28 @@ const invoiceWithContact = {
   mainAmount: sql<number>`${invoices.total} * ${invoices.exchangeRate}`,
 };
 
+/** Only posted documents belong to the accounting period being frozen. */
+function closedInvoicePostings(
+  db: Db,
+  rows: { ledgerRecordId: number | null }[],
+): Map<number, string> {
+  const boundary = closedThrough(db as LedgerDb);
+  const ids = rows.flatMap((row) =>
+    row.ledgerRecordId === null ? [] : [row.ledgerRecordId],
+  );
+  if (!boundary || !ids.length) return new Map();
+  return new Map(
+    db
+      .select({ id: ledgerRecords.id })
+      .from(ledgerRecords)
+      .where(
+        and(inArray(ledgerRecords.id, ids), lte(ledgerRecords.date, boundary)),
+      )
+      .all()
+      .map((row) => [row.id, boundary]),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // List
 // ---------------------------------------------------------------------------
@@ -349,9 +373,18 @@ export function listInvoices(db: Db, filters: InvoiceFilters = {}) {
     .all();
 
   const states = paymentStatesFor(db, rows);
+  const closedPostings = closedInvoicePostings(db, rows);
   const withState = rows.map((row) => {
     const state = states.get(row.id)!;
-    return { ...row, ...state, isOverdue: deriveOverdue(row, state.paid) };
+    return {
+      ...row,
+      ...state,
+      periodClosedThrough:
+        row.ledgerRecordId === null
+          ? null
+          : (closedPostings.get(row.ledgerRecordId) ?? null),
+      isOverdue: deriveOverdue(row, state.paid),
+    };
   });
 
   return overdueOnly ? withState.filter((row) => row.isOverdue) : withState;
@@ -450,6 +483,10 @@ export function getInvoice(db: Db, id: number) {
   return {
     ...row,
     ...state,
+    periodClosedThrough:
+      row.ledgerRecordId === null
+        ? null
+        : (closedInvoicePostings(db, [row]).get(row.ledgerRecordId) ?? null),
     lines,
     settlements,
     isOverdue: deriveOverdue(row, state.paid),
@@ -544,49 +581,63 @@ export function updateInvoice(
   userId: number,
   patch: InvoicePatch,
 ) {
-  return db.transaction((tx) => {
-    const existing = tx
-      .select()
-      .from(invoices)
-      .where(eq(invoices.id, id))
-      .get();
-    if (!existing) return null;
+  return db.transaction(
+    (tx) => {
+      const existing = tx
+        .select()
+        .from(invoices)
+        .where(eq(invoices.id, id))
+        .get();
+      if (!existing) return null;
 
-    let totalsUpdate: SalesTotals | null = null;
-    if (patch.lines) {
-      totalsUpdate = computeTotals(patch.lines);
-      tx.delete(invoiceLines).where(eq(invoiceLines.invoiceId, id)).run();
-      tx.insert(invoiceLines)
-        .values(lineRows(patch.lines).map((row) => ({ ...row, invoiceId: id })))
-        .run();
-    }
+      if (existing.ledgerRecordId !== null) {
+        const posting = tx
+          .select({ date: ledgerRecords.date })
+          .from(ledgerRecords)
+          .where(eq(ledgerRecords.id, existing.ledgerRecordId))
+          .get();
+        if (posting) assertDatesOpen(tx as LedgerDb, [posting.date]);
+      }
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { lines: _lines, ...headerPatch } = patch;
-    const setValues = {
-      ...headerPatch,
-      ...(totalsUpdate ?? {}),
-      updatedBy: userId,
-      updatedAt: new Date().toISOString(),
-    };
+      let totalsUpdate: SalesTotals | null = null;
+      if (patch.lines) {
+        totalsUpdate = computeTotals(patch.lines);
+        tx.delete(invoiceLines).where(eq(invoiceLines.invoiceId, id)).run();
+        tx.insert(invoiceLines)
+          .values(
+            lineRows(patch.lines).map((row) => ({ ...row, invoiceId: id })),
+          )
+          .run();
+      }
 
-    tx.update(invoices).set(setValues).where(eq(invoices.id, id)).run();
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { lines: _lines, ...headerPatch } = patch;
+      const setValues = {
+        ...headerPatch,
+        ...(totalsUpdate ?? {}),
+        updatedBy: userId,
+        updatedAt: new Date().toISOString(),
+      };
 
-    reindexInvoice(tx, id);
-    const updatedRow = tx
-      .select()
-      .from(invoices)
-      .where(eq(invoices.id, id))
-      .get();
-    recordAudit(tx, {
-      recordType: "invoice",
-      recordId: id,
-      userId,
-      action: "update",
-      changes: diffRecords(existing, updatedRow),
-    });
-    return getInvoice(tx, id)!;
-  });
+      tx.update(invoices).set(setValues).where(eq(invoices.id, id)).run();
+
+      reindexInvoice(tx, id);
+      const updatedRow = tx
+        .select()
+        .from(invoices)
+        .where(eq(invoices.id, id))
+        .get();
+      recordAudit(tx, {
+        recordType: "invoice",
+        recordId: id,
+        userId,
+        action: "update",
+        changes: diffRecords(existing, updatedRow),
+      });
+      return getInvoice(tx, id)!;
+    },
+    { behavior: "immediate" },
+  );
 }
 
 // ---------------------------------------------------------------------------

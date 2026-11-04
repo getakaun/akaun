@@ -10,6 +10,10 @@ import {
   setExtractedText,
 } from "$lib/server/queries/ledger.js";
 import { permissionForKind } from "$lib/server/ledger/record-permissions.js";
+import {
+  ClosedPeriodError,
+  closedPeriodReason,
+} from "$lib/server/closing/policy.js";
 import { recordAudit } from "$lib/server/audit.js";
 import { emitRecordUpdate } from "$lib/server/services/ledger.js";
 import { extractAttachmentsText } from "$lib/server/extraction/attachment-text.js";
@@ -58,6 +62,8 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!can(locals, permissionForKind(record.kind, "update"))) {
     return forbidden();
   }
+  if (record.periodClosedThrough)
+    return refused(new ClosedPeriodError(record.periodClosedThrough).message);
 
   const formData = await request.formData();
   const file = formData.get("file");
@@ -80,10 +86,27 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   let attachment;
   try {
     finalPath = moveToRecordStorage(finalPath, record.date);
-    attachment = addAttachment(db, id, finalPath, displayName(finalPath));
+    attachment = db.transaction(
+      (tx) => {
+        const added = addAttachment(tx, id, finalPath, displayName(finalPath));
+        recordAudit(tx, {
+          recordType: "record",
+          recordId: id,
+          userId: locals.user!.id,
+          action: "update",
+          changes: [
+            { field: "attachments", before: null, after: added.displayName },
+          ],
+        });
+        return added;
+      },
+      { behavior: "immediate" },
+    );
   } catch (e) {
     // No row points at the upload, so remove it wherever it got to.
     releaseIfUnreferenced(db, finalPath);
+    const reason = closedPeriodReason(e);
+    if (reason) return refused(reason);
     throw e;
   }
 
@@ -100,13 +123,6 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     // Best-effort: an attachment must still save even if it can't be indexed.
   }
 
-  recordAudit(db, {
-    recordType: "record",
-    recordId: id,
-    userId: locals.user!.id,
-    action: "update",
-    changes: [{ field: "attachments", before: null, after: attachment.displayName }],
-  });
   emitRecordUpdate(db, id);
 
   return Response.json(attachment, { status: 201 });

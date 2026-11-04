@@ -1,7 +1,14 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ClosedPeriodError } from "$lib/server/closing/policy.js";
 
 /**
  * Opening an attachment: it is found by its id, it must belong to the record
@@ -20,15 +27,20 @@ vi.mock("$lib/server/env.js", () => ({
   DATABASE_PATH: "/dev/null",
   OCR_CACHE_PATH: "/dev/null",
 }));
-vi.mock("$lib/server/db/client.js", () => ({ db: {} }));
+vi.mock("$lib/server/db/client.js", () => ({
+  db: { transaction: (write: (tx: unknown) => unknown) => write({}) },
+}));
 
-const allowed = { view: true };
+const allowed = { view: true, delete: true };
 vi.mock("$lib/server/permissions.js", async () => {
   // The fake answers in the old grid's terms; each leaf is asked as the
   // (resource, action) it came from.
-  const { legacyPairOf } = await import("$lib/server/permissions/legacy-map.js");
+  const { legacyPairOf } =
+    await import("$lib/server/permissions/legacy-map.js");
   const allow = (resource: string, action: string) =>
-    resource === "records" && action === "view" && allowed.view;
+    resource === "records" &&
+    ((action === "view" && allowed.view) ||
+      (action === "delete" && allowed.delete));
   return {
     can: (_locals: unknown, permission: string) =>
       allow(...legacyPairOf(permission)),
@@ -53,17 +65,22 @@ const attachments: Record<
     displayName: "receipt.pdf",
   },
 };
+const deleteAttachment = vi.fn(() => false);
+const recordAudit = vi.fn();
+const emitRecordUpdate = vi.fn();
 vi.mock("$lib/server/queries/ledger.js", () => ({
   getRecord: (_db: unknown, id: number) => records[id],
   getAttachment: (_db: unknown, id: number) => attachments[id] ?? null,
-  deleteAttachment: () => false,
+  deleteAttachment: (...args: unknown[]) => deleteAttachment(...(args as [])),
 }));
-vi.mock("$lib/server/audit.js", () => ({ recordAudit: () => {} }));
+vi.mock("$lib/server/audit.js", () => ({
+  recordAudit: (...args: unknown[]) => recordAudit(...args),
+}));
 vi.mock("$lib/server/services/ledger.js", () => ({
-  emitRecordUpdate: () => {},
+  emitRecordUpdate: (...args: unknown[]) => emitRecordUpdate(...args),
 }));
 
-const { GET } = await import("./[attachmentId]/+server.js");
+const { GET, DELETE } = await import("./[attachmentId]/+server.js");
 const PDF = "%PDF-1.4 receipt";
 
 function open(id: string, attachmentId: string, user: unknown = { id: 1 }) {
@@ -75,10 +92,34 @@ function open(id: string, attachmentId: string, user: unknown = { id: 1 }) {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   allowed.view = true;
+  allowed.delete = true;
+  deleteAttachment.mockImplementation(() => false);
   const abs = join(sandbox, "storage", attachments[7].filename);
   mkdirSync(dirname(abs), { recursive: true });
   writeFileSync(abs, PDF);
+});
+
+describe("DELETE /api/records/[id]/attachments/[attachmentId]", () => {
+  it("keeps the file and emits no success activity when the record's month is closed", async () => {
+    deleteAttachment.mockImplementation(() => {
+      throw new ClosedPeriodError("2026-10-31");
+    });
+    const response = await (DELETE as (event: never) => Promise<Response>)({
+      locals: { user: { id: 1 } },
+      params: { id: "42", attachmentId: "7" },
+    } as never);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      reason: expect.stringMatching(/closed through 2026-10-31/),
+    });
+    expect(
+      readFileSync(join(sandbox, "storage", attachments[7].filename), "utf8"),
+    ).toBe(PDF);
+    expect(recordAudit).not.toHaveBeenCalled();
+    expect(emitRecordUpdate).not.toHaveBeenCalled();
+  });
 });
 
 describe("GET /api/records/[id]/attachments/[attachmentId]", () => {

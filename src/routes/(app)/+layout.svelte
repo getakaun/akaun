@@ -3,6 +3,7 @@
   import { resolve } from "$app/paths";
   import { createResourceStream } from "$lib/sse.js";
   import type { ClosingStatus } from "$lib/closing.js";
+  import { provideClosingBoundary } from "$lib/closing-context.js";
   import { onNavigate } from "$app/navigation";
   import { Menu } from "@lucide/svelte";
   import Sidebar from "$lib/components/ui/Sidebar.svelte";
@@ -16,9 +17,22 @@
     children,
   }: { data: LayoutData; children: import("svelte").Snippet } = $props();
   let drawerOpen = $state(false);
-  let closingBoundary = $derived(data.closedThrough);
+  // SSR supplies the first boundary. Once the stream connects, its snapshot and
+  // changes remain authoritative across navigations, including an explicit null
+  // after reopening; inherited page data must not restore an older boundary.
+  let streamedClosingStatus = $state<ClosingStatus | null>(null);
+  const closingBoundary = $derived(
+    streamedClosingStatus === null
+      ? data.closedThrough
+      : streamedClosingStatus.closedThrough,
+  );
+  provideClosingBoundary({
+    get closedThrough() {
+      return closingBoundary;
+    },
+  });
   createResourceStream<ClosingStatus>("/api/closing/stream", (status) => {
-    closingBoundary = status.closedThrough;
+    streamedClosingStatus = status;
   });
 
   // Make the global main currency available to formatMoney/AmountInput everywhere.

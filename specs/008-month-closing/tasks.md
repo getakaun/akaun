@@ -23,7 +23,7 @@
 ## Phase 4: US2 Protect alternate writes and reports
 
 **Goal**: Prevent financial changes through ordinary, specialist and master-data paths.
-**Independent test**: Reclassifications, contact corrections, imports and voids refuse atomically; annotations/later payments remain available.
+**Independent test**: Reclassifications, contact corrections, imports and voids refuse atomically; closed annotations refuse and later payments remain available.
 
 - [x] T009 [US2] Write failing master-data and application refusal/rollback tests in new closing-focused service/application test files.
 - [x] T010 [US2] Protect account classification, partner roles and merges in src/lib/server/services/accounts.ts, services/contacts.ts and queries/contacts.ts; honor closing in startup repairs.
@@ -57,3 +57,10 @@ Parallel examples: closing page and policy tests edit different files; account/c
 - [x] T020 [US1] Remove manual acknowledgment inputs, retain automated guards and record server-derived evidence in src/lib/server/application/closing.ts and shared closing DTOs.
 - [x] T021 [US1] Move the workspace to src/routes/(app)/accounts/closing, preserve /closing redirect, add the Accounts main action and replace native month controls with src/lib/components/ui/month-picker/MonthPicker.svelte using existing app styles.
 - [x] T022 Run focused and required checks, update docs/PR description, and push the refinement to PR #62.
+
+## Follow-up: Freeze complete entries and show orange close locks
+
+- [x] T023 Update accepted spec, explicit shared DTO extension and failing policy/write-path regression tests.
+- [x] T024 Freeze all ledger fields, movement labels, attachments, delayed OCR and linked posted-invoice edits inside write transactions; preserve cleanup/refusal/atomicity and later payments.
+- [x] T025 Add orange month-close locks with gray dependency-lock fallback, full read-only forms/attachments and immediate SSE close/reopen propagation.
+- [x] T026 Update user/maintainer docs, run focused and required gates, review and push PR #62.

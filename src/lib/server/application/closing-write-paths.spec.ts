@@ -25,7 +25,12 @@ import * as schema from "../db/schema.js";
 import type { LedgerDb, RecordView } from "../ledger/types.js";
 import { localsFor } from "../permissions/test-locals.js";
 import { createAccount } from "../services/accounts.js";
-import { createInvoice, getInvoice } from "../queries/invoices.js";
+import {
+  createInvoice,
+  getInvoice,
+  listInvoices,
+  updateInvoice as updateInvoiceRow,
+} from "../queries/invoices.js";
 import { balanceSheetReport, profitLossReport } from "../queries/reports.js";
 import { confirmImportRow } from "../services/import.js";
 import { accountEvents, ledgerEvents } from "../ledger/events.js";
@@ -34,7 +39,9 @@ import { importEvents } from "../import/events.js";
 import { SETTING_KEYS, setSetting } from "../settings.js";
 import type { AppContext } from "./context.js";
 import { createRecord, settlePayment } from "./records.js";
-import { issueInvoice, voidInvoice } from "./sales.js";
+import { issueInvoice, updateInvoice, voidInvoice } from "./sales.js";
+import { attachFile } from "./attachments.js";
+import { getRecord } from "../queries/ledger.js";
 import {
   correctRecordDate,
   prepareRecordDateCorrection,
@@ -257,6 +264,147 @@ afterEach(() => {
 });
 
 describe("month closing across alternate accounting write paths", () => {
+  it("preserves the payment lock when a settled record's closed month is reopened", () => {
+    const record = bill();
+    payment(record, "2026-11-02");
+    const paymentLock = getRecord(db, record.id)!;
+    expect(paymentLock.locked).toBe(true);
+    expect(paymentLock.periodClosedThrough).toBeNull();
+    close();
+    expect(getRecord(db, record.id)).toMatchObject({
+      locked: true,
+      lockedReason: paymentLock.lockedReason,
+      periodClosedThrough: "2026-10-31",
+    });
+    setSetting(db, SETTING_KEYS.accountingClosedThrough, "");
+    expect(getRecord(db, record.id)).toMatchObject({
+      locked: true,
+      lockedReason: paymentLock.lockedReason,
+      periodClosedThrough: null,
+    });
+  });
+
+  it.each([
+    { reference: "Corrected reference" },
+    { notes: "Corrected notes" },
+    { terms: "Corrected terms" },
+    { dueDate: "2026-11-30" },
+  ])("refuses closed posted invoice metadata edits: %j", (patch) => {
+    const sent = invoice(true);
+    close();
+    expectRefusedWithoutChanges(() => updateInvoice(ctx, sent.id, patch));
+  });
+
+  it("guards direct invoice header and line writes before any child is changed", () => {
+    const sent = invoice(true);
+    close();
+    const before = snapshot();
+    expect(() =>
+      updateInvoiceRow(db, sent.id, 1, {
+        notes: "Changed",
+        lines: [{ description: "Replacement", quantity: 1, unitPrice: 200 }],
+      }),
+    ).toThrow(/closed through 2026-10-31/i);
+    expect(snapshot()).toEqual(before);
+  });
+
+  it("reports posted invoice closure and permits old-date unposted draft edits and reopening", () => {
+    const draft = invoice();
+    const sent = invoice(true);
+    close();
+    expect(getInvoice(db, sent.id)?.periodClosedThrough).toBe("2026-10-31");
+    expect(
+      listInvoices(db).find((row) => row.id === sent.id)?.periodClosedThrough,
+    ).toBe("2026-10-31");
+    expect(getInvoice(db, draft.id)?.periodClosedThrough).toBeNull();
+    expect(updateInvoice(ctx, draft.id, { notes: "Still a draft" }).ok).toBe(
+      true,
+    );
+    setSetting(db, SETTING_KEYS.accountingClosedThrough, "");
+    expect(getInvoice(db, sent.id)?.periodClosedThrough).toBeNull();
+    expect(updateInvoice(ctx, sent.id, { notes: "Reopened" }).ok).toBe(true);
+  });
+
+  it("refuses attaching a file to a closed record without saving it", async () => {
+    const record = bill();
+    const root = mkdtempSync(join(tmpdir(), "akaun-closed-attachment-"));
+    roots.push(root);
+    let saved = false;
+    const store = new LocalBlobStore(root);
+    store.put = async () => {
+      saved = true;
+    };
+    const attachmentCtx = { ...ctx, storageRoot: root, store };
+    close();
+    const before = snapshot();
+    const result = await attachFile(attachmentCtx, {
+      recordId: record.id,
+      filename: "receipt.pdf",
+      contentBase64: Buffer.from("%PDF-1.4 receipt").toString("base64"),
+    });
+    expect(result).toMatchObject({ ok: false, code: "REFUSED" });
+    expect(saved).toBe(false);
+    expect(snapshot()).toEqual(before);
+  });
+
+  it("cleans up an MCP upload when its month closes while storage is awaited", async () => {
+    const record = bill();
+    const root = mkdtempSync(join(tmpdir(), "akaun-attachment-close-race-"));
+    roots.push(root);
+    const store = new LocalBlobStore(root);
+    const put = store.put.bind(store);
+    let key = "";
+    let before: ReturnType<typeof snapshot> | undefined;
+    store.put = async (storedKey, bytes) => {
+      await put(storedKey, bytes);
+      key = storedKey;
+      close();
+      before = snapshot();
+    };
+    const result = await attachFile(
+      { ...ctx, store, storageRoot: root },
+      {
+        recordId: record.id,
+        filename: "receipt.pdf",
+        contentBase64: Buffer.from("%PDF-1.4 receipt").toString("base64"),
+      },
+    );
+    expect(result).toMatchObject({ ok: false, code: "REFUSED" });
+    expect(snapshot()).toEqual(before);
+    expect(await store.stat(key)).toBeNull();
+  });
+
+  it("leaves frozen record text unchanged when attachment OCR completes after closing", async () => {
+    const record = bill();
+    const root = mkdtempSync(join(tmpdir(), "akaun-attachment-ocr-race-"));
+    roots.push(root);
+    let finishIndex!: (text: string) => void;
+    const indexed = new Promise<string>((resolve) => {
+      finishIndex = resolve;
+    });
+    const result = await attachFile(
+      {
+        ...ctx,
+        store: new LocalBlobStore(root),
+        storageRoot: root,
+        indexAttachments: () => indexed,
+      },
+      {
+        recordId: record.id,
+        filename: "receipt.pdf",
+        contentBase64: Buffer.from("%PDF-1.4 receipt").toString("base64"),
+      },
+    );
+    expect(result.ok).toBe(true);
+    close();
+    const before = snapshot();
+    finishIndex("New OCR text");
+    await indexed;
+    await Promise.resolve();
+    expect(getRecord(db, record.id)?.extractedText).toBeNull();
+    expect(snapshot()).toEqual(before);
+  });
+
   it("refuses issue of a closed-date draft without posting, numbering or success events", () => {
     const draft = invoice();
     close();

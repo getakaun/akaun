@@ -22,7 +22,7 @@ A bookkeeper reviews transactions, bank differences, adjustments and reports, th
 
 **Why this priority**: Prevent accidental changes to reviewed figures.
 
-**Independent Test**: Close October; October financial edits fail while November entries and payments against October invoices succeed.
+**Independent Test**: Close October; all October entry edits fail while November entries and payments against October invoices succeed.
 
 **Acceptance Scenarios**:
 
@@ -32,7 +32,7 @@ A bookkeeper reviews transactions, bank differences, adjustments and reports, th
 
 ### User Story 2 - Protect every accounting write path (Priority: P1)
 
-A user receives a clear refusal when an action would change protected accounting figures, regardless of how they submit it.
+A user receives a clear refusal when an action would change a protected entry or accounting figures, regardless of how they submit it.
 
 **Why this priority**: A lock with alternate routes around it gives false assurance.
 
@@ -41,7 +41,7 @@ A user receives a clear refusal when an action would change protected accounting
 **Acceptance Scenarios**:
 
 1. Given October closed, creating/deleting/recategorizing or moving a posting across its boundary is refused without partial changes.
-2. Given an unchanged financial field resent by a form, when only a description changes, then saving remains possible.
+2. Given a closed entry, changing only its description or resending unchanged fields is refused until reopening.
 3. Given a new November payment against an October invoice, when posted, then October amounts remain intact.
 4. Given a report-affecting account or partner roster change, when protected history would be affected, then it is refused.
 
@@ -75,9 +75,9 @@ An authorized person reopens from an earlier month with a reason, corrects entri
 - **FR-002**: Permit closing only through an elapsed calendar month end, after automated date, integrity and revision checks pass and one close confirmation.
 - **FR-003**: Block failed integrity checks; show non-blocking notices about pending relevant imports/drafts, bank differences, incomplete history and classification notes. Never infer completeness from uploaded data alone.
 - **FR-004**: Require distinct explicit permissions to close and reopen; delegated tokens/apps cannot exercise them in this release.
-- **FR-005**: Atomically protect additions, removals and financial updates through the boundary across all entry points. Check original and proposed dates, dependent postings, account/category, currency/rate and financial attribution.
+- **FR-005**: Atomically protect additions, removals and every stored entry field through the boundary across all entry points. Check original and proposed dates, dependent postings, account/category, currency/rate and financial attribution.
 - **FR-006**: Protect account classification and partner membership/attribution changes that alter closed-period reports.
-- **FR-007**: Permit non-financial annotations and attachments, non-posting drafts, later payments against closed obligations, and pure matching/allocations, retaining existing permissions and audit history.
+- **FR-007**: Freeze every stored transaction field, movement label, attachment addition/removal and posted-invoice field until reopening. Permit non-posting drafts, later payments against closed obligations, and pure matching/allocations that do not rewrite frozen entries, retaining existing permissions and audit history.
 - **FR-008**: Reopening from a month moves the boundary to the preceding month end (or unsets it when all protected history is reopened); require a reason and show the whole affected range.
 - **FR-009**: Keep append-only close/reopen history with actor, time, old/new boundary and review/reason evidence; show narrow history without exposing unrelated administration.
 - **FR-010**: Place month closing under Accounts, reachable from the Accounts main page without placing an action on individual account details, while clearly stating it covers all accounts. Use existing app buttons, cards and a custom popover month picker; preserve old closing links with a redirect. Show the boundary to signed-in entry users and report readers, with live updates and an actionable error for refused writes.
@@ -95,7 +95,7 @@ An authorized person reopens from an earlier month with a reason, corrects entri
 ### Measurable Outcomes
 
 - **SC-001**: Every protected-date financial mutation in the acceptance matrix is refused without changing the book.
-- **SC-002**: Later-period payments and non-financial annotations remain usable in all corresponding scenarios.
+- **SC-002**: Later-period payments and pure allocations remain usable; closed entry annotations, attachments and posted-invoice metadata refuse atomically until reopening.
 - **SC-003**: Every successful close/reopen has one retained history entry; unauthorized and stale actions have none.
 - **SC-004**: Closing uses one custom month selection, automatic checks and one confirmation, with no checklist or notice acknowledgments, without configuring fiscal periods or module locks.
 
@@ -105,3 +105,9 @@ An authorized person reopens from an earlier month with a reason, corrects entri
 - Existing business date conventions, financial queries, permissions and audit storage are reused.
 - A close protects accounting amounts/grouping, not immutable copies of live report presentation or historical aging.
 - Financial and permission rules require isolated test-first verification. UI uses static checks and maintainer review.
+
+## Accepted full freeze and lock appearance (2026-11-04)
+
+Closing freezes the complete entry, including description, contact, reference, remark, movement labels and attachment membership. It also freezes the linked posted invoice, including due date, notes and terms. No permission or credential bypasses closing. Background OCR must not rewrite frozen stored text. Reopening restores ordinary editing permissions and existing settlement/reconciliation restrictions. Later open-period payments and pure matching/allocation can still change derived paid/cleared state without rewriting the original entry.
+
+Use the application orange accent for month-close locks, with the tooltip “Month closed — reopen to edit”. Existing dependency locks remain gray; orange takes precedence when both apply. Closing/reopening propagates through the existing SSE boundary to active lists/forms without polling.

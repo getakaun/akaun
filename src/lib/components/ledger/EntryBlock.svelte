@@ -181,6 +181,7 @@
 	}
 
 	function selectDirection(side: SideDraft, next: string | null): void {
+		if (extraSidesReadOnly) return;
 		if (next === 'in' || next === 'out') side.direction = next;
 	}
 </script>
@@ -189,7 +190,9 @@
 	<div class="detail-card-head">
 		<span class="detail-card-title">Journal entry</span>
 		<span class="entry-state" class:off={difference !== 0}>
-			{difference === 0 ? 'Balanced' : `Out of balance by ${(Math.abs(difference) / 100).toFixed(2)}`}
+			{difference === 0
+				? 'Balanced'
+				: `Out of balance by ${(Math.abs(difference) / 100).toFixed(2)}`}
 		</span>
 	</div>
 	<p class="field-hint" style="margin:0 0 12px;">
@@ -254,8 +257,8 @@
 			<div class="entry-account">
 				{#if toAccountChoices.length === 0}
 					<p class="entry-note">
-						There is only one account to choose from, so there is no second account to
-						post to. Add another account first.
+						There is only one account to choose from, so there is no second account to post to. Add
+						another account first.
 					</p>
 				{:else}
 					<AccountSelect
@@ -316,8 +319,11 @@
 				<div class="entry-account">
 					<Select.Root
 						type="single"
+						disabled={extraSidesReadOnly}
 						value={side.accountId === null ? '' : String(side.accountId)}
-						onValueChange={(next) => (side.accountId = next ? Number(next) : null)}
+						onValueChange={(next) => {
+							if (!extraSidesReadOnly) side.accountId = next ? Number(next) : null;
+						}}
 					>
 						<Select.Trigger
 							class="w-full justify-between"
@@ -332,13 +338,22 @@
 						</Select.Trigger>
 						<Select.Content>
 							{#each canAdjust ? allAccounts : extraSideAccountChoices as account (account.id)}
-								<Select.Item value={String(account.id)} label={`${account.code} · ${account.name}`} />
+								<Select.Item
+									disabled={extraSidesReadOnly}
+									value={String(account.id)}
+									label={`${account.code} · ${account.name}`}
+								/>
 							{/each}
 						</Select.Content>
 					</Select.Root>
 				</div>
 				{#if canAdjust}
-					<Select.Root type="single" value={side.direction} onValueChange={(next) => selectDirection(side, next)}>
+					<Select.Root
+						type="single"
+						disabled={extraSidesReadOnly}
+						value={side.direction}
+						onValueChange={(next) => selectDirection(side, next)}
+					>
 						<Select.Trigger
 							class="entry-dir-select w-full justify-between"
 							aria-label="Debit or credit"
@@ -347,8 +362,8 @@
 							{side.direction === 'in' ? 'Dr' : 'Cr'}
 						</Select.Trigger>
 						<Select.Content>
-							<Select.Item value="in" label="Debit (Dr)" />
-							<Select.Item value="out" label="Credit (Cr)" />
+							<Select.Item disabled={extraSidesReadOnly} value="in" label="Debit (Dr)" />
+							<Select.Item disabled={extraSidesReadOnly} value="out" label="Credit (Cr)" />
 						</Select.Content>
 					</Select.Root>
 				{:else}

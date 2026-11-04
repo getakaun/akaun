@@ -15,7 +15,17 @@ import {
   users,
 } from "../db/schema.js";
 import type { LedgerDb, MovementDraft } from "../ledger/types.js";
-import { deleteRecord, insertRecord, updateRecord } from "../queries/ledger.js";
+import {
+  addAttachment,
+  deleteAttachment,
+  deleteRecord,
+  getRecord,
+  insertRecord,
+  listAttachments,
+  listRecords,
+  setExtractedText,
+  updateRecord,
+} from "../queries/ledger.js";
 import { getSetting, SETTING_KEYS, setSetting } from "../settings.js";
 import {
   assertDatesOpen,
@@ -154,43 +164,81 @@ describe("accounting close at the shared ledger write boundary", () => {
       /closed/i,
     );
   });
-  it("allows annotations and unchanged financial fields while preserving movement ids", () => {
+  it.each([
+    { description: "Paper and pens" },
+    { reference: "Receipt 12" },
+    { remark: "Reviewed" },
+    { extractedText: "New OCR text" },
+    { amount: 50, date: "2026-10-15" },
+    {},
+  ])("freezes every field including unchanged patches: %j", (patch) => {
+    const record = add();
+    const before = db.select().from(ledgerRecords).all();
+    const beforeMovements = movements();
+    setSetting(db, closeKey, "2026-10-31");
+    expect(() => updateRecord(db, record.id, 1, patch)).toThrow(/closed/i);
+    expect(db.select().from(ledgerRecords).all()).toEqual(before);
+    expect(movements()).toEqual(beforeMovements);
+    setSetting(db, closeKey, "");
+    expect(updateRecord(db, record.id, 1, patch)?.id).toBe(record.id);
+  });
+  it("freezes movement labels until reopening", () => {
     const record = add();
     const before = movements();
+    const labeled = sides().map((side) => ({ ...side, label: "Detail" }));
     setSetting(db, closeKey, "2026-10-31");
-    const after = updateRecord(
-      db,
-      record.id,
-      1,
-      {
-        amount: 50,
-        date: "2026-10-15",
-        currency: "USD",
-        exchangeRate: 1,
-        contactId: null,
-        supplierContactId: null,
-        expensePaymentSource: null,
-        description: "Paper and pens",
-        reference: "Receipt 12",
-        remark: "Reviewed",
-      },
-      [...sides()].reverse(),
+    expect(() => updateRecord(db, record.id, 1, {}, labeled)).toThrow(
+      /closed/i,
     );
-    expect(after?.description).toBe("Paper and pens");
     expect(movements()).toEqual(before);
-  });
-  it("allows a changed movement label without changing closed accounting amounts", () => {
-    const record = add();
-    setSetting(db, closeKey, "2026-10-31");
-    const labeled = sides().map((side) => ({
-      ...side,
-      label: "Stationery detail",
-    }));
+    setSetting(db, closeKey, "");
     updateRecord(db, record.id, 1, {}, labeled);
-    expect(movements().map((m) => m.label)).toEqual([
-      "Stationery detail",
-      "Stationery detail",
-    ]);
+    expect(movements().map((m) => m.label)).toEqual(["Detail", "Detail"]);
+  });
+  it("freezes attachment additions and removals until reopening", () => {
+    const record = add();
+    const attachment = addAttachment(db, record.id, "receipt.pdf", "Receipt");
+    setSetting(db, closeKey, "2026-10-31");
+    expect(() => addAttachment(db, record.id, "new.pdf", "New")).toThrow(
+      /closed/i,
+    );
+    expect(() => deleteAttachment(db, attachment.id)).toThrow(/closed/i);
+    expect(listAttachments(db, record.id)).toEqual([attachment]);
+    setSetting(db, closeKey, "");
+    expect(deleteAttachment(db, attachment.id)).toBe(true);
+    expect(addAttachment(db, record.id, "new.pdf", "New").recordId).toBe(
+      record.id,
+    );
+  });
+  it("does not rewrite frozen record text when delayed OCR completes", () => {
+    const record = add();
+    setExtractedText(db, record.id, "Original text");
+    const before = db.select().from(ledgerRecords).all();
+    setSetting(db, closeKey, "2026-10-31");
+    setExtractedText(db, record.id, "Late text");
+    expect(db.select().from(ledgerRecords).all()).toEqual(before);
+    setSetting(db, closeKey, "");
+    setExtractedText(db, record.id, "Late text");
+    expect(getRecord(db, record.id)?.extractedText).toBe("Late text");
+  });
+  it("derives month closure separately from settlement locks in list and detail", () => {
+    const record = add();
+    const open = add("2026-11-01");
+    setSetting(db, closeKey, "2026-10-31");
+    expect(getRecord(db, record.id)).toMatchObject({
+      periodClosedThrough: "2026-10-31",
+      locked: false,
+    });
+    expect(getRecord(db, open.id)).toMatchObject({
+      periodClosedThrough: null,
+      locked: false,
+    });
+    expect(
+      listRecords(db).records.find((r) => r.id === record.id)
+        ?.periodClosedThrough,
+    ).toBe("2026-10-31");
+    setSetting(db, closeKey, "");
+    expect(getRecord(db, record.id)?.periodClosedThrough).toBeNull();
   });
   it("refuses removed, added or resized movements", () => {
     const record = add();

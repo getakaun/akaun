@@ -9,6 +9,12 @@
 	import AttachmentManager, { type Attachment } from '$lib/components/ui/AttachmentManager.svelte';
 	import AuditTrail from '$lib/components/ui/AuditTrail.svelte';
 	import RecordForm from '$lib/components/ledger/RecordForm.svelte';
+	import RecordLock from '$lib/components/ledger/RecordLock.svelte';
+	import {
+		getClosingBoundary,
+		periodClosedThroughFor,
+		MONTH_CLOSED_REASON
+	} from '$lib/closing-context.js';
 	import ReimbursementDetails from './ReimbursementDetails.svelte';
 	import ReimbursementReversalDialog from './ReimbursementReversalDialog.svelte';
 	import ContactCorrectionDialog from './ContactCorrectionDialog.svelte';
@@ -40,6 +46,11 @@
 	// Writable-derived: a fresh server load replaces it, and a stream event can
 	// still patch it in place.
 	let record = $derived<RecordView>(data.record);
+	const closingBoundary = getClosingBoundary();
+	const periodClosedThrough = $derived(
+		periodClosedThroughFor(record.date, record.periodClosedThrough, closingBoundary)
+	);
+	const periodClosed = $derived(periodClosedThrough !== null);
 	let attachments = $derived<Attachment[]>(data.attachments as Attachment[]);
 	let settlementLinks = $derived<SettlementLink[]>(data.displayLinks);
 	let reimbursement = $derived(data.reimbursement);
@@ -64,6 +75,14 @@
 	let reversalGroupId = $state<number | null>(null);
 	let correctionSettlementId = $state<number | null>(null);
 	let auditTrailRef = $state<{ refresh: () => Promise<void> } | null>(null);
+	$effect(() => {
+		if (!periodClosed) return;
+		dateCorrectionOpen = false;
+		amountCorrectionOpen = false;
+		recipientCorrectionOpen = false;
+		deleteDialogOpen = false;
+		reversalGroupId = null;
+	});
 
 	const KIND_TITLES: Record<number, string> = {
 		[LedgerRecordKind.Expense]: 'Expense',
@@ -101,7 +120,11 @@
 			(record.kind === LedgerRecordKind.Expense || record.kind === LedgerRecordKind.Income)
 	);
 	const deleteBlockedReason = $derived(
-		fromInvoice ? 'Cancel the invoice instead' : historyDeleteReason ?? (record.locked ? (record.lockedReason ?? '') : null)
+		periodClosed
+			? MONTH_CLOSED_REASON
+			: fromInvoice
+				? 'Cancel the invoice instead'
+				: (historyDeleteReason ?? (record.locked ? (record.lockedReason ?? '') : null))
 	);
 	const isPayment = $derived(record.kind === LedgerRecordKind.Payment);
 	const paymentControl = $derived(
@@ -122,10 +145,13 @@
 			data.perms.correctPaymentRecipient &&
 			data.perms.add
 	);
-	const canCorrectContact = $derived(canCorrectPayee || (
-		record.kind === LedgerRecordKind.Expense && !reimbursement.generated &&
-		data.perms.change && data.perms.correctContact
-	));
+	const canCorrectContact = $derived(
+		canCorrectPayee ||
+			(record.kind === LedgerRecordKind.Expense &&
+				!reimbursement.generated &&
+				data.perms.change &&
+				data.perms.correctContact)
+	);
 	const creditPayment = $derived(
 		!!paymentControl &&
 			record.contactId !== null &&
@@ -151,6 +177,7 @@
 	);
 
 	async function save() {
+		if (periodClosed) return;
 		const saved = await formRef?.submit();
 		if (saved) {
 			record = saved;
@@ -159,6 +186,7 @@
 	}
 
 	async function remove() {
+		if (periodClosed) return;
 		error = '';
 		const res = await fetch(`/api/records/${record.id}`, { method: 'DELETE' });
 		if (!res.ok) {
@@ -293,6 +321,7 @@
 	backLabel="Records"
 	{dirty}
 	{saving}
+	saveDisabled={periodClosed}
 	onsave={save}
 	onrevert={() => formRef?.revert()}
 	dirtyNote={formRef?.blockedBy() ?? 'Unsaved changes'}
@@ -301,14 +330,19 @@
 		<RecordActions
 			canCorrectAmount={data.reimbursementAmountCorrection !== null}
 			amountBlockedReason={data.reimbursementAmountCorrection?.blockedReason ?? null}
+			blockedReason={periodClosed ? MONTH_CLOSED_REASON : null}
 			{canCorrectContact}
 			{canCorrectDate}
 			canDelete={data.perms.delete && !reimbursement.generated}
 			{deleteBlockedReason}
 			{dirty}
 			{saving}
-			dialogOpen={recipientCorrectionOpen || dateCorrectionOpen || amountCorrectionOpen || deleteDialogOpen}
+			dialogOpen={recipientCorrectionOpen ||
+				dateCorrectionOpen ||
+				amountCorrectionOpen ||
+				deleteDialogOpen}
 			onaction={(action) => {
+				if (periodClosed) return;
 				if (action === 'contact') recipientCorrectionOpen = true;
 				else if (action === 'date') dateCorrectionOpen = true;
 				else if (action === 'amount') amountCorrectionOpen = true;
@@ -319,7 +353,13 @@
 
 	{#snippet hero()}
 		<div class="detail-hero-eyebrow">
-			<span>{kindLabel}</span>
+			<span
+				>{kindLabel}<RecordLock
+					{periodClosedThrough}
+					locked={record.locked}
+					lockedReason={record.lockedReason}
+				/></span
+			>
 			<span>·</span>
 			<span>{formatDate(record.date)}</span>
 			{#if record.recordNumber}
@@ -357,7 +397,7 @@
 	{/snippet}
 
 	{#snippet main()}
-		{#if canCorrectDate}
+		{#if canCorrectDate && !periodClosed}
 			<p class="text-muted-foreground mb-3 text-sm">
 				To correct only this settled date, use Correct date. A reason and review are required.
 			</p>
@@ -472,7 +512,9 @@
 		{#if historicalLinks.length}
 			<section class="detail-card">
 				<details>
-					<summary class="cursor-pointer text-sm font-medium">Reversed allocations · {historicalLinks.length}</summary>
+					<summary class="cursor-pointer text-sm font-medium"
+						>Reversed allocations · {historicalLinks.length}</summary
+					>
 					<div class="mt-3"><SettlementList links={historicalLinks} /></div>
 				</details>
 			</section>
@@ -482,7 +524,7 @@
 			{reimbursement}
 			recordId={record.id}
 			canReverse={data.perms.add && data.perms.delete}
-			disabled={dirty || saving}
+			disabled={dirty || saving || periodClosed}
 			onreverse={(groupId) => (reversalGroupId = groupId)}
 		/>
 
@@ -491,6 +533,8 @@
 				apiBase="/api/records/{record.id}"
 				bind:attachments
 				canDelete={data.perms.delete && !reimbursement.generated}
+				readOnly={periodClosed}
+				readOnlyReason={MONTH_CLOSED_REASON}
 			/>
 		</section>
 

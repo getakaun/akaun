@@ -5,7 +5,6 @@
   import {
     Calendar,
     ChevronRight,
-    Lock,
     Plus,
     Search,
     SlidersHorizontal,
@@ -15,6 +14,11 @@
     X,
   } from "@lucide/svelte";
   import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
+  import RecordLock from "$lib/components/ledger/RecordLock.svelte";
+  import {
+    getClosingBoundary,
+    periodClosedThroughFor,
+  } from "$lib/closing-context.js";
   import EmptyState from "$lib/components/ui/EmptyState.svelte";
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -72,6 +76,17 @@
    * payable, reconciled), with a short ASD-STE100 hint where a hint helps.
    */
   type PageData = ReturnType<typeof loadRecordsPage>;
+  const closingBoundary = getClosingBoundary();
+  function recordPeriodClosed(record: {
+    date: string;
+    periodClosedThrough: string | null;
+  }): string | null {
+    return periodClosedThroughFor(
+      record.date,
+      record.periodClosedThrough,
+      closingBoundary,
+    );
+  }
   type ActionData = {
     error?: string;
     success?: boolean;
@@ -678,7 +693,13 @@
   type Statement = {
     account: { id: number; name: string; role: number };
     entries: StatementEntry[];
-    selectionRecords: { id: number; amountMinor: number; locked: boolean }[];
+    selectionRecords: {
+      id: number;
+      date: string;
+      amountMinor: number;
+      locked: boolean;
+      periodClosedThrough: string | null;
+    }[];
     openingBalanceMinor: number;
     closingBalanceMinor: number;
     total: number;
@@ -709,7 +730,10 @@
   );
   // A record a settlement or a bank line still points at refuses deletion, so
   // the bar says so up front rather than after the fact.
-  const lockedSelected = $derived(selectedList.filter((r) => r.locked).length);
+  const lockedSelected = $derived(
+    selectedList.filter((r) => r.locked || recordPeriodClosed(r) !== null)
+      .length,
+  );
 
   $effect(() => {
     // A selection belongs to the account and date range the user selected in.
@@ -1364,7 +1388,17 @@
                       </td>
                       <td class="td-date">{formatDateShort(entry.date)}</td>
                       <td class="td-primary">
-                        <span class="cell-itemname">{entry.description}</span>
+                        <span class="cell-itemname"
+                          >{entry.description}<RecordLock
+                            periodClosedThrough={periodClosedThroughFor(
+                              entry.date,
+                              statement.selectionRecords.find(
+                                (r) => r.id === entry.recordId,
+                              )?.periodClosedThrough ?? null,
+                              closingBoundary,
+                            )}
+                          /></span
+                        >
                         {#if entry.contactName}<span class="cell-contact"
                             >{entry.contactName}</span
                           >{/if}
@@ -1503,10 +1537,11 @@
                   <a class="cell-item row-link" href={recordHref(e.id)}>
                     <span class="cell-itemname">
                       {e.description}
-                      {#if e.locked}<span
-                          class="row-lock"
-                          title={e.lockedReason}><Lock size={11} /></span
-                        >{/if}
+                      <RecordLock
+                        periodClosedThrough={recordPeriodClosed(e)}
+                        locked={e.locked}
+                        lockedReason={e.lockedReason}
+                      />
                     </span>
                     <span class="cell-itemnum">{e.recordNumber ?? ""}</span>
                   </a>
@@ -1644,7 +1679,7 @@
   bind:open={deleteDialogOpen}
   title={selected.size === 1 ? "Delete this record?" : "Delete these records?"}
   description={lockedSelected > 0
-    ? `${lockedSelected} of the ${selected.size} selected are settled or reconciled and cannot be deleted. The others will be removed. This can't be undone.`
+    ? `${lockedSelected} of the ${selected.size} selected are settled, reconciled or in a closed month and cannot be deleted. The others will be removed. This can't be undone.`
     : `This removes ${selected.size} ${selected.size === 1 ? "record" : "records"} and all their journal lines. It can't be undone.`}
   confirmLabel="Delete"
   danger
@@ -2082,13 +2117,6 @@
   .cat-option.on .cat-box {
     border-color: var(--primary);
     background: var(--primary);
-  }
-
-  .row-lock {
-    display: inline-flex;
-    vertical-align: middle;
-    margin-left: 5px;
-    color: var(--muted-foreground);
   }
 
   /* Who is owed, and how much is left — a fixed-height banner; the full

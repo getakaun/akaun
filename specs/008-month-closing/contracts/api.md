@@ -14,3 +14,7 @@ All endpoints authenticate; modifying actions also use normal same-origin protec
 Failures preserve existing authorization/validation/refusal/conflict status conventions. Do not expose unrelated financial reports/history in status streams. UI /accounts/closing uses the same authorized operations as API actions.
 
 `/closing` redirects to `/accounts/closing`. Month changes automatically prepare the review; a single confirmation submits closing. Notices are non-blocking and are recorded with server-computed checks in the audit.
+
+## Frozen entry reads and writes
+
+Record list/detail/SSE and invoice views add `periodClosedThrough: string | null`, separate from existing settlement/reconciliation `locked` state. A non-null value means the complete entry is frozen until reopen. Metadata-only/no-op patches, movement labels, attachment mutations and linked posted-invoice edits return the same actionable closed-period refusal (HTTP 409 / MCP refusal), with no partial audit, files or success events. Non-posting drafts and later-period payments remain permitted. Live close/reopen boundary events update lock presentation without polling.

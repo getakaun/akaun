@@ -200,6 +200,10 @@ export type RecordView = LedgerRecordRow & {
   /** Derived from settlements — never stored (FR-012). */
   paid: boolean;
   outstandingMinor: Minor;
+  /** Inclusive month-close boundary when this entry is frozen; derived, never stored.
+   * Separate from dependency locks so later payments and allocations remain valid.
+   */
+  periodClosedThrough: string | null;
   /** Derived from settlements and reconciliation allocations (FR-017a). */
   locked: boolean;
   lockedReason: string | null;

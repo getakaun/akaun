@@ -64,7 +64,7 @@ import {
   upsertSearchText,
 } from "../search-text.js";
 import type { SequenceDocumentType } from "../db/schema.js";
-import { assertDatesOpen } from "../closing/policy.js";
+import { assertDatesOpen, closedThrough } from "../closing/policy.js";
 
 /**
  * Every read and write of the one record store.
@@ -255,11 +255,24 @@ export function setExtractedText(
   recordId: number,
   text: string | null,
 ): void {
-  db.update(ledgerRecords)
-    .set({ extractedText: text })
-    .where(eq(ledgerRecords.id, recordId))
-    .run();
-  reindexRecord(db, recordId);
+  db.transaction(
+    (transaction) => {
+      const tx = transaction as unknown as LedgerDb;
+      const record = getRecordRow(tx, recordId);
+      if (!record) return;
+      const boundary = closedThrough(tx);
+      // OCR may finish after a close. Keep the stored entry untouched; rebuilding
+      // a derived search index is safe and uses the existing frozen text.
+      if (!boundary || record.date > boundary) {
+        tx.update(ledgerRecords)
+          .set({ extractedText: text })
+          .where(eq(ledgerRecords.id, recordId))
+          .run();
+      }
+      reindexRecord(tx, recordId);
+    },
+    { behavior: "immediate" },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +280,7 @@ export function setExtractedText(
 // ---------------------------------------------------------------------------
 
 type DerivedState = {
+  closedThrough: string | null;
   movements: Map<number, MovementView[]>;
   paidState: Map<number, { paid: boolean; outstandingMinor: Minor }>;
   lockState: Map<number, LockState>;
@@ -367,6 +381,7 @@ function allocatedByMovement(
 /** Everything derived, for a whole page of records, in a fixed number of queries. */
 function deriveFor(db: LedgerDb, recordIds: number[]): DerivedState {
   const empty: DerivedState = {
+    closedThrough: closedThrough(db),
     movements: new Map(),
     paidState: new Map(),
     lockState: new Map(),
@@ -489,6 +504,7 @@ function deriveFor(db: LedgerDb, recordIds: number[]): DerivedState {
     .all();
 
   return {
+    closedThrough: empty.closedThrough,
     supplierNames: new Map(
       db
         .select({ id: contacts.id, name: contacts.legalName })
@@ -542,6 +558,10 @@ function toRecordView(
     movements,
     paid: paidState.paid,
     outstandingMinor: paidState.outstandingMinor,
+    periodClosedThrough:
+      derived.closedThrough && row.date <= derived.closedThrough
+        ? derived.closedThrough
+        : null,
     locked: lock.locked,
     lockedReason: lock.reason,
     reconciled: lockState.reconciled,
@@ -750,6 +770,8 @@ export function recordSelectionDetails(db: LedgerDb, recordIds: number[]) {
       id: record.id,
       amountMinor: record.amountMinor,
       locked: record.locked,
+      date: record.date,
+      periodClosedThrough: record.periodClosedThrough,
     };
   });
 }
@@ -976,8 +998,6 @@ export function updateRecord(
   return db.transaction(
     (transaction) => {
       const tx = transaction as unknown as LedgerDb;
-      if (movements && wouldRemoveAllocationHistory(tx, id, movements))
-        throw new Error(ALLOCATION_HISTORY_EDIT_REASON);
       const existing = tx
         .select()
         .from(ledgerRecords)
@@ -985,44 +1005,12 @@ export function updateRecord(
         .get();
       if (!existing) return null;
 
-      // A form may resend unchanged financial values while editing an annotation.
-      // Compare the actual proposed accounting values, not the presence of a key.
-      const financialFields = [
-        "date",
-        "amount",
-        "currency",
-        "exchangeRate",
-        "contactId",
-        "supplierContactId",
-        "expensePaymentSource",
-      ] as const;
-      let financialChange = financialFields.some(
-        (field) =>
-          patch[field] !== undefined && patch[field] !== existing[field],
-      );
-      if (movements) {
-        const before = tx
-          .select({
-            accountId: ledgerMovements.accountId,
-            amountMinor: ledgerMovements.amountMinor,
-            sortOrder: ledgerMovements.sortOrder,
-          })
-          .from(ledgerMovements)
-          .where(eq(ledgerMovements.recordId, id))
-          .orderBy(asc(ledgerMovements.sortOrder), asc(ledgerMovements.id))
-          .all();
-        const after = [...movements].sort((a, b) => a.sortOrder - b.sortOrder);
-        financialChange ||=
-          before.length !== after.length ||
-          before.some(
-            (row, index) =>
-              row.accountId !== after[index].accountId ||
-              row.amountMinor !== after[index].amountMinor ||
-              row.sortOrder !== after[index].sortOrder,
-          );
-      }
-      if (financialChange)
-        assertDatesOpen(tx, [existing.date, patch.date ?? existing.date]);
+      // Closed entries are immutable, including notes, labels and no-op saves.
+      // Check both dates so moving a closed entry out (or an open entry in)
+      // cannot bypass the boundary.
+      assertDatesOpen(tx, [existing.date, patch.date ?? existing.date]);
+      if (movements && wouldRemoveAllocationHistory(tx, id, movements))
+        throw new Error(ALLOCATION_HISTORY_EDIT_REASON);
 
       const updated = tx
         .update(ledgerRecords)
@@ -1213,16 +1201,25 @@ export function addAttachment(
   displayName: string,
   options: { groupDocument?: boolean } = {},
 ): RecordAttachmentRow {
-  return db
-    .insert(recordAttachments)
-    .values({
-      recordId,
-      filename,
-      displayName,
-      groupDocument: options.groupDocument ?? false,
-    })
-    .returning()
-    .get()!;
+  return db.transaction(
+    (transaction) => {
+      const tx = transaction as unknown as LedgerDb;
+      const record = getRecordRow(tx, recordId);
+      if (!record) throw new Error("Record not found");
+      assertDatesOpen(tx, [record.date]);
+      return tx
+        .insert(recordAttachments)
+        .values({
+          recordId,
+          filename,
+          displayName,
+          groupDocument: options.groupDocument ?? false,
+        })
+        .returning()
+        .get()!;
+    },
+    { behavior: "immediate" },
+  );
 }
 
 export function getAttachment(
@@ -1239,10 +1236,22 @@ export function getAttachment(
 }
 
 export function deleteAttachment(db: LedgerDb, attachmentId: number): boolean {
-  const row = db
-    .delete(recordAttachments)
-    .where(eq(recordAttachments.id, attachmentId))
-    .returning({ id: recordAttachments.id })
-    .get();
-  return row !== undefined;
+  return db.transaction(
+    (transaction) => {
+      const tx = transaction as unknown as LedgerDb;
+      const attachment = getAttachment(tx, attachmentId);
+      if (!attachment) return false;
+      const record = getRecordRow(tx, attachment.recordId);
+      if (!record) return false;
+      assertDatesOpen(tx, [record.date]);
+      return (
+        tx
+          .delete(recordAttachments)
+          .where(eq(recordAttachments.id, attachmentId))
+          .returning({ id: recordAttachments.id })
+          .get() !== undefined
+      );
+    },
+    { behavior: "immediate" },
+  );
 }

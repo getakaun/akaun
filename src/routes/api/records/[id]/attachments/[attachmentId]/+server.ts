@@ -1,7 +1,8 @@
 import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
 import { can } from "$lib/server/permissions.js";
-import { forbidden, notFound } from "$lib/server/api-response.js";
+import { forbidden, notFound, refused } from "$lib/server/api-response.js";
+import { closedPeriodReason } from "$lib/server/closing/policy.js";
 import {
   deleteAttachment,
   getAttachment,
@@ -67,23 +68,40 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
     return notFound("That attachment no longer exists.");
   }
 
-  if (!deleteAttachment(db, attachmentId)) {
-    return notFound("That attachment no longer exists.");
+  try {
+    const deleted = db.transaction(
+      (tx) => {
+        if (!deleteAttachment(tx, attachmentId)) return false;
+        recordAudit(tx, {
+          recordType: "record",
+          recordId: id,
+          userId: locals.user!.id,
+          action: "update",
+          changes: [
+            {
+              field: "attachments",
+              before: attachment.displayName,
+              after: null,
+            },
+          ],
+        });
+        return true;
+      },
+      { behavior: "immediate" },
+    );
+    if (!deleted) {
+      return notFound("That attachment no longer exists.");
+    }
+  } catch (error) {
+    const reason = closedPeriodReason(error);
+    if (reason) return refused(reason);
+    throw error;
   }
   // The row goes first: a file left behind is recoverable, a row pointing at a
   // file that is gone is not. The file stays while another record still
   // shows it.
   releaseIfUnreferenced(db, attachment.filename);
 
-  recordAudit(db, {
-    recordType: "record",
-    recordId: id,
-    userId: locals.user!.id,
-    action: "update",
-    changes: [
-      { field: "attachments", before: attachment.displayName, after: null },
-    ],
-  });
   emitRecordUpdate(db, id);
 
   return new Response(null, { status: 204 });

@@ -20,6 +20,8 @@ import { actor, requirePermissions, type AppContext } from "./context.js";
 import { fail, missing, ok, type AppResult } from "./result.js";
 import { positiveId } from "./records.js";
 import { recordVersion } from "./version.js";
+import { withAsyncClosingRefusal } from "./closing-refusal.js";
+import { ClosedPeriodError } from "../closing/policy.js";
 
 const log = createLogger("attachments");
 
@@ -53,10 +55,19 @@ export async function attachFile(
   ctx: AppContext,
   input: z.output<z.ZodObject<typeof attachFileShape>>,
 ): Promise<AppResult<Record<string, unknown>>> {
+  return withAsyncClosingRefusal(() => attachFileOperation(ctx, input));
+}
+
+async function attachFileOperation(
+  ctx: AppContext,
+  input: z.output<z.ZodObject<typeof attachFileShape>>,
+): Promise<AppResult<Record<string, unknown>>> {
   const refused = requirePermissions(ctx, ["records.update"]);
   if (refused) return refused;
   const record = getRecord(ctx.db, input.recordId);
   if (!record) return missing("That record no longer exists.");
+  if (record.periodClosedThrough)
+    throw new ClosedPeriodError(record.periodClosedThrough);
   if (!ctx.store || !ctx.storageRoot)
     return fail("REFUSED", "File storage is not available here.");
   const userId = actor(ctx);
@@ -92,22 +103,28 @@ export async function attachFile(
   await ctx.store.put(key, bytes);
   let attachment;
   try {
-    attachment = addAttachmentRow(ctx.db, record.id, key, displayName(key));
+    attachment = ctx.db.transaction(
+      (tx) => {
+        const added = addAttachmentRow(tx, record.id, key, displayName(key));
+        recordAudit(tx, {
+          recordType: "record",
+          recordId: record.id,
+          userId,
+          action: "update",
+          changes: [
+            { field: "attachments", before: null, after: added.displayName },
+          ],
+        });
+        return added;
+      },
+      { behavior: "immediate" },
+    );
   } catch (error) {
     // No row points at the file, so remove it.
     await ctx.store.delete(key);
     throw error;
   }
 
-  recordAudit(ctx.db, {
-    recordType: "record",
-    recordId: record.id,
-    userId,
-    action: "update",
-    changes: [
-      { field: "attachments", before: null, after: attachment.displayName },
-    ],
-  });
   emitRecordUpdate(ctx.db, record.id);
 
   const index = ctx.indexAttachments;

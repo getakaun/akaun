@@ -45,10 +45,14 @@ Explicit source-level query guards are preferred to custom SQL triggers because 
 
 ### Validation baseline exception
 
-The repository-wide lint gate is already failing on main: Prettier reports 242 existing files. The feature branch reports 236 existing files after formatting its changed files. Pre-existing ESLint issues remain in untouched files; focused linting of the changed files passes. This PR does not bulk-format or rewrite unrelated code to make the existing gate green. Changed files pass their focused formatter and ESLint checks; type-check and the full server/client test suites pass. This is a documented validation-baseline exception, not an unreported passing lint gate.
+The repository-wide lint gate is already failing on main: Prettier reports 242 existing files. The feature branch reports 233 existing files after formatting its changed files. Pre-existing ESLint issues remain in untouched files; focused linting of the changed files passes. This PR does not bulk-format or rewrite unrelated code to make the existing gate green. Changed files pass their focused formatter and ESLint checks; type-check and the full server/client test suites pass. This is a documented validation-baseline exception, not an unreported passing lint gate.
 
 ## Approved UI simplification (2026-11-04)
 
 Remove all manual checklist and warning acknowledgments. A selected month triggers automated checks; the single close confirmation submits only the month end and revision. The server recomputes and records checks and notices in the close audit, with unchanged integrity, date, permission, stale-review and transaction protections. Notices remain non-blocking because draft invoices and bank timing differences can be legitimate.
 
 Move the book-wide workspace to `/accounts/closing`, link from the Accounts main page (not individual account details), and redirect `/closing`. Reuse shared Button, Textarea, StatusBadge, BackLink, detail-card and Popover primitives. The custom MonthPicker uses an app-styled trigger and year navigation/month grid for both closing and reopening. Fix missing primary-button base styles by using the shared component. No dependencies, schema changes or extra approval steps.
+
+## Accepted full freeze and orange lock (2026-11-04)
+
+Guard every ledger update, attachment insert/delete, and posted-invoice edit at the immediate write transaction boundary. Freeze delayed extracted-text writes while allowing derived search rebuilds. Preserve later payments and pure operational allocations. Add an explicitly documented `RecordView.periodClosedThrough` field separate from existing dependency locks; update typed consumers. Use the existing orange primary accent for the close lock, gray for settlement/reconciliation, and a per-layout reactive SSE boundary for immediate close/reopen behavior. Freeze all form inputs and attachment mutation handlers, including dirty forms and already-open dialogs. No new dependency, table, permission or confirmation. Constitution review remains PASS; regression tests precede policy changes, read-only viewing remains available.

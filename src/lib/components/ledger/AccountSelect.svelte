@@ -84,13 +84,17 @@
 
   const onlyChoice = $derived(choices.length === 1 ? choices[0] : null);
   const id = $derived(`account-select-${name}`);
+  let open = $state(false);
+  $effect(() => {
+    if (disabled) open = false;
+  });
 
   function accountLabel(account: AccountView): string {
     return `${account.code} · ${account.name} · ${AccountTypeDisplayLabels[account.type]}`;
   }
 
   function selectAccount(next: string | null): void {
-    if (next === null) return;
+    if (disabled || next === null) return;
     if (next === NONE_VALUE) {
       value = null;
       return;
@@ -121,6 +125,8 @@
     <input type="hidden" {name} value={value ?? ""} {disabled} />
     <Select.Root
       type="single"
+      {disabled}
+      bind:open
       value={value === null ? NONE_VALUE : String(value)}
       onValueChange={selectAccount}
     >
@@ -139,7 +145,10 @@
       </Select.Trigger>
       <Select.Content>
         {#if !required}
-          <Select.Item value={NONE_VALUE} label="Accounts payable (paid by another party)" />
+          <Select.Item
+            value={NONE_VALUE}
+            label="Accounts payable (paid by another party)"
+          />
         {/if}
         {#each choices as account (account.id)}
           <Select.Item

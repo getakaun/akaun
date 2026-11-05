@@ -2,6 +2,7 @@
 ./src/lib/components/dashboard/chart-scale.spec.ts
 ./src/lib/components/import/review-card.spec.ts
 ./src/lib/components/ledger/credit-application.spec.ts
+./src/lib/components/ledger/journal-rules.spec.ts
 ./src/lib/dashboard-periods.spec.ts
 ./src/lib/enums.spec.ts
 ./src/lib/expense-tax.spec.ts
@@ -23,6 +24,7 @@
 ./src/lib/server/application/expense-tax.spec.ts
 ./src/lib/server/application/record-void.spec.ts
 ./src/lib/server/application/records.spec.ts
+./src/lib/server/application/tax-review-closing.spec.ts
 ./src/lib/server/audit-context.spec.ts
 ./src/lib/server/closing/policy.spec.ts
 ./src/lib/server/db/allocation-reversal-migration.spec.ts
@@ -97,6 +99,6 @@
 ./src/lib/server/services/settlements.spec.ts
 ./src/lib/server/sse-stream.spec.ts
 ./src/lib/server/tokens/pat.spec.ts
+./src/lib/tax-form.spec.ts
 ./src/lib/vitest-examples/greet.spec.ts
 ./src/routes/api/permission-coverage.spec.ts
-./src/lib/components/ledger/journal-rules.spec.ts

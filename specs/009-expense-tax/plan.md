@@ -1,6 +1,6 @@
 # Expense tax classification — phases 0 and 1
 
-Date: 2026-11-05. Requested scope: plan and implement both phases. The handover's intermediate approval gate is superseded by that explicit request. No phase 2–7 feature work is included.
+Date: 2026-11-05. Requested scope: plan and implement both phases. The handover's intermediate approval gate is superseded by that explicit request. The original scope excludes phases 2–7. The owner subsequently approved the treatment-first UI and mandatory expense-tax close check described in `review-ux-plan.md`; other later-phase work remains deferred.
 
 ## Phase 0 — architecture audit and proposal (before implementation)
 

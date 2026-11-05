@@ -71,7 +71,10 @@
     const period = `dateFrom=${p.dateFrom}&dateTo=${p.dateTo}`;
     switch (data.view) {
       case "expense-tax":
-        return { endpoint: "expense-tax", query: period };
+        return {
+          endpoint: "expense-tax",
+          query: period + (data.report.reviewOnly ? "&review=unresolved" : ""),
+        };
       case "profit-loss":
         return { endpoint: "profit-loss", query: period };
       case "balance-sheet":

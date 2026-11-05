@@ -20,14 +20,14 @@ export const basisPointsSchema = z.number().int().min(0).max(10000);
 export const taxTreatmentSchema = z.enum(TAX_TREATMENTS);
 export const taxValuesSchema = z
   .object({
-    percentageBps: basisPointsSchema,
+    percentageBps: basisPointsSchema.nullable(),
     treatment: taxTreatmentSchema,
   })
   .refine(
     ({ percentageBps: p, treatment: t }) =>
       t === "requires_review" ||
       (t === "ordinary_deductible" && p === 10000) ||
-      (t === "partial" && p > 0 && p < 10000) ||
+      (t === "partial" && p !== null && p > 0 && p < 10000) ||
       ((t === "non_deductible" || t === "capital_expenditure") && p === 0),
     {
       message:
@@ -108,4 +108,78 @@ export function taxDefaultError(
     treatment: treatment ?? treatmentForPercentage(percentageBps),
   });
   return result.success ? null : result.error.issues[0].message;
+}
+
+/** Classification status is independent of signed amount or accountant approval. */
+export function needsTaxReview(
+  tax:
+    | Pick<ExpenseTaxSnapshot, "percentageBps" | "treatment">
+    | null
+    | undefined,
+): boolean {
+  return tax?.percentageBps == null || tax.treatment === "requires_review";
+}
+
+export type TaxFormDraft = { treatment: string; percentage: string };
+/** Normalize only an explicitly edited form; never rewrite saved snapshots on read. */
+export function taxFormValues(
+  treatment: string,
+  percentage: string,
+  allowNoDefault = false,
+): {
+  treatment: TaxTreatment | null;
+  percentageBps: number | null;
+  error: string | null;
+} {
+  if (!treatment && allowNoDefault)
+    return { treatment: null, percentageBps: null, error: null };
+  const selected = taxTreatmentSchema.safeParse(treatment || "requires_review");
+  if (!selected.success)
+    return {
+      treatment: null,
+      percentageBps: null,
+      error: "Choose a tax treatment.",
+    };
+  const t = selected.data;
+  if (t === "requires_review")
+    return { treatment: t, percentageBps: null, error: null };
+  if (t !== "partial")
+    return {
+      treatment: t,
+      percentageBps: t === "ordinary_deductible" ? 10000 : 0,
+      error: null,
+    };
+  const p = percentageToBps(String(percentage));
+  return {
+    treatment: t,
+    percentageBps: p,
+    error:
+      p === null || p <= 0 || p >= 10000
+        ? "Enter a partial deduction from 0.01% to 99.99%, with at most two decimal places."
+        : null,
+  };
+}
+
+/** Keep a valid partial draft when switching, and never seed Partial with a fixed endpoint. */
+export function switchTaxTreatment(
+  current: TaxFormDraft,
+  next: string,
+  previousPartial = "",
+) {
+  const p = percentageToBps(String(current.percentage));
+  const partial =
+    current.treatment === "partial" && p !== null && p > 0 && p < 10000
+      ? current.percentage
+      : previousPartial;
+  const values = taxFormValues(next, "", true);
+  return {
+    treatment: next,
+    percentage:
+      next === "partial"
+        ? partial
+        : values.percentageBps === null
+          ? ""
+          : (values.percentageBps / 100).toFixed(2),
+    previousPartial: partial,
+  };
 }

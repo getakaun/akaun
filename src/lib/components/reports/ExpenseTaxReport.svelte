@@ -3,6 +3,9 @@
   import { formatMinor } from "$lib/format.js";
   import { TaxTreatmentLabels } from "$lib/expense-tax.js";
   import type { ExpenseTaxReport } from "$lib/server/queries/expense-tax-report.js";
+  function filterHref(reviewOnly: boolean) {
+    return `${resolve("/(app)/reports/[view]", { view: "expense-tax" })}?${new URLSearchParams({ from: report.dateFrom, to: report.dateTo, ...(reviewOnly ? { review: "unresolved" } : {}) })}`;
+  }
   let { report }: { report: ExpenseTaxReport } = $props();
 </script>
 
@@ -11,6 +14,29 @@
     <span class="detail-card-title">Expense tax estimates</span>
   </div>
   <p class="notice">{report.note}</p>
+  {#if report.unresolvedLineCount > 0}
+    <p class="review-warning" role="status">
+      Needs tax review: {report.unresolvedLineCount} expense lines ({formatMinor(
+        report.unresolvedMinor,
+      )} net). Review every line, even when the net amount is zero. Each unresolved
+      line must be classified before closing its period; already closed entries require
+      reopening to edit.
+    </p>
+  {/if}
+  <!-- eslint-disable svelte/no-navigation-without-resolve -- filterHref resolves the route and appends only date/review query values. -->
+  <nav class="filters" aria-label="Expense tax review filter">
+    <a
+      href={filterHref(false)}
+      aria-current={!report.reviewOnly ? "page" : undefined}
+      >All expense lines</a
+    >
+    <a
+      href={filterHref(true)}
+      aria-current={report.reviewOnly ? "page" : undefined}
+      >Needs tax review ({report.unresolvedLineCount})</a
+    >
+  </nav>
+  <!-- eslint-enable svelte/no-navigation-without-resolve -->
   <dl class="totals">
     <div>
       <dt>Expense</dt>
@@ -70,8 +96,11 @@
                 : `${(row.classification.percentageBps / 100).toFixed(2)}%`} · {TaxTreatmentLabels[
                 row.classification?.treatment ?? "requires_review"
               ]}<br /><small
-                >{row.reviewStatus === "estimate" ? "Estimate" : "Unreviewed"} · {row
-                  .classification?.source === "override"
+                >{row.reviewRequired
+                  ? "Needs tax review"
+                  : row.voided
+                    ? "Voided — no review needed"
+                    : "Estimate"} · {row.classification?.source === "override"
                   ? "Override"
                   : row.classification?.source === "account_default"
                     ? "Saved account default"
@@ -89,6 +118,23 @@
 </section>
 
 <style>
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    padding: 1rem;
+  }
+  .filters a[aria-current="page"] {
+    font-weight: 600;
+  }
+  .review-warning {
+    margin: 1rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: var(--orange-soft, var(--muted));
+  }
+
   .notice {
     margin: 1rem;
     color: var(--muted-foreground);

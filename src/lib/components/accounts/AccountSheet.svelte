@@ -147,7 +147,7 @@
 				</div>
 
 				{#if selectedType === AccountType.Expense}
-          <TaxValuesFields id="new-account-tax" named />
+          <TaxValuesFields id="new-account-tax" named allowNoDefault />
           <p class="field-hint">Optional tax defaults apply only to new expense lines. Blank means unreviewed. Classifications are estimates.</p>
         {/if}
 

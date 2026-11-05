@@ -1,6 +1,6 @@
 <script lang="ts">
 	import ExpenseTaxLines, { type TaxLineDraft } from '$lib/components/tax/ExpenseTaxLines.svelte';
-	import { percentageToBps, treatmentForPercentage, type TaxTreatment } from '$lib/expense-tax.js';
+	import { taxFormValues, treatmentForPercentage } from '$lib/expense-tax.js';
 	import { tick } from 'svelte';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
@@ -537,18 +537,29 @@
 		const overrides = expenseTaxLines.flatMap((line) => {
 			const draft = taxDrafts[line.key];
 			if (!draft?.enabled) return [];
-			const percentageBps = percentageToBps(String(draft.percentage));
+			const tax = taxFormValues(draft.treatment, draft.percentage);
 			return [
 				{
 					accountId: line.account.id,
 					occurrence: line.occurrence,
-					percentageBps: percentageBps ?? -1,
-					treatment: (draft.treatment || treatmentForPercentage(percentageBps ?? 0)) as TaxTreatment,
+					percentageBps: tax.percentageBps,
+					treatment: tax.treatment ?? 'requires_review',
 					reason: draft.reason
 				}
 			];
 		});
 		return overrides.length ? { taxOverrides: overrides } : {};
+	}
+
+	function taxError(): string | null {
+		for (const line of expenseTaxLines) {
+			const draft = taxDrafts[line.key];
+			if (!draft?.enabled) continue;
+			const error = taxFormValues(draft.treatment, draft.percentage).error;
+			if (error) return error;
+			if (!draft.reason.trim()) return 'Give a reason for each tax override.';
+		}
+		return null;
 	}
 
 	function onlyTaxChanged(): boolean {
@@ -563,6 +574,7 @@
 	/** What the frame around this form shows above its Save button. */
 	export function blockedBy(): string | null {
 		if (periodClosed) return MONTH_CLOSED_REASON;
+		if (taxError()) return taxError();
 		if (onlyTaxChanged()) return null;
 		if (rateMissing) return 'Enter the exchange rate before saving.';
 		return blockedReason;
@@ -735,6 +747,8 @@
 			error = MONTH_CLOSED_REASON;
 			return null;
 		}
+		const invalidTax = taxError();
+		if (invalidTax) { error = invalidTax; return null; }
 		saving = true;
 		error = '';
 
@@ -980,7 +994,7 @@
 	onremoveside={removeSide}
 />
 
-<ExpenseTaxLines lines={expenseTaxLines} bind:drafts={taxDrafts} readOnly={taxReadOnly} />
+<ExpenseTaxLines lines={expenseTaxLines} bind:drafts={taxDrafts} readOnly={taxReadOnly} reviewExempt={record?.voidedByRecordId != null || record?.reversesRecordId != null} />
 
 <section class="detail-card">
 	<div class="detail-card-head"><span class="detail-card-title">Details</span></div>

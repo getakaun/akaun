@@ -1,14 +1,21 @@
-import { and, asc, eq, gte, lte } from "drizzle-orm";
+import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { AccountType } from "$lib/enums.js";
-import { deductionMinor, TaxTreatmentLabels } from "$lib/expense-tax.js";
+import {
+  deductionMinor,
+  TaxTreatmentLabels,
+  needsTaxReview,
+} from "$lib/expense-tax.js";
 import { accounts, ledgerMovements, ledgerRecords } from "../db/schema.js";
 import type { CsvTable, LedgerDb } from "../ledger/types.js";
 import { isValidDate } from "../date.js";
+
+import { inVoidPair } from "./void-state.js";
 
 export function expenseTaxReport(
   db: LedgerDb,
   dateFrom: string,
   dateTo: string,
+  reviewOnly = false,
 ) {
   if (!isValidDate(dateFrom) || !isValidDate(dateTo) || dateFrom > dateTo)
     throw new Error("Choose a valid inclusive date range.");
@@ -24,6 +31,7 @@ export function expenseTaxReport(
       accountName: accounts.name,
       expenseMinor: ledgerMovements.amountMinor,
       classification: ledgerMovements.taxClassification,
+      voided: sql<number>`${inVoidPair(ledgerRecords.id)}`,
     })
     .from(ledgerMovements)
     .innerJoin(ledgerRecords, eq(ledgerRecords.id, ledgerMovements.recordId))
@@ -44,13 +52,16 @@ export function expenseTaxReport(
     .all()
     .map((row) => {
       const tax = row.classification;
-      const unresolved =
-        tax?.percentageBps == null || tax.treatment === "requires_review";
-      const deductibleMinor = unresolved
-        ? null
-        : deductionMinor(row.expenseMinor, tax.percentageBps!);
+      const unresolved = needsTaxReview(tax);
+      const percentageBps = tax?.percentageBps;
+      const deductibleMinor =
+        unresolved || percentageBps == null
+          ? null
+          : deductionMinor(row.expenseMinor, percentageBps);
       return {
         ...row,
+        voided: Boolean(row.voided),
+        reviewRequired: unresolved && !row.voided,
         reviewStatus: unresolved
           ? ("unreviewed" as const)
           : ("estimate" as const),
@@ -58,7 +69,8 @@ export function expenseTaxReport(
         addBackMinor:
           deductibleMinor === null ? null : row.expenseMinor - deductibleMinor,
       };
-    });
+    })
+    .filter((row) => !reviewOnly || row.reviewRequired);
   const sum = (values: number[]) => {
     const total = Number(values.reduce((s, n) => s + BigInt(n), 0n));
     if (!Number.isSafeInteger(total))
@@ -68,6 +80,7 @@ export function expenseTaxReport(
   return {
     dateFrom,
     dateTo,
+    reviewOnly,
     rows,
     expenseMinor: sum(rows.map((r) => r.expenseMinor)),
     deductibleMinor: sum(rows.map((r) => r.deductibleMinor ?? 0)),
@@ -77,8 +90,7 @@ export function expenseTaxReport(
         .filter((r) => r.reviewStatus === "unreviewed")
         .map((r) => r.expenseMinor),
     ),
-    unresolvedLineCount: rows.filter((r) => r.reviewStatus === "unreviewed")
-      .length,
+    unresolvedLineCount: rows.filter((r) => r.reviewRequired).length,
     note: "Potential deductions and add-backs are estimates, not accountant-approved tax amounts. Unreviewed lines are excluded from both estimates. Amounts use saved line classifications in the main currency; void pairs cancel.",
   };
 }
@@ -106,6 +118,7 @@ export function expenseTaxCsv(report: ExpenseTaxReport): CsvTable {
       "Classified by",
       "Classified at",
       "Provenance",
+      "Needs tax review",
     ],
     rows: report.rows.map((r) => [
       r.date,
@@ -127,6 +140,7 @@ export function expenseTaxCsv(report: ExpenseTaxReport): CsvTable {
       r.classification?.classifiedBy ?? null,
       r.classification?.classifiedAt ?? null,
       r.classification?.provenance ?? "historical",
+      r.reviewRequired ? "Yes" : "No",
     ]),
     notes: [
       report.note,

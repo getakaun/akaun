@@ -43,6 +43,12 @@ export type ClosingPreview = ClosingStatus & {
   dateFrom: string | null;
   revision: string;
   warnings: ClosingWarning[];
+  taxReview: {
+    ok: boolean;
+    unresolvedLineCount: number;
+    unresolvedMinor: number;
+    items: ClosingItem[];
+  };
   integrity: {
     ok: boolean;
     recordsChecked: number;

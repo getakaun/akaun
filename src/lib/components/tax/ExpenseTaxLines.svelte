@@ -20,16 +20,18 @@
 
 <script lang="ts">
   import { Input } from "$lib/components/ui/input/index.js";
-  import { TaxTreatmentLabels } from "$lib/expense-tax.js";
+  import { TaxTreatmentLabels, needsTaxReview } from "$lib/expense-tax.js";
   import TaxValuesFields from "./TaxValuesFields.svelte";
   let {
     lines,
     drafts = $bindable({}),
     readOnly = false,
+    reviewExempt = false,
   }: {
     lines: ExpenseTaxLine[];
     drafts?: Record<string, TaxLineDraft>;
     readOnly?: boolean;
+    reviewExempt?: boolean;
   } = $props();
 </script>
 
@@ -43,16 +45,28 @@
       when account defaults change. Historical and unconfigured lines remain
       unreviewed.
     </p>
+    {#if reviewExempt}<p class="field-hint" style="padding: 0 1rem;">
+        This record is voided or reverses a voided record. No tax review is
+        required.
+      </p>{/if}
     {#each lines as line (line.key)}
       <div style="padding: 1rem; border-top: 1px solid var(--border);">
         <strong
           >{line.account.name}{line.side.label ? ` · ${line.side.label}` : ""} · line
           {line.occurrence + 1}</strong
         >
+        {#if needsTaxReview(line) && !reviewExempt}<p
+            class="review-badge"
+            role="status"
+          >
+            Needs tax review
+          </p>{/if}
         <p class="field-hint">
-          {line.percentageBps === null
-            ? "Unreviewed"
-            : `${(line.percentageBps / 100).toFixed(2)}%`} · {TaxTreatmentLabels[
+          {line.treatment === "requires_review" && line.percentageBps !== null
+            ? `Tentative ${(line.percentageBps / 100).toFixed(2)}% — excluded from estimates`
+            : line.percentageBps === null
+              ? "Unreviewed"
+              : `${(line.percentageBps / 100).toFixed(2)}%`} · {TaxTreatmentLabels[
             line.treatment
           ]} · {line.savedLine
             ? line.saved?.source === "override"
@@ -86,7 +100,7 @@
                   line.percentageBps === null
                     ? ""
                     : (line.percentageBps / 100).toFixed(2),
-                treatment: line.percentageBps === null ? "" : line.treatment,
+                treatment: line.treatment,
                 reason: "",
               };
             }}
@@ -114,3 +128,15 @@
     {/each}
   </section>
 {/if}
+
+<style>
+  .review-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    background: var(--orange-soft, var(--muted));
+    color: var(--foreground);
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+</style>

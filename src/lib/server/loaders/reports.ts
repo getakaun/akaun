@@ -121,7 +121,12 @@ export function loadReportsPage(
       return {
         view,
         period,
-        report: expenseTaxReport(db, period.dateFrom, period.dateTo),
+        report: expenseTaxReport(
+          db,
+          period.dateFrom,
+          period.dateTo,
+          url.searchParams.get("review") === "unresolved",
+        ),
         hasPartners,
       };
     case "profit-loss":

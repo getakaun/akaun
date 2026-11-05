@@ -4,9 +4,15 @@ Akaun stores one inclusive `accounting.closedThrough` boundary in existing setti
 
 ## Using it
 
-Open **Accounts → Month closing** on the chart’s main page and select a completed month. Checks run automatically, then one dialog confirms the close. The workspace covers all accounts; individual account detail pages do not offer closing. The review checks ledger integrity and warns about pending imports/items, draft invoices, unresolved/unread bank statements, incomplete history and classification notes. A permanent completeness reminder explains that uploaded data cannot prove every receipt/statement was supplied. No checklist or notice acknowledgments are required. Notices are informational; integrity, date, permission and stale-review checks still block invalid closes. Unpaid invoices/bills/reimbursements do not block closing.
+Open **Accounts → Month closing** on the chart’s main page and select a completed month. Checks run automatically, then one dialog confirms the close. The workspace covers all accounts; individual account detail pages do not offer closing. The review checks ledger integrity and warns about pending imports/items, draft invoices, unresolved/unread bank statements, incomplete history and classification notes. A permanent completeness reminder explains that uploaded data cannot prove every receipt/statement was supplied. No checklist or notice acknowledgments are required. Notices are informational; integrity, expense tax classification, date, permission and stale-review checks block invalid closes. Unpaid invoices/bills/reimbursements do not block closing.
 
 The first close protects all earlier history. Later closes can cover several months, with the review covering the newly protected range. Reopening from a month also opens every subsequent closed month; a reason and current boundary are required. All-history reopen clears the boundary. Existing settlement/reconciliation/document restrictions continue to apply.
+
+## Mandatory expense tax review (owner-approved 5 November 2026)
+
+Every active Expense movement in the newly protected range must have a saved classification before closing. Historical NULL snapshots, missing percentages and Requires review block closing. A resolved 0% classification is valid. The check counts lines independently of their signed net amount, so a refund and expense netting to zero do not escape review. True void pairs are excluded. The first close checks all earlier actual history; later closes check only dates after the current boundary. Existing closed history is never relabelled or silently reopened.
+
+The preview displays the unresolved count, signed net amount and record links, with a link to the Expense tax report filtered to Needs tax review. Its result and line identities participate in the review revision. Closing recomputes this check inside the same immediate transaction as the boundary/audit write and refuses unresolved or stale reviews. Successful closing retains a `taxReviewCheck` audit field. Informational notices remain non-blocking; tax classification is a separate blocking check. Classification completeness does not imply accountant approval or tax-law eligibility.
 
 ## Authorization and evidence
 

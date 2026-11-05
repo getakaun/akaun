@@ -77,7 +77,8 @@
     !checking &&
       canReview &&
       review?.monthEnd === monthEnd &&
-      review?.integrity.ok === true,
+      review?.integrity.ok === true &&
+      review?.taxReview.ok === true,
   );
   const notices = $derived(
     review?.warnings.filter(
@@ -87,9 +88,7 @@
   );
   const history = $derived(visibleItems(data.history, expandedHistory));
   // The month still in progress: the one that cannot be closed yet.
-  const currentMonth = $derived(
-    addDaysISO(data.latestMonthEnd, 1).slice(0, 7),
-  );
+  const currentMonth = $derived(addDaysISO(data.latestMonthEnd, 1).slice(0, 7));
   const reopenValid = $derived(
     !!data.closedThrough &&
       reason.trim().length >= 10 &&
@@ -421,7 +420,7 @@
       <div class="detail-card-head">
         <h2 class="detail-card-title" id="close-month-title">Close a month</h2>
         <div class="card-head-end">
-          {#if canReviewAny && (error || (review && (!review.integrity.ok || notices.length > 0)))}
+          {#if canReviewAny && (error || (review && (!review.integrity.ok || !review.taxReview.ok || notices.length > 0)))}
             <button
               type="button"
               class="detail-card-action"
@@ -433,7 +432,9 @@
           {#if checking}<StatusBadge
               status="checks-running"
             />{:else if review}<StatusBadge
-              status={review.integrity.ok ? "checks-passed" : "failed"}
+              status={review.integrity.ok && review.taxReview.ok
+                ? "checks-passed"
+                : "failed"}
             />{/if}
         </div>
       </div>
@@ -501,6 +502,36 @@
                 {/if}
               </div>
             </li>
+            <li class="check-row">
+              {#if review.taxReview.ok}<CircleCheck
+                  size={16}
+                  class="check-pass"
+                />{:else}<CircleAlert size={16} class="check-fail" />{/if}
+              <div class="check-body">
+                <strong>Expense tax classification</strong>
+                <span
+                  >{review.taxReview.ok
+                    ? "Every expense line being closed has a tax classification."
+                    : `${review.taxReview.unresolvedLineCount} expense lines need tax review (${formatMinor(review.taxReview.unresolvedMinor)} net). Classify them before closing, even if their amounts net to zero.`}</span
+                >
+                {#if !review.taxReview.ok}
+                  {@render itemList(
+                    "tax-review",
+                    review.taxReview.items,
+                    review.taxReview.unresolvedLineCount,
+                  )}
+                  <!-- eslint-disable svelte/no-navigation-without-resolve -- The route is resolved; the suffix contains date/review query values only. -->
+                  <a
+                    href={`${resolve("/(app)/reports/[view]", { view: "expense-tax" })}?from=${reviewFrom}&to=${review.monthEnd}&review=unresolved`}
+                    >Open expenses needing tax review</a
+                  >
+                  <!-- eslint-enable svelte/no-navigation-without-resolve -->
+                  <span class="check-extra"
+                    >This blocks closing. Tax figures remain estimates.</span
+                  >
+                {/if}
+              </div>
+            </li>
             {#each notices as item (item.id)}
               <li class="check-row">
                 <Info size={16} class="check-note" />
@@ -559,7 +590,8 @@
           {#each history as entry (entry.id)}
             <li class="history-entry">
               <div class="history-line">
-                <strong>{entry.action === "close" ? "Closed" : "Reopened"}</strong
+                <strong
+                  >{entry.action === "close" ? "Closed" : "Reopened"}</strong
                 ><span class="num"
                   >{entry.before ? formatDate(entry.before) : "Open"} → {entry.after
                     ? formatDate(entry.after)

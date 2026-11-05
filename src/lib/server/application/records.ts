@@ -60,6 +60,8 @@ export const isoDate = z.string().refine(isValidDate, {
   message: "The date must be in YYYY-MM-DD form.",
 });
 
+import { taxOverrideSchema } from "$lib/expense-tax.js";
+
 const sideShape = z.object({
   accountId: positiveId,
   amountMinor: z.number().int(),
@@ -69,6 +71,7 @@ const sideShape = z.object({
 
 /** What every record states about itself, whichever kind it is. */
 export const recordFieldsShape = {
+  taxOverrides: z.array(taxOverrideSchema).optional(),
   date: isoDate,
   description: z.string().trim().max(500).default(""),
   amount: z.number().finite(),
@@ -127,6 +130,7 @@ export const paymentShape = {
 };
 
 export const patchShape = {
+  taxOverrides: z.array(taxOverrideSchema).optional(),
   date: isoDate.optional(),
   description: z.string().trim().max(500).optional(),
   amount: z.number().finite().optional(),

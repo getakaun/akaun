@@ -76,6 +76,7 @@ export function recordVersions(
         accountId: ledgerMovements.accountId,
         amountMinor: ledgerMovements.amountMinor,
         label: ledgerMovements.label,
+        taxClassification: ledgerMovements.taxClassification,
       })
       .from(ledgerMovements)
       .where(inArray(ledgerMovements.recordId, wanted))

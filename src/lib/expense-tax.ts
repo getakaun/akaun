@@ -1,0 +1,111 @@
+import { z } from "zod";
+import { AccountType } from "./enums.js";
+
+export const TAX_TREATMENTS = [
+  "ordinary_deductible",
+  "partial",
+  "non_deductible",
+  "capital_expenditure",
+  "requires_review",
+] as const;
+export type TaxTreatment = (typeof TAX_TREATMENTS)[number];
+export const TaxTreatmentLabels: Record<TaxTreatment, string> = {
+  ordinary_deductible: "Ordinary deductible",
+  partial: "Partial",
+  non_deductible: "Non-deductible",
+  capital_expenditure: "Capital expenditure",
+  requires_review: "Requires review",
+};
+export const basisPointsSchema = z.number().int().min(0).max(10000);
+export const taxTreatmentSchema = z.enum(TAX_TREATMENTS);
+export const taxValuesSchema = z
+  .object({
+    percentageBps: basisPointsSchema,
+    treatment: taxTreatmentSchema,
+  })
+  .refine(
+    ({ percentageBps: p, treatment: t }) =>
+      t === "requires_review" ||
+      (t === "ordinary_deductible" && p === 10000) ||
+      (t === "partial" && p > 0 && p < 10000) ||
+      ((t === "non_deductible" || t === "capital_expenditure") && p === 0),
+    {
+      message:
+        "The treatment must agree with the percentage (ordinary 100%, partial between 0% and 100%, non-deductible or capital expenditure 0%).",
+    },
+  );
+export const taxOverrideSchema = z
+  .object({
+    accountId: z.number().int().positive(),
+    /** Zero-based occurrence among movements on this account, in movement order. */
+    occurrence: z.number().int().min(0).default(0),
+    ...taxValuesSchema.shape,
+    reason: z.string().trim().min(1).max(500),
+  })
+  .superRefine((value, ctx) => {
+    const result = taxValuesSchema.safeParse(value);
+    if (!result.success)
+      ctx.addIssue({ code: "custom", message: result.error.issues[0].message });
+  });
+export type TaxOverride = z.output<typeof taxOverrideSchema>;
+export type ExpenseTaxSnapshot = {
+  percentageBps: number | null;
+  source: "account_default" | "override" | "unreviewed";
+  treatment: TaxTreatment;
+  reason: string | null;
+  classifiedBy: number | null;
+  classifiedAt: string;
+  provenance: "record_creation" | "account_change" | "line_override";
+};
+
+export function treatmentForPercentage(p: number): TaxTreatment {
+  return p === 10000
+    ? "ordinary_deductible"
+    : p === 0
+      ? "non_deductible"
+      : "partial";
+}
+
+/** Parses a decimal percentage by digits, never floating point multiplication. */
+export function percentageToBps(raw: string): number | null {
+  const match = /^(\d{1,3})(?:\.(\d{1,2}))?$/.exec(raw.trim());
+  if (!match) return null;
+  const value =
+    Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"));
+  return value <= 10000 ? value : null;
+}
+
+/** Main-currency cents; halves away from zero on each line. */
+export function deductionMinor(
+  amountMinor: number,
+  percentageBps: number,
+): number {
+  if (!Number.isSafeInteger(amountMinor))
+    throw new Error("Expense amounts must be safe integer cents.");
+  basisPointsSchema.parse(percentageBps);
+  const product = BigInt(amountMinor) * BigInt(percentageBps);
+  const magnitude = product < 0n ? -product : product;
+  return Number((magnitude + 5000n) / 10000n) * (product < 0n ? -1 : 1);
+}
+
+/** Empty defaults mean unreviewed, never an implied 100% deduction. */
+export function taxDefaultError(
+  type: number,
+  percentageBps: number | null,
+  treatment: TaxTreatment | null,
+): string | null {
+  if (
+    type !== AccountType.Expense &&
+    (percentageBps !== null || treatment !== null)
+  )
+    return "Tax deduction defaults apply only to Expense accounts.";
+  if (percentageBps === null)
+    return treatment && treatment !== "requires_review"
+      ? "Set a percentage for this treatment, or choose Requires review."
+      : null;
+  const result = taxValuesSchema.safeParse({
+    percentageBps,
+    treatment: treatment ?? treatmentForPercentage(percentageBps),
+  });
+  return result.success ? null : result.error.issues[0].message;
+}

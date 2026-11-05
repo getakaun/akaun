@@ -111,3 +111,16 @@ export function whyNotSaveable(
 
   return null;
 }
+
+/** Preserve line identity when loading a journal, including repeated accounts. */
+export function splitRecordLines<T extends { id: number; amountMinor: number }>(
+  movements: T[],
+) {
+  const into = movements.find((m) => m.amountMinor > 0);
+  const outOf = movements.find((m) => m.amountMinor < 0);
+  return {
+    into,
+    outOf,
+    extra: movements.filter((m) => m.id !== into?.id && m.id !== outOf?.id),
+  };
+}

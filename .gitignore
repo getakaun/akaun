@@ -42,3 +42,6 @@ __MACOSX
 # cachePath (see src/lib/server/extraction/document-text.ts). Older versions of this
 # repo accidentally committed these from the CWD; never track them.
 *.traineddata
+
+# Local implementation scratch and tool cache
+/work/

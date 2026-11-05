@@ -35,6 +35,8 @@ import {
 function accountSummary(context: McpContext, account: AccountView) {
   return {
     id: account.id,
+    defaultTaxPercentageBps: account.defaultTaxPercentageBps ?? null,
+    defaultTaxTreatment: account.defaultTaxTreatment ?? null,
     code: account.code,
     name: account.name,
     type: AccountTypeLabels[account.type],

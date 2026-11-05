@@ -19,6 +19,11 @@
  * See specs/002-double-entry-ledger/data-model.md.
  */
 
+import type {
+  ExpenseTaxSnapshot,
+  TaxOverride,
+  TaxTreatment,
+} from "$lib/expense-tax.js";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import type {
   AccountRoleCode,
@@ -52,6 +57,8 @@ export type Allowed = { ok: true } | { ok: false; reason: string };
 // ---------------------------------------------------------------------------
 
 export type AccountRow = {
+  defaultTaxPercentageBps?: number | null;
+  defaultTaxTreatment?: TaxTreatment | null;
   id: number;
   /** Legacy storage value retained only until the conversion release drops the column. */
   role: number;
@@ -83,6 +90,8 @@ export type AccountView = AccountRow & {
 export type AccountRef = { id: number; type: AccountTypeCode };
 
 export type AccountCreate = {
+  defaultTaxPercentageBps?: number | null;
+  defaultTaxTreatment?: TaxTreatment | null;
   /** Omit to allocate the lowest free code in the selected type range. */
   code?: number;
   name: string;
@@ -95,6 +104,8 @@ export type AccountCreate = {
   subType?: AccountSubTypeCode;
 };
 export type AccountPatch = {
+  defaultTaxPercentageBps?: number | null;
+  defaultTaxTreatment?: TaxTreatment | null;
   name?: string;
   type?: AccountTypeCode;
   active?: boolean;
@@ -158,6 +169,7 @@ export type MovementDraft = {
 
 /** One side of a record as a screen shows it. */
 export type MovementView = {
+  taxClassification?: ExpenseTaxSnapshot | null;
   id: number;
   accountId: number;
   accountName: string;
@@ -255,6 +267,7 @@ export type RecordAttachmentRow = {
  * caller to construct movements except for a journal entry (FR-020).
  */
 export type RecordCreate = {
+  taxOverrides?: TaxOverride[];
   expensePaymentSource?: ExpensePaymentSource | null;
   supplierContactId?: number | null;
   paidByContactId?: number | null;
@@ -365,6 +378,7 @@ export type RecordCreateFromSides = {
 
 /** Only the fields a `PATCH /api/records/[id]` may carry. */
 export type RecordPatch = {
+  taxOverrides?: TaxOverride[];
   expensePaymentSource?: ExpensePaymentSource | null;
   supplierContactId?: number | null;
   paidByContactId?: number | null;

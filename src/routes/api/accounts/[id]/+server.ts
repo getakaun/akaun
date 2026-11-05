@@ -27,8 +27,12 @@ import {
 // `patchAccount` itself (`ledger/account-eligibility.ts`).
 const KNOWN_SUB_TYPES = Object.values(AccountSubTypesByType).flat();
 
+import { basisPointsSchema, taxTreatmentSchema } from "$lib/expense-tax.js";
+
 const patchSchema = z
   .object({
+    defaultTaxPercentageBps: basisPointsSchema.nullable().optional(),
+    defaultTaxTreatment: taxTreatmentSchema.nullable().optional(),
     name: z.string().trim().min(1).max(120).optional(),
     type: z
       .number()

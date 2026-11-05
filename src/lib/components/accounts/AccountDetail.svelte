@@ -1,4 +1,6 @@
 <script lang="ts">
+	import TaxValuesFields from '$lib/components/tax/TaxValuesFields.svelte';
+	import { percentageToBps } from '$lib/expense-tax.js';
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -57,6 +59,8 @@
 	);
 
 	// --- The fields that name it ---------------------------------------------
+	let taxPercentage = $state('');
+	let taxTreatment = $state('');
 	let name = $state('');
 	let code = $state(0);
 	let selectedType = $state<AccountTypeCode>(AccountType.Asset);
@@ -68,10 +72,12 @@
 	const subTypes = $derived(AccountSubTypesByType[selectedType] ?? []);
 
 	function fingerprint(): string {
-		return JSON.stringify([name, code, selectedType, subType]);
+		return JSON.stringify([name, code, selectedType, subType, taxPercentage, taxTreatment]);
 	}
 
 	function seed() {
+		taxPercentage = account.defaultTaxPercentageBps == null ? '' : (account.defaultTaxPercentageBps / 100).toFixed(2);
+		taxTreatment = account.defaultTaxTreatment ?? '';
 		name = account.name;
 		code = account.code ?? account.id;
 		selectedType = account.type;
@@ -99,6 +105,16 @@
 		// given one: the PATCH schema accepts a number or nothing, never null.
 		if (AccountSubTypesByType[selectedType] !== undefined && subType != null) {
 			body.subType = subType;
+		}
+		if (selectedType === AccountType.Expense) {
+			const percentageBps = taxPercentage === '' ? null : percentageToBps(String(taxPercentage));
+			if (taxPercentage !== '' && percentageBps === null) {
+				saving = false;
+				error = 'Enter a percentage from 0 to 100 with at most two decimals.';
+				return;
+			}
+			body.defaultTaxPercentageBps = percentageBps;
+			body.defaultTaxTreatment = taxTreatment || null;
 		}
 		const res = await fetch(`/api/accounts/${account.id}`, {
 			method: 'PATCH',
@@ -351,6 +367,10 @@
 					</p>
 				</div>
 			{/if}
+      {#if selectedType === AccountType.Expense}
+        <TaxValuesFields id="account-tax" bind:percentage={taxPercentage} bind:treatment={taxTreatment} disabled={!data.perms.change} />
+        <p class="field-hint">Applies only to new expense lines. Saved classifications stay unchanged, including closed months. Blank means unreviewed. All amounts are estimates.</p>
+      {/if}
 		</section>
 	{/snippet}
 

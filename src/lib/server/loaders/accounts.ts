@@ -29,6 +29,8 @@ function toRoleFreeAccount(
 ): AccountApiView {
   return {
     id: account.id,
+    defaultTaxPercentageBps: account.defaultTaxPercentageBps,
+    defaultTaxTreatment: account.defaultTaxTreatment,
     code: account.code!,
     name: account.name,
     type: account.type,
@@ -36,6 +38,29 @@ function toRoleFreeAccount(
     active: account.active!,
     postingEligible: account.postingEligible!,
   };
+}
+
+import { percentageToBps, taxTreatmentSchema } from "$lib/expense-tax.js";
+
+function taxDefaultsFromForm(data: FormData) {
+  const raw = String(data.get("defaultTaxPercentage") ?? "").trim();
+  const percentageBps = raw ? percentageToBps(raw) : null;
+  if (raw && percentageBps === null)
+    return {
+      error: "Enter a percentage from 0 to 100 with at most two decimals.",
+    } as const;
+  const treatmentRaw = String(data.get("defaultTaxTreatment") ?? "");
+  const treatment = treatmentRaw
+    ? taxTreatmentSchema.safeParse(treatmentRaw)
+    : null;
+  if (treatment && !treatment.success)
+    return { error: "Choose a valid tax treatment." } as const;
+  return {
+    value: {
+      defaultTaxPercentageBps: percentageBps,
+      defaultTaxTreatment: treatment?.data ?? null,
+    },
+  } as const;
 }
 
 const LIST_PATH = "/accounts";
@@ -144,7 +169,10 @@ export const accountsActions: Actions = {
     if (codeRaw && !/^\d+$/.test(codeRaw))
       return fail(400, { error: "Enter a whole number for the account code." });
 
+    const tax = taxDefaultsFromForm(data);
+    if (tax.error) return fail(400, { error: tax.error });
     const result = createAccount(db, locals.user!.id, {
+      ...tax.value,
       code: codeRaw ? Number(codeRaw) : undefined,
       type,
       name,
@@ -163,8 +191,13 @@ export const accountsActions: Actions = {
     const id = parseInt(String(data.get("id") ?? "0"));
     if (!id) return fail(400, { error: "That account no longer exists." });
 
+    const tax = taxDefaultsFromForm(data);
+    if (tax.error) return fail(400, { error: tax.error });
     const activeRaw = data.get("active");
     const result = patchAccount(db, id, locals.user!.id, {
+      ...(data.has("defaultTaxPercentage") || data.has("defaultTaxTreatment")
+        ? tax.value
+        : {}),
       name: data.has("name")
         ? String(data.get("name") ?? "").trim()
         : undefined,

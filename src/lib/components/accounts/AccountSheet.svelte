@@ -1,4 +1,5 @@
 <script lang="ts">
+	import TaxValuesFields from '$lib/components/tax/TaxValuesFields.svelte';
 	import { enhance } from '$app/forms';
 	import { X } from '@lucide/svelte';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
@@ -144,6 +145,11 @@
 						available code.
 					</p>
 				</div>
+
+				{#if selectedType === AccountType.Expense}
+          <TaxValuesFields id="new-account-tax" named />
+          <p class="field-hint">Optional tax defaults apply only to new expense lines. Blank means unreviewed. Classifications are estimates.</p>
+        {/if}
 
 				{#if subTypes.length > 0}
 					<div class="field">

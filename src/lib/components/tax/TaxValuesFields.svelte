@@ -159,7 +159,7 @@
 <style>
   .compact {
     display: flex;
-    gap: 0.75rem;
+    gap: 12px;
     align-items: flex-start;
     flex-wrap: wrap;
   }
@@ -177,10 +177,17 @@
   .percentage-input {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 6px;
+  }
+  .compact .percentage-input {
+    font-size: 13.5px;
   }
   .fixed-percentage {
-    padding: 0.5rem 0;
+    display: flex;
+    align-items: center;
+    height: 36px;
+    font-size: 13.5px;
+    font-family: "Geist Mono", monospace;
     font-variant-numeric: tabular-nums;
     min-width: 3rem;
   }

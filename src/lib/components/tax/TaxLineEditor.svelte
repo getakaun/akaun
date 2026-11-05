@@ -133,12 +133,14 @@
   {/if}
   {#if !readOnly && (activeDraft || canUseDefault)}
     <div class="actions">
-      {#if activeDraft}<button type="button" class="text-action" onclick={undo}
-          >Undo change</button
+      {#if activeDraft}<button
+          type="button"
+          class="detail-card-action"
+          onclick={undo}>Undo change</button
         >{/if}
       {#if canUseDefault}<button
           type="button"
-          class="text-action"
+          class="detail-card-action"
           onclick={applyDefault}
           title={line.currentDefault
             ? describe(line.currentDefault)
@@ -202,32 +204,38 @@
 
 <style>
   .tax-line {
-    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
   }
   .line-heading {
     display: flex;
     align-items: baseline;
-    gap: 0.75rem;
+    gap: 12px;
     justify-content: space-between;
-    margin-bottom: 0.65rem;
-    font-size: 0.875rem;
+    font-size: 13px;
+  }
+  .line-heading strong {
+    font-weight: 500;
+    overflow-wrap: anywhere;
   }
   .line-amount {
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+    font-family: "Geist Mono", monospace;
     color: var(--muted-foreground);
   }
   .chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.4rem;
-    margin-bottom: 0.65rem;
+    gap: 6px;
   }
   .chip {
     display: inline-flex;
-    padding: 0.2rem 0.5rem;
+    padding: 2px 9px;
     border-radius: 999px;
-    font-size: 0.75rem;
+    font-size: 11.5px;
     font-weight: 500;
   }
   .override-chip {
@@ -235,41 +243,29 @@
     color: var(--muted-foreground);
   }
   .review-chip {
-    background: var(--orange-soft, var(--muted));
-    color: var(--foreground);
+    background: var(--amber-soft);
+    color: var(--amber);
   }
   .classification-value {
     margin: 0;
-    font-size: 0.875rem;
+    font-size: 13px;
   }
   .reason-field {
-    margin-top: 0.8rem;
+    margin: 0;
   }
   .actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 1rem;
-    margin-top: 0.7rem;
+    gap: 12px;
   }
-  .text-action {
-    border: 0;
-    background: transparent;
-    padding: 0.2rem 0;
-    color: var(--foreground);
-    text-decoration: underline;
-    text-underline-offset: 3px;
-    cursor: pointer;
-    font-size: 0.8rem;
-  }
-  .text-action:focus-visible {
+  .detail-card-action:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 3px;
     border-radius: 0.2rem;
   }
   .tax-details {
-    margin-top: 0.7rem;
     color: var(--muted-foreground);
-    font-size: 0.8rem;
+    font-size: 12px;
   }
   summary {
     cursor: pointer;
@@ -278,8 +274,8 @@
   dl {
     display: grid;
     grid-template-columns: auto 1fr;
-    gap: 0.35rem 0.8rem;
-    margin-bottom: 0;
+    gap: 6px 12px;
+    margin: 12px 0 0;
   }
   dt {
     font-weight: 500;

@@ -63,22 +63,30 @@
 <style>
   .split-line + .split-line {
     border-top: 1px solid var(--border);
+    margin-top: 16px;
+    padding-top: 16px;
   }
   .void-note {
-    margin: 0.8rem 1rem 0;
+    margin: 0 0 12px;
     color: var(--muted-foreground);
-    font-size: 0.8rem;
+    font-size: 11.5px;
   }
   :global(.tax-help) {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0.2rem;
+    width: 20px;
+    height: 20px;
+    padding: 0;
     border: 0;
     border-radius: 0.25rem;
     background: transparent;
     color: var(--muted-foreground);
     cursor: pointer;
+  }
+  :global(.tax-help:hover) {
+    background: var(--accent);
+    color: var(--foreground);
   }
   :global(.tax-help:focus-visible) {
     outline: 2px solid var(--ring);

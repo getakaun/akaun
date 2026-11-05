@@ -70,6 +70,12 @@ bun run check
 
 The normal `bun run test:unit -- --run --project server` failed at baseline before running tests: Vitest 4/Bun thread startup encountered `this._thread.stdout.pipe` on null. The existing `scripts/mcp-test-preload.ts` adapter was used, with explicit `./` file paths. It refuses loading the configured database client and supplies temporary storage. Vitest mocking-only suites and browser suites were not executed. All financial fixtures used in-memory or explicitly temporary databases. No real book or receipts were opened by these checks.
 
+## Card styling follow-up
+
+Compared Tax Classification with Transaction details, Journal entry and Account details. Removed the extra row padding inside the shared card, aligned fields and split dividers with the existing content inset, and matched compact text, amber review chips, monetary typography and shared card action links. No classification or persistence rules changed. Visual acceptance remains with the owner under the repository verification policy.
+
+Follow-up verification: `bun run check` reports 0 errors / 0 warnings; changed-component ESLint, changed-file formatting and `git diff --check` pass. Full-project lint still reports the existing 231-file formatting backlog. The earlier server test results above are unchanged; the styling-only follow-up did not rerun them.
+
 ## Manual walkthrough — owner validation
 
 1. In a development/test book, open **Accounts → Add account**, choose **Expense**, choose **Partial**, enter potential deduction **50.00%**, and save. The account detail should show the prospective default. Non-expense accounts should offer no tax defaults.
@@ -92,6 +98,7 @@ The normal `bun run test:unit -- --run --project server` failed at baseline befo
 16. Change an account default from 50% to 100%, then open an older record saved at 50%. Its select must still show 50%. Use current account default should preview 100% without saving yet; provide a reason and use the normal Save. Details and Activity should show the new default snapshot and actor/time/reason. Verify account defaults and financial amounts are unchanged by this action.
 17. Undo a pending default application and confirm the old saved value returns. Try applying a default after another session changes it: Save must refuse with an actionable refresh message and no partial record/audit change. A missing current default must return the line to Requires review rather than zero deduction.
 18. Check single-line, split, repeated-account, closed and voided records. A single line should have no redundant heading; splits should remain independently editable and identifiable. Details should be collapsed initially, the help icon keyboard-operable, and closed/voided values read-only. Current-default application is unavailable when the account's current policy is not loaded, while manual classification remains subject to existing permissions/locks.
+19. Compare Tax Classification beside Transaction details and Journal entry at desktop and narrow widths. Headers, content edges and bottom padding should align; split lines should have evenly spaced dividers. Check the amber review chip, Override chip, reason field, action links, fixed percentage and expanded Details for consistent sizing and spacing. Tab through the help and action controls to check visible focus.
 
 ## Screenshots / UI locations
 

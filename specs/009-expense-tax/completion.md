@@ -20,6 +20,14 @@ Records display Needs tax review badges. Reports show an unresolved warning driv
 
 Month closing now shows a separate mandatory tax check and links to affected records and the filtered report. It checks active Expense lines in the newly protected range, includes historical NULL snapshots, excludes true void pairs, and refuses unresolved lines even when their signed amounts cancel. The check is part of the stale-review revision and is recomputed inside the immediate close transaction. Successful closes retain `taxReviewCheck` audit evidence. Already closed periods remain frozen. This is the owner-approved exception to the handover's warning-only proposal; it does not add annual tax approval or finalisation.
 
+## Approved direct-edit simplification — 6 November 2026
+
+The section is now named Tax Classification and always shows the effective treatment directly. No checkbox is needed to edit. Override chips are derived from actual changes and retained for saved overrides; reverting an unsaved edit to its numerically identical baseline clears its draft and reason requirement. New records start from the account default; existing records always start from saved values, even if today's default differs.
+
+Only actual classification/source edits show Reason for change. Saved reason, actor/time and origin are collapsed under Details; an accessible help control replaces the repeated introductory paragraph. Single expense lines omit a redundant account/line-number heading; splits show account/description and available main-currency amounts. Fixed percentages are compact read-only values, Partial remains editable and Requires review keeps its visible status. Closed/voided classifications render as read-only values.
+
+Undo change restores the saved baseline. Use current account default is a separate existing-record action that previews a new snapshot and requires a reason before Save. The existing `taxOverrides` input accepts optional `source: "account_default"`; supplied percentage/treatment are checked against the actual account policy inside the record write transaction. A mismatch refuses and rolls back without changing the record, version or audit. Success records source/actor/time/reason and `account_default_reset` provenance; missing defaults remain unreviewed. Tax-only changes read movements in their saved display order, so repeated-account targets remain correct even when historical movement IDs have a different order. Account defaults, financial amounts and earlier audit evidence are untouched. Existing clients omitting source retain manual-override behaviour. No additional schema migration is required.
+
 ## Migrations and data impact
 
 `drizzle/0041_expense_tax_classification.sql` uses three additive `ALTER TABLE ADD COLUMN` statements:
@@ -40,7 +48,7 @@ The generated migration was hand-corrected to additive ALTERs: Drizzle's generat
 - Baseline selected ledger/account/closing/void suites using the repository Bun adapter: **89 passed, 0 failed** before feature changes.
 - New tax rule, application and migration specs: **19 tests passed** as part of the final regression run. Includes the RM1,000 / 50% and RM600 / 100% + RM400 / 0% examples, duplicate-account splits, signed refunds, reversal snapshot copying, prospective defaults, historical NULL retention, stale versions, permissions, closed query/application boundaries, audit rollback, foreign-currency amounts, import confirmer attribution, invalid inputs, book isolation and unchanged financial totals.
 - Additional targeted editor regression: **1 passed**, proving a five-line split retains every extra line, including duplicate-account labels/classifications. The editor now selects extra lines by movement identity; classification-only saves send only tax changes and never rebuild the journal.
-- Final adapter run including the follow-up: **104 compatible server/shared-rule spec files: 1,603 passed, 0 failed; 2 snapshots; 15,958 assertions**. Four treatment-entry tests and ten mandatory-close tests cover null overrides, partial endpoints, transitions, net-zero review, void exclusions, historical/date scope, stale previews, permissions, audit rollback and filtered report/CSV output.
+- Final adapter run including the follow-up: **105 compatible server/shared-rule spec files: 1,619 passed, 0 failed; 2 snapshots; 16,016 assertions**. Seven direct-edit state tests, nine explicit-default reset tests, four treatment-entry tests and ten mandatory-close tests cover null overrides, partial endpoints, transitions, net-zero review, void exclusions, historical/date scope, stale previews, permissions, audit rollback and filtered report/CSV output.
 - Final `bun run check`: **0 errors, 0 warnings**.
 - ESLint on every changed/new source file: **passed**.
 - `git diff --check`: **passed**.
@@ -66,7 +74,7 @@ The normal `bun run test:unit -- --run --project server` failed at baseline befo
 
 1. In a development/test book, open **Accounts → Add account**, choose **Expense**, choose **Partial**, enter potential deduction **50.00%**, and save. The account detail should show the prospective default. Non-expense accounts should offer no tax defaults.
 2. Open **Records → New**, create a **RM1,000** expense using that account and a bank account. The tax card should show the current 50% default before saving and a saved account-default snapshot afterward. Open **Reports → Expense tax**, selecting the transaction's date range: expense **RM1,000**, potential deduction **RM500**, potential add-back **RM500**, unresolved **RM0**.
-3. Create a second expense. Enable **Override this line**, choose **Partial**, enter **25.00%** and give a reason. Save. The line should show a saved override and the account default should remain **50%**.
+3. Create a second expense. Change the displayed treatment/percentage to **Partial, 25.00%** and give a reason. The Override chip should appear automatically. Save. The line should show a saved override and the account default should remain **50%**.
 4. Choose **Ordinary deductible** on the account; its percentage must display read-only **100%**. Old records/reports should retain their saved 50% or 25%; a newly created expense should capture 100%. Saving an old record's amount/description should retain its saved percentage.
 5. Create a split expense: **RM600 at 100%** and **RM400 at 0%** on two expense lines. The report should show **RM600** potential deduction and **RM400** add-back. Repeat with two lines on the same account; overrides should stay independent by occurrence.
 6. Inspect a historical expense and a new line on an account without defaults. Both should say **Unreviewed**, with blank deduction/add-back and amounts included in the separate unresolved total. An explicit open-period override with a reason should classify only that line. Confirm an import: a configured default should snapshot on confirmation; an unconfigured one should remain unreviewed.
@@ -79,6 +87,11 @@ The normal `bun run test:unit -- --run --project server` failed at baseline befo
 12. Choose Requires review on a record override with a reason and save without entering a percentage. Confirm the Needs tax review badge, unresolved report warning and unresolved-only filter/CSV. A historical tentative review percentage should remain visible as tentative evidence and excluded from estimates until explicitly changed.
 13. Create unresolved positive/negative expense lines netting to zero. Month closing must list both and block in UI and API. Classify each, refresh checks and close successfully; confirm the successful tax check in audit. Voiding a true duplicate must remove that pair from the review queue; an independent refund must still need classification.
 14. For a book already closed through an earlier month, verify only newly protected dates block a later close. Historical unreviewed lines in already closed periods remain immutable; correcting them requires the existing audited reopening process.
+
+15. Open a saved record in Tax Classification. The treatment should be visible without a checkbox; opening or saving unrelated fields must not create an override or require a reason. Change an inherited 50% to 25%, then back to 50.0%: the new Override chip/reason field and unsaved classification change should disappear. A previously saved override must retain its chip after Undo.
+16. Change an account default from 50% to 100%, then open an older record saved at 50%. Its select must still show 50%. Use current account default should preview 100% without saving yet; provide a reason and use the normal Save. Details and Activity should show the new default snapshot and actor/time/reason. Verify account defaults and financial amounts are unchanged by this action.
+17. Undo a pending default application and confirm the old saved value returns. Try applying a default after another session changes it: Save must refuse with an actionable refresh message and no partial record/audit change. A missing current default must return the line to Requires review rather than zero deduction.
+18. Check single-line, split, repeated-account, closed and voided records. A single line should have no redundant heading; splits should remain independently editable and identifiable. Details should be collapsed initially, the help icon keyboard-operable, and closed/voided values read-only. Current-default application is unavailable when the account's current policy is not loaded, while manual classification remains subject to existing permissions/locks.
 
 ## Screenshots / UI locations
 
@@ -117,6 +130,7 @@ Do not delete classification/audit evidence to roll back application code. To re
 - `drizzle/meta/_journal.json`
 - `specs/008-month-closing/spec.md`
 - `specs/009-expense-tax/completion.md`
+- `specs/009-expense-tax/direct-edit-ux-plan.md`
 - `specs/009-expense-tax/plan.md`
 - `specs/009-expense-tax/review-ux-plan.md`
 - `specs/009-expense-tax/validation-files.txt`
@@ -130,7 +144,10 @@ Do not delete classification/audit evidence to roll back application code. To re
 - `src/lib/components/reports/ExpenseTaxReport.svelte`
 - `src/lib/components/reports/ReportsPage.svelte`
 - `src/lib/components/tax/ExpenseTaxLines.svelte`
+- `src/lib/components/tax/TaxLineEditor.svelte`
 - `src/lib/components/tax/TaxValuesFields.svelte`
+- `src/lib/components/tax/tax-line-state.spec.ts`
+- `src/lib/components/tax/tax-line-state.ts`
 - `src/lib/expense-tax.spec.ts`
 - `src/lib/expense-tax.ts`
 - `src/lib/server/application/accounts.ts`

@@ -533,3 +533,259 @@ describe("expense tax snapshots across authorized write paths", () => {
     }
   });
 });
+
+describe("explicit adoption of current account tax defaults", () => {
+  function useDefault(
+    percentageBps: number | null = 5000,
+    treatment: TaxOverride["treatment"] = "partial",
+  ): TaxOverride {
+    return {
+      accountId: fuel,
+      occurrence: 0,
+      percentageBps,
+      treatment,
+      source: "account_default",
+      reason: "Apply current account policy",
+    };
+  }
+  it("re-snapshots the current default with reason, actor and audit without changing financial amounts or the account", () => {
+    const old = expense([override()]);
+    const accountBefore = getAccount(db, fuel);
+    const amountsBefore = accountTotalsBetween(db, "2026-01-01", "2026-12-31");
+    const updated = value(
+      updateRecord(ctx(), old.id, { taxOverrides: [useDefault()] }),
+    ).record;
+    expect(tax(updated)).toMatchObject({
+      percentageBps: 5000,
+      treatment: "partial",
+      source: "account_default",
+      provenance: "account_default_reset",
+      reason: "Apply current account policy",
+      classifiedBy: 1,
+    });
+    expect(
+      updated.movements.map((m) => [m.id, m.accountId, m.amountMinor, m.label]),
+    ).toEqual(
+      old.movements.map((m) => [m.id, m.accountId, m.amountMinor, m.label]),
+    );
+    expect(getAccount(db, fuel)).toEqual(accountBefore);
+    expect(accountTotalsBetween(db, "2026-01-01", "2026-12-31")).toEqual(
+      amountsBefore,
+    );
+    const audit = db
+      .select()
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.recordType, "record"),
+          eq(auditLog.recordId, String(old.id)),
+        ),
+      )
+      .all()
+      .at(-1)!;
+    expect(audit.changes).toContain("account_default_reset");
+    expect(audit.changes).toContain("Apply current account policy");
+  });
+  it("changes saved override provenance even when its values already match today's default", () => {
+    const old = expense([override(fuel, 5000)]);
+    expect(tax(old)?.source).toBe("override");
+    const updated = value(
+      updateRecord(ctx(), old.id, { taxOverrides: [useDefault()] }),
+    ).record;
+    expect(tax(updated)?.source).toBe("account_default");
+    expect(tax(updated)?.percentageBps).toBe(5000);
+  });
+  it("refuses a stale or spoofed default without changing the record, its version or audit", () => {
+    const old = expense([override()]);
+    value(updateAccount(ctx(), fuel, { defaultTaxPercentageBps: 10000 }));
+    const version = recordVersion(db, old.id);
+    const auditBefore = db.select().from(auditLog).all();
+    const result = updateRecord(ctx(), old.id, {
+      taxOverrides: [useDefault()],
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      code: "REFUSED",
+      reason: expect.stringContaining("default changed"),
+    });
+    expect(recordVersion(db, old.id)).toBe(version);
+    expect(db.select().from(auditLog).all()).toEqual(auditBefore);
+    expect(tax(getRecord(db, old.id)!)).toEqual(tax(old));
+    expect(
+      tax(
+        value(
+          updateRecord(ctx(), old.id, {
+            taxOverrides: [useDefault(10000, "ordinary_deductible")],
+          }),
+        ).record,
+      )?.percentageBps,
+    ).toBe(10000);
+  });
+  it("checks treatment as well as percentage when adopting zero-percent defaults", () => {
+    const old = expense([override()]);
+    value(
+      updateAccount(ctx(), fuel, {
+        defaultTaxPercentageBps: 0,
+        defaultTaxTreatment: "capital_expenditure",
+      }),
+    );
+    const before = recordVersion(db, old.id);
+    expect(
+      updateRecord(ctx(), old.id, {
+        taxOverrides: [useDefault(0, "non_deductible")],
+      }).ok,
+    ).toBe(false);
+    expect(recordVersion(db, old.id)).toBe(before);
+    expect(
+      tax(
+        value(
+          updateRecord(ctx(), old.id, {
+            taxOverrides: [useDefault(0, "capital_expenditure")],
+          }),
+        ).record,
+      )?.treatment,
+    ).toBe("capital_expenditure");
+  });
+  it("can return to an unconfigured default as unreviewed, never as a confirmed zero deduction", () => {
+    const old = expense([override()]);
+    value(
+      updateAccount(ctx(), fuel, {
+        defaultTaxPercentageBps: null,
+        defaultTaxTreatment: null,
+      }),
+    );
+    const updated = value(
+      updateRecord(ctx(), old.id, {
+        taxOverrides: [useDefault(null, "requires_review")],
+      }),
+    ).record;
+    expect(tax(updated)).toMatchObject({
+      source: "unreviewed",
+      percentageBps: null,
+      treatment: "requires_review",
+      provenance: "account_default_reset",
+    });
+    expect(report()).toMatchObject({
+      unresolvedLineCount: 1,
+      unresolvedMinor: 100000,
+      deductibleMinor: 0,
+      addBackMinor: 0,
+    });
+  });
+  it("preserves a current default's legacy tentative review percentage and still reports it unresolved", () => {
+    const old = expense([override()]);
+    value(
+      updateAccount(ctx(), fuel, {
+        defaultTaxPercentageBps: 2500,
+        defaultTaxTreatment: "requires_review",
+      }),
+    );
+    const updated = value(
+      updateRecord(ctx(), old.id, {
+        taxOverrides: [useDefault(2500, "requires_review")],
+      }),
+    ).record;
+    expect(tax(updated)).toMatchObject({
+      percentageBps: 2500,
+      treatment: "requires_review",
+      source: "account_default",
+    });
+    expect(report().unresolvedLineCount).toBe(1);
+  });
+  it("requires the existing permission and reason and respects the month lock through both API operation and query boundaries", () => {
+    const old = expense([override()]);
+    const before = recordVersion(db, old.id);
+    expect(
+      updateRecord(ctx([]), old.id, { taxOverrides: [useDefault()] }),
+    ).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(
+      updateRecord(ctx(), old.id, {
+        taxOverrides: [{ ...useDefault(), reason: "" }],
+      }).ok,
+    ).toBe(false);
+    setSetting(db, SETTING_KEYS.accountingClosedThrough, "2026-01-31");
+    expect(
+      updateRecord(ctx(), old.id, { taxOverrides: [useDefault()] }),
+    ).toMatchObject({ ok: false, code: "REFUSED" });
+    expect(() =>
+      queryUpdate(db, old.id, 1, { taxOverrides: [useDefault()] }),
+    ).toThrow("closed through");
+    expect(recordVersion(db, old.id)).toBe(before);
+  });
+  it("targets the displayed occurrence even when historical movement IDs are in a different order", () => {
+    const original = value(
+      createRecord(ctx(), {
+        kind: "journal",
+        date: "2026-01-01",
+        description: "Reordered split",
+        amount: 1000,
+        currency: "MYR",
+        exchangeRate: 1,
+        movements: [
+          { accountId: bank, amountMinor: -100000 },
+          { accountId: fuel, amountMinor: 60000 },
+          { accountId: fuel, amountMinor: 40000 },
+        ],
+        taxOverrides: [override(fuel, 10000), override(fuel, 0, 1)],
+      }),
+    ).record;
+    const fuelLines = original.movements.filter((m) => m.accountId === fuel);
+    db.update(ledgerMovements)
+      .set({ sortOrder: 2 })
+      .where(eq(ledgerMovements.id, fuelLines[0].id))
+      .run();
+    db.update(ledgerMovements)
+      .set({ sortOrder: 1 })
+      .where(eq(ledgerMovements.id, fuelLines[1].id))
+      .run();
+    const updated = value(
+      updateRecord(ctx(), original.id, { taxOverrides: [useDefault()] }),
+    ).record;
+    expect(
+      updated.movements
+        .filter((m) => m.accountId === fuel)
+        .map((m) => [m.id, m.taxClassification?.percentageBps]),
+    ).toEqual([
+      [fuelLines[1].id, 5000],
+      [fuelLines[0].id, 10000],
+    ]);
+    expect(report().deductibleMinor).toBe(80000);
+  });
+  it("keeps split default-reset and manual override targets independent", () => {
+    const created = value(
+      createRecord(ctx(), {
+        kind: "journal",
+        date: "2026-01-01",
+        description: "Split",
+        amount: 1000,
+        currency: "MYR",
+        exchangeRate: 1,
+        movements: [
+          { accountId: bank, amountMinor: -100000 },
+          { accountId: fuel, amountMinor: 60000 },
+          { accountId: fuel, amountMinor: 40000 },
+        ],
+        taxOverrides: [override(fuel, 10000), override(fuel, 0, 1)],
+      }),
+    ).record;
+    const updated = value(
+      updateRecord(ctx(), created.id, { taxOverrides: [useDefault()] }),
+    ).record;
+    expect(
+      updated.movements
+        .filter((m) => m.accountId === fuel)
+        .map((m) => [
+          m.taxClassification?.percentageBps,
+          m.taxClassification?.source,
+        ]),
+    ).toEqual([
+      [5000, "account_default"],
+      [0, "override"],
+    ]);
+    expect(report()).toMatchObject({
+      expenseMinor: 100000,
+      deductibleMinor: 30000,
+      addBackMinor: 70000,
+    });
+  });
+});

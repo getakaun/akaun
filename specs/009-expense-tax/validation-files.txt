@@ -3,6 +3,7 @@
 ./src/lib/components/import/review-card.spec.ts
 ./src/lib/components/ledger/credit-application.spec.ts
 ./src/lib/components/ledger/journal-rules.spec.ts
+./src/lib/components/tax/tax-line-state.spec.ts
 ./src/lib/dashboard-periods.spec.ts
 ./src/lib/enums.spec.ts
 ./src/lib/expense-tax.spec.ts

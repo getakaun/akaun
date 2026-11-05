@@ -1,6 +1,7 @@
 <script lang="ts">
-	import ExpenseTaxLines, { type TaxLineDraft } from '$lib/components/tax/ExpenseTaxLines.svelte';
-	import { taxFormValues, treatmentForPercentage } from '$lib/expense-tax.js';
+	import ExpenseTaxLines from '$lib/components/tax/ExpenseTaxLines.svelte';
+	import { taxLineChanged, taxLineRequest, type TaxLineDraft } from '$lib/components/tax/tax-line-state.js';
+	import { taxFormValues, accountTaxDefault } from '$lib/expense-tax.js';
 	import { tick } from 'svelte';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
@@ -223,7 +224,10 @@
 			toAccountId,
 			categoryAmount,
 			categoryLabel,
-			includeTax ? Object.entries(taxDrafts).filter(([, draft]) => draft.enabled) : null,
+			includeTax ? expenseTaxLines.flatMap((line) => {
+				const draft = taxDrafts[line.key];
+				return draft && taxLineChanged(line, draft) ? [[line.key, taxLineRequest(draft)]] : [];
+			}) : null,
 			extraSides.map((s) => [s.accountId, s.direction, s.amount, s.label])
 		]);
 	}
@@ -505,28 +509,61 @@
 		// Saved tax lines retain the ledger's order and identity even when the
 		// everyday editor presents the named debit/credit in a different order.
 		const taxSides = record
-			? record.movements.map((m) => ({ key: m.id, accountId: m.accountId, label: m.label ?? '' }))
+			? record.movements.map((m) => ({
+					key: m.id,
+					accountId: m.accountId,
+					label: m.label ?? '',
+					amountMinor: m.amountMinor
+				}))
 			: allSides;
 		return taxSides.flatMap((side) => {
 			const savedAccount = record?.movements.find((m) => m.accountId === side.accountId);
-			const account = allAccounts.concat(categories, accounts).find((a) => a.id === side.accountId) ??
-				(savedAccount ? { id: savedAccount.accountId, name: savedAccount.accountName, type: savedAccount.accountType, defaultTaxPercentageBps: null, defaultTaxTreatment: null } : undefined);
+			const currentAccount = allAccounts
+				.concat(categories, accounts)
+				.find((a) => a.id === side.accountId);
+			const account =
+				currentAccount ??
+				(savedAccount
+					? {
+							id: savedAccount.accountId,
+							name: savedAccount.accountName,
+							type: savedAccount.accountType,
+							defaultTaxPercentageBps: null,
+							defaultTaxTreatment: null
+						}
+					: undefined);
 			if (!account || account.type !== AccountType.Expense) return [];
 			const occurrence = occurrenceByAccount[account.id] ?? 0;
 			occurrenceByAccount[account.id] = occurrence + 1;
 			const key = `${side.key}:${account.id}`;
 			const savedLine = record?.movements.filter((m) => m.accountId === account.id)[occurrence];
 			const saved = savedLine?.taxClassification;
+			const currentDefault = currentAccount ? accountTaxDefault(currentAccount) : null;
 			const percentageBps = savedLine
 				? (saved?.percentageBps ?? null)
-				: (account.defaultTaxPercentageBps ?? null);
+				: (currentDefault?.percentageBps ?? null);
 			const treatment = savedLine
 				? (saved?.treatment ?? 'requires_review')
-				: (account.defaultTaxTreatment ??
-					(percentageBps === null ? 'requires_review' : treatmentForPercentage(percentageBps)));
-			return [{ side, account, occurrence, key, saved, savedLine, percentageBps, treatment }];
+				: (currentDefault?.treatment ?? 'requires_review');
+			const amountMinor =
+				'amountMinor' in side ? side.amountMinor : isForeign ? undefined : sideMinor(side);
+			return [
+				{
+					side,
+					account,
+					occurrence,
+					key,
+					saved,
+					persisted: Boolean(savedLine),
+					percentageBps,
+					treatment,
+					currentDefault,
+					amountMinor
+				}
+			];
 		});
 	});
+
 	const taxReadOnly = $derived(
 		annotationReadOnly ||
 			fromInvoice ||
@@ -536,17 +573,8 @@
 	function taxPayload() {
 		const overrides = expenseTaxLines.flatMap((line) => {
 			const draft = taxDrafts[line.key];
-			if (!draft?.enabled) return [];
-			const tax = taxFormValues(draft.treatment, draft.percentage);
-			return [
-				{
-					accountId: line.account.id,
-					occurrence: line.occurrence,
-					percentageBps: tax.percentageBps,
-					treatment: tax.treatment ?? 'requires_review',
-					reason: draft.reason
-				}
-			];
+			if (!draft || !taxLineChanged(line, draft)) return [];
+			return [{ accountId: line.account.id, occurrence: line.occurrence, ...taxLineRequest(draft) }];
 		});
 		return overrides.length ? { taxOverrides: overrides } : {};
 	}
@@ -554,10 +582,10 @@
 	function taxError(): string | null {
 		for (const line of expenseTaxLines) {
 			const draft = taxDrafts[line.key];
-			if (!draft?.enabled) continue;
+			if (!draft || !taxLineChanged(line, draft)) continue;
 			const error = taxFormValues(draft.treatment, draft.percentage).error;
 			if (error) return error;
-			if (!draft.reason.trim()) return 'Give a reason for each tax override.';
+			if (!draft.reason.trim()) return 'Give a reason for each classification change.';
 		}
 		return null;
 	}

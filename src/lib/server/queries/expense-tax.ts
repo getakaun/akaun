@@ -2,7 +2,7 @@ import { eq, inArray } from "drizzle-orm";
 import { AccountType } from "$lib/enums.js";
 import {
   taxOverrideSchema,
-  treatmentForPercentage,
+  accountTaxDefault,
   type ExpenseTaxSnapshot,
   type TaxOverride,
 } from "$lib/expense-tax.js";
@@ -74,7 +74,31 @@ export function classifiedMovements(
         taxClassification: previous[index]?.taxClassification ?? null,
       };
     }
+    const currentDefault = accountTaxDefault(account);
     const old = previousByOrder.get(m.sortOrder);
+    if (override?.source === "account_default") {
+      if (
+        override.percentageBps !== currentDefault.percentageBps ||
+        override.treatment !== currentDefault.treatment
+      )
+        throw new ExpenseTaxError(
+          "The account tax default changed. Refresh this record, then choose Use current account default again.",
+        );
+      return {
+        ...m,
+        taxClassification: {
+          ...currentDefault,
+          source:
+            currentDefault.percentageBps === null
+              ? "unreviewed"
+              : "account_default",
+          reason: override.reason,
+          classifiedBy: actor,
+          classifiedAt: now,
+          provenance: old ? "account_default_reset" : "record_creation",
+        },
+      };
+    }
     const provenance = old
       ? old.accountId === m.accountId
         ? "line_override"
@@ -97,17 +121,13 @@ export function classifiedMovements(
     if (old?.accountId === m.accountId)
       return { ...m, taxClassification: old.taxClassification };
     if (options.historical) return { ...m, taxClassification: null };
-    const percentageBps = account.defaultTaxPercentageBps;
+    const { percentageBps, treatment } = currentDefault;
     return {
       ...m,
       taxClassification: {
         percentageBps,
         source: percentageBps == null ? "unreviewed" : "account_default",
-        treatment:
-          account.defaultTaxTreatment ??
-          (percentageBps == null
-            ? "requires_review"
-            : treatmentForPercentage(percentageBps)),
+        treatment,
         reason: null,
         classifiedBy: actor,
         classifiedAt: now,

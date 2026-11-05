@@ -40,6 +40,12 @@ export const taxOverrideSchema = z
     /** Zero-based occurrence among movements on this account, in movement order. */
     occurrence: z.number().int().min(0).default(0),
     ...taxValuesSchema.shape,
+    source: z
+      .enum(["override", "account_default"])
+      .optional()
+      .describe(
+        "Omit for a manual override. account_default explicitly reapplies the current default; percentage and treatment must match it.",
+      ),
     reason: z.string().trim().min(1).max(500),
   })
   .superRefine((value, ctx) => {
@@ -55,7 +61,11 @@ export type ExpenseTaxSnapshot = {
   reason: string | null;
   classifiedBy: number | null;
   classifiedAt: string;
-  provenance: "record_creation" | "account_change" | "line_override";
+  provenance:
+    | "record_creation"
+    | "account_change"
+    | "line_override"
+    | "account_default_reset";
 };
 
 export function treatmentForPercentage(p: number): TaxTreatment {
@@ -181,5 +191,21 @@ export function switchTaxTreatment(
           ? ""
           : (values.percentageBps / 100).toFixed(2),
     previousPartial: partial,
+  };
+}
+
+/** The current account policy, distinct from a movement's saved effective values. */
+export function accountTaxDefault(account: {
+  defaultTaxPercentageBps?: number | null;
+  defaultTaxTreatment?: TaxTreatment | null;
+}): Pick<ExpenseTaxSnapshot, "percentageBps" | "treatment"> {
+  const percentageBps = account.defaultTaxPercentageBps ?? null;
+  return {
+    percentageBps,
+    treatment:
+      account.defaultTaxTreatment ??
+      (percentageBps === null
+        ? "requires_review"
+        : treatmentForPercentage(percentageBps)),
   };
 }

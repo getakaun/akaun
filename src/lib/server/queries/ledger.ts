@@ -1088,6 +1088,7 @@ export function updateRecord(
             .select()
             .from(ledgerMovements)
             .where(eq(ledgerMovements.recordId, id))
+            .orderBy(asc(ledgerMovements.sortOrder), asc(ledgerMovements.id))
             .all();
         replaceMovements(
           tx,

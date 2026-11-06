@@ -16,6 +16,7 @@ export function expenseTaxReport(
   dateFrom: string,
   dateTo: string,
   reviewOnly = false,
+  accountId: number | null = null,
 ) {
   if (!isValidDate(dateFrom) || !isValidDate(dateTo) || dateFrom > dateTo)
     throw new Error("Choose a valid inclusive date range.");
@@ -41,6 +42,9 @@ export function expenseTaxReport(
         eq(accounts.type, AccountType.Expense),
         gte(ledgerRecords.date, dateFrom),
         lte(ledgerRecords.date, dateTo),
+        accountId === null
+          ? undefined
+          : eq(ledgerMovements.accountId, accountId),
       ),
     )
     .orderBy(
@@ -80,6 +84,7 @@ export function expenseTaxReport(
   return {
     dateFrom,
     dateTo,
+    accountId,
     reviewOnly,
     rows,
     expenseMinor: sum(rows.map((r) => r.expenseMinor)),

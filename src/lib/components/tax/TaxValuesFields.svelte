@@ -17,6 +17,7 @@
     named = false,
     allowNoDefault = false,
     compact = false,
+    popoverClass = "",
     onchange,
   }: {
     id: string;
@@ -26,6 +27,7 @@
     named?: boolean;
     allowNoDefault?: boolean;
     compact?: boolean;
+    popoverClass?: string;
     onchange?: (value: TaxFormDraft) => void;
   } = $props();
   let previousPartial = $state("");
@@ -64,7 +66,7 @@
           ? TaxTreatmentLabels[selected as TaxTreatment]
           : "No default — requires review"}
       </Select.Trigger>
-      <Select.Content>
+      <Select.Content class={popoverClass}>
         {#if allowNoDefault}<Select.Item
             value="__none__"
             label="No default — requires review"

@@ -1,6 +1,10 @@
 import { redirect } from "@sveltejs/kit";
 import { db } from "$lib/server/db/client.js";
 import { can } from "$lib/server/permissions.js";
+import { eq, asc } from "drizzle-orm";
+import { AccountType } from "$lib/enums.js";
+import { accounts } from "../db/schema.js";
+import { closedThrough } from "../closing/policy.js";
 import { normalizeDate, today } from "$lib/server/date.js";
 import {
   balanceSheetReport,
@@ -57,7 +61,14 @@ export type ReportPeriod = { dateFrom: string; dateTo: string; asAt: string };
 export type ReportsPageData = {
   hasPartners: boolean;
 } & (
-  | { view: "expense-tax"; period: ReportPeriod; report: ExpenseTaxReport }
+  | {
+      view: "expense-tax";
+      period: ReportPeriod;
+      report: ExpenseTaxReport;
+      taxAccounts: { id: number; name: string }[];
+      canBulkTaxClassify: boolean;
+      taxClosedThrough: string | null;
+    }
   | { view: "profit-loss"; period: ReportPeriod; report: ProfitLossReport }
   | { view: "balance-sheet"; period: ReportPeriod; report: BalanceSheetReport }
   | { view: "cash-flow"; period: ReportPeriod; report: CashFlowReport }
@@ -126,7 +137,20 @@ export function loadReportsPage(
           period.dateFrom,
           period.dateTo,
           url.searchParams.get("review") === "unresolved",
+          Number.isSafeInteger(Number(url.searchParams.get("account"))) &&
+            Number(url.searchParams.get("account")) > 0
+            ? Number(url.searchParams.get("account"))
+            : null,
         ),
+        taxAccounts: db
+          .select({ id: accounts.id, name: accounts.name })
+          .from(accounts)
+          .where(eq(accounts.type, AccountType.Expense))
+          .orderBy(asc(accounts.name), asc(accounts.id))
+          .all(),
+        canBulkTaxClassify:
+          can(locals, "records.read") && can(locals, "records.update"),
+        taxClosedThrough: closedThrough(db),
         hasPartners,
       };
     case "profit-loss":

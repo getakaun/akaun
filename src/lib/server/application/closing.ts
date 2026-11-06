@@ -555,6 +555,7 @@ export function closingPage(ctx: AppContext): AppResult<ClosingPageData> {
     closedThrough: current,
     latestMonthEnd,
     defaultMonth,
+    canReadRecords: can(ctx.locals, "records.read"),
     canClose:
       !ctx.locals.credential &&
       !ctx.locals.oauth &&

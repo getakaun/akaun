@@ -69,6 +69,7 @@ export type ClosingHistoryEntry = {
   reason: string | null;
 };
 export type ClosingPageData = ClosingStatus & {
+  canReadRecords: boolean;
   canClose: boolean;
   canReopen: boolean;
   latestMonthEnd: string;

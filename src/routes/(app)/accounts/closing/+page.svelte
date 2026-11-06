@@ -228,7 +228,22 @@
 
   onMount(() => {
     void prepareReview();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const source = data.canReadRecords
+      ? new EventSource("/api/records/stream")
+      : null;
+    const refreshChecks = () => {
+      clearReview();
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        void prepareReview();
+      }, 80);
+    };
+    source?.addEventListener("record-update", refreshChecks);
+    source?.addEventListener("record-deleted", refreshChecks);
     return () => {
+      source?.close();
+      clearTimeout(timer);
       reviewRequest++;
     };
   });

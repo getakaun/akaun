@@ -17,17 +17,21 @@ import {
 export const GET: RequestHandler = async ({ locals, url }) => {
   if (!can(locals, "reports.read")) return forbidden();
   const parsed = periodQuery
-    .extend({ review: z.enum(["unresolved", "all"]).optional() })
+    .extend({
+      review: z.enum(["unresolved", "all"]).optional(),
+      accountId: z.coerce.number().int().positive().optional(),
+    })
     .refine((q) => q.dateFrom <= q.dateTo, {
       message: "The start date must not follow the end date.",
     })
-    .safeParse(queryValues(url, ["dateFrom", "dateTo", "review"]));
+    .safeParse(queryValues(url, ["dateFrom", "dateTo", "review", "accountId"]));
   if (!parsed.success) return badRequest(parsed.error);
   const report = expenseTaxReport(
     db,
     parsed.data.dateFrom,
     parsed.data.dateTo,
     parsed.data.review === "unresolved",
+    parsed.data.accountId ?? null,
   );
   return reportResponse(
     formatFrom(url),

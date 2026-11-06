@@ -73,7 +73,12 @@
       case "expense-tax":
         return {
           endpoint: "expense-tax",
-          query: period + (data.report.reviewOnly ? "&review=unresolved" : ""),
+          query:
+            period +
+            (data.report.reviewOnly ? "&review=unresolved" : "") +
+            (data.report.accountId === null
+              ? ""
+              : `&accountId=${data.report.accountId}`),
         };
       case "profit-loss":
         return { endpoint: "profit-loss", query: period };
@@ -116,6 +121,14 @@
       from: dateFrom ?? data.period.dateFrom,
       to: dateTo ?? data.period.dateTo,
       asAt: asAt ?? data.period.asAt,
+      ...(data.view === "expense-tax"
+        ? {
+            ...(data.report.reviewOnly ? { review: "unresolved" } : {}),
+            ...(data.report.accountId === null
+              ? {}
+              : { account: String(data.report.accountId) }),
+          }
+        : {}),
     }).toString();
     // eslint-disable-next-line svelte/no-navigation-without-resolve -- route is resolved; only the period is appended.
     goto(`${resolve("/(app)/reports/[view]", { view: data.view })}?${query}`, {
@@ -196,7 +209,12 @@
   </div>
 
   {#if data.view === "expense-tax"}
-    <ExpenseTaxReport report={data.report} />
+    <ExpenseTaxReport
+      report={data.report}
+      accounts={data.taxAccounts}
+      canBulk={data.canBulkTaxClassify}
+      closedThrough={data.taxClosedThrough}
+    />
   {:else if data.view === "profit-loss"}
     <ProfitLossReport report={data.report} {isMobile} />
   {:else if data.view === "balance-sheet"}

@@ -319,6 +319,8 @@ export function recordAudit(
     changes?: FieldChange[];
     /** What to call the record, when its row does not say (or is gone). */
     label?: string | null;
+    /** Compound writes publish only after their outer transaction commits. */
+    deferredEmits?: (() => void)[];
   },
 ): void {
   // Don't log a save that changed nothing.
@@ -356,9 +358,12 @@ export function recordAudit(
     })
     .run();
 
-  // bun:sqlite transactions are synchronous, so this runs after the caller's
-  // transaction has committed (or rolled back — the page then finds nothing).
-  queueMicrotask(() => auditEvents.emit("entry-added"));
+  // Compound writes publish through their caller's post-commit buffer. Legacy
+  // callers use a microtask after the synchronous transaction finishes; a
+  // rolled-back entry is never returned when the audit page refreshes.
+  if (opts.deferredEmits)
+    opts.deferredEmits.push(() => auditEvents.emit("entry-added"));
+  else queueMicrotask(() => auditEvents.emit("entry-added"));
 }
 
 export type AuditEntry = {

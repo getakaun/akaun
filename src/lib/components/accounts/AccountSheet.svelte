@@ -147,8 +147,8 @@
 				</div>
 
 				{#if selectedType === AccountType.Expense}
-          <TaxValuesFields id="new-account-tax" named allowNoDefault />
-          <p class="field-hint">Optional tax defaults apply only to new expense lines. Blank means unreviewed. Classifications are estimates.</p>
+          <TaxValuesFields id="new-account-tax" named accountDefault />
+          <p class="field-hint">New expense lines capture this default. Unclassified means no treatment has been established. Classifications are estimates.</p>
         {/if}
 
 				{#if subTypes.length > 0}

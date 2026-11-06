@@ -81,13 +81,14 @@
 	const locked = $derived(record?.locked ?? false);
 	const lockedReason = $derived(record?.lockedReason ?? '');
 	const closingBoundary = getClosingBoundary();
-	const periodClosed = $derived(
+	const periodClosedThrough = $derived(
 		periodClosedThroughFor(
 			record?.date ?? null,
 			record?.periodClosedThrough ?? null,
 			closingBoundary
-		) !== null
+		)
 	);
+	const periodClosed = $derived(periodClosedThrough !== null);
 	const annotationReadOnly = $derived(periodClosed || (!canChange && !isNew));
 
 	// --- Form state ---------------------------------------------------------
@@ -543,8 +544,8 @@
 				? (saved?.percentageBps ?? null)
 				: (currentDefault?.percentageBps ?? null);
 			const treatment = savedLine
-				? (saved?.treatment ?? 'requires_review')
-				: (currentDefault?.treatment ?? 'requires_review');
+				? (saved?.treatment ?? 'unclassified')
+				: (currentDefault?.treatment ?? 'unclassified');
 			const amountMinor =
 				'amountMinor' in side ? side.amountMinor : isForeign ? undefined : sideMinor(side);
 			return [
@@ -1022,7 +1023,15 @@
 	onremoveside={removeSide}
 />
 
-<ExpenseTaxLines lines={expenseTaxLines} bind:drafts={taxDrafts} readOnly={taxReadOnly} reviewExempt={record?.voidedByRecordId != null || record?.reversesRecordId != null} />
+<ExpenseTaxLines
+	lines={expenseTaxLines}
+	bind:drafts={taxDrafts}
+	readOnly={taxReadOnly}
+	readOnlyReason={periodClosed
+		? `Tax classification is read-only because accounting is closed through ${periodClosedThrough}. An authorised user must reopen the affected months before correcting it.`
+		: ''}
+	reviewExempt={record?.voidedByRecordId != null || record?.reversesRecordId != null}
+/>
 
 <section class="detail-card">
 	<div class="detail-card-head"><span class="detail-card-title">Details</span></div>

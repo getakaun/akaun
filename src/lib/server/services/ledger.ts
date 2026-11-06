@@ -435,12 +435,14 @@ export function patchRecord(
   }
 }
 
-function patchRecordInTransaction(
+/** Caller owns the write transaction and flushes events only after commit. */
+export function patchRecordInTransaction(
   db: LedgerDb,
   id: number,
   actingUserId: number,
   patch: RecordPatch,
   deferredEmits: DeferredEmits,
+  taxReviewBatch?: { id: string; movementIds: number[] },
 ): Refusable<RecordView> {
   if (
     db
@@ -676,7 +678,13 @@ function patchRecordInTransaction(
     recordId: id,
     userId: actingUserId,
     action: "update",
-    changes: diffRecords(before, snapshotForAudit(db, id)),
+    changes: [
+      ...diffRecords(before, snapshotForAudit(db, id)),
+      ...(taxReviewBatch
+        ? [{ field: "taxReviewBatch", before: null, after: taxReviewBatch }]
+        : []),
+    ],
+    deferredEmits,
   });
 
   const updated = getRecord(db, id)!;

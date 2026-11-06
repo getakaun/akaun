@@ -37,7 +37,10 @@
     showHeading?: boolean;
   } = $props();
   let controlRevision = $state(0);
-  const activeDraft = $derived(taxLineChanged(line, draft) ? draft : undefined);
+  // A live close/permission change must show saved evidence, never an unsaved edit.
+  const activeDraft = $derived(
+    !readOnly && taxLineChanged(line, draft) ? draft : undefined,
+  );
   const value = $derived(activeDraft ?? initialTaxDraft(line));
   const effective = $derived(activeDraft ? taxLineRequest(activeDraft) : line);
   const overridden = $derived(taxLineIsOverride(line, activeDraft));
@@ -65,6 +68,16 @@
   function applyDefault() {
     controlRevision++;
     onchange(useCurrentTaxDefault(line));
+  }
+  function keepForReview() {
+    onchange({
+      ...initialTaxDraft(line),
+      treatment: "requires_review",
+      percentage: "",
+      source: "override",
+      reason: "",
+      explicitReview: true,
+    });
   }
   function describe(tax: TaxClassification) {
     const percentage =
@@ -131,7 +144,7 @@
       />
     </div>
   {/if}
-  {#if !readOnly && (activeDraft || canUseDefault)}
+  {#if !readOnly && (activeDraft || canUseDefault || (line.treatment === "requires_review" && line.saved?.source !== "override"))}
     <div class="actions">
       {#if activeDraft}<button
           type="button"
@@ -146,6 +159,11 @@
             ? describe(line.currentDefault)
             : undefined}>Use current account default</button
         >{/if}
+      {#if line.treatment === "requires_review" && line.saved?.source !== "override" && !activeDraft}<button
+          type="button"
+          class="detail-card-action"
+          onclick={keepForReview}>Keep for individual review</button
+        >{/if}
     </div>
   {/if}
   {#if line.persisted}
@@ -158,7 +176,7 @@
             ? "Override"
             : line.saved?.source === "account_default"
               ? "Account default at capture"
-              : "Unreviewed"}
+              : "Unclassified at capture"}
         </dd>
         {#if line.saved?.reason}<dt>Saved reason</dt>
           <dd>{line.saved.reason}</dd>{/if}

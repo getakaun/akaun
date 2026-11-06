@@ -656,13 +656,13 @@ describe("explicit adoption of current account tax defaults", () => {
     );
     const updated = value(
       updateRecord(ctx(), old.id, {
-        taxOverrides: [useDefault(null, "requires_review")],
+        taxOverrides: [useDefault(null, "unclassified")],
       }),
     ).record;
     expect(tax(updated)).toMatchObject({
       source: "unreviewed",
       percentageBps: null,
-      treatment: "requires_review",
+      treatment: "unclassified",
       provenance: "account_default_reset",
     });
     expect(report()).toMatchObject({

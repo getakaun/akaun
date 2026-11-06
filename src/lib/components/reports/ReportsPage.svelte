@@ -9,7 +9,6 @@
     ReportsPageData,
     ReportView,
   } from "$lib/server/loaders/reports.js";
-  import ExpenseTaxReport from "./ExpenseTaxReport.svelte";
   import BalanceSheetReport from "./BalanceSheetReport.svelte";
   import CashFlowStatementReport from "./CashFlowStatementReport.svelte";
   import PartnerStatementReport from "./PartnerStatementReport.svelte";
@@ -37,13 +36,11 @@
         { view: "balance-sheet", label: "Balance Sheet" },
         { view: "cash-flow", label: "Cash Flow Statement" },
         { view: "partners", label: "Partners' Equity" },
-        { view: "expense-tax", label: "Expense tax" },
       ] satisfies { view: ReportView; label: string }[]
     ).filter((tab) => tab.view !== "partners" || data.hasPartners),
   );
 
   const DESCRIPTIONS: Record<ReportView, string> = {
-    "expense-tax": "Potential expense deductions and add-backs for review",
     "profit-loss": "Revenue and expenses for the period",
     "balance-sheet": "Assets, liabilities and equity as at a date",
     "cash-flow":
@@ -70,11 +67,6 @@
     const p = data.period;
     const period = `dateFrom=${p.dateFrom}&dateTo=${p.dateTo}`;
     switch (data.view) {
-      case "expense-tax":
-        return {
-          endpoint: "expense-tax",
-          query: period + (data.report.reviewOnly ? "&review=unresolved" : ""),
-        };
       case "profit-loss":
         return { endpoint: "profit-loss", query: period };
       case "balance-sheet":
@@ -87,8 +79,7 @@
   });
 
   const showsPeriod = $derived(
-    data.view === "expense-tax" ||
-      data.view === "profit-loss" ||
+    data.view === "profit-loss" ||
       data.view === "cash-flow" ||
       data.view === "partners",
   );
@@ -195,9 +186,7 @@
     {/if}
   </div>
 
-  {#if data.view === "expense-tax"}
-    <ExpenseTaxReport report={data.report} />
-  {:else if data.view === "profit-loss"}
+  {#if data.view === "profit-loss"}
     <ProfitLossReport report={data.report} {isMobile} />
   {:else if data.view === "balance-sheet"}
     <BalanceSheetReport report={data.report} {isMobile} />

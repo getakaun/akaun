@@ -1,8 +1,11 @@
 <script lang="ts">
 	import TaxValuesFields from '$lib/components/tax/TaxValuesFields.svelte';
+	import AccountTaxDefaultDialog from './AccountTaxDefaultDialog.svelte';
+	import { untrack, onDestroy } from 'svelte';
+	import { accountTaxDefault, needsTaxReview } from '$lib/expense-tax.js';
 	import { taxFormValues, treatmentForPercentage } from '$lib/expense-tax.js';
 	import { enhance } from '$app/forms';
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { ChevronRight, Landmark, Scale, Trash2, Wallet } from '@lucide/svelte';
 	import { toast } from 'svelte-sonner';
@@ -69,6 +72,12 @@
 	let snapshot = $state('');
 	let saving = $state(false);
 	let error = $state('');
+	let savedVersion = $state('');
+	let taxApplyOpen = $state(false);
+	let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+	onDestroy(() => clearTimeout(refreshTimer));
+	const hasResolvedDefault = $derived(!needsTaxReview(accountTaxDefault(account)));
+
 
 	const subTypes = $derived(AccountSubTypesByType[selectedType] ?? []);
 
@@ -78,7 +87,8 @@
 
 	function seed() {
 		taxPercentage = account.defaultTaxPercentageBps == null ? '' : (account.defaultTaxPercentageBps / 100).toFixed(2);
-		taxTreatment = account.defaultTaxTreatment ?? (account.defaultTaxPercentageBps == null ? '' : treatmentForPercentage(account.defaultTaxPercentageBps));
+		taxTreatment = account.defaultTaxTreatment ?? (account.defaultTaxPercentageBps == null ? 'unclassified' : treatmentForPercentage(account.defaultTaxPercentageBps));
+		savedVersion = data.accountVersion;
 		taxSnapshot = JSON.stringify([taxPercentage, taxTreatment]);
 		name = account.name;
 		code = account.code ?? account.id;
@@ -90,9 +100,9 @@
 
 	let seededId = $state<number | null>(null);
 	$effect(() => {
-		if (seededId === account.id) return;
+		if (seededId === account.id && (dirty || savedVersion === data.accountVersion)) return;
 		seededId = account.id;
-		seed();
+		untrack(seed);
 	});
 
 	const dirty = $derived(snapshot !== '' && fingerprint() !== snapshot);
@@ -102,35 +112,55 @@
 		if (saving) return;
 		saving = true;
 		error = '';
-		const body: Record<string, unknown> = { name, code, type: selectedType };
+		const body: Record<string, unknown> = {
+			name,
+			code,
+			type: selectedType,
+			expectedVersion: savedVersion
+		};
 		// `subType` stays absent (never `null`) until a "needs review" account is
 		// given one: the PATCH schema accepts a number or nothing, never null.
 		if (AccountSubTypesByType[selectedType] !== undefined && subType != null) {
 			body.subType = subType;
 		}
-		if (selectedType === AccountType.Expense && taxSnapshot !== JSON.stringify([taxPercentage, taxTreatment])) {
+		if (
+			selectedType === AccountType.Expense &&
+			taxSnapshot !== JSON.stringify([taxPercentage, taxTreatment])
+		) {
 			const tax = taxFormValues(taxTreatment, taxPercentage, true);
-			if (tax.error) { saving = false; error = tax.error; return; }
+			if (tax.error) {
+				saving = false;
+				error = tax.error;
+				return;
+			}
 			body.defaultTaxPercentageBps = tax.percentageBps;
 			body.defaultTaxTreatment = tax.treatment;
 		} else if (account.type === AccountType.Expense && selectedType !== AccountType.Expense) {
 			body.defaultTaxPercentageBps = null;
 			body.defaultTaxTreatment = null;
 		}
-		const res = await fetch(`/api/accounts/${account.id}`, {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(body)
-		});
-		saving = false;
-		if (!res.ok) {
-			const body = await res.json().catch(() => null);
-			error = body?.reason ?? body?.error ?? 'That could not be saved.';
-			return;
+		try {
+			const res = await fetch(`/api/accounts/${account.id}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			});
+			if (!res.ok) {
+				const body = await res.json().catch(() => null);
+				error = body?.reason ?? body?.error ?? 'That could not be saved.';
+				return;
+			}
+			const saved = await res.json();
+			savedVersion = saved.version;
+			snapshot = fingerprint();
+			taxSnapshot = JSON.stringify([taxPercentage, taxTreatment]);
+			auditTrailRef?.refresh();
+			await invalidateAll();
+		} catch {
+			error = 'The save could not be confirmed. Refresh the account before retrying.';
+		} finally {
+			saving = false;
 		}
-		snapshot = fingerprint();
-		taxSnapshot = JSON.stringify([taxPercentage, taxTreatment]);
-		auditTrailRef?.refresh();
 	}
 
 	// --- Related surfaces ---------------------------------------------------
@@ -179,6 +209,12 @@
 				chart = chart.some((a) => a.id === incoming.id)
 					? chart.map((a) => (a.id === incoming.id ? incoming : a))
 					: [...chart, incoming];
+				if (incoming.id === account.id && !dirty && !saving) {
+					clearTimeout(refreshTimer);
+					refreshTimer = setTimeout(() => {
+						void invalidateAll();
+					}, 80);
+				}
 			} else if (m.type === 'account-deleted' && m.id === account.id) {
 				toast('That account was deleted.');
 				void goto(resolve('/(app)/accounts'), { replaceState: true });
@@ -186,6 +222,23 @@
 		}
 	);
 </script>
+
+{#if taxApplyOpen}
+	<AccountTaxDefaultDialog
+		accountId={account.id}
+		onclose={() => {
+			taxApplyOpen = false;
+		}}
+		onapplied={async (result) => {
+			taxApplyOpen = false;
+			toast(
+				`Classified ${result.updatedLineCount} entries. ${result.remainingCount} eligible entries remain.`
+			);
+			await invalidateAll();
+			await auditTrailRef?.refresh();
+		}}
+	/>
+{/if}
 
 <svelte:head><title>{account.code} {account.name} - Akaun</title></svelte:head>
 
@@ -369,10 +422,41 @@
 					</p>
 				</div>
 			{/if}
-      {#if selectedType === AccountType.Expense}
-        <TaxValuesFields id="account-tax" allowNoDefault bind:percentage={taxPercentage} bind:treatment={taxTreatment} disabled={!data.perms.change} />
-        <p class="field-hint">Applies only to new expense lines. Saved classifications stay unchanged, including closed months. Blank means unreviewed. All amounts are estimates.</p>
-      {/if}
+			{#if selectedType === AccountType.Expense}
+				<TaxValuesFields
+					id="account-tax"
+					accountDefault
+					bind:percentage={taxPercentage}
+					bind:treatment={taxTreatment}
+					disabled={!data.perms.change}
+				/>
+				<p class="field-hint">
+					New expense lines capture this default. Unclassified means no treatment has been
+					established. Saved classifications stay unchanged. All amounts are estimates.
+				</p>
+				{#if data.perms.applyTaxDefault && data.taxOverview}
+					<p class="field-hint">
+						{data.taxOverview.eligibleCount} existing entries can use this account’s saved default. Individual
+						decisions, resolved treatments and closed history stay protected.
+					</p>
+					<button
+						type="button"
+						class="detail-card-action"
+						disabled={dirty ||
+							saving ||
+							!hasResolvedDefault ||
+							data.taxOverview.eligibleCount === 0}
+						onclick={() => {
+							taxApplyOpen = true;
+						}}>Apply default to unclassified entries</button
+					>
+					{#if dirty}<p class="field-hint">
+							Save account changes before applying the default to existing entries.
+						</p>{:else if !hasResolvedDefault}<p class="field-hint">
+							Save a resolved tax default to classify existing entries.
+						</p>{/if}
+				{/if}
+			{/if}
 		</section>
 	{/snippet}
 

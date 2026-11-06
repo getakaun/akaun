@@ -13,6 +13,7 @@ export function unresolvedTaxLines(
   return db
     .select({
       movementId: ledgerMovements.id,
+      accountId: ledgerMovements.accountId,
       recordId: ledgerRecords.id,
       recordNumber: ledgerRecords.recordNumber,
       description: ledgerRecords.description,
@@ -33,7 +34,7 @@ export function unresolvedTaxLines(
         or(
           isNull(ledgerMovements.taxClassification),
           sql`json_extract(${ledgerMovements.taxClassification}, '$.percentageBps') IS NULL`,
-          sql`json_extract(${ledgerMovements.taxClassification}, '$.treatment') = 'requires_review'`,
+          sql`json_extract(${ledgerMovements.taxClassification}, '$.treatment') IN ('requires_review', 'unclassified')`,
         ),
       ),
     )

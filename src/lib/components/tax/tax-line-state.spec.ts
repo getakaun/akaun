@@ -32,6 +32,30 @@ function line(savedOverride = false): ExpenseTaxLine {
 }
 
 describe("direct tax line edits", () => {
+  it("lets an inherited review hold become an explicit protected individual decision", () => {
+    const original = line();
+    original.treatment = "requires_review";
+    original.percentageBps = null;
+    original.saved = {
+      ...original.saved!,
+      treatment: "requires_review",
+      percentageBps: null,
+    };
+    const draft = {
+      ...initialTaxDraft(original),
+      explicitReview: true,
+      reason: "Waiting for accountant",
+    };
+    expect(taxLineChanged(original, initialTaxDraft(original))).toBe(false);
+    expect(taxLineChanged(original, draft)).toBe(true);
+    expect(taxLineRequest(draft)).toMatchObject({
+      treatment: "requires_review",
+      source: "override",
+      percentageBps: null,
+    });
+    original.saved.source = "override";
+    expect(taxLineChanged(original, draft)).toBe(false);
+  });
   it("opens on saved values without manufacturing a change or adopting a newer default", () => {
     const original = line();
     const before = JSON.stringify(original);

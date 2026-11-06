@@ -1057,7 +1057,7 @@ export const accounts = sqliteTable(
     ),
     check(
       "accounts_tax_treatment_check",
-      sql`${t.defaultTaxTreatment} IS NULL OR (${t.type} IS 5 AND ${t.defaultTaxTreatment} IN ('ordinary_deductible', 'partial', 'non_deductible', 'capital_expenditure', 'requires_review'))`,
+      sql`${t.defaultTaxTreatment} IS NULL OR (${t.type} IS 5 AND ${t.defaultTaxTreatment} IN ('ordinary_deductible', 'partial', 'non_deductible', 'capital_expenditure', 'unclassified', 'requires_review'))`,
     ),
     // Transitional index used only while migration readers still classify old rows.
     index("accounts_role_rank_idx").on(t.role, t.rank),
@@ -1249,7 +1249,7 @@ export const ledgerMovements = sqliteTable(
   (t) => [
     check(
       "movements_tax_json_check",
-      sql`${t.taxClassification} IS NULL OR CASE WHEN json_valid(${t.taxClassification}) THEN coalesce(json_type(${t.taxClassification}, '$.percentageBps') IN ('null', 'integer') AND (json_extract(${t.taxClassification}, '$.percentageBps') IS NULL OR json_extract(${t.taxClassification}, '$.percentageBps') BETWEEN 0 AND 10000) AND json_extract(${t.taxClassification}, '$.source') IN ('account_default', 'override', 'unreviewed') AND json_extract(${t.taxClassification}, '$.treatment') IN ('ordinary_deductible', 'partial', 'non_deductible', 'capital_expenditure', 'requires_review'), 0) ELSE 0 END`,
+      sql`${t.taxClassification} IS NULL OR CASE WHEN json_valid(${t.taxClassification}) THEN coalesce(json_type(${t.taxClassification}, '$.percentageBps') IN ('null', 'integer') AND (json_extract(${t.taxClassification}, '$.percentageBps') IS NULL OR json_extract(${t.taxClassification}, '$.percentageBps') BETWEEN 0 AND 10000) AND json_extract(${t.taxClassification}, '$.source') IN ('account_default', 'override', 'unreviewed') AND json_extract(${t.taxClassification}, '$.treatment') IN ('ordinary_deductible', 'partial', 'non_deductible', 'capital_expenditure', 'unclassified', 'requires_review'), 0) ELSE 0 END`,
     ),
     // The balance check and every record read.
     index("ledger_movements_record_idx").on(t.recordId),

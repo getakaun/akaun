@@ -1,5 +1,7 @@
 # Phase 0 and phase 1 completion report — with approved tax-review follow-up
 
+Later changes to Unclassified terminology and account-based historical cleanup are documented in [Account-based tax classification](bulk-review.md), which supersedes this report's original tax labels and cleanup limitations.
+
 **Phase:** 0 — repository audit and design; 1 — expense tax classification foundation.  
 **Commit / PR:** Branch `codex/expense-tax-phase-0-1`, based on verified remote main `152708d17e132e0c7c3c2c65785b495f681ab332`. See the branch commit and associated pull request for the published revision. No deployment or production migration performed.  
 **Owner decision:** Pending owner walkthrough / acceptance. The owner-approved tax UI and strict tax-review close check are included; remaining later-phase work is deferred.

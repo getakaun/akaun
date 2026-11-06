@@ -27,13 +27,7 @@ import type {
  * same arithmetic as the same figure anywhere else in the app (FR-031).
  */
 
-import {
-  expenseTaxReport,
-  type ExpenseTaxReport,
-} from "../queries/expense-tax-report.js";
-
 export const REPORT_VIEWS = [
-  "expense-tax",
   "profit-loss",
   "balance-sheet",
   "cash-flow",
@@ -57,7 +51,6 @@ export type ReportPeriod = { dateFrom: string; dateTo: string; asAt: string };
 export type ReportsPageData = {
   hasPartners: boolean;
 } & (
-  | { view: "expense-tax"; period: ReportPeriod; report: ExpenseTaxReport }
   | { view: "profit-loss"; period: ReportPeriod; report: ProfitLossReport }
   | { view: "balance-sheet"; period: ReportPeriod; report: BalanceSheetReport }
   | { view: "cash-flow"; period: ReportPeriod; report: CashFlowReport }
@@ -102,6 +95,17 @@ export function loadReportsPage(
 ): ReportsPageData {
   if (!can(locals, "reports.read")) throw redirect(302, "/dashboard");
 
+  // Tax classification is maintained on accounts and individual records.
+  if (viewParam === "expense-tax")
+    throw redirect(
+      302,
+      can(locals, "accounts.read")
+        ? "/accounts"
+        : can(locals, "records.read")
+          ? "/records"
+          : "/reports",
+    );
+
   // Contacts already renders the balance either direction owed, for every
   // contact — one navigation step, not an explanation of an absence.
   if (viewParam !== null && isRetiredView(viewParam))
@@ -117,18 +121,6 @@ export function loadReportsPage(
   const hasPartners = partnerContacts(db).length > 0;
 
   switch (view) {
-    case "expense-tax":
-      return {
-        view,
-        period,
-        report: expenseTaxReport(
-          db,
-          period.dateFrom,
-          period.dateTo,
-          url.searchParams.get("review") === "unresolved",
-        ),
-        hasPartners,
-      };
     case "profit-loss":
       return {
         view,

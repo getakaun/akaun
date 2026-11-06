@@ -103,3 +103,4 @@
 ./src/lib/tax-form.spec.ts
 ./src/lib/vitest-examples/greet.spec.ts
 ./src/routes/api/permission-coverage.spec.ts
+./src/lib/server/application/expense-tax-closing.spec.ts

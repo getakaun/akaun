@@ -14,6 +14,14 @@ Every active Expense movement in the newly protected range must have a saved cla
 
 The preview displays the unresolved count, signed net amount and record links, with a link to the Expense tax report filtered to Needs tax review. Its result and line identities participate in the review revision. Closing recomputes this check inside the same immediate transaction as the boundary/audit write and refuses unresolved or stale reviews. Successful closing retains a `taxReviewCheck` audit field. Informational notices remain non-blocking; tax classification is a separate blocking check. Classification completeness does not imply accountant approval or tax-law eligibility.
 
+## Tax corrections after closing
+
+The Tax Classification card on a closed record shows saved values and explains the closed-through date. It does not offer an override or adoption of today's account default while closed. Account tax defaults remain editable for future entries; they never recalculate existing classifications. A live close discards unsaved form drafts, and a read-only tax editor always renders the saved classification.
+
+To correct a source classification, an authorised user reopens from the affected month with a reason, saves the reasoned line correction, then runs the close checks and closes again. Record audit retains the original override and subsequent before/after snapshots, actor, time and request channel. Month-closing history retains both closes and the reasoned reopen. Reopening does not remove settlement, reconciliation, invoice or void restrictions. Classification-only corrections preserve movement IDs, accounts and signed amounts. Annual tax-only adjustments remain deferred.
+
+Phase 2 retains the mandatory tax-review policy explicitly approved during phase 1, which superseded the original handover's warning-only proposal. No new policy toggle or annual finalisation lock is introduced. The phase 2 plan and completion report are in `specs/009-expense-tax/phase-2-*`; isolated regression coverage includes the full audited lifecycle, HTTP operation/response mapping, actual MCP requests, import rollback, bulk deletion and two-connection WAL contention.
+
 ## Authorization and evidence
 
 `closing.close` and `closing.reopen` are explicit, sensitive, nondelegable leaves. Both require `reports.read`, and both reject token/OAuth credentials even if supplied artificially. Existing Administrators receive new leaves through normal superuser permission resolution. Other users require a deliberate grant. Preview and narrow history require `reports.read`; signed-in users can read only the boundary from status/stream. Unrelated settings/history remain protected by their existing permissions.

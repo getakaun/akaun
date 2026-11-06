@@ -37,7 +37,10 @@
     showHeading?: boolean;
   } = $props();
   let controlRevision = $state(0);
-  const activeDraft = $derived(taxLineChanged(line, draft) ? draft : undefined);
+  // A live close/permission change must show saved evidence, never an unsaved edit.
+  const activeDraft = $derived(
+    !readOnly && taxLineChanged(line, draft) ? draft : undefined,
+  );
   const value = $derived(activeDraft ?? initialTaxDraft(line));
   const effective = $derived(activeDraft ? taxLineRequest(activeDraft) : line);
   const overridden = $derived(taxLineIsOverride(line, activeDraft));

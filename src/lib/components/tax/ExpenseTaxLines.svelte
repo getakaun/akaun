@@ -8,11 +8,13 @@
     lines,
     drafts = $bindable({}),
     readOnly = false,
+    readOnlyReason = "",
     reviewExempt = false,
   }: {
     lines: ExpenseTaxLine[];
     drafts?: Record<string, TaxLineDraft>;
     readOnly?: boolean;
+    readOnlyReason?: string;
     reviewExempt?: boolean;
   } = $props();
   function update(key: string, draft: TaxLineDraft | undefined) {
@@ -42,6 +44,9 @@
         </Popover.Content>
       </Popover.Root>
     </div>
+    {#if readOnly && readOnlyReason}
+      <p class="void-note" role="status">{readOnlyReason}</p>
+    {/if}
     {#if reviewExempt}<p class="void-note">
         Voided record — no tax review needed.
       </p>{/if}

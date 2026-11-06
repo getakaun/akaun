@@ -288,6 +288,13 @@
       "when": 1793796098440,
       "tag": "0040_record_void",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1793870393239,
+      "tag": "0041_expense_tax_classification",
+      "breakpoints": true
     }
   ]
 }

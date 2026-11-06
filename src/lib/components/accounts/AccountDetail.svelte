@@ -1,4 +1,6 @@
 <script lang="ts">
+	import TaxValuesFields from '$lib/components/tax/TaxValuesFields.svelte';
+	import { taxFormValues, treatmentForPercentage } from '$lib/expense-tax.js';
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -57,6 +59,9 @@
 	);
 
 	// --- The fields that name it ---------------------------------------------
+	let taxPercentage = $state('');
+	let taxTreatment = $state('');
+	let taxSnapshot = $state('');
 	let name = $state('');
 	let code = $state(0);
 	let selectedType = $state<AccountTypeCode>(AccountType.Asset);
@@ -68,10 +73,13 @@
 	const subTypes = $derived(AccountSubTypesByType[selectedType] ?? []);
 
 	function fingerprint(): string {
-		return JSON.stringify([name, code, selectedType, subType]);
+		return JSON.stringify([name, code, selectedType, subType, taxPercentage, taxTreatment]);
 	}
 
 	function seed() {
+		taxPercentage = account.defaultTaxPercentageBps == null ? '' : (account.defaultTaxPercentageBps / 100).toFixed(2);
+		taxTreatment = account.defaultTaxTreatment ?? (account.defaultTaxPercentageBps == null ? '' : treatmentForPercentage(account.defaultTaxPercentageBps));
+		taxSnapshot = JSON.stringify([taxPercentage, taxTreatment]);
 		name = account.name;
 		code = account.code ?? account.id;
 		selectedType = account.type;
@@ -100,6 +108,15 @@
 		if (AccountSubTypesByType[selectedType] !== undefined && subType != null) {
 			body.subType = subType;
 		}
+		if (selectedType === AccountType.Expense && taxSnapshot !== JSON.stringify([taxPercentage, taxTreatment])) {
+			const tax = taxFormValues(taxTreatment, taxPercentage, true);
+			if (tax.error) { saving = false; error = tax.error; return; }
+			body.defaultTaxPercentageBps = tax.percentageBps;
+			body.defaultTaxTreatment = tax.treatment;
+		} else if (account.type === AccountType.Expense && selectedType !== AccountType.Expense) {
+			body.defaultTaxPercentageBps = null;
+			body.defaultTaxTreatment = null;
+		}
 		const res = await fetch(`/api/accounts/${account.id}`, {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
@@ -112,6 +129,7 @@
 			return;
 		}
 		snapshot = fingerprint();
+		taxSnapshot = JSON.stringify([taxPercentage, taxTreatment]);
 		auditTrailRef?.refresh();
 	}
 
@@ -351,6 +369,10 @@
 					</p>
 				</div>
 			{/if}
+      {#if selectedType === AccountType.Expense}
+        <TaxValuesFields id="account-tax" allowNoDefault bind:percentage={taxPercentage} bind:treatment={taxTreatment} disabled={!data.perms.change} />
+        <p class="field-hint">Applies only to new expense lines. Saved classifications stay unchanged, including closed months. Blank means unreviewed. All amounts are estimates.</p>
+      {/if}
 		</section>
 	{/snippet}
 

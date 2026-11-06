@@ -74,6 +74,9 @@ import {
 import type { SequenceDocumentType } from "../db/schema.js";
 import { assertDatesOpen, closedThrough } from "../closing/policy.js";
 
+import { classifiedMovements, type TaxMovementDraft } from "./expense-tax.js";
+import type { TaxOverride } from "$lib/expense-tax.js";
+
 /**
  * Every read and write of the one record store.
  *
@@ -408,6 +411,7 @@ function deriveFor(db: LedgerDb, recordIds: number[]): DerivedState {
       amountMinor: ledgerMovements.amountMinor,
       sortOrder: ledgerMovements.sortOrder,
       label: ledgerMovements.label,
+      taxClassification: ledgerMovements.taxClassification,
       // Only for `displayLabel` below — a movement stores no description of
       // its own, and this is the one place `MovementView` is built, so the
       // fallback is resolved here rather than left for every reader to redo.
@@ -463,6 +467,7 @@ function deriveFor(db: LedgerDb, recordIds: number[]): DerivedState {
       accountSubType: m.accountSubType as AccountSubTypeCode | null,
       amountMinor: m.amountMinor,
       label: m.label,
+      taxClassification: m.taxClassification,
       displayLabel: resolveMovementLabel(m.label, m.recordDescription),
     });
 
@@ -861,7 +866,7 @@ export function lockStateFor(db: LedgerDb, recordId: number): LockState {
 function replaceMovements(
   db: LedgerDb,
   recordId: number,
-  movements: MovementDraft[],
+  movements: TaxMovementDraft[],
 ): void {
   if (wouldRemoveAllocationHistory(db, recordId, movements))
     throw new Error(ALLOCATION_HISTORY_EDIT_REASON);
@@ -883,6 +888,7 @@ function replaceMovements(
         accountId: m.accountId,
         amountMinor: m.amountMinor,
         label: m.label,
+        taxClassification: m.taxClassification,
       })
       .where(eq(ledgerMovements.id, existingId))
       .run();
@@ -900,6 +906,7 @@ function replaceMovements(
           amountMinor: m.amountMinor,
           sortOrder: m.sortOrder,
           label: m.label,
+          taxClassification: m.taxClassification,
         })),
       )
       .run();
@@ -937,6 +944,9 @@ export function insertRecord(
   actingUserId: number | null,
   data: {
     kind: LedgerRecordKindCode;
+    taxOverrides?: TaxOverride[];
+    /** Imports credit the confirmer while retaining the record owner. */
+    taxActorId?: number;
     date: string;
     description: string;
     amount: number;
@@ -997,7 +1007,21 @@ export function insertRecord(
         .returning()
         .get()!;
 
-      replaceMovements(tx, row.id, movements);
+      replaceMovements(
+        tx,
+        row.id,
+        classifiedMovements(
+          tx,
+          row.id,
+          movements,
+          data.taxActorId ?? actingUserId,
+          data.taxOverrides,
+          {
+            reversalOf: data.reversesRecordId,
+            historical: data.legacyKind != null,
+          },
+        ),
+      );
       reindexRecord(tx, row.id);
       return toRecordRow(row);
     },
@@ -1010,6 +1034,7 @@ export function updateRecord(
   id: number,
   actingUserId: number | null,
   patch: Partial<{
+    taxOverrides: TaxOverride[];
     date: string;
     description: string;
     amount: number;
@@ -1044,10 +1069,11 @@ export function updateRecord(
       if (movements && wouldRemoveAllocationHistory(tx, id, movements))
         throw new Error(ALLOCATION_HISTORY_EDIT_REASON);
 
+      const { taxOverrides, ...recordPatch } = patch;
       const updated = tx
         .update(ledgerRecords)
         .set({
-          ...patch,
+          ...recordPatch,
           updatedBy: actingUserId,
           updatedAt: new Date().toISOString(),
         })
@@ -1055,7 +1081,21 @@ export function updateRecord(
         .returning()
         .get()!;
 
-      if (movements) replaceMovements(tx, id, movements);
+      if (movements || taxOverrides !== undefined) {
+        const drafts =
+          movements ??
+          tx
+            .select()
+            .from(ledgerMovements)
+            .where(eq(ledgerMovements.recordId, id))
+            .orderBy(asc(ledgerMovements.sortOrder), asc(ledgerMovements.id))
+            .all();
+        replaceMovements(
+          tx,
+          id,
+          classifiedMovements(tx, id, drafts, actingUserId, taxOverrides),
+        );
+      }
       reindexRecord(tx, id);
       return toRecordRow(updated);
     },
@@ -1074,6 +1114,7 @@ export function snapshotForAudit(
     .select({
       accountId: ledgerMovements.accountId,
       amountMinor: ledgerMovements.amountMinor,
+      taxClassification: ledgerMovements.taxClassification,
     })
     .from(ledgerMovements)
     .where(eq(ledgerMovements.recordId, id))

@@ -56,6 +56,8 @@ import { actor, requirePermissions, type AppContext } from "./context.js";
 import { withClosingRefusal } from "./closing-refusal.js";
 import { denied, fail, invalid, ok, type AppResult } from "./result.js";
 
+import { unresolvedTaxLines } from "../queries/tax-review.js";
+
 const CLOSED_THROUGH_KEY = SETTING_KEYS.accountingClosedThrough;
 const previewSchema = z.object({ monthEnd: z.string() }).strict();
 const closeSchema = z
@@ -126,6 +128,24 @@ function review(ctx: AppContext, monthEnd: string): ClosingPreview {
   const reportFrom =
     dateFrom && dateFrom <= monthEnd ? dateFrom : `${monthEnd.slice(0, 7)}-01`;
   const integrity = checkIntegrity(integrityInputs(db));
+  const unresolved = unresolvedTaxLines(db, current, monthEnd);
+  const unresolvedMinor = Number(
+    unresolved.reduce((sum, line) => sum + BigInt(line.amountMinor), 0n),
+  );
+  if (!Number.isSafeInteger(unresolvedMinor))
+    throw new Error("The unresolved tax total exceeds safe integer cents.");
+  const taxReview = {
+    ok: unresolved.length === 0,
+    unresolvedLineCount: unresolved.length,
+    unresolvedMinor,
+    items: unresolved.slice(0, CLOSING_ITEM_LIMIT).map((line) => ({
+      key: `tax-${line.movementId}`,
+      label: line.recordNumber ?? `Record #${line.recordId}`,
+      detail: `${formatDate(line.date)} · ${line.accountName} · ${line.label ?? line.description}`,
+      amountMinor: line.amountMinor,
+      ref: { kind: "record" as const, id: line.recordId },
+    })),
+  };
   const warnings: ClosingWarning[] = [];
   if (current === null)
     warnings.push({
@@ -414,6 +434,8 @@ function review(ctx: AppContext, monthEnd: string): ClosingPreview {
         dateFrom,
         warnings,
         integrity,
+        taxReview,
+        unresolvedTaxMovementIds: unresolved.map((line) => line.movementId),
         lastAudit,
       }),
     )
@@ -424,6 +446,7 @@ function review(ctx: AppContext, monthEnd: string): ClosingPreview {
     dateFrom,
     revision,
     warnings,
+    taxReview,
     integrity: {
       ok: integrity.ok,
       recordsChecked: integrity.recordsChecked,
@@ -575,6 +598,11 @@ export function closeMonth(
             "REFUSED",
             "The ledger integrity check failed. Resolve the accounting errors before closing.",
           );
+        if (!current.taxReview.ok)
+          return fail(
+            "REFUSED",
+            `${current.taxReview.unresolvedLineCount} expense ${current.taxReview.unresolvedLineCount === 1 ? "line needs" : "lines need"} tax review. Classify every unresolved expense line before closing.`,
+          );
         setSetting(tx, CLOSED_THROUGH_KEY, data.monthEnd);
         recordAudit(tx, {
           recordType: "settings",
@@ -589,6 +617,7 @@ export function closeMonth(
               before: null,
               after: { completedMonth: true, ...current.integrity },
             },
+            { field: "taxReviewCheck", before: null, after: current.taxReview },
             {
               field: "closingNotices",
               before: null,

@@ -1,3 +1,4 @@
+import { ExpenseTaxError } from "../queries/expense-tax.js";
 import { closedPeriodReason } from "../closing/policy.js";
 import { isMoneyPotAccount } from "../ledger/account-type.js";
 import {
@@ -214,7 +215,9 @@ export function createRecord(
     return result;
   } catch (error) {
     // A compound caller must roll back its earlier writes as well.
-    const reason = closedPeriodReason(error);
+    const reason =
+      closedPeriodReason(error) ??
+      (error instanceof ExpenseTaxError ? error.message : null);
     if (deferredEmits || !reason) throw error;
     return { ok: false, reason };
   }
@@ -358,6 +361,8 @@ function createRecordInTransaction(
           ? data.storedKind
           : kindCodeFor(data.kind),
       date: data.date,
+      taxOverrides: data.taxOverrides,
+      taxActorId: auditUserId ?? actingUserId,
       description: data.description,
       amount: data.amount,
       currency: data.currency,
@@ -381,6 +386,13 @@ function createRecordInTransaction(
     recordId: row.id,
     userId: auditUserId ?? actingUserId,
     action: "create",
+    changes: [
+      {
+        field: "movements",
+        before: null,
+        after: snapshotForAudit(db, row.id)?.movements,
+      },
+    ],
   });
 
   if (deferredEmits) {
@@ -415,7 +427,9 @@ export function patchRecord(
     if (result.ok) for (const emit of pending) emit();
     return result;
   } catch (error) {
-    const reason = closedPeriodReason(error);
+    const reason =
+      closedPeriodReason(error) ??
+      (error instanceof ExpenseTaxError ? error.message : null);
     if (!reason) throw error;
     return { ok: false, reason };
   }
@@ -643,6 +657,7 @@ function patchRecordInTransaction(
     actingUserId,
     {
       date: patch.date,
+      taxOverrides: patch.taxOverrides,
       description: patch.description,
       amount: patch.amount,
       currency: patch.currency,

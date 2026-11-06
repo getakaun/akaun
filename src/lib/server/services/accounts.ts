@@ -1,3 +1,4 @@
+import { taxDefaultError } from "$lib/expense-tax.js";
 import { assertDatesOpen, closedPeriodReason } from "../closing/policy.js";
 import { and, eq, sql } from "drizzle-orm";
 import { notVoided } from "../queries/void-state.js";
@@ -80,6 +81,12 @@ export function createAccount(
   data: AccountCreate,
   deferredEmits?: (() => void)[],
 ): Refusable<AccountView> {
+  const taxError = taxDefaultError(
+    data.type,
+    data.defaultTaxPercentageBps ?? null,
+    data.defaultTaxTreatment ?? null,
+  );
+  if (taxError) return { ok: false, reason: taxError };
   const name = data.name.trim();
   if (!name) return { ok: false, reason: "Give the account a name." };
 
@@ -136,6 +143,8 @@ export function createAccount(
       const inserted = tx
         .insert(accounts)
         .values({
+          defaultTaxPercentageBps: data.defaultTaxPercentageBps ?? null,
+          defaultTaxTreatment: data.defaultTaxTreatment ?? null,
           role: legacyRoleForAccountType(data.type),
           type: data.type,
           subType:
@@ -234,6 +243,20 @@ function patchAccountInTransaction(
   }
 
   const effectiveType = patch.type ?? (existing.type as AccountTypeCode);
+  const defaultTaxPercentageBps =
+    patch.defaultTaxPercentageBps !== undefined
+      ? patch.defaultTaxPercentageBps
+      : existing.defaultTaxPercentageBps;
+  const defaultTaxTreatment =
+    patch.defaultTaxTreatment !== undefined
+      ? patch.defaultTaxTreatment
+      : existing.defaultTaxTreatment;
+  const taxError = taxDefaultError(
+    effectiveType,
+    defaultTaxPercentageBps,
+    defaultTaxTreatment,
+  );
+  if (taxError) return { ok: false, reason: taxError };
   if (patch.subType !== undefined) {
     const allowed = AccountSubTypesByType[effectiveType];
     if (allowed === undefined) {
@@ -345,6 +368,8 @@ function patchAccountInTransaction(
       const result = tx
         .update(accounts)
         .set({
+          defaultTaxPercentageBps,
+          defaultTaxTreatment,
           ...(name ? { name } : {}),
           ...(patch.type !== undefined
             ? {

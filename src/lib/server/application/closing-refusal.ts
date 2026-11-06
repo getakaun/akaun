@@ -1,7 +1,10 @@
 import { closedPeriodReason } from "../closing/policy.js";
 import { fail, type AppFailure } from "./result.js";
 
+import { ExpenseTaxError } from "../queries/expense-tax.js";
+
 function writeFailure(error: unknown): AppFailure | null {
+  if (error instanceof ExpenseTaxError) return fail("REFUSED", error.message);
   const reason = closedPeriodReason(error);
   if (reason) return fail("REFUSED", reason);
   const visited = new Set<unknown>();

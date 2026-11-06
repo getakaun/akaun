@@ -20,19 +20,31 @@ import { NEEDS_REVIEW_TYPES } from "$lib/server/ledger/account-type.js";
  * app's own plumbing; a partner's pair comes from granting that contact the
  * Partner role (FR-008b). Neither is offered here.
  */
-const ACCOUNT_TYPES = Object.values(AccountType).filter((value): value is AccountTypeCode => typeof value === "number");
+const ACCOUNT_TYPES = Object.values(AccountType).filter(
+  (value): value is AccountTypeCode => typeof value === "number",
+);
+
+import { basisPointsSchema, taxTreatmentSchema } from "$lib/expense-tax.js";
 
 const createSchema = z
   .object({
+    defaultTaxPercentageBps: basisPointsSchema.nullable().optional(),
+    defaultTaxTreatment: taxTreatmentSchema.nullable().optional(),
     type: z
       .number()
       .int()
-      .refine((value): value is AccountTypeCode => ACCOUNT_TYPES.includes(value as AccountTypeCode), {
-        message: "Choose one of the five account types.",
-      }),
+      .refine(
+        (value): value is AccountTypeCode =>
+          ACCOUNT_TYPES.includes(value as AccountTypeCode),
+        {
+          message: "Choose one of the five account types.",
+        },
+      ),
     name: z.string().trim().min(1).max(120),
     code: z.number().int().optional(),
-    subType: z.number().int().optional() as z.ZodType<AccountSubTypeCode | undefined>,
+    subType: z.number().int().optional() as z.ZodType<
+      AccountSubTypeCode | undefined
+    >,
   })
   .strict()
   .superRefine((data, ctx) => {
@@ -72,7 +84,9 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 
   return Response.json({
     accounts: listAccounts(db, {
-      type: ACCOUNT_TYPES.includes(type as AccountTypeCode) ? type as AccountTypeCode : undefined,
+      type: ACCOUNT_TYPES.includes(type as AccountTypeCode)
+        ? (type as AccountTypeCode)
+        : undefined,
       search: url.searchParams.get("search") ?? undefined,
       includeArchived: url.searchParams.get("includeArchived") === "true",
     }),
@@ -86,6 +100,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   if (!parsed.success) return badRequest(parsed.error);
 
   const result = createAccount(db, locals.user!.id, {
+    defaultTaxPercentageBps: parsed.data.defaultTaxPercentageBps,
+    defaultTaxTreatment: parsed.data.defaultTaxTreatment,
     type: parsed.data.type,
     name: parsed.data.name,
     code: parsed.data.code,

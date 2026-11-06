@@ -56,6 +56,8 @@ function toAccountRow(row: typeof accounts.$inferSelect): AccountRow {
     role: row.role,
     type: row.type as AccountTypeCode,
     subType: row.subType as AccountSubTypeCode | null,
+    defaultTaxPercentageBps: row.defaultTaxPercentageBps,
+    defaultTaxTreatment: row.defaultTaxTreatment,
     code: row.code ?? row.id,
     name: row.name,
     mergedIntoAccountId: row.mergedIntoAccountId,

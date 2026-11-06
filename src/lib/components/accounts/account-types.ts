@@ -1,3 +1,4 @@
+import type { TaxTreatment } from "$lib/expense-tax.js";
 import type {
   AccountSubTypeCode,
   AccountTypeCode,
@@ -6,6 +7,8 @@ import type {
 
 /** The role-free account contract shared by account API consumers. */
 export type AccountView = {
+  defaultTaxPercentageBps?: number | null;
+  defaultTaxTreatment?: TaxTreatment | null;
   id: number;
   code: number;
   name: string;

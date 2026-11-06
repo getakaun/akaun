@@ -36,6 +36,8 @@ import {
  * (`ledger/account-eligibility.ts`); these add who may, and the version check.
  */
 
+import { basisPointsSchema, taxTreatmentSchema } from "$lib/expense-tax.js";
+
 const ACCOUNT_TYPES = Object.values(AccountType).filter(
   (value): value is AccountTypeCode => typeof value === "number",
 );
@@ -60,6 +62,8 @@ export const accountSubType = z
   );
 
 export const createAccountShape = {
+  defaultTaxPercentageBps: basisPointsSchema.nullable().optional(),
+  defaultTaxTreatment: taxTreatmentSchema.nullable().optional(),
   type: accountType,
   name: z.string().trim().min(1).max(120),
   code: z.number().int().positive().optional(),
@@ -67,6 +71,8 @@ export const createAccountShape = {
 };
 
 export const updateAccountShape = {
+  defaultTaxPercentageBps: basisPointsSchema.nullable().optional(),
+  defaultTaxTreatment: taxTreatmentSchema.nullable().optional(),
   name: z.string().trim().min(1).max(120).optional(),
   type: accountType.optional(),
   /** False archives: the account keeps its history and is no longer offered. */
@@ -96,6 +102,8 @@ export function createAccount(
   const refused = requirePermissions(ctx, ["accounts.create"]);
   if (refused) return refused;
   const result = createAccountService(ctx.db, actor(ctx), {
+    defaultTaxPercentageBps: input.defaultTaxPercentageBps,
+    defaultTaxTreatment: input.defaultTaxTreatment,
     type: input.type,
     name: input.name,
     code: input.code,

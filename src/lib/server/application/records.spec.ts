@@ -441,7 +441,7 @@ describe("the adjustments gate on kinds and single accounts", () => {
 });
 
 describe("record versions read in bulk", () => {
-  /** The per-record hash as it was before the batch existed, kept verbatim. */
+  /** The independent per-record hash, including tax snapshots in the movement payload. */
   function oneByOne(id: number): string {
     const found = db
       .select()
@@ -457,6 +457,7 @@ describe("record versions read in bulk", () => {
         accountId: ledgerMovements.accountId,
         amountMinor: ledgerMovements.amountMinor,
         label: ledgerMovements.label,
+        taxClassification: ledgerMovements.taxClassification,
       })
       .from(ledgerMovements)
       .where(eq(ledgerMovements.recordId, id))
@@ -474,7 +475,7 @@ describe("record versions read in bulk", () => {
       .slice(0, 16);
   }
 
-  it("gives each record the version a single read gives, unchanged from before", () => {
+  it("gives each record the version a single read gives, including saved tax classifications", () => {
     const ids = [fuel, paper].map((to) => {
       const written = createRecord(ctx(), {
         ...base,

@@ -1,4 +1,7 @@
 <script lang="ts">
+	import ExpenseTaxLines from '$lib/components/tax/ExpenseTaxLines.svelte';
+	import { taxLineChanged, taxLineRequest, type TaxLineDraft } from '$lib/components/tax/tax-line-state.js';
+	import { taxFormValues, accountTaxDefault } from '$lib/expense-tax.js';
 	import { tick } from 'svelte';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
@@ -8,7 +11,7 @@
 	import { mainCurrency, mainCurrencySymbol } from '$lib/currency-state.svelte.js';
 	import { formatMoneyRM } from '$lib/format.js';
 	import { CURRENCIES, currencySymbol } from '$lib/currency.js';
-	import { AccountSubType, EntityType, LedgerRecordKind, Role } from '$lib/enums.js';
+	import { AccountSubType, AccountType, EntityType, LedgerRecordKind, Role } from '$lib/enums.js';
 	import { everydayCategoryKind } from '$lib/account-classification.js';
 	import EntryBlock from './EntryBlock.svelte';
 	import {
@@ -18,7 +21,7 @@
 	} from '$lib/closing-context.js';
 	// The running difference itself is drawn by `EntryBlock`, which owns the
 	// lines it is computed from.
-	import { sideMinor, whyNotSaveable, type SideDraft } from './journal-rules.js';
+	import { sideMinor, whyNotSaveable, splitRecordLines, type SideDraft } from './journal-rules.js';
 	import type { AccountView, RecordView } from '$lib/server/ledger/types.js';
 
 	/**
@@ -88,6 +91,7 @@
 	const annotationReadOnly = $derived(periodClosed || (!canChange && !isNew));
 
 	// --- Form state ---------------------------------------------------------
+	let taxDrafts = $state<Record<string, TaxLineDraft>>({});
 	let date = $state('');
 	let description = $state('');
 	let amount = $state('');
@@ -133,8 +137,10 @@
 
 	/** What the server last told us, so `dirty` has something to compare against. */
 	let snapshot = $state('');
+	let entrySnapshot = $state('');
 
 	async function seed(source: RecordView | null) {
+		taxDrafts = {};
 		date = source?.date ?? new Date().toISOString().slice(0, 10);
 		description = source?.description ?? '';
 		amount = source ? String(source.amount) : '';
@@ -160,16 +166,12 @@
 			// no per-screen branch to get wrong. An expense somebody else paid
 			// simply has Accounts Payable as its paying side, which is exactly what
 			// the user picked to record it that way (FR-008).
-			const into = source.movements.find((m) => m.amountMinor > 0);
-			const outOf = source.movements.find((m) => m.amountMinor < 0);
+			const { into, outOf, extra } = splitRecordLines(source.movements);
 			fromAccountId = outOf?.accountId ?? null;
 			toAccountId = into?.accountId ?? null;
 
 			// A record with more than two sides keeps the rest of them editable.
-			const [, ...rest] = source.movements
-				.filter((m) => m.accountId !== outOf?.accountId && m.accountId !== into?.accountId)
-				.map((m) => m);
-			extraSides = (rest.length ? rest : source.movements.slice(2)).map((m) => ({
+			extraSides = extra.map((m) => ({
 				key: nextSideKey++,
 				accountId: m.accountId,
 				direction: m.amountMinor >= 0 ? ('in' as const) : ('out' as const),
@@ -201,10 +203,11 @@
 		// the baseline, or a freshly opened create page reads as already dirty.
 		await tick();
 		snapshot = fingerprint();
+		entrySnapshot = fingerprint(false);
 	}
 
 	/** Everything the user can change, as one comparable string. */
-	function fingerprint(): string {
+	function fingerprint(includeTax = true): string {
 		return JSON.stringify([
 			date,
 			description,
@@ -221,6 +224,10 @@
 			toAccountId,
 			categoryAmount,
 			categoryLabel,
+			includeTax ? expenseTaxLines.flatMap((line) => {
+				const draft = taxDrafts[line.key];
+				return draft && taxLineChanged(line, draft) ? [[line.key, taxLineRequest(draft)]] : [];
+			}) : null,
 			extraSides.map((s) => [s.accountId, s.direction, s.amount, s.label])
 		]);
 	}
@@ -497,6 +504,96 @@
 		];
 	});
 
+	const expenseTaxLines = $derived.by(() => {
+		const occurrenceByAccount: Record<number, number> = {};
+		// Saved tax lines retain the ledger's order and identity even when the
+		// everyday editor presents the named debit/credit in a different order.
+		const taxSides = record
+			? record.movements.map((m) => ({
+					key: m.id,
+					accountId: m.accountId,
+					label: m.label ?? '',
+					amountMinor: m.amountMinor
+				}))
+			: allSides;
+		return taxSides.flatMap((side) => {
+			const savedAccount = record?.movements.find((m) => m.accountId === side.accountId);
+			const currentAccount = allAccounts
+				.concat(categories, accounts)
+				.find((a) => a.id === side.accountId);
+			const account =
+				currentAccount ??
+				(savedAccount
+					? {
+							id: savedAccount.accountId,
+							name: savedAccount.accountName,
+							type: savedAccount.accountType,
+							defaultTaxPercentageBps: null,
+							defaultTaxTreatment: null
+						}
+					: undefined);
+			if (!account || account.type !== AccountType.Expense) return [];
+			const occurrence = occurrenceByAccount[account.id] ?? 0;
+			occurrenceByAccount[account.id] = occurrence + 1;
+			const key = `${side.key}:${account.id}`;
+			const savedLine = record?.movements.filter((m) => m.accountId === account.id)[occurrence];
+			const saved = savedLine?.taxClassification;
+			const currentDefault = currentAccount ? accountTaxDefault(currentAccount) : null;
+			const percentageBps = savedLine
+				? (saved?.percentageBps ?? null)
+				: (currentDefault?.percentageBps ?? null);
+			const treatment = savedLine
+				? (saved?.treatment ?? 'requires_review')
+				: (currentDefault?.treatment ?? 'requires_review');
+			const amountMinor =
+				'amountMinor' in side ? side.amountMinor : isForeign ? undefined : sideMinor(side);
+			return [
+				{
+					side,
+					account,
+					occurrence,
+					key,
+					saved,
+					persisted: Boolean(savedLine),
+					percentageBps,
+					treatment,
+					currentDefault,
+					amountMinor
+				}
+			];
+		});
+	});
+
+	const taxReadOnly = $derived(
+		annotationReadOnly ||
+			fromInvoice ||
+			record?.voidedByRecordId != null ||
+			record?.reversesRecordId != null
+	);
+	function taxPayload() {
+		const overrides = expenseTaxLines.flatMap((line) => {
+			const draft = taxDrafts[line.key];
+			if (!draft || !taxLineChanged(line, draft)) return [];
+			return [{ accountId: line.account.id, occurrence: line.occurrence, ...taxLineRequest(draft) }];
+		});
+		return overrides.length ? { taxOverrides: overrides } : {};
+	}
+
+	function taxError(): string | null {
+		for (const line of expenseTaxLines) {
+			const draft = taxDrafts[line.key];
+			if (!draft || !taxLineChanged(line, draft)) continue;
+			const error = taxFormValues(draft.treatment, draft.percentage).error;
+			if (error) return error;
+			if (!draft.reason.trim()) return 'Give a reason for each classification change.';
+		}
+		return null;
+	}
+
+	function onlyTaxChanged(): boolean {
+		return record !== null && fingerprint(false) === entrySnapshot && 'taxOverrides' in taxPayload();
+	}
+
 	/** Why this cannot be saved yet, in the words the server would use. */
 	const blockedReason = $derived(
 		extraSides.length > 0 ? whyNotSaveable(allSides, requiresContact, contactId) : null
@@ -505,6 +602,8 @@
 	/** What the frame around this form shows above its Save button. */
 	export function blockedBy(): string | null {
 		if (periodClosed) return MONTH_CLOSED_REASON;
+		if (taxError()) return taxError();
+		if (onlyTaxChanged()) return null;
 		if (rateMissing) return 'Enter the exchange rate before saving.';
 		return blockedReason;
 	}
@@ -580,6 +679,7 @@
 		// currency — plus the rate that turns it into the main currency. The
 		// ledger converts once, from these (FR-005).
 		const base = {
+      ...taxPayload(),
 			date,
 			description,
 			amount: isForeign ? parseFloat(foreignAmount || '0') : parseFloat(amount || '0'),
@@ -612,7 +712,9 @@
 
 	/** The fields a patch may carry: everything on a free record, the rest on a locked one. */
 	function patchPayload() {
-		const everyday = { description, reference, remark, contactId };
+		// A classification-only save never rebuilds the journal or its lines.
+		if (onlyTaxChanged()) return taxPayload();
+		const everyday = { description, reference, remark, contactId, ...taxPayload() };
 		// A locked record refuses its amount, date and the account it moved
 		// through, and a payment is described by the payment drawer, which is
 		// where its direction and what it covers are decided. This form only
@@ -673,6 +775,8 @@
 			error = MONTH_CLOSED_REASON;
 			return null;
 		}
+		const invalidTax = taxError();
+		if (invalidTax) { error = invalidTax; return null; }
 		saving = true;
 		error = '';
 
@@ -708,7 +812,9 @@
 			return null;
 		}
 		const saved: RecordView = await res.json();
+		taxDrafts = {};
 		snapshot = fingerprint();
+		entrySnapshot = fingerprint(false);
 		onsaved?.(saved);
 		return saved;
 	}
@@ -915,6 +1021,8 @@
 	onaddside={addSide}
 	onremoveside={removeSide}
 />
+
+<ExpenseTaxLines lines={expenseTaxLines} bind:drafts={taxDrafts} readOnly={taxReadOnly} reviewExempt={record?.voidedByRecordId != null || record?.reversesRecordId != null} />
 
 <section class="detail-card">
 	<div class="detail-card-head"><span class="detail-card-title">Details</span></div>

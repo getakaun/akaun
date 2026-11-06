@@ -535,14 +535,15 @@
                     review.taxReview.items,
                     review.taxReview.unresolvedLineCount,
                   )}
-                  <!-- eslint-disable svelte/no-navigation-without-resolve -- The route is resolved; the suffix contains date/review query values only. -->
-                  <a
-                    href={`${resolve("/(app)/reports/[view]", { view: "expense-tax" })}?from=${reviewFrom}&to=${review.monthEnd}&review=unresolved`}
-                    >Open expenses needing tax review</a
-                  >
-                  <!-- eslint-enable svelte/no-navigation-without-resolve -->
+                  {#if data.canReadAccounts}
+                    <a href={resolve("/(app)/accounts")}
+                      >Review expense account defaults</a
+                    >
+                  {/if}
                   <span class="check-extra"
-                    >This blocks closing. Tax figures remain estimates.</span
+                    >Apply account defaults to unclassified entries, or correct
+                    individual records above. This blocks closing. Tax figures
+                    remain estimates.</span
                   >
                 {/if}
               </div>

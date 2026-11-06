@@ -1,9 +1,6 @@
 import { redirect } from "@sveltejs/kit";
 import { db } from "$lib/server/db/client.js";
 import { can } from "$lib/server/permissions.js";
-import { eq, asc } from "drizzle-orm";
-import { AccountType } from "$lib/enums.js";
-import { accounts } from "../db/schema.js";
 import { normalizeDate, today } from "$lib/server/date.js";
 import {
   balanceSheetReport,
@@ -30,13 +27,7 @@ import type {
  * same arithmetic as the same figure anywhere else in the app (FR-031).
  */
 
-import {
-  expenseTaxReport,
-  type ExpenseTaxReport,
-} from "../queries/expense-tax-report.js";
-
 export const REPORT_VIEWS = [
-  "expense-tax",
   "profit-loss",
   "balance-sheet",
   "cash-flow",
@@ -60,12 +51,6 @@ export type ReportPeriod = { dateFrom: string; dateTo: string; asAt: string };
 export type ReportsPageData = {
   hasPartners: boolean;
 } & (
-  | {
-      view: "expense-tax";
-      period: ReportPeriod;
-      report: ExpenseTaxReport;
-      taxAccounts: { id: number; name: string }[];
-    }
   | { view: "profit-loss"; period: ReportPeriod; report: ProfitLossReport }
   | { view: "balance-sheet"; period: ReportPeriod; report: BalanceSheetReport }
   | { view: "cash-flow"; period: ReportPeriod; report: CashFlowReport }
@@ -110,6 +95,17 @@ export function loadReportsPage(
 ): ReportsPageData {
   if (!can(locals, "reports.read")) throw redirect(302, "/dashboard");
 
+  // Tax classification is maintained on accounts and individual records.
+  if (viewParam === "expense-tax")
+    throw redirect(
+      302,
+      can(locals, "accounts.read")
+        ? "/accounts"
+        : can(locals, "records.read")
+          ? "/records"
+          : "/reports",
+    );
+
   // Contacts already renders the balance either direction owed, for every
   // contact — one navigation step, not an explanation of an absence.
   if (viewParam !== null && isRetiredView(viewParam))
@@ -125,28 +121,6 @@ export function loadReportsPage(
   const hasPartners = partnerContacts(db).length > 0;
 
   switch (view) {
-    case "expense-tax":
-      return {
-        view,
-        period,
-        report: expenseTaxReport(
-          db,
-          period.dateFrom,
-          period.dateTo,
-          url.searchParams.get("review") === "unresolved",
-          Number.isSafeInteger(Number(url.searchParams.get("account"))) &&
-            Number(url.searchParams.get("account")) > 0
-            ? Number(url.searchParams.get("account"))
-            : null,
-        ),
-        taxAccounts: db
-          .select({ id: accounts.id, name: accounts.name })
-          .from(accounts)
-          .where(eq(accounts.type, AccountType.Expense))
-          .orderBy(asc(accounts.name), asc(accounts.id))
-          .all(),
-        hasPartners,
-      };
     case "profit-loss":
       return {
         view,

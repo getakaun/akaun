@@ -9,7 +9,7 @@
 3. Enter a reason and review a compact confirmation: account, saved default, eligible entry/record counts, dates, expense/refund totals, deduction/add-back estimates, protected counts and remaining backlog.
 4. Confirm **Apply to N entries**. Each batch covers the next 200 eligible Expense movement lines, oldest first. Start another confirmation for any remaining entries.
 
-Individual corrections stay on the record page. Expense tax reports retain filters, deep links and CSV export, but no selection or bulk mutation UI. Account saves and historical cleanup are separate actions; neither happens silently as a side effect of the other.
+Individual corrections stay on the record page. The Expense tax tab and its report page are removed from Reports. Old report URLs redirect to Accounts (or Records when the user has record access only). The existing read-only estimate/CSV API remains available. Account saves and historical cleanup are separate actions; neither happens silently as a side effect of the other.
 
 ## Classification and migration
 
@@ -53,6 +53,8 @@ Coverage includes revised migration preservation, Unclassified semantics, prospe
 
 Final results: **1,658 tests passed across 108 compatible spec files**, with no failures. `bun run check` reports zero errors and warnings; changed-source ESLint and `git diff --check` pass. Drizzle reports no schema/snapshot drift. Full-project lint still stops at the existing 231-file formatting backlog.
 
+Report-tab removal follow-up: 66 focused closing and account-classification tests pass across four files. Type checks and changed-source ESLint pass. The existing formatting backlog is unchanged.
+
 ## Owner walkthrough
 
 1. In a disposable test book, inspect historical entries and unset Expense defaults: both should show Unclassified, with no implied deduction. Confirm month closing is blocked.
@@ -60,7 +62,7 @@ Final results: **1,658 tests passed across 108 compatible spec files**, with no 
 3. Apply the default with a reason. Check counts, signed totals, protected entries and the resulting record audit. Change the account default again; previously classified entries must retain their captured values.
 4. Explicitly choose Requires review on one record and Unclassified on another. Apply the account default again; both decisions must remain protected and closing must stay blocked.
 5. Open the confirmation in two sessions. Edit an entry, change the default or close the period in one; applying the other session's stale confirmation must fail without partial writes.
-6. Try a backlog exceeding 200 entries. Verify the remaining count and explicitly confirm the next batch. Verify the report has no bulk editing controls.
+6. Try a backlog exceeding 200 entries. Verify the remaining count and explicitly confirm the next batch. Verify Reports has no Expense tax tab and old tax-report links redirect to the correction pages.
 7. Confirm resolved 0%, payment allocations and bank reconciliation links remain intact. Reopen closed history through the existing authorised process before correcting its tax data.
 
 No real database or receipt storage is modified by these checks. The revised 0041 is intended for installations migrating from before this unshipped feature; a development database that already applied the old 0041 will retain its old SQL constraints and needs a separate, deliberate upgrade before use with Unclassified writes.

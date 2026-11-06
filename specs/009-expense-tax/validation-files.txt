@@ -104,5 +104,5 @@
 ./src/lib/vitest-examples/greet.spec.ts
 ./src/routes/api/permission-coverage.spec.ts
 ./src/lib/server/application/expense-tax-closing.spec.ts
-./src/lib/server/application/bulk-expense-tax.spec.ts
-./src/lib/components/tax/bulk-tax-selection.spec.ts
+./src/lib/server/application/account-tax-classification.spec.ts
+./src/lib/server/db/migration-0041.spec.ts

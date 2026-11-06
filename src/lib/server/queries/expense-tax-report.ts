@@ -67,7 +67,9 @@ export function expenseTaxReport(
         voided: Boolean(row.voided),
         reviewRequired: unresolved && !row.voided,
         reviewStatus: unresolved
-          ? ("unreviewed" as const)
+          ? tax?.treatment === "requires_review"
+            ? ("requires_review" as const)
+            : ("unclassified" as const)
           : ("estimate" as const),
         deductibleMinor,
         addBackMinor:
@@ -92,11 +94,11 @@ export function expenseTaxReport(
     addBackMinor: sum(rows.map((r) => r.addBackMinor ?? 0)),
     unresolvedMinor: sum(
       rows
-        .filter((r) => r.reviewStatus === "unreviewed")
+        .filter((r) => r.reviewStatus !== "estimate")
         .map((r) => r.expenseMinor),
     ),
     unresolvedLineCount: rows.filter((r) => r.reviewRequired).length,
-    note: "Potential deductions and add-backs are estimates, not accountant-approved tax amounts. Unreviewed lines are excluded from both estimates. Amounts use saved line classifications in the main currency; void pairs cancel.",
+    note: "Potential deductions and add-backs are estimates, not accountant-approved tax amounts. Unclassified and Requires review lines are excluded from both estimates. Amounts use saved line classifications in the main currency; void pairs cancel.",
   };
 }
 export type ExpenseTaxReport = ReturnType<typeof expenseTaxReport>;
@@ -138,7 +140,7 @@ export function expenseTaxCsv(report: ExpenseTaxReport): CsvTable {
       r.classification?.percentageBps == null
         ? null
         : (r.classification.percentageBps / 100).toFixed(2),
-      TaxTreatmentLabels[r.classification?.treatment ?? "requires_review"],
+      TaxTreatmentLabels[r.classification?.treatment ?? "unclassified"],
       r.reviewStatus,
       r.classification?.source ?? "historical_unreviewed",
       r.classification?.reason ?? null,

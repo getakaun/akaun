@@ -4,7 +4,6 @@ import { can } from "$lib/server/permissions.js";
 import { eq, asc } from "drizzle-orm";
 import { AccountType } from "$lib/enums.js";
 import { accounts } from "../db/schema.js";
-import { closedThrough } from "../closing/policy.js";
 import { normalizeDate, today } from "$lib/server/date.js";
 import {
   balanceSheetReport,
@@ -66,8 +65,6 @@ export type ReportsPageData = {
       period: ReportPeriod;
       report: ExpenseTaxReport;
       taxAccounts: { id: number; name: string }[];
-      canBulkTaxClassify: boolean;
-      taxClosedThrough: string | null;
     }
   | { view: "profit-loss"; period: ReportPeriod; report: ProfitLossReport }
   | { view: "balance-sheet"; period: ReportPeriod; report: BalanceSheetReport }
@@ -148,9 +145,6 @@ export function loadReportsPage(
           .where(eq(accounts.type, AccountType.Expense))
           .orderBy(asc(accounts.name), asc(accounts.id))
           .all(),
-        canBulkTaxClassify:
-          can(locals, "records.read") && can(locals, "records.update"),
-        taxClosedThrough: closedThrough(db),
         hasPartners,
       };
     case "profit-loss":

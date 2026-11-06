@@ -544,8 +544,8 @@
 				? (saved?.percentageBps ?? null)
 				: (currentDefault?.percentageBps ?? null);
 			const treatment = savedLine
-				? (saved?.treatment ?? 'requires_review')
-				: (currentDefault?.treatment ?? 'requires_review');
+				? (saved?.treatment ?? 'unclassified')
+				: (currentDefault?.treatment ?? 'unclassified');
 			const amountMinor =
 				'amountMinor' in side ? side.amountMinor : isForeign ? undefined : sideMinor(side);
 			return [

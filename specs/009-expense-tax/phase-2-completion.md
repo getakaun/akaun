@@ -1,5 +1,7 @@
 # Phase 2 completion — month-close integration and tax auditability
 
+The subsequent [account-based tax classification follow-up](bulk-review.md) replaces report bulk editing, distinguishes Unclassified from Requires review, and records the current verification results. The strict closing policy below remains in force.
+
 **Phase:** 2. Implementation and automated validation complete; owner UI acceptance pending.
 
 **Commit / PR:** Branch `codex/expense-tax-phase-2`, based on remote main `ed384741f0ba4c76ab54562686cee535f400a468`. See the branch commit and associated pull request for the published revision. No deployment performed. The original supplied checkout was older than the phase 0/1 implementation; local checkpoint `404a54b` imports that already merged foundation from PR #63. The phase 2 pull request contains only the changes listed below.

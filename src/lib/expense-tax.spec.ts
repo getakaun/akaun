@@ -1,11 +1,34 @@
 import { describe, expect, it } from "vitest";
 import {
+  accountTaxDefault,
+  canApplyAccountTaxDefault,
+  needsTaxReview,
   deductionMinor,
   percentageToBps,
   taxValuesSchema,
 } from "./expense-tax.js";
 
 describe("expense tax arithmetic and validation", () => {
+  it("separates never classified defaults from deliberate review holds", () => {
+    expect(accountTaxDefault({})).toEqual({
+      treatment: "unclassified",
+      percentageBps: null,
+    });
+    expect(
+      taxValuesSchema.safeParse({
+        treatment: "unclassified",
+        percentageBps: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      taxValuesSchema.safeParse({ treatment: "unclassified", percentageBps: 0 })
+        .success,
+    ).toBe(false);
+    expect(
+      needsTaxReview({ treatment: "unclassified", percentageBps: null }),
+    ).toBe(true);
+    expect(canApplyAccountTaxDefault(null)).toBe(true);
+  });
   it("calculates the RM1,000 at 50% example and exact split amounts", () => {
     expect(deductionMinor(100000, 5000)).toBe(50000);
     expect(deductionMinor(60000, 10000) + deductionMinor(40000, 0)).toBe(60000);

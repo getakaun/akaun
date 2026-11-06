@@ -12,6 +12,8 @@ export type TaxClassification = Pick<
 export type TaxLineDraft = TaxFormDraft & {
   source: "override" | "account_default";
   reason: string;
+  /** An explicit review hold can matter even when the displayed values match. */
+  explicitReview?: boolean;
 };
 export type ExpenseTaxLine = TaxClassification & {
   key: string;
@@ -51,7 +53,7 @@ export function taxLineRequest(draft: TaxLineDraft) {
           ? null
           : percentageToBps(draft.percentage)
         : tax.percentageBps,
-    treatment: tax.treatment ?? "requires_review",
+    treatment: tax.treatment ?? "unclassified",
     source: draft.source,
     reason: draft.reason,
   };
@@ -64,6 +66,13 @@ export function taxLineChanged(
   if (!draft) return false;
   if (taxFormValues(draft.treatment, draft.percentage).error) return true;
   const value = taxLineRequest(draft);
+  if (
+    draft.explicitReview &&
+    draft.source === "override" &&
+    value.treatment === "requires_review" &&
+    line.saved?.source !== "override"
+  )
+    return true;
   if (!sameTaxClassification(line, value)) return true;
   // Applying the default can change provenance even when the numbers happen to match.
   return (
@@ -82,6 +91,7 @@ export function editTaxLine(
     ...(current ?? initialTaxDraft(line)),
     ...values,
     source: "override",
+    explicitReview: false,
   };
   // Merely formatting an already selected default percentage must not change its source.
   if (

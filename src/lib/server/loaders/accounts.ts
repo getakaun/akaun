@@ -23,6 +23,12 @@ import {
   type AccountTypeCode,
 } from "$lib/enums.js";
 import type { AccountView as AccountApiView } from "$lib/components/accounts/account-types.js";
+import { accountVersion } from "../application/version.js";
+import {
+  accountTaxOverview,
+  ACCOUNT_TAX_PERMISSIONS,
+} from "../application/account-tax-classification.js";
+import { canAll } from "../permissions.js";
 
 function toRoleFreeAccount(
   account: ReturnType<typeof listAccounts>[number],
@@ -74,6 +80,7 @@ function accountPerms(locals: App.Locals) {
     // Whether to offer the way in to reconciling at all (FR-049).
     reconcile: can(locals, "reconciliation.read"),
     closing: can(locals, "reports.read"),
+    applyTaxDefault: canAll(locals, ACCOUNT_TAX_PERMISSIONS),
   };
 }
 
@@ -137,9 +144,16 @@ export function loadAccountDetail(locals: App.Locals, requestedId: number) {
   // `/records?account=<id>` (D-05) and this page links to it rather than
   // computing a second one.
   const recent = listRecords(db, { accountId: canonical, limit: RECENT_LIMIT });
+  const taxOverview =
+    account.type === AccountType.Expense &&
+    canAll(locals, ACCOUNT_TAX_PERMISSIONS)
+      ? accountTaxOverview({ db, locals }, canonical)
+      : null;
 
   return {
     account,
+    accountVersion: accountVersion(db, canonical),
+    taxOverview: taxOverview?.ok ? taxOverview.value : null,
     accounts: chart,
     openingBalance: openingBalanceFor(db, canonical),
     unfinishedStatements,

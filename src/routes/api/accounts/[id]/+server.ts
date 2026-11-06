@@ -9,7 +9,10 @@ import {
   refused,
 } from "$lib/server/api-response.js";
 import { getAccount } from "$lib/server/queries/accounts.js";
-import { patchAccount, removeAccount } from "$lib/server/services/accounts.js";
+import { removeAccount } from "$lib/server/services/accounts.js";
+import { updateAccount } from "$lib/server/application/accounts.js";
+import { accountVersion } from "$lib/server/application/version.js";
+import { toResponse } from "$lib/server/application/http.js";
 import {
   AccountSubTypesByType,
   AccountType,
@@ -31,6 +34,7 @@ import { basisPointsSchema, taxTreatmentSchema } from "$lib/expense-tax.js";
 
 const patchSchema = z
   .object({
+    expectedVersion: z.string().min(1).optional(),
     defaultTaxPercentageBps: basisPointsSchema.nullable().optional(),
     defaultTaxTreatment: taxTreatmentSchema.nullable().optional(),
     name: z.string().trim().min(1).max(120).optional(),
@@ -69,7 +73,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 
   const account = getAccount(db, id);
   if (!account) return notFound("That account no longer exists.");
-  return Response.json(account);
+  return Response.json({ ...account, version: accountVersion(db, id) });
 };
 
 export const PATCH: RequestHandler = async ({ locals, params, request }) => {
@@ -80,9 +84,12 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
   const parsed = patchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return badRequest(parsed.error);
 
-  const result = patchAccount(db, id, locals.user!.id, parsed.data);
-  if (!result.ok) return refused(result.reason);
-  return Response.json(result.value);
+  const { expectedVersion, ...patch } = parsed.data;
+  return toResponse(
+    updateAccount({ db, locals }, id, patch, expectedVersion),
+    200,
+    ({ account, version }) => ({ ...account, version }),
+  );
 };
 
 export const DELETE: RequestHandler = async ({ locals, params }) => {

@@ -8,9 +8,9 @@ import {
 } from "./expense-tax.js";
 
 describe("treatment-first deduction entry", () => {
-  it("defaults an unconfigured line to Requires review without manufacturing a zero deduction", () => {
+  it("defaults an unconfigured line to Unclassified without manufacturing a zero deduction", () => {
     expect(taxFormValues("", "")).toEqual({
-      treatment: "requires_review",
+      treatment: "unclassified",
       percentageBps: null,
       error: null,
     });

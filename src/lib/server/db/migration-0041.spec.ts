@@ -69,6 +69,26 @@ describe("additive expense tax migration 0041", () => {
             .run(invalid),
         ).toThrow();
       }
+      raw.exec(
+        "UPDATE accounts SET default_tax_treatment = 'unclassified' WHERE id = 2",
+      );
+      const unclassified = JSON.stringify({
+        percentageBps: null,
+        treatment: "unclassified",
+        source: "unreviewed",
+        reason: null,
+        classifiedBy: null,
+        classifiedAt: "2026-01-01T00:00:00.000Z",
+        provenance: "record_creation",
+      });
+      expect(() =>
+        raw
+          .query(
+            "UPDATE ledger_movements SET tax_classification = ? WHERE id = 1",
+          )
+          .run(unclassified),
+      ).not.toThrow();
+      expect(raw.query("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
       raw.close();
     }

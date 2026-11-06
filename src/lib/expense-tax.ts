@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AccountType } from "./enums.js";
 
 export const TAX_TREATMENTS = [
+  "unclassified",
   "ordinary_deductible",
   "partial",
   "non_deductible",
@@ -10,6 +11,7 @@ export const TAX_TREATMENTS = [
 ] as const;
 export type TaxTreatment = (typeof TAX_TREATMENTS)[number];
 export const TaxTreatmentLabels: Record<TaxTreatment, string> = {
+  unclassified: "Unclassified",
   ordinary_deductible: "Ordinary deductible",
   partial: "Partial",
   non_deductible: "Non-deductible",
@@ -26,6 +28,7 @@ export const taxValuesSchema = z
   .refine(
     ({ percentageBps: p, treatment: t }) =>
       t === "requires_review" ||
+      (t === "unclassified" && p === null) ||
       (t === "ordinary_deductible" && p === 10000) ||
       (t === "partial" && p !== null && p > 0 && p < 10000) ||
       ((t === "non_deductible" || t === "capital_expenditure") && p === 0),
@@ -110,8 +113,10 @@ export function taxDefaultError(
   )
     return "Tax deduction defaults apply only to Expense accounts.";
   if (percentageBps === null)
-    return treatment && treatment !== "requires_review"
-      ? "Set a percentage for this treatment, or choose Requires review."
+    return treatment &&
+      treatment !== "requires_review" &&
+      treatment !== "unclassified"
+      ? "Set a percentage for this treatment, or choose Unclassified."
       : null;
   const result = taxValuesSchema.safeParse({
     percentageBps,
@@ -127,7 +132,25 @@ export function needsTaxReview(
     | null
     | undefined,
 ): boolean {
-  return tax?.percentageBps == null || tax.treatment === "requires_review";
+  return (
+    tax?.percentageBps == null ||
+    tax.treatment === "requires_review" ||
+    tax.treatment === "unclassified"
+  );
+}
+
+/** Account cleanup fills missing decisions, never explicit individual choices. */
+export function canApplyAccountTaxDefault(
+  tax: ExpenseTaxSnapshot | null | undefined,
+): boolean {
+  if (tax == null) return true;
+  return (
+    needsTaxReview(tax) &&
+    (tax.source === "unreviewed" || tax.source === "account_default") &&
+    (tax.provenance === "record_creation" ||
+      tax.provenance === "account_change") &&
+    tax.reason === null
+  );
 }
 
 export type TaxFormDraft = { treatment: string; percentage: string };
@@ -143,7 +166,7 @@ export function taxFormValues(
 } {
   if (!treatment && allowNoDefault)
     return { treatment: null, percentageBps: null, error: null };
-  const selected = taxTreatmentSchema.safeParse(treatment || "requires_review");
+  const selected = taxTreatmentSchema.safeParse(treatment || "unclassified");
   if (!selected.success)
     return {
       treatment: null,
@@ -151,7 +174,7 @@ export function taxFormValues(
       error: "Choose a tax treatment.",
     };
   const t = selected.data;
-  if (t === "requires_review")
+  if (t === "requires_review" || t === "unclassified")
     return { treatment: t, percentageBps: null, error: null };
   if (t !== "partial")
     return {
@@ -205,7 +228,7 @@ export function accountTaxDefault(account: {
     treatment:
       account.defaultTaxTreatment ??
       (percentageBps === null
-        ? "requires_review"
+        ? "unclassified"
         : treatmentForPercentage(percentageBps)),
   };
 }

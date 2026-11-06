@@ -209,12 +209,7 @@
   </div>
 
   {#if data.view === "expense-tax"}
-    <ExpenseTaxReport
-      report={data.report}
-      accounts={data.taxAccounts}
-      canBulk={data.canBulkTaxClassify}
-      closedThrough={data.taxClosedThrough}
-    />
+    <ExpenseTaxReport report={data.report} accounts={data.taxAccounts} />
   {:else if data.view === "profit-loss"}
     <ProfitLossReport report={data.report} {isMobile} />
   {:else if data.view === "balance-sheet"}

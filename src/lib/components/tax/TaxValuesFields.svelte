@@ -12,10 +12,10 @@
   let {
     id,
     percentage = $bindable(""),
-    treatment = $bindable("requires_review"),
+    treatment = $bindable("unclassified"),
     disabled = false,
     named = false,
-    allowNoDefault = false,
+    accountDefault = false,
     compact = false,
     popoverClass = "",
     onchange,
@@ -25,18 +25,16 @@
     treatment?: string;
     disabled?: boolean;
     named?: boolean;
-    allowNoDefault?: boolean;
+    accountDefault?: boolean;
     compact?: boolean;
     popoverClass?: string;
     onchange?: (value: TaxFormDraft) => void;
   } = $props();
   let previousPartial = $state("");
-  const selected = $derived(
-    treatment || (allowNoDefault ? "" : "requires_review"),
-  );
-  const values = $derived(taxFormValues(selected, percentage, allowNoDefault));
+  const selected = $derived(treatment || "unclassified");
+  const values = $derived(taxFormValues(selected, percentage));
   function choose(value: string) {
-    const next = value === "__none__" ? "" : value;
+    const next = value;
     if (next === selected) return;
     const draft = switchTaxTreatment(
       { treatment: selected, percentage },
@@ -57,21 +55,15 @@
     >
     <Select.Root
       type="single"
-      value={selected || "__none__"}
+      value={selected}
       onValueChange={choose}
       {disabled}
     >
       <Select.Trigger id={`${id}-treatment`} class="w-full justify-between">
-        {selected
-          ? TaxTreatmentLabels[selected as TaxTreatment]
-          : "No default — requires review"}
+        {TaxTreatmentLabels[selected as TaxTreatment]}
       </Select.Trigger>
       <Select.Content class={popoverClass}>
-        {#if allowNoDefault}<Select.Item
-            value="__none__"
-            label="No default — requires review"
-          />{/if}
-        {#each TAX_TREATMENTS as value (value)}<Select.Item
+        {#each TAX_TREATMENTS.filter((value) => !accountDefault || value !== "requires_review" || selected === "requires_review") as value (value)}<Select.Item
             {value}
             label={TaxTreatmentLabels[value]}
           />{/each}
@@ -118,10 +110,12 @@
             : "Greater than 0% and below 100%."}
         </p>{/if}
     </div>
-  {:else if selected === "requires_review" || !selected}
+  {:else if selected === "requires_review" || selected === "unclassified"}
     {#if !compact}<p class="field-hint" role="status">
-        Needs tax review. Excluded from potential deduction and add-back
-        estimates until classified.
+        {selected === "unclassified"
+          ? "No tax treatment has been established."
+          : "An individual tax decision is still required."} Excluded from potential
+        deduction and add-back estimates until classified.
       </p>{/if}
   {:else if compact}
     <output class="fixed-percentage" aria-label="Potential deduction percentage"

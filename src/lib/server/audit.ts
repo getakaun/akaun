@@ -19,6 +19,7 @@ export type RecordType =
   // balance, invoice issue or journal entry.
   | "record"
   | "account"
+  | "fixed_asset"
   // Settling is the one action that changes a record nobody edited, so it is
   // audited in its own right (FR-041).
   | "settlement"
@@ -47,6 +48,7 @@ export type { AuditVia };
 export const AUDIT_PERMISSION: Record<RecordType, LeafPermission> = {
   record: "records.read",
   account: "accounts.read",
+  fixed_asset: "accounts.read",
   settlement: "records.read",
   contact: "contacts.read",
   quotation: "quotations.read",
@@ -186,6 +188,10 @@ function currentLabel(db: Db, type: RecordType, id: string): string | null {
     case "record":
       return one(
         sql`SELECT trim(coalesce(record_number, '') || ' ' || description) AS label FROM ledger_records WHERE id = ${id}`,
+      );
+    case "fixed_asset":
+      return one(
+        sql`SELECT asset_code || ' ' || name AS label FROM fixed_assets WHERE id = ${id}`,
       );
     case "account":
       return one(sql`SELECT name AS label FROM accounts WHERE id = ${id}`);

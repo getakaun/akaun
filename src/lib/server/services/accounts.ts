@@ -1,3 +1,4 @@
+import { assetAccountReferenceCount } from "../queries/fixed-assets.js";
 import { taxDefaultError } from "$lib/expense-tax.js";
 import { assertDatesOpen, closedPeriodReason } from "../closing/policy.js";
 import { and, eq, sql } from "drizzle-orm";
@@ -468,7 +469,7 @@ function dependencyState(db: LedgerDb, id: number) {
         .from(accountDefaults)
         .where(eq(accountDefaults.accountId, id))
         .get()?.n ?? 0,
-    otherDependencyCount: 0,
+    otherDependencyCount: assetAccountReferenceCount(db, id),
   };
 }
 

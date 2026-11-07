@@ -1,3 +1,4 @@
+import { assetAccountReferenceCount } from "./fixed-assets.js";
 import {
   and,
   asc,
@@ -15,6 +16,7 @@ import {
 import {
   accounts,
   accountDefaults,
+  fixedAssets,
   contacts,
   ledgerMovements,
   ledgerRecords,
@@ -72,7 +74,10 @@ function toAccountRow(row: typeof accounts.$inferSelect): AccountRow {
 function cannotDeleteReason(
   row: AccountRow,
   movementCount: number,
+  assetReferences = 0,
 ): string | null {
+  if (assetReferences)
+    return "This account is mapped in the fixed asset register. Keep it for the registration and its audit history.";
   if (row.isSystem) {
     return "This is one of the accounts the app needs to work, so it cannot be deleted.";
   }
@@ -158,12 +163,27 @@ export function listAccounts(
       .all()
       .map((row) => row.accountId),
   );
+  const assetAccountIds = new Set(
+    db
+      .select({
+        cost: fixedAssets.accountId,
+        accumulated: fixedAssets.accumulatedAccountId,
+        expense: fixedAssets.expenseAccountId,
+      })
+      .from(fixedAssets)
+      .all()
+      .flatMap((a) => [a.cost, a.accumulated, a.expense]),
+  );
   const accountRows = rows.map(toAccountRow);
 
   const views = accountRows.map((row) => {
     const totalsFor = totalsById.get(row.id);
     const movementCount = totalsFor?.movementCount ?? 0;
-    const reason = cannotDeleteReason(row, movementCount);
+    const reason = cannotDeleteReason(
+      row,
+      movementCount,
+      assetAccountIds.has(row.id) ? 1 : 0,
+    );
     const balanceMinor = totalsFor?.balanceMinor ?? 0;
     return {
       ...row,
@@ -237,6 +257,7 @@ export function canDeleteAccount(
   const reason = cannotDeleteReason(
     toAccountRow(raw),
     movementCountFor(db, id),
+    assetAccountReferenceCount(db, id),
   );
   return { ok: reason === null, reason };
 }

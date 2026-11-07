@@ -1,4 +1,5 @@
 import { ExpenseTaxError } from "../queries/expense-tax.js";
+import { assetRecordDeletionReason } from "../queries/fixed-assets.js";
 import { closedPeriodReason } from "../closing/policy.js";
 import { isMoneyPotAccount } from "../ledger/account-type.js";
 import {
@@ -1041,6 +1042,9 @@ function removeRecordInTransaction(
   if (!allowed.ok) return allowed;
   const historyReason = allocationHistoryDeletionReason(db, id);
   if (historyReason) return { ok: false, reason: historyReason };
+
+  const assetReason = assetRecordDeletionReason(db, id);
+  if (assetReason) return { ok: false, reason: assetReason };
 
   const before = snapshotForAudit(db, id);
   const touched = existing.movements.map((m) => m.accountId);

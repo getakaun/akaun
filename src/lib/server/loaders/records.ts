@@ -1,4 +1,6 @@
 import { recordRelations } from "../queries/reimbursements.js";
+import { readFixedAssets } from "../application/fixed-assets.js";
+import { assetRecordDeletionReason } from "../queries/fixed-assets.js";
 import { reimbursementAmountCorrectionAvailability } from "../application/reimbursement-amount-correction.js";
 import { allocationHistoryDeletionReason } from "../queries/allocation-state.js";
 import { fail, redirect, type Actions } from "@sveltejs/kit";
@@ -91,7 +93,23 @@ export function loadRecordDetail(locals: App.Locals, id: number) {
   // there is no `+error.svelte` in the app shell to land on.
   if (!record) throw redirect(302, LIST_PATH);
 
+  const assetResult = readFixedAssets({ db, locals }, "9999-12-31");
+  const assetData = assetResult.ok
+    ? {
+        assets: assetResult.value.assets.filter(
+          (asset) => asset.sourceRecordId === id,
+        ),
+        unregistered: assetResult.value.unregistered.filter(
+          (line) => line.recordId === id,
+        ),
+        accounts: assetResult.value.accounts,
+        canChange: can(locals, "accounts.update"),
+      }
+    : null;
+
   return {
+    assetData,
+    fixedAssetDeletionReason: assetRecordDeletionReason(db, id),
     record,
     reimbursementAmountCorrection: reimbursementAmountCorrectionAvailability(
       { db, locals },

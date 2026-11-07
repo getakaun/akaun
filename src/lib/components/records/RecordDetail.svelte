@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RecordAssets from '$lib/components/assets/RecordAssets.svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { Ban, ChevronRight, FileText, Scale, Undo2, Users } from '@lucide/svelte';
@@ -151,7 +152,7 @@
 			? MONTH_CLOSED_REASON
 			: fromInvoice
 				? 'Cancel the invoice instead'
-				: (historyDeleteReason ?? (record.locked ? (record.lockedReason ?? '') : null))
+				: (data.fixedAssetDeletionReason ?? historyDeleteReason ?? (record.locked ? (record.lockedReason ?? '') : null))
 	);
 	const isPayment = $derived(record.kind === LedgerRecordKind.Payment);
 	const paymentControl = $derived(
@@ -501,6 +502,7 @@
 	{/snippet}
 
 	{#snippet rail()}
+    {#if data.assetData}<RecordAssets data={data.assetData} />{/if}
 		{#if contact}
 			<section class="detail-card">
 				<div class="detail-card-head">

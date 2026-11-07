@@ -11,6 +11,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import type { ExpenseTaxSnapshot, TaxTreatment } from "$lib/expense-tax.js";
+import type { AssetSourceSnapshot } from "$lib/fixed-assets.js";
 
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -1220,6 +1221,95 @@ export const importRecordProfiles = sqliteTable(
 );
 
 // One side of a record: an amount against one account.
+export const fixedAssets = sqliteTable(
+  "fixed_assets",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    assetType: text("asset_type").notNull(),
+    serialNumber: text("serial_number").notNull().default(""),
+    acquisitionDate: text("acquisition_date").notNull(),
+    inServiceDate: text("in_service_date"),
+    assetAccountId: integer("asset_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    costMinor: integer("cost_minor").notNull(),
+    // Movement IDs may disappear during an audited source edit. Keep their identity
+    // as evidence, without blocking the ledger's existing movement rebuild path.
+    sourceMovementId: integer("source_movement_id"),
+    sourceRecordId: integer("source_record_id").references(
+      () => ledgerRecords.id,
+      { onDelete: "restrict" },
+    ),
+    sourceSortOrder: integer("source_sort_order"),
+    sourceSnapshot: text("source_snapshot", {
+      mode: "json",
+    }).$type<AssetSourceSnapshot>(),
+    openingAsAt: text("opening_as_at"),
+    broughtForwardDepMinor: integer("brought_forward_dep_minor")
+      .notNull()
+      .default(0),
+    accumulatedDepreciationAccountId: integer(
+      "accumulated_depreciation_account_id",
+    ).references(() => accounts.id, { onDelete: "restrict" }),
+    openingRecordId: integer("opening_record_id").references(
+      () => ledgerRecords.id,
+      { onDelete: "restrict" },
+    ),
+    businessUseBps: integer("business_use_bps"),
+    documentReference: text("document_reference").notNull().default(""),
+    bookMethod: text("book_method"),
+    usefulLifeMonths: integer("useful_life_months"),
+    residualMinor: integer("residual_minor"),
+    depreciationExpenseAccountId: integer(
+      "depreciation_expense_account_id",
+    ).references(() => accounts.id, { onDelete: "restrict" }),
+    createdBy: integer("created_by").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    updatedBy: integer("updated_by").notNull(),
+    revision: integer("revision").notNull().default(1),
+  },
+  (t) => [
+    uniqueIndex("fixed_assets_source_movement_unique").on(t.sourceMovementId),
+    uniqueIndex("fixed_assets_source_slot_unique").on(
+      t.sourceRecordId,
+      t.sourceSortOrder,
+    ),
+    index("fixed_assets_account_idx").on(t.assetAccountId),
+    check(
+      "fixed_assets_cost_check",
+      sql`${t.costMinor} > 0 AND ${t.costMinor} <= 9007199254740991`,
+    ),
+    check(
+      "fixed_assets_dep_check",
+      sql`${t.broughtForwardDepMinor} BETWEEN 0 AND ${t.costMinor}`,
+    ),
+    check(
+      "fixed_assets_business_check",
+      sql`${t.businessUseBps} IS NULL OR ${t.businessUseBps} BETWEEN 0 AND 10000`,
+    ),
+    check(
+      "fixed_assets_source_check",
+      sql`(${t.sourceRecordId} IS NOT NULL AND ${t.sourceMovementId} IS NOT NULL AND ${t.sourceSortOrder} IS NOT NULL AND ${t.sourceSnapshot} IS NOT NULL AND ${t.openingAsAt} IS NULL AND ${t.broughtForwardDepMinor} = 0 AND ${t.openingRecordId} IS NULL) OR (${t.sourceRecordId} IS NULL AND ${t.sourceMovementId} IS NULL AND ${t.sourceSortOrder} IS NULL AND ${t.sourceSnapshot} IS NULL AND ${t.openingAsAt} IS NOT NULL)`,
+    ),
+    check(
+      "fixed_assets_accounts_check",
+      sql`${t.accumulatedDepreciationAccountId} IS NULL OR ${t.accumulatedDepreciationAccountId} <> ${t.assetAccountId}`,
+    ),
+    check(
+      "fixed_assets_dep_mapping_check",
+      sql`${t.broughtForwardDepMinor} = 0 OR ${t.accumulatedDepreciationAccountId} IS NOT NULL`,
+    ),
+    check(
+      "fixed_assets_residual_check",
+      sql`${t.residualMinor} IS NULL OR ${t.residualMinor} BETWEEN 0 AND ${t.costMinor}`,
+    ),
+  ],
+);
+
 export const ledgerMovements = sqliteTable(
   "ledger_movements",
   {

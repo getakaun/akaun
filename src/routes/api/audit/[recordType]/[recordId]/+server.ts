@@ -13,6 +13,8 @@ export const GET: RequestHandler = ({ locals, params }) => {
     return Response.json({ error: "Unknown record type" }, { status: 400 });
   if (!can(locals, AUDIT_PERMISSION[recordType]))
     return new Response("Forbidden", { status: 403 });
+  if (recordType === "fixed_asset" && !can(locals, "accounts.read"))
+    return new Response("Forbidden", { status: 403 });
 
   // Text, because some kinds have text ids (an OAuth grant, an import job).
   const recordId = params.recordId.trim();

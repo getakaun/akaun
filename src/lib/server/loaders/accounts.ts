@@ -74,6 +74,7 @@ const LIST_PATH = "/accounts";
 /** Account actions and the book-wide workspace offered from the chart. */
 function accountPerms(locals: App.Locals) {
   return {
+    fixedAssets: canAll(locals, ["accounts.read", "records.read"]),
     add: can(locals, "accounts.create"),
     change: can(locals, "accounts.update"),
     delete: can(locals, "accounts.delete"),

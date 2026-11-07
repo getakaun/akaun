@@ -1,4 +1,5 @@
 import type { PageServerLoad } from "./$types.js";
-import { loadFixedAssetsPage } from "$lib/server/loaders/fixed-assets.js";
-export const load: PageServerLoad = ({ locals, url }) =>
-  loadFixedAssetsPage(locals, url);
+import { redirect } from "@sveltejs/kit";
+export const load: PageServerLoad = ({ url }) => {
+  throw redirect(308, `/assets${url.search}`);
+};

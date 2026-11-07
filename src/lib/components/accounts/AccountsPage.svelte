@@ -264,7 +264,7 @@
         <!-- Closing is book-wide, not a list control, so it reads as the book's
              status beside the tabs rather than a button beside the search. -->
         {#if data.perms.fixedAssets}
-          <a class="sheet-btn" href={resolve('/(app)/accounts/fixed-assets')}>Fixed assets</a>
+          <a class="sheet-btn" href={resolve('/(app)/assets')}>Fixed assets</a>
         {/if}
         {#if data.perms.closing}
           <a

@@ -5,7 +5,7 @@ import { listRecords } from "$lib/server/queries/ledger.js";
 import { LedgerRecordKind } from "$lib/enums.js";
 import { getUserNavOrder } from "$lib/server/navPreferences.js";
 import { DEFAULT_CURRENCY } from "$lib/currency.js";
-import { can } from "$lib/server/permissions.js";
+import { can, canAll } from "$lib/server/permissions.js";
 import { closedThrough } from "$lib/server/closing/policy.js";
 
 export const load: LayoutServerLoad = async ({ locals }) => {
@@ -29,7 +29,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
   }).total;
 
   const navItems = getUserNavOrder(db, locals.user!.id).filter((item) =>
-    can(locals, item.permission),
+    canAll(locals, [item.permission, ...(item.requires ?? [])]),
   );
 
   return {

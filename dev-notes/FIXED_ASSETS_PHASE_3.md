@@ -1,6 +1,6 @@
 # Phase 3 — fixed asset register
 
-Approved flow: Records → Register asset → Accounts → Fixed assets. Registration is metadata only: no purchase, opening-balance, depreciation or disposal journals. Tax preparation remains deferred.
+Approved flow: Records → Register asset → Assets. Registration is metadata only: no purchase, opening-balance, depreciation or disposal journals. Tax preparation remains deferred.
 
 ## Implementation map
 
@@ -9,7 +9,7 @@ Approved flow: Records → Register asset → Accounts → Fixed assets. Registr
 - Put authorized reads/writes in `application/fixed-assets.ts`, calculations in `queries/fixed-assets.ts`, validation/types in `lib/fixed-assets.ts`.
 - REST endpoints at `/api/fixed-assets`, `/api/fixed-assets/[id]`, and a shared SSE invalidation stream. Reads require accounts.read + records.read; writes additionally require accounts.update. Metadata registration is permitted for closed purchases and never reopens or edits them.
 - Reuse record attachments for linked purchases. Legacy entries retain a supporting-document reference and an optional existing opening record. Opening cost and accumulated depreciation are register values, never an instruction to post.
-- Add one register under Accounts, a reusable registration/editor sheet, links on purchase lines and fixed-asset account details. Separate registered, unregistered and reconciliation views; preserve as-at date in the URL.
+- Add a standalone Assets module at `/assets`, a reusable registration/editor sheet, links on purchase lines and fixed-asset account details. Separate registered, unregistered and reconciliation views; preserve as-at date in the URL.
 - Reconcile gross cost and accumulated depreciation separately, on the same as-at date. Keep changed/voided sources and unallocated ledger movements visible. No current valuation inferred from brought-forward depreciation.
 
 ## Scope and limitations
@@ -26,7 +26,7 @@ Rollback: hide the new entry points and retain the additive table and audit hist
 
 1. Create a RM6,000 purchase in Records, from Bank to Computer equipment (Asset / Fixed asset), and attach its receipt. Save, then select **Register asset** in the Fixed assets card. Confirm the prefilled cost/account/date, enter the type and in-service date, and register. The card becomes **View asset FA-…**.
 2. Inspect the purchase and bank/account balances: registration adds no journal, payment, expense, settlement or tax-classification change. Trying to register the same purchase line again is refused.
-3. Open **Accounts → Fixed assets**. Check Registered assets, change the as-at date, and search by name, asset ID, type or serial number. From the Computer equipment account detail, follow **View linked assets and reconciliation** to the same register filtered to that account.
+3. Open **Assets** from the main navigation. Check Registered assets, change the as-at date, and search by name, asset ID, type or serial number. From the Computer equipment account detail, follow **View linked assets and reconciliation** to the same register filtered to that account.
 4. Create another capital purchase, then use **Unregistered purchases → Register asset**. It opens the same form. Opening-balance records and transfers are not purchase candidates; journal lines require checking that they actually represent purchases.
 5. Use **Add existing asset** with original cost RM12,000, brought-forward depreciation RM4,000, acquisition date, opening as-at date, a separate accumulated depreciation Asset account, and a document/schedule reference. Optionally reference an existing opening record that includes the cost account. Save: no opening journal is created.
 6. Open Reconciliation. Gross cost and accumulated depreciation are compared separately at the selected date. Missing ledger opening values appear as differences, and the linked records/evidence let the accountant investigate them. RM8,000 is labelled opening net book value on the asset's opening date, not current valuation.
@@ -52,3 +52,11 @@ Rollback: hide the new entry points and retain the additive table and audit hist
 - Browser assertions pass, with Svelte `derived_inert` warnings during dialog teardown. No full application instance was started against the configured book.
 
 **Owner review:** Ready for Phase 3 walkthrough. Phase 4 remains deferred.
+
+## Assets module and styling follow-up
+
+Assets now has its own navigation item and canonical `/assets` route. Record and account links still reach the same register; `/accounts/fixed-assets` redirects permanently and preserves asset IDs, as-at dates and account filters. Existing menu preferences automatically gain the Assets item, and users can pin it on mobile through the existing navigation settings. Visibility retains both required read permissions.
+
+The sheet and register primary actions use both the base `sheet-btn` and primary modifier. The sheet contains its scroll area, keeps the footer visible and uses consistent native-control styling. The module uses the shared topbar, explicit table cell spacing and horizontally scrollable labelled tables on phones.
+
+Browser tests load the actual application stylesheet and check button size/padding, form scrolling, footer visibility after the phone animation, table spacing and module heading. Financial storage and posting behavior are unchanged by this follow-up.

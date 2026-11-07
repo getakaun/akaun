@@ -4,16 +4,20 @@ import { render } from "vitest-browser-svelte";
 import { AccountSubType, AccountType, LedgerRecordKind } from "$lib/enums.js";
 import AssetSheet from "./AssetSheet.svelte";
 import FixedAssetsPage from "./FixedAssetsPage.svelte";
+import "../../../routes/layout.css";
 
 vi.mock("$app/navigation", () => ({
   beforeNavigate: vi.fn(),
   invalidateAll: vi.fn(async () => {}),
 }));
 vi.mock("$app/state", () => ({
-  page: { url: new URL("https://akaun.test/accounts/fixed-assets") },
+  page: { url: new URL("https://akaun.test/assets") },
 }));
 vi.mock("$lib/sse.js", () => ({ createResourceStream: vi.fn() }));
-afterEach(() => vi.unstubAllGlobals());
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  await page.viewport(1280, 900);
+});
 
 const accounts = [
   {
@@ -192,4 +196,71 @@ it("protects unsaved asset details on close", async () => {
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
   expect(onclose).toHaveBeenCalledOnce();
+});
+
+it("uses the shared button styling and keeps a long asset form inside the sheet", async () => {
+  await page.viewport(1280, 900);
+  render(AssetSheet, {
+    accounts,
+    canChange: true,
+    onclose: vi.fn(),
+    onsaved: vi.fn(async () => {}),
+  });
+  await expect.element(page.getByRole("dialog")).toBeVisible();
+  const dialog = document.querySelector<HTMLElement>(
+    '[data-slot="sheet-content"]',
+  )!;
+  const primary = dialog.querySelector<HTMLElement>('button[type="submit"]')!;
+  const body = dialog.querySelector<HTMLElement>(".asset-sheet-body")!;
+  expect(getComputedStyle(primary).height).toBe("34px");
+  expect(getComputedStyle(primary).paddingLeft).toBe("14px");
+  expect(getComputedStyle(primary).borderRadius).toBe("8px");
+  expect(getComputedStyle(dialog).overflowY).toBe("hidden");
+  expect(getComputedStyle(body).overflowY).toBe("auto");
+  expect(getComputedStyle(body).minHeight).toBe("0px");
+  expect(body.scrollHeight).toBeGreaterThan(body.clientHeight);
+  const footer = dialog.querySelector<HTMLElement>(".sheet-foot")!;
+  expect(footer.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+    dialog.getBoundingClientRect().bottom + 1,
+  );
+});
+
+it("keeps the asset sheet footer visible on a phone", async () => {
+  await page.viewport(390, 844);
+  render(AssetSheet, {
+    accounts,
+    canChange: true,
+    onclose: vi.fn(),
+    onsaved: vi.fn(async () => {}),
+  });
+  await expect.element(page.getByRole("dialog")).toBeVisible();
+  const dialog = document.querySelector<HTMLElement>(
+    '[data-slot="sheet-content"]',
+  )!;
+  await expect.poll(() => dialog.dataset.side).toBe("bottom");
+  expect(dialog.getBoundingClientRect().width).toBeLessThanOrEqual(390);
+  const button = page
+    .getByRole("button", { name: "Register asset", exact: true })
+    .element();
+  await expect
+    .poll(() => button.getBoundingClientRect().bottom)
+    .toBeLessThanOrEqual(844);
+  expect(getComputedStyle(button).height).toBe("34px");
+});
+
+it("styles Assets as a module with padded register rows", async () => {
+  render(FixedAssetsPage, { data: registerData(true) });
+  await expect
+    .element(page.getByRole("heading", { name: "Assets", exact: true }))
+    .toBeVisible();
+  const primary = page
+    .getByRole("button", { name: "Add existing asset", exact: true })
+    .element();
+  expect(getComputedStyle(primary).height).toBe("34px");
+  await page
+    .getByRole("button", { name: "Unregistered purchases", exact: true })
+    .click();
+  const cell = document.querySelector<HTMLElement>(".asset-table tbody td")!;
+  expect(getComputedStyle(cell).paddingTop).toBe("13px");
+  expect(getComputedStyle(cell).paddingLeft).toBe("14px");
 });

@@ -27,7 +27,7 @@
     {#each data.assets as asset (asset.id)}<a
         class="related-link block p-3 text-sm"
         href={resolve(
-          `/(app)/accounts/fixed-assets?asset=${asset.id}&asAt=${asset.acquisitionDate}`,
+          `/(app)/assets?asset=${asset.id}&asAt=${asset.acquisitionDate}`,
         )}
         >View asset {assetNumber(asset.id)} · {asset.name}{asset.reviewReason
           ? " · Needs review"

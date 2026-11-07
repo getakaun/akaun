@@ -8,7 +8,7 @@ import { getUserNavOrder, setUserNavOrder } from '$lib/server/navPreferences.js'
 import { oauth } from '$lib/server/oauth/runtime.js';
 import { auditUser, userAuditSnapshot } from '$lib/server/admin/access.js';
 import { MAX_MOBILE_NAV_ITEMS } from '$lib/nav-config.js';
-import { can } from '$lib/server/permissions.js';
+import { canAll } from '$lib/server/permissions.js';
 import {
 	listTokens,
 	regenerateToken,
@@ -20,7 +20,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const userId = locals.user!.id;
 
 	const navItems = getUserNavOrder(db, userId)
-		.filter((item) => can(locals, item.permission))
+		.filter((item) => canAll(locals, [item.permission, ...(item.requires ?? [])]))
 		.map((item) => ({ id: item.id, label: item.label, showOnMobile: item.showOnMobile }));
 
 	return {

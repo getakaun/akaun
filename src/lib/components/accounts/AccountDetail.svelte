@@ -463,7 +463,7 @@
 
 	{#snippet rail()}
     {#if data.perms.fixedAssets && account.type === AccountType.Asset && account.subType === AccountSubType.FixedAsset}
-      <section class="detail-card"><div class="detail-card-head"><span class="detail-card-title">Fixed assets</span></div><a class="related-link block p-3 text-sm" href={resolve(`/(app)/accounts/fixed-assets?account=${account.id}`)}>View linked assets and reconciliation</a></section>
+      <section class="detail-card"><div class="detail-card-head"><span class="detail-card-title">Fixed assets</span></div><a class="related-link block p-3 text-sm" href={resolve(`/(app)/assets?account=${account.id}`)}>View linked assets and reconciliation</a></section>
     {/if}
 		<section class="detail-card">
 			<div class="detail-card-head"><span class="detail-card-title">Opening balance</span></div>

@@ -78,28 +78,23 @@
 </script>
 
 <div class="screen">
-  <div class="page-topbar">
-    <a href={resolve("/(app)/accounts")} class="text-muted-foreground text-sm"
-      >Accounts</a
-    >
-  </div>
-  <div class="page-content asset-page">
-    <div class="asset-title">
-      <div>
-        <h1 class="page-title">Fixed assets</h1>
-        <p class="text-muted-foreground mt-1 text-sm">
-          Individual assets linked to your existing accounting records.
-        </p>
-      </div>
-      {#if data.canChange}<button
-          class="sheet-btn-primary"
-          onclick={() => {
-            assetId = null;
-            movementId = null;
-            sheetOpen = true;
-          }}>Add existing asset</button
-        >{/if}
+  <div class="topbar">
+    <div>
+      <h1 class="page-title">Assets</h1>
+      <p class="text-muted-foreground mt-1 text-sm">
+        Fixed asset register linked to your accounting records.
+      </p>
     </div>
+    {#if data.canChange}<button
+        class="sheet-btn sheet-btn-primary"
+        onclick={() => {
+          assetId = null;
+          movementId = null;
+          sheetOpen = true;
+        }}>Add existing asset</button
+      >{/if}
+  </div>
+  <div class="asset-page">
     <form method="GET" class="asset-filters">
       <label for="assets-as-at" class="text-sm">As at</label><Input
         id="assets-as-at"
@@ -119,9 +114,7 @@
           >{data.register.accounts.find((account) => account.id === accountId)
             ?.name}</span
         ><a
-          href={resolve(
-            `/(app)/accounts/fixed-assets?asAt=${data.register.asAt}`,
-          )}
+          href={resolve(`/(app)/assets?asAt=${data.register.asAt}`)}
           class="text-sm underline">All accounts</a
         >{/if}
     </form>
@@ -172,7 +165,7 @@
                   ><a
                     class="row-link"
                     href={resolve(
-                      `/(app)/accounts/fixed-assets?asAt=${data.register.asAt}&asset=${asset.id}`,
+                      `/(app)/assets?asAt=${data.register.asAt}&asset=${asset.id}`,
                     )}
                     onclick={(event) => {
                       if (
@@ -373,11 +366,14 @@
 
 <style>
   .asset-page {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    overflow-y: auto;
     padding: 24px;
     max-width: 1500px;
     margin: 0 auto;
   }
-  .asset-title,
   .asset-filters,
   .asset-toolbar {
     display: flex;
@@ -386,7 +382,6 @@
     flex-wrap: wrap;
     margin-bottom: 20px;
   }
-  .asset-title,
   .asset-toolbar {
     justify-content: space-between;
   }
@@ -416,6 +411,18 @@
     overflow-x: auto;
     border: 1px solid var(--border);
     border-radius: 8px;
+  }
+  .asset-table td {
+    padding: 13px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+    font-size: 13px;
+  }
+  .asset-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .asset-table th.money {
+    text-align: right;
   }
   .money {
     text-align: right;
@@ -447,6 +454,23 @@
     font-size: 13px;
   }
   @media (max-width: 767px) {
+    .asset-table .exp-table {
+      display: table;
+      min-width: 640px;
+    }
+    .asset-table thead {
+      display: table-header-group;
+    }
+    .asset-table tbody {
+      display: table-row-group;
+    }
+    .asset-table tr {
+      display: table-row;
+    }
+    .asset-table th,
+    .asset-table td {
+      display: table-cell;
+    }
     .asset-page {
       padding: 16px;
     }

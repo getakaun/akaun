@@ -4,5 +4,5 @@
   let { data }: { data: PageData } = $props();
 </script>
 
-<svelte:head><title>Fixed assets - Akaun</title></svelte:head>
+<svelte:head><title>Assets - Akaun</title></svelte:head>
 <FixedAssetsPage {data} />

@@ -209,8 +209,8 @@
   <Sheet.Content
     side={screen.current ? "bottom" : "right"}
     style={screen.current
-      ? "height:100dvh; border-radius:0; display:flex; flex-direction:column; gap:0;"
-      : "width:500px; max-width:95vw; display:flex; flex-direction:column; gap:0;"}
+      ? "height:100dvh; border-radius:0; border-top:none; overflow:hidden; display:flex; flex-direction:column; gap:0;"
+      : "width:500px; max-width:95vw; overflow:hidden; display:flex; flex-direction:column; gap:0;"}
   >
     <div class="asset-sheet-head">
       <div>
@@ -531,7 +531,7 @@
             onclick={close}
             disabled={saving}>Close</button
           >{#if canChange}<button
-              class="sheet-btn-primary"
+              class="sheet-btn sheet-btn-primary"
               type="submit"
               disabled={saving || (!!asset && !dirty)}
               >{saving
@@ -561,6 +561,7 @@
     gap: 12px;
     padding: 22px;
     border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
   }
   .asset-sheet-form {
     flex: 1;
@@ -570,6 +571,7 @@
   }
   .asset-sheet-body {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 20px 22px;
   }
@@ -584,8 +586,32 @@
     padding: 8px 10px;
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: var(--background);
-    font-size: 14px;
+    background: var(--card);
+    color: var(--foreground);
+    font-family: inherit;
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+  select {
+    min-height: 36px;
+  }
+  textarea {
+    min-height: 80px;
+    resize: vertical;
+  }
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  select:disabled,
+  textarea:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .asset-sheet-body :global(input[readonly]) {
+    background: var(--muted);
+    color: var(--muted-foreground);
   }
   .hint {
     color: var(--muted-foreground);

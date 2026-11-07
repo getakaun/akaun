@@ -216,6 +216,20 @@ export function fixedAssetRegister(db: LedgerDb, asAt: string) {
     if (opening?.voided || (opening && opening.date > asset.openingAsAt!))
       reviewReason =
         "Opening evidence changed or was voided. Review opening values.";
+    if (asset.accumulatedDepreciationAccountId !== null) {
+      const contra = chartById.get(asset.accumulatedDepreciationAccountId);
+      if (
+        !contra ||
+        contra.type !== AccountType.Asset ||
+        contra.mergedIntoAccountId !== null
+      )
+        reviewReason = [
+          reviewReason,
+          "Accumulated depreciation account is missing or no longer an Asset account. Review its mapping.",
+        ]
+          .filter(Boolean)
+          .join(" ");
+    }
     return {
       ...asset,
       accountName: account?.name ?? "Missing account",

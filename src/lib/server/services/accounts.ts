@@ -474,7 +474,7 @@ function dependencyState(db: LedgerDb, id: number) {
         .from(accountDefaults)
         .where(eq(accountDefaults.accountId, id))
         .get()?.n ?? 0,
-    otherDependencyCount: 0,
+    otherDependencyCount: assetAccountReferenceIds(db).has(id) ? 1 : 0,
   };
 }
 

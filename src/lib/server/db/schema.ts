@@ -1281,15 +1281,15 @@ export const fixedAssets = sqliteTable(
     index("fixed_assets_account_idx").on(t.assetAccountId),
     check(
       "fixed_assets_cost_check",
-      sql`${t.costMinor} > 0 AND ${t.costMinor} <= 9007199254740991`,
+      sql`typeof(${t.costMinor}) = 'integer' AND ${t.costMinor} > 0 AND ${t.costMinor} <= 9007199254740991`,
     ),
     check(
       "fixed_assets_dep_check",
-      sql`${t.broughtForwardDepMinor} BETWEEN 0 AND ${t.costMinor}`,
+      sql`typeof(${t.broughtForwardDepMinor}) = 'integer' AND ${t.broughtForwardDepMinor} BETWEEN 0 AND ${t.costMinor}`,
     ),
     check(
       "fixed_assets_business_check",
-      sql`${t.businessUseBps} IS NULL OR ${t.businessUseBps} BETWEEN 0 AND 10000`,
+      sql`${t.businessUseBps} IS NULL OR (typeof(${t.businessUseBps}) = 'integer' AND ${t.businessUseBps} BETWEEN 0 AND 10000)`,
     ),
     check(
       "fixed_assets_source_check",
@@ -1305,7 +1305,7 @@ export const fixedAssets = sqliteTable(
     ),
     check(
       "fixed_assets_residual_check",
-      sql`${t.residualMinor} IS NULL OR ${t.residualMinor} BETWEEN 0 AND ${t.costMinor}`,
+      sql`${t.residualMinor} IS NULL OR (typeof(${t.residualMinor}) = 'integer' AND ${t.residualMinor} BETWEEN 0 AND ${t.costMinor})`,
     ),
   ],
 );

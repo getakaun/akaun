@@ -72,3 +72,9 @@ Compared AccountsPage, AccountSheet, AccountDetail, ContactDetail and Reports ag
 - Former `?asset=<id>` links redirect to the full asset detail route; account/record/audit links now point there directly. The redundant register button on the Accounts list was removed; the contextual link on a fixed-asset account remains and uses the existing relation-card shape.
 
 Verification: 12 Chromium interaction tests cover shared control operation, creation, detail save/discard and mobile layout; 5 fixture previews compare Accounts with Assets on desktop and phone; 30 asset/audit tests pass. Test fixtures do not open the configured book. No financial data model, migration or posting behavior changed during this UI review.
+
+## Duplicate branch consolidation
+
+PR #65 (`82caf374`) has been reviewed and merged into the #66 branch with explicit conflict resolution. The canonical register, API and standardized UI are retained. The duplicate initial table migration and competing API/page implementations are excluded. Useful test coverage, account-reference accounting and the minimal account-default fixture are adapted to the canonical model.
+
+Migration 0042 is unchanged. Follow-up `0043_fixed_asset_integer_checks.sql` upgrades a canonical 0042 register with stronger integer checks, preserving existing asset/financial/audit rows. An existing database created with #65’s alternative schema is not automatically converted. See [the full consolidation review](../specs/010-fixed-assets/consolidation.md) for compatibility decisions and final validation.

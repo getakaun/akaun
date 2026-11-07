@@ -8,7 +8,8 @@ import {
   AccountType,
   DefaultAccountPurpose,
 } from "$lib/enums.js";
-import { assetMoneyMinor } from "$lib/fixed-assets.js";
+import { assetMoneyMinor, assetMoneyInput } from "$lib/fixed-assets.js";
+import { applyMigrationRange } from "../db/auto-upgrade.js";
 import * as schema from "../db/schema.js";
 import type { LedgerDb } from "../ledger/types.js";
 import { createAccount } from "../services/accounts.js";
@@ -141,6 +142,130 @@ beforeEach(() => {
 afterEach(() => sqlite.close());
 
 describe("Phase 3 fixed asset register", () => {
+  it("upgrades an existing 0042 register without losing evidence and rejects fractional database amounts", () => {
+    const old = new Database(":memory:");
+    try {
+      applyMigrationRange(old, 0, 42);
+      old.exec(
+        "INSERT INTO accounts(id,role,type,sub_type,name,rank) VALUES(1,1,1,2,'Bank','a'),(2,8,1,8,'Equipment','b'),(3,8,1,15,'Accumulated depreciation','c'); INSERT INTO ledger_records(id,kind,date,description,amount,currency) VALUES(1,1,'2026-01-01','Existing',6000,'MYR'); INSERT INTO ledger_movements(id,record_id,account_id,amount_minor,sort_order) VALUES(1,1,2,600000,0),(2,1,1,-600000,1); INSERT INTO settings(key,value) VALUES('accounting.closedThrough','2026-01-31'); INSERT INTO audit_log(record_type,record_id,action,via) VALUES('record','1','create','system'); INSERT INTO fixed_assets(name,asset_type,acquisition_date,asset_account_id,cost_minor,opening_as_at,brought_forward_dep_minor,accumulated_depreciation_account_id,document_reference,created_by,updated_by) VALUES('Existing laptop','Computer equipment','2024-01-01',2,600000,'2026-01-01',200000,3,'Accountant opening schedule',1,1);",
+      );
+      const tables = [
+        "accounts",
+        "ledger_records",
+        "ledger_movements",
+        "settlements",
+        "settings",
+        "audit_log",
+        "fixed_assets",
+      ];
+      const before = tables.map((table) =>
+        old.query(`SELECT * FROM ${table}`).all(),
+      );
+      old.exec("PRAGMA foreign_keys=ON");
+      applyMigrationRange(old, 43, 43);
+      expect(
+        tables.map((table) => old.query(`SELECT * FROM ${table}`).all()),
+      ).toEqual(before);
+      expect(old.query("PRAGMA foreign_key_check").all()).toEqual([]);
+      for (const column of [
+        "cost_minor",
+        "brought_forward_dep_minor",
+        "business_use_bps",
+        "residual_minor",
+      ])
+        expect(() =>
+          old.exec(`UPDATE fixed_assets SET ${column} = 0.25 WHERE id = 1`),
+        ).toThrow();
+      expect(
+        old
+          .query(
+            "SELECT cost_minor, brought_forward_dep_minor FROM fixed_assets",
+          )
+          .get(),
+      ).toEqual({ cost_minor: 600000, brought_forward_dep_minor: 200000 });
+    } finally {
+      old.close();
+    }
+  });
+  it("keeps a credential's narrower permission ceiling on asset registration", () => {
+    const record = purchase();
+    const before = financialState();
+    const auditBefore = db.select().from(schema.auditLog).all();
+    const locals = localsFor(permissions, {
+      credential: ["accounts.read", "records.read"],
+    });
+    expect(
+      registerFixedAsset(
+        { db, locals },
+        {
+          ...details,
+          sourceMovementId: record.movements.find(
+            (line) => line.accountId === equipment,
+          )!.id,
+        },
+      ),
+    ).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(db.select().from(schema.fixedAssets).all()).toHaveLength(0);
+    expect(db.select().from(schema.auditLog).all()).toEqual(auditBefore);
+    expect(financialState()).toEqual(before);
+  });
+  it("surfaces an invalidated accumulated depreciation mapping without losing the legacy evidence", () => {
+    value(
+      registerFixedAsset(ctx(), {
+        ...details,
+        sourceMovementId: null,
+        acquisitionDate: "2024-01-01",
+        openingAsAt: "2026-01-01",
+        assetAccountId: equipment,
+        costMinor: 1200000,
+        broughtForwardDepMinor: 400000,
+        accumulatedDepreciationAccountId: accumulated,
+        documentReference: "Opening schedule",
+      }),
+    );
+    db.update(schema.accounts)
+      .set({
+        type: AccountType.Expense,
+        subType: AccountSubType.OperatingExpense,
+      })
+      .where(eq(schema.accounts.id, accumulated))
+      .run();
+    expect(register().assets[0].reviewReason).toContain(
+      "Accumulated depreciation account",
+    );
+    expect(register().assets[0].broughtForwardDepMinor).toBe(400000);
+  });
+  it("adds migration 0042 without rewriting existing financial rows, closing settings or audit", () => {
+    const old = new Database(":memory:");
+    try {
+      applyMigrationRange(old, 0, 41);
+      old.exec(
+        "INSERT INTO accounts(id,role,type,name,rank) VALUES(1,1,1,'Bank','a'); INSERT INTO ledger_records(id,kind,date,description,amount,currency) VALUES(1,1,'2026-01-01','Existing',100,'MYR'); INSERT INTO ledger_movements(id,record_id,account_id,amount_minor) VALUES(1,1,1,10000); INSERT INTO settings(key,value) VALUES('accounting.closedThrough','2026-01-31'); INSERT INTO audit_log(record_type,record_id,action,via) VALUES('record','1','create','system');",
+      );
+      const tables = [
+        "accounts",
+        "ledger_records",
+        "ledger_movements",
+        "settlements",
+        "settings",
+        "audit_log",
+      ];
+      const before = tables.map((table) =>
+        old.query(`SELECT * FROM ${table}`).all(),
+      );
+      applyMigrationRange(old, 42, 42);
+      expect(
+        tables.map((table) => old.query(`SELECT * FROM ${table}`).all()),
+      ).toEqual(before);
+      expect(old.query("SELECT * FROM fixed_assets").all()).toHaveLength(0);
+      expect(old.query("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(assetMoneyInput(Number.MAX_SAFE_INTEGER)).toBe(
+        "90071992547409.91",
+      );
+    } finally {
+      old.close();
+    }
+  });
   it("follows the original movement identity when source lines are reordered", () => {
     const { asset } = registerPurchase();
     db.update(schema.ledgerMovements)

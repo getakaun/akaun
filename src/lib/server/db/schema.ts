@@ -1382,3 +1382,66 @@ export const mcpFileLinkUses = sqliteTable("mcp_file_link_uses", {
   jti: text("jti").primaryKey(),
   expiresAt: integer("expires_at").notNull(),
 });
+
+/** Register evidence only. Source IDs deliberately survive ledger line rebuilds/deletes. */
+export const fixedAssets = sqliteTable(
+  "fixed_assets",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    assetCode: text("asset_code").notNull().unique(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    category: text("category").notNull(),
+    acquisitionDate: text("acquisition_date").notNull(),
+    inServiceDate: text("in_service_date"),
+    costMinor: integer("cost_minor").notNull(),
+    accountId: integer("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    sourceMovementId: integer("source_movement_id").unique(),
+    sourceRecordId: integer("source_record_id"),
+    origin: text("origin").notNull(),
+    openingDate: text("opening_date"),
+    openingAccumulatedMinor: integer("opening_accumulated_minor")
+      .notNull()
+      .default(0),
+    accumulatedAccountId: integer("accumulated_account_id").references(
+      () => accounts.id,
+    ),
+    reconciliationNote: text("reconciliation_note").notNull(),
+    businessUseBps: integer("business_use_bps"),
+    documentation: text("documentation").notNull(),
+    method: text("method").notNull().default("none"),
+    usefulLifeMonths: integer("useful_life_months"),
+    residualMinor: integer("residual_minor").notNull().default(0),
+    expenseAccountId: integer("expense_account_id").references(
+      () => accounts.id,
+    ),
+    version: integer("version").notNull().default(1),
+    createdBy: integer("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (t) => [
+    check(
+      "fixed_asset_cost",
+      sql`typeof(${t.costMinor}) = 'integer' AND ${t.costMinor} BETWEEN 1 AND 9007199254740991 AND typeof(${t.openingAccumulatedMinor}) = 'integer' AND typeof(${t.residualMinor}) = 'integer' AND ${t.openingAccumulatedMinor} BETWEEN 0 AND ${t.costMinor} AND ${t.residualMinor} BETWEEN 0 AND ${t.costMinor}`,
+    ),
+    check(
+      "fixed_asset_origin",
+      sql`(${t.origin} = 'purchase' AND ${t.sourceMovementId} IS NOT NULL AND ${t.sourceRecordId} IS NOT NULL AND ${t.openingDate} IS NULL AND ${t.openingAccumulatedMinor} = 0) OR (${t.origin} = 'legacy' AND ${t.sourceMovementId} IS NULL AND ${t.sourceRecordId} IS NULL AND ${t.openingDate} IS NOT NULL)`,
+    ),
+    check(
+      "fixed_asset_business_use",
+      sql`${t.businessUseBps} IS NULL OR (typeof(${t.businessUseBps}) = 'integer' AND ${t.businessUseBps} BETWEEN 0 AND 10000)`,
+    ),
+    check("fixed_asset_method", sql`${t.method} IN ('none', 'straight_line')`),
+    check(
+      "fixed_asset_accumulated",
+      sql`${t.openingAccumulatedMinor} = 0 OR ${t.accumulatedAccountId} IS NOT NULL`,
+    ),
+  ],
+);

@@ -74,6 +74,12 @@ beforeEach(() => {
       changes TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE fixed_assets (
+      id INTEGER PRIMARY KEY,
+      account_id INTEGER NOT NULL REFERENCES accounts(id),
+      accumulated_account_id INTEGER REFERENCES accounts(id),
+      expense_account_id INTEGER REFERENCES accounts(id)
+    );
     CREATE TABLE ledger_movements (
       id INTEGER PRIMARY KEY,
       record_id INTEGER NOT NULL,

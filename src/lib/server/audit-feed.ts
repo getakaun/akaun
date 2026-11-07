@@ -392,8 +392,7 @@ export function resolveAuditLinks(
         );
         for (const row of group) {
           const date = dates.get(row.recordId);
-          if (date)
-            links.set(row.id, `/assets?asset=${row.recordId}&asAt=${date}`);
+          if (date) links.set(row.id, `/assets/${row.recordId}`);
         }
         break;
       }

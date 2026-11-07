@@ -94,6 +94,17 @@ export function assetNumber(id: number) {
   return `FA-${String(id).padStart(4, "0")}`;
 }
 
+export function assetReviewStatus(asset: {
+  reviewReason: string | null;
+  openingAsAt: string | null;
+}): string {
+  return asset.reviewReason
+    ? "asset-review"
+    : asset.openingAsAt
+      ? "asset-opening"
+      : "asset-linked";
+}
+
 export function assetMoneyInput(minor: number): string {
   const cents = BigInt(minor);
   return `${cents / 100n}.${String(cents % 100n).padStart(2, "0")}`;

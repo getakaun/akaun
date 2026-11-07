@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ChevronRight } from "@lucide/svelte";
   import { invalidateAll } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { createResourceStream } from "$lib/sse.js";
@@ -25,13 +26,13 @@
       <span class="detail-card-title">Fixed assets</span>
     </div>
     {#each data.assets as asset (asset.id)}<a
-        class="related-link block p-3 text-sm"
-        href={resolve(
-          `/(app)/assets?asset=${asset.id}&asAt=${asset.acquisitionDate}`,
-        )}
-        >View asset {assetNumber(asset.id)} · {asset.name}{asset.reviewReason
-          ? " · Needs review"
-          : ""}</a
+        class="related-link flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
+        href={resolve("/(app)/assets/[id]", { id: String(asset.id) })}
+        ><span
+          >View asset {assetNumber(asset.id)} · {asset.name}{asset.reviewReason
+            ? " · Needs review"
+            : ""}</span
+        ><ChevronRight size={14} /></a
       >{/each}
     {#each data.unregistered as line (line.movementId)}<div
         class="flex items-center justify-between gap-3 p-3 text-sm"

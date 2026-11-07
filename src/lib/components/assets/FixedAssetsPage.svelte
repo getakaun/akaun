@@ -1,21 +1,28 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import { invalidateAll } from "$app/navigation";
+  import { goto, invalidateAll } from "$app/navigation";
   import { resolve } from "$app/paths";
+  import { fly } from "svelte/transition";
+  import { Package, Plus, Search, X } from "@lucide/svelte";
   import { createResourceStream } from "$lib/sse.js";
   import { formatDate, formatMinor } from "$lib/format.js";
-  import { assetNumber } from "$lib/fixed-assets.js";
+  import { assetNumber, assetReviewStatus } from "$lib/fixed-assets.js";
   import { Input } from "$lib/components/ui/input/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import DatePicker from "$lib/components/ui/date-picker/DatePicker.svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
   import AssetSheet from "./AssetSheet.svelte";
+  import AssetReconciliation from "./AssetReconciliation.svelte";
   import type { loadFixedAssetsPage } from "$lib/server/loaders/fixed-assets.js";
 
   let { data }: { data: ReturnType<typeof loadFixedAssetsPage> } = $props();
   let tab = $state("registered");
   let search = $state("");
+  let mobileSearchOpen = $state(false);
+  let mobileSearchEl = $state<HTMLInputElement | null>(null);
   let sheetOpen = $state(false);
-  let assetId = $state<number | null>(null);
   let movementId = $state<number | null>(null);
-  let openedKey = $state("");
   const accountId = $derived(
     Number(page.url.searchParams.get("account")) || null,
   );
@@ -28,6 +35,11 @@
           .includes(search.toLowerCase()),
     ),
   );
+  const shownCostMinor = $derived(
+    Number(
+      assets.reduce((total, asset) => total + BigInt(asset.costMinor), 0n),
+    ),
+  );
   const purchases = $derived(
     data.register.unregistered.filter(
       (line) =>
@@ -37,326 +49,288 @@
           .includes(search.toLowerCase()),
     ),
   );
-  const costRows = $derived(
-    data.register.costReconciliation.filter(
-      (row) => !accountId || row.accountId === accountId,
-    ),
-  );
-  const selectedAsset = $derived(
-    data.register.assets.find((asset) => asset.id === assetId) ?? null,
-  );
   const selectedSource = $derived(
     data.register.unregistered.find((line) => line.movementId === movementId) ??
       null,
   );
   $effect(() => {
-    const key = `${page.url.searchParams.get("asset") ?? ""}:${page.url.searchParams.get("register") ?? ""}`;
-    if (key !== openedKey) {
-      openedKey = key;
-      const id = Number(page.url.searchParams.get("asset"));
-      const movement = Number(page.url.searchParams.get("register"));
-      if (id || movement) {
-        assetId = id || null;
-        movementId = movement || null;
-        sheetOpen = true;
-      }
+    if (mobileSearchOpen && mobileSearchEl) mobileSearchEl.focus();
+  });
+  $effect(() => {
+    const requested = page.url.searchParams.get("view");
+    if (
+      requested === "registered" ||
+      requested === "unregistered" ||
+      requested === "reconciliation"
+    )
+      tab = requested;
+    const movement = Number(page.url.searchParams.get("register"));
+    if (movement) {
+      movementId = movement;
+      sheetOpen = true;
     }
   });
-  createResourceStream<{ type: string }>("/api/fixed-assets/stream", () => {
+  createResourceStream("/api/fixed-assets/stream", () => {
     void invalidateAll();
   });
-  function openAsset(id: number) {
-    assetId = id;
+  function create() {
     movementId = null;
     sheetOpen = true;
   }
   function registerPurchase(id: number) {
     movementId = id;
-    assetId = null;
     sheetOpen = true;
+  }
+  function openAsset(id: number) {
+    void goto(resolve("/(app)/assets/[id]", { id: String(id) }));
+  }
+  function clearSearch() {
+    search = "";
   }
 </script>
 
-<div class="screen">
-  <div class="topbar">
-    <div>
+<div class="screen" style="position:relative;">
+  <header class="topbar">
+    <div class="topbar-left">
       <h1 class="page-title">Assets</h1>
-      <p class="text-muted-foreground mt-1 text-sm">
-        Fixed asset register linked to your accounting records.
-      </p>
-    </div>
-    {#if data.canChange}<button
-        class="sheet-btn sheet-btn-primary"
-        onclick={() => {
-          assetId = null;
-          movementId = null;
-          sheetOpen = true;
-        }}>Add existing asset</button
-      >{/if}
-  </div>
-  <div class="asset-page">
-    <form method="GET" class="asset-filters">
-      <label for="assets-as-at" class="text-sm">As at</label><Input
-        id="assets-as-at"
-        type="date"
-        name="asAt"
-        value={data.register.asAt}
-        required
-        class="w-auto"
-      />
-      {#if accountId}<input
-          type="hidden"
-          name="account"
-          value={accountId}
-        />{/if}
-      <button class="sheet-btn" type="submit">Apply</button>
-      {#if accountId}<span class="text-sm"
-          >{data.register.accounts.find((account) => account.id === accountId)
-            ?.name}</span
-        ><a
-          href={resolve(`/(app)/assets?asAt=${data.register.asAt}`)}
-          class="text-sm underline">All accounts</a
-        >{/if}
-    </form>
-    <div class="asset-summary">
-      <div>
-        <span>Register cost · all accounts</span><strong
-          >{formatMinor(data.register.totalCostMinor)}</strong
-        >
-      </div>
-      <div>
-        <span>Depreciation brought forward · all accounts</span><strong
-          >{formatMinor(data.register.totalOpeningDepMinor)}</strong
-        >
-      </div>
-    </div>
-    <p class="text-muted-foreground mb-4 text-xs">
-      Brought-forward depreciation is recorded at each asset's opening date.
-      This register does not calculate current depreciation or current net book
-      value. Disposal is not supported yet.
-    </p>
-    <div class="asset-toolbar">
-      <div class="status-tabs">
-        {#each [["registered", "Registered assets"], ["unregistered", "Unregistered purchases"], ["reconciliation", "Reconciliation"]] as [value, label] (value)}<button
-            class="status-tab"
-            class:active={tab === value}
-            onclick={() => (tab = value)}>{label}</button
-          >{/each}
-      </div>
-      <Input
-        aria-label="Search assets or purchases"
-        placeholder="Search assets or purchases"
-        bind:value={search}
-        class="max-w-xs"
-      />
-    </div>
-    {#if tab === "registered"}
-      <div class="asset-table">
-        <table class="exp-table">
-          <thead
-            ><tr
-              ><th>Asset</th><th>Type</th><th>Acquired</th><th>In service</th
-              ><th>Cost account</th><th class="money">Cost</th><th>Review</th
-              ></tr
-            ></thead
-          ><tbody>
-            {#each assets as asset (asset.id)}<tr
-                ><td
-                  ><a
-                    class="row-link"
-                    href={resolve(
-                      `/(app)/assets?asAt=${data.register.asAt}&asset=${asset.id}`,
-                    )}
-                    onclick={(event) => {
-                      if (
-                        !event.metaKey &&
-                        !event.ctrlKey &&
-                        !event.shiftKey &&
-                        event.button === 0
-                      ) {
-                        event.preventDefault();
-                        openAsset(asset.id);
-                      }
-                    }}>{assetNumber(asset.id)} · {asset.name}</a
-                  ></td
-                ><td>{asset.assetType}</td><td
-                  >{formatDate(asset.acquisitionDate)}</td
-                ><td
-                  >{asset.inServiceDate
-                    ? formatDate(asset.inServiceDate)
-                    : "Not yet in use"}</td
-                ><td>{asset.accountName}</td><td class="money"
-                  >{formatMinor(asset.costMinor)}</td
-                ><td
-                  >{asset.reviewReason
-                    ? "Needs review"
-                    : asset.openingAsAt
-                      ? "Check opening reconciliation"
-                      : "Source linked"}</td
-                ></tr
-              >{/each}
-            {#if assets.length === 0}<tr
-                ><td colspan="7" class="empty"
-                  >No registered assets match this date and filter.</td
-                ></tr
-              >{/if}
-          </tbody>
-        </table>
-      </div>
-    {:else if tab === "unregistered"}
-      <p class="text-muted-foreground my-3 text-sm">
-        One individual asset per purchase line. Split multi-asset bundles in
-        Records before registration. Opening entries, transfers and corrections
-        are reviewed in Reconciliation.
-      </p>
-      <div class="asset-table">
-        <table class="exp-table">
-          <thead
-            ><tr
-              ><th>Date</th><th>Purchase</th><th>Account</th><th class="money"
-                >Cost</th
-              ><th></th></tr
-            ></thead
-          ><tbody>
-            {#each purchases as line (line.movementId)}<tr
-                ><td>{formatDate(line.recordDate)}</td><td
-                  ><a
-                    class="row-link"
-                    href={resolve("/(app)/records/[id]", {
-                      id: String(line.recordId),
-                    })}
-                    >{line.label ?? line.description} · {line.recordNumber}</a
-                  ></td
-                ><td>{line.accountName}</td><td class="money"
-                  >{formatMinor(line.amountMinor)}</td
-                ><td
-                  >{#if data.canChange}<button
-                      class="sheet-btn"
-                      onclick={() => registerPurchase(line.movementId)}
-                      >Register asset</button
-                    >{/if}</td
-                ></tr
-              >{/each}
-            {#if purchases.length === 0}<tr
-                ><td colspan="5" class="empty"
-                  >No unregistered purchases match this date and filter.</td
-                ></tr
-              >{/if}
-          </tbody>
-        </table>
-      </div>
-    {:else}
-      <h2 class="mt-5 mb-2 font-semibold">Gross cost reconciliation</h2>
-      <p class="text-muted-foreground mb-3 text-sm">
-        Ledger balance minus registered cost, as at {formatDate(
+      <p class="page-sub">
+        {data.register.assets.length} registered · as at {formatDate(
           data.register.asAt,
-        )}. Registration never fixes a ledger balance automatically.
+        )}
       </p>
-      <div class="asset-table">
-        <table class="exp-table">
-          <thead
-            ><tr
-              ><th>Account</th><th class="money">Ledger cost</th><th
-                class="money">Register cost</th
-              ><th class="money">Difference</th><th>Exceptions</th></tr
-            ></thead
-          ><tbody>
-            {#each costRows as row (row.accountId)}<tr
-                ><td
-                  ><a
-                    href={resolve("/(app)/accounts/[id]", {
-                      id: String(row.accountId),
-                    })}>{row.accountName}</a
-                  ></td
-                ><td class="money">{formatMinor(row.ledgerMinor)}</td><td
-                  class="money">{formatMinor(row.registerMinor)}</td
-                ><td class="money">{formatMinor(row.differenceMinor)}</td><td
-                  >{row.unregisteredCount} unregistered · {row.reviewCount} source
-                  reviews{#if row.differenceMinor !== 0}<p class="hint">
-                      Review missing opening balances, source changes and other
-                      movements below.
-                    </p>{/if}</td
-                ></tr
-              >{/each}
-            {#if costRows.length === 0}<tr
-                ><td colspan="5" class="empty">No fixed-asset cost accounts.</td
-                ></tr
-              >{/if}
-          </tbody>
-        </table>
+    </div>
+    <div class="topbar-right">
+      <div class="search-box">
+        <div class="asset-search">
+          <Search size={15} /><Input
+            aria-label="Search assets or purchases"
+            type="search"
+            placeholder="Search assets or purchases…"
+            bind:value={search}
+            class="h-[34px] pl-8 text-[13px]"
+          />
+        </div>
       </div>
-      {#each costRows.filter((row) => row.exceptions.length > 0) as row (row.accountId)}<details
-          class="asset-exceptions"
+      {#if mobileSearchOpen}<div
+          class="mobile-search-inline"
+          transition:fly={{ x: 12, duration: 180 }}
         >
-          <summary
-            >{row.accountName}: {row.exceptions.length} ledger movements without a
-            registered source link</summary
-          >{#each row.exceptions as line (line.movementId)}<p
-              class="flex justify-between gap-3 py-2 text-sm"
-            >
-              <a
-                href={resolve("/(app)/records/[id]", {
-                  id: String(line.recordId),
-                })}
-                >{formatDate(line.recordDate)} · {line.recordNumber} · {line.label ??
-                  line.description}{line.voided ? " · void pair" : ""}</a
-              ><span>{formatMinor(line.amountMinor)}</span>
-            </p>{/each}
-          <p class="hint">
-            Legacy opening values can represent these movements without a
-            purchase-line link. Check the asset's opening reference before
-            registering anything again.
-          </p>
-        </details>{/each}
-      {#each assets.filter((asset) => asset.reviewReason) as asset (asset.id)}<p
-          class="asset-warning"
-        >
-          <button class="underline" onclick={() => openAsset(asset.id)}
-            >{assetNumber(asset.id)} · {asset.name}</button
-          >: {asset.reviewReason}
-        </p>{/each}
-      <h2 class="mt-6 mb-2 font-semibold">
-        Accumulated depreciation reconciliation
-      </h2>
-      <p class="text-muted-foreground mb-3 text-sm">
-        Credit balances are shown as positive depreciation amounts. Differences
-        can include depreciation posted manually after an asset's opening date.
-      </p>
-      <div class="asset-table">
-        <table class="exp-table">
-          <thead
-            ><tr
-              ><th>Mapped account</th><th class="money">Ledger depreciation</th
-              ><th class="money">Brought forward in register</th><th
-                class="money">Unallocated difference</th
-              ></tr
-            ></thead
-          ><tbody
-            >{#each data.register.depreciationReconciliation as row (row.accountId)}<tr
-                ><td
-                  ><a
-                    href={resolve("/(app)/accounts/[id]", {
-                      id: String(row.accountId),
-                    })}>{row.accountName}</a
-                  ></td
-                ><td class="money">{formatMinor(row.ledgerMinor)}</td><td
-                  class="money">{formatMinor(row.registerMinor)}</td
-                ><td class="money">{formatMinor(row.differenceMinor)}</td></tr
-              >{/each}{#if data.register.depreciationReconciliation.length === 0}<tr
-                ><td colspan="4" class="empty"
-                  >No accumulated depreciation accounts mapped. Map these when
-                  registering legacy depreciation; unmapped accounts are not
-                  reconciled here.</td
-                ></tr
-              >{/if}</tbody
+          <span class="mobile-search-inline-icon"><Search size={15} /></span
+          ><input
+            aria-label="Search assets or purchases on mobile"
+            class="mobile-search-inline-input"
+            type="search"
+            placeholder="Search assets…"
+            bind:value={search}
+            bind:this={mobileSearchEl}
+          />
+        </div>{/if}
+      <button
+        type="button"
+        class="mobile-search-toggle"
+        class:active={mobileSearchOpen}
+        aria-label={mobileSearchOpen ? "Close asset search" : "Search assets"}
+        onclick={() => {
+          mobileSearchOpen = !mobileSearchOpen;
+          if (!mobileSearchOpen) clearSearch();
+        }}
+        >{#if mobileSearchOpen}<X size={16} />{:else}<Search
+            size={16}
+          />{/if}</button
+      >
+      {#if data.canChange}<Button size="sm" onclick={create}
+          ><Plus size={15} /><span class="btn-text">Add existing asset</span
+          ></Button
+        >{/if}
+    </div>
+  </header>
+  <div class="work">
+    <div class="work-main layout-standard" style="padding-top:12px;">
+      <div class="toolbar">
+        <div class="status-tabs" style="max-width:100%;">
+          {#each [["registered", "Registered", assets.length], ["unregistered", "Unregistered", purchases.length], ["reconciliation", "Reconciliation", null]] as [value, label, count] (value)}<button
+              type="button"
+              class="status-tab"
+              class:active={tab === value}
+              onclick={() => (tab = String(value))}
+              >{label}{#if count !== null}<span class="tab-count">{count}</span
+                >{/if}</button
+            >{/each}
+        </div>
+      </div>
+      <form method="GET" class="asset-filters">
+        <span id="assets-as-at-label" class="mini-label">As at</span>
+        <div class="w-[180px]">
+          <DatePicker
+            name="asAt"
+            value={data.register.asAt}
+            labelledBy="assets-as-at-label"
+          />
+        </div>
+        <input type="hidden" name="view" value={tab} />{#if accountId}<input
+            type="hidden"
+            name="account"
+            value={accountId}
+          /><span class="mini-label"
+            >{data.register.accounts.find((account) => account.id === accountId)
+              ?.name}</span
+          ><a
+            class="clear-filters"
+            href={resolve(
+              `/(app)/assets?asAt=${data.register.asAt}&view=${tab}`,
+            )}>All accounts</a
+          >{/if}<Button variant="outline" size="sm" type="submit">Apply</Button>
+      </form>
+      {#if tab === "registered"}
+        <div class="result-meta">
+          <span
+            >{assets.length}
+            {assets.length === 1 ? "asset" : "assets"} shown</span
+          ><span class="result-total"
+            >Cost <span class="num">{formatMinor(shownCostMinor)}</span></span
           >
-        </table>
-      </div>
-    {/if}
+        </div>
+        <div class="table-card">
+          <table class="exp-table">
+            <thead
+              ><tr
+                ><th>Asset</th><th>Type</th><th>Cost account</th><th
+                  class="ta-right">Cost</th
+                ><th>Acquired</th><th>Review</th></tr
+              ></thead
+            ><tbody>
+              {#each assets as asset (asset.id)}<tr
+                  class="exp-row"
+                  onclick={(event) => {
+                    if (!(event.target as HTMLElement).closest("a,button"))
+                      openAsset(asset.id);
+                  }}
+                >
+                  <td class="td-primary" data-label="Asset"
+                    ><a
+                      class="cell-item row-link"
+                      href={resolve("/(app)/assets/[id]", {
+                        id: String(asset.id),
+                      })}
+                      ><span class="cell-itemname">{asset.name}</span><span
+                        class="cell-itemnum"
+                        >{assetNumber(asset.id)} · {asset.inServiceDate
+                          ? `In service ${formatDate(asset.inServiceDate)}`
+                          : "Not yet in use"}</span
+                      ></a
+                    ></td
+                  >
+                  <td data-label="Type">{asset.assetType}</td><td
+                    data-label="Cost account">{asset.accountName}</td
+                  ><td class="td-amount" data-label="Cost"
+                    ><span class="amount-num"
+                      >{formatMinor(asset.costMinor)}</span
+                    ></td
+                  ><td class="row-break"></td><td
+                    class="td-date"
+                    data-label="Acquired"
+                    >{formatDate(asset.acquisitionDate)}</td
+                  ><td data-label="Review"
+                    ><StatusBadge status={assetReviewStatus(asset)} /></td
+                  >
+                </tr>{/each}
+              {#if assets.length === 0}<tr class="empty-row"
+                  ><td colspan="6"
+                    ><EmptyState
+                      title={search
+                        ? "Nothing to show"
+                        : "No assets registered"}
+                      sub={search
+                        ? "Try another name, type or serial number."
+                        : "Register a saved purchase, or add an existing asset with opening values."}
+                      >{#snippet icon()}<Package
+                          size={20}
+                        />{/snippet}{#snippet action()}{#if search}<button
+                            class="link-btn"
+                            onclick={clearSearch}>Clear search</button
+                          >{:else if data.canChange}<button
+                            class="link-btn"
+                            onclick={create}>Add an existing asset</button
+                          >{/if}{/snippet}</EmptyState
+                    ></td
+                  ></tr
+                >{/if}
+            </tbody>
+          </table>
+        </div>
+        <div class="table-foot">
+          <span
+            >{assets.length} registered {assets.length === 1
+              ? "asset"
+              : "assets"} shown</span
+          ><span class="hidden sm:inline"
+            >Brought-forward depreciation, all accounts {formatMinor(
+              data.register.totalOpeningDepMinor,
+            )}</span
+          >
+        </div>
+      {:else if tab === "unregistered"}
+        <div class="result-meta">
+          <span
+            >{purchases.length}
+            {purchases.length === 1 ? "purchase" : "purchases"} shown</span
+          >
+        </div>
+        <div class="table-card">
+          <table class="exp-table">
+            <thead
+              ><tr
+                ><th>Purchase</th><th>Account</th><th>Date</th><th
+                  class="ta-right">Cost</th
+                ><th></th></tr
+              ></thead
+            ><tbody>
+              {#each purchases as line (line.movementId)}<tr class="exp-row"
+                  ><td class="td-primary" data-label="Purchase"
+                    ><a
+                      class="cell-item row-link"
+                      href={resolve("/(app)/records/[id]", {
+                        id: String(line.recordId),
+                      })}
+                      ><span class="cell-itemname"
+                        >{line.label ?? line.description}</span
+                      ><span class="cell-itemnum">{line.recordNumber}</span></a
+                    ></td
+                  ><td data-label="Account">{line.accountName}</td><td
+                    class="td-date"
+                    data-label="Date">{formatDate(line.recordDate)}</td
+                  ><td class="td-amount" data-label="Cost"
+                    ><span class="amount-num"
+                      >{formatMinor(line.amountMinor)}</span
+                    ></td
+                  ><td class="row-break"></td><td data-label="Registration"
+                    >{#if data.canChange}<Button
+                        variant="outline"
+                        size="sm"
+                        onclick={() => registerPurchase(line.movementId)}
+                        >Register asset</Button
+                      >{/if}</td
+                  ></tr
+                >{/each}
+              {#if purchases.length === 0}<tr class="empty-row"
+                  ><td colspan="5"
+                    ><EmptyState
+                      title="No unregistered purchases"
+                      sub="No eligible purchase lines match this date and filter."
+                    /></td
+                  ></tr
+                >{/if}
+            </tbody>
+          </table>
+        </div>
+        <div class="table-foot">
+          <span>Split multi-asset bundles in Records before registration.</span>
+        </div>
+      {:else}<AssetReconciliation register={data.register} {accountId} />{/if}
+    </div>
   </div>
 </div>
-{#if sheetOpen && (!assetId || selectedAsset) && (!movementId || selectedSource)}<AssetSheet
-    asset={selectedAsset}
+{#if sheetOpen && (!movementId || selectedSource)}<AssetSheet
     source={selectedSource}
     accounts={data.register.accounts}
     canChange={data.canChange}
@@ -365,114 +339,22 @@
   />{/if}
 
 <style>
-  .asset-page {
-    flex: 1;
-    min-height: 0;
-    width: 100%;
-    overflow-y: auto;
-    padding: 24px;
-    max-width: 1500px;
-    margin: 0 auto;
-  }
-  .asset-filters,
-  .asset-toolbar {
+  .asset-search {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin-bottom: 20px;
   }
-  .asset-toolbar {
-    justify-content: space-between;
+  .asset-search :global(> svg) {
+    position: absolute;
+    left: 10px;
+    color: var(--muted-foreground);
+    pointer-events: none;
   }
-  .asset-summary {
+  .asset-filters {
     display: flex;
+    align-items: center;
+    gap: 8px;
     flex-wrap: wrap;
-    gap: 20px;
-    margin: 20px 0 12px;
-  }
-  .asset-summary > div {
-    padding: 18px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    min-width: 220px;
-  }
-  .asset-summary span {
-    display: block;
-    color: var(--muted-foreground);
-    font-size: 12px;
-  }
-  .asset-summary strong {
-    display: block;
-    margin-top: 8px;
-    font-size: 22px;
-  }
-  .asset-table {
-    overflow-x: auto;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-  }
-  .asset-table td {
-    padding: 13px 14px;
-    border-bottom: 1px solid var(--border);
-    vertical-align: middle;
-    font-size: 13px;
-  }
-  .asset-table tbody tr:last-child td {
-    border-bottom: none;
-  }
-  .asset-table th.money {
-    text-align: right;
-  }
-  .money {
-    text-align: right;
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-  .empty {
-    padding: 24px;
-    color: var(--muted-foreground);
-  }
-  .hint {
-    font-size: 12px;
-    color: var(--muted-foreground);
-  }
-  .asset-exceptions {
-    padding: 14px;
-    border-bottom: 1px solid var(--border);
-  }
-  .asset-exceptions summary {
-    cursor: pointer;
-    font-size: 13px;
-  }
-  .asset-warning {
-    padding: 12px;
-    margin-top: 12px;
-    color: var(--red);
-    background: var(--red-soft);
-    border-radius: 6px;
-    font-size: 13px;
-  }
-  @media (max-width: 767px) {
-    .asset-table .exp-table {
-      display: table;
-      min-width: 640px;
-    }
-    .asset-table thead {
-      display: table-header-group;
-    }
-    .asset-table tbody {
-      display: table-row-group;
-    }
-    .asset-table tr {
-      display: table-row;
-    }
-    .asset-table th,
-    .asset-table td {
-      display: table-cell;
-    }
-    .asset-page {
-      padding: 16px;
-    }
+    padding-bottom: 12px;
   }
 </style>

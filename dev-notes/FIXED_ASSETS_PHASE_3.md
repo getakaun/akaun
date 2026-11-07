@@ -9,7 +9,7 @@ Approved flow: Records → Register asset → Assets. Registration is metadata o
 - Put authorized reads/writes in `application/fixed-assets.ts`, calculations in `queries/fixed-assets.ts`, validation/types in `lib/fixed-assets.ts`.
 - REST endpoints at `/api/fixed-assets`, `/api/fixed-assets/[id]`, and a shared SSE invalidation stream. Reads require accounts.read + records.read; writes additionally require accounts.update. Metadata registration is permitted for closed purchases and never reopens or edits them.
 - Reuse record attachments for linked purchases. Legacy entries retain a supporting-document reference and an optional existing opening record. Opening cost and accumulated depreciation are register values, never an instruction to post.
-- Add a standalone Assets module at `/assets`, a reusable registration/editor sheet, links on purchase lines and fixed-asset account details. Separate registered, unregistered and reconciliation views; preserve as-at date in the URL.
+- Add a standalone Assets module at `/assets`, a shared asset form, create drawer and full detail page, links on purchase lines and fixed-asset account details. Separate registered, unregistered and reconciliation views; preserve as-at date in the URL.
 - Reconcile gross cost and accumulated depreciation separately, on the same as-at date. Keep changed/voided sources and unallocated ledger movements visible. No current valuation inferred from brought-forward depreciation.
 
 ## Scope and limitations
@@ -49,7 +49,7 @@ Rollback: hide the new entry points and retain the additive table and audit hist
 - Legacy supporting documents are references or attachments on the linked opening record; this phase does not introduce a second document-storage workflow.
 - Accumulated depreciation reconciliation covers explicitly mapped accounts. Manually posted depreciation after the opening date remains an unallocated difference; the register does not invent asset-level allocations.
 - The register is an audited metadata register, not a period-frozen valuation schedule. Historical register corrections remain visible in Activity.
-- Browser assertions pass, with Svelte `derived_inert` warnings during dialog teardown. No full application instance was started against the configured book.
+- Browser checks use isolated fixtures with the real application stylesheet. No full application instance was started against the configured book.
 
 **Owner review:** Ready for Phase 3 walkthrough. Phase 4 remains deferred.
 
@@ -57,6 +57,18 @@ Rollback: hide the new entry points and retain the additive table and audit hist
 
 Assets now has its own navigation item and canonical `/assets` route. Record and account links still reach the same register; `/accounts/fixed-assets` redirects permanently and preserves asset IDs, as-at dates and account filters. Existing menu preferences automatically gain the Assets item, and users can pin it on mobile through the existing navigation settings. Visibility retains both required read permissions.
 
-The sheet and register primary actions use both the base `sheet-btn` and primary modifier. The sheet contains its scroll area, keeps the footer visible and uses consistent native-control styling. The module uses the shared topbar, explicit table cell spacing and horizontally scrollable labelled tables on phones.
+The create drawer follows AccountSheet. The module uses the shared topbar, list spacing and mobile row cards; reconciliation uses the existing Reports stylesheet. Forms use the shared Select, DatePicker, Input and Textarea components. Existing assets open on the standard DetailPage frame with related records and Activity in the rail.
 
 Browser tests load the actual application stylesheet and check button size/padding, form scrolling, footer visibility after the phone animation, table spacing and module heading. Financial storage and posting behavior are unchanged by this follow-up.
+
+## UI standardization review
+
+Compared AccountsPage, AccountSheet, AccountDetail, ContactDetail and Reports against the asset surfaces. The earlier module-specific table/summary layout, native controls and combined create/edit drawer were replaced:
+
+- Lists reuse `topbar`, `topbar-right`, header search, shared Button actions, counted `status-tabs`, `work-main`, `table-card`, `exp-row`, `EmptyState`, StatusBadge and `table-foot`. Registered assets open through real `/assets/[id]` links; the whole row also navigates like Accounts. Mobile uses the same header search toggle and row cards. The as-at date uses a compact shared DatePicker.
+- `AssetForm` is shared by creation and detail editing and uses the same Select, DatePicker, Input and Textarea components as account/contact forms. Legacy-only opening fields are hidden on linked purchase registration.
+- `AssetSheet` is create-only. Its header, body, footer, Cancel/Register actions and unsaved-change confirmation follow AccountSheet. Existing assets use `DetailPage` with the amount hero, asset fields, related-record cards, Activity rail and dirty-only Save/Discard bar. Back navigation uses the shared BackLink behavior.
+- Reconciliation reuses `reports.css` (`rep-block`, `rep-table`, amount cells) and ReportNotes. It no longer introduces a second report-table appearance.
+- Former `?asset=<id>` links redirect to the full asset detail route; account/record/audit links now point there directly. The redundant register button on the Accounts list was removed; the contextual link on a fixed-asset account remains and uses the existing relation-card shape.
+
+Verification: 12 Chromium interaction tests cover shared control operation, creation, detail save/discard and mobile layout; 5 fixture previews compare Accounts with Assets on desktop and phone; 30 asset/audit tests pass. Test fixtures do not open the configured book. No financial data model, migration or posting behavior changed during this UI review.

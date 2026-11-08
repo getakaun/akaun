@@ -25,3 +25,13 @@ This is a **code consolidation**, not a conversion of live books. No configured 
 A database already created with #65's incompatible 0042 schema needs a separately reviewed schema/data mapping before running the consolidated branch. That conversion is not silently inferred or performed here. Both original implementations remain available in Git history; the duplicate branch is not deleted.
 
 PR #66 remains the review/release PR. PR #65 is superseded and is closed after the consolidated branch is pushed and verified. Neither PR is merged into main by this task.
+
+## Startup migration compatibility correction
+
+The reported startup failure came from migration 0043 introduced during consolidation. Its generated CHECK expressions qualified columns with the temporary table name `__new_fixed_assets`. SQLite's legacy table-rename behavior leaves these references invalid when renaming the table to `fixed_assets`, reproducing the reported `no such column: __new_fixed_assets.cost_minor` error. Repeated traces represent retries of this same failed migration.
+
+Migration 0043 now uses unqualified CHECK columns, preserving the same constraints under either rename mode. This corrects the failing migration itself: a later migration cannot repair a startup blocked at 0043. Previously successful installations skip it normally; failed transactional upgrades can retry on restart without deleting data or resetting the migration journal. No application-wide SQLite settings are changed.
+
+`migration-0043.spec.ts` exercises the production Drizzle migrator on temporary book files with `legacy_alter_table` both off and on, verifies preserved asset/ledger/settings/audit rows and foreign keys, checks integer enforcement, and reopens each file to verify restart idempotence. It also reproduces the original failing SQL in a transaction, proves rollback preserves the fixture and migration journal, and then retries the corrected migration. The regression failed before the correction and passes afterward. The configured live book is never opened by these tests.
+
+Verification after this correction: all 1,659 Phase 0–2 regression tests across 108 files and all 34 targeted asset/migration/upgrade tests pass. Type checking reports zero errors and warnings; targeted ESLint, formatting and diff checks pass.

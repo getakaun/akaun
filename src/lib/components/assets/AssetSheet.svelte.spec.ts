@@ -141,8 +141,11 @@ it("registers a saved purchase with source-derived cost and no opening or ledger
   });
   await expect.element(page.getByRole("dialog")).toBeVisible();
   await expect
+    .element(page.getByRole("region", { name: "Saved purchase details" }))
+    .toBeVisible();
+  await expect
     .element(page.getByLabelText("Acquisition date *"))
-    .toBeDisabled();
+    .not.toBeInTheDocument();
   await page
     .getByRole("button", { name: "Register asset", exact: true })
     .click();
@@ -309,6 +312,8 @@ const registeredAsset: RegisteredAsset = {
   source,
   sourceVersion: "source-v1",
   reviewReason: null,
+  reviewIssues: [],
+  canAcceptSource: false,
   version: "1",
 };
 

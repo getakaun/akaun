@@ -185,21 +185,32 @@ export function fixedAssetRegister(db: LedgerDb, asAt: string) {
       ) ??
       bySlot.get(`${asset.sourceRecordId}:${asset.sourceSortOrder}`) ??
       null;
-    let reviewReason: string | null = null;
+    const reviewIssues: {
+      kind: "purchase" | "cost-account" | "depreciation-account" | "opening";
+      message: string;
+    }[] = [];
+    let sourceChanged = false;
     if (asset.sourceRecordId !== null) {
+      let message: string | null = null;
       if (source?.voided)
-        reviewReason =
+        message =
           "Source purchase was voided. The register retains the original cost for review.";
-      else if (!originalSource)
-        reviewReason =
+      else if (!source || !isAssetPurchase(source, contraIds))
+        message =
+          "The source line is missing or no longer an eligible purchase. Resolve the accounting record first.";
+      else if (!originalSource) {
+        sourceChanged = true;
+        message =
           "Source line changed or was replaced. Review the original record.";
-      else if (
-        source &&
+      } else if (
         JSON.stringify(sourceSnapshot(source)) !==
-          JSON.stringify(asset.sourceSnapshot)
-      )
-        reviewReason =
+        JSON.stringify(asset.sourceSnapshot)
+      ) {
+        sourceChanged = true;
+        message =
           "Source purchase details changed. Review before accepting new values.";
+      }
+      if (message) reviewIssues.push({ kind: "purchase", message });
     }
     const account = chartById.get(asset.assetAccountId);
     if (
@@ -207,35 +218,59 @@ export function fixedAssetRegister(db: LedgerDb, asAt: string) {
       !isFixedAssetAccount(account) ||
       account.mergedIntoAccountId !== null
     )
-      reviewReason =
-        "The asset account classification changed. Review its mapping.";
+      reviewIssues.push({
+        kind: "cost-account",
+        message:
+          "The asset account classification changed. Review its mapping.",
+      });
     const opening =
       asset.openingRecordId === null
         ? null
         : openingById.get(asset.openingRecordId);
     if (opening?.voided || (opening && opening.date > asset.openingAsAt!))
-      reviewReason =
-        "Opening evidence changed or was voided. Review opening values.";
+      reviewIssues.push({
+        kind: "opening",
+        message:
+          "Opening evidence changed or was voided. Review opening values.",
+      });
     if (asset.accumulatedDepreciationAccountId !== null) {
       const contra = chartById.get(asset.accumulatedDepreciationAccountId);
-      if (
-        !contra ||
-        contra.type !== AccountType.Asset ||
-        contra.mergedIntoAccountId !== null
-      )
-        reviewReason = [
-          reviewReason,
-          "Accumulated depreciation account is missing or no longer an Asset account. Review its mapping.",
-        ]
-          .filter(Boolean)
-          .join(" ");
+      if (!contra || contra.type !== AccountType.Asset || !contra.active)
+        reviewIssues.push({
+          kind: "depreciation-account",
+          message:
+            "Accumulated depreciation account is missing or no longer an active Asset account. Review its mapping.",
+        });
     }
+    const replacementConflict =
+      source !== null &&
+      (source.accountId === asset.accumulatedDepreciationAccountId ||
+        stored.some(
+          (other) =>
+            other.id !== asset.id &&
+            other.sourceMovementId === source.movementId,
+        ));
+    const canAcceptSource =
+      sourceChanged &&
+      source !== null &&
+      !replacementConflict &&
+      !reviewIssues.some((issue) => issue.kind === "depreciation-account");
+    if (sourceChanged && replacementConflict)
+      reviewIssues.push({
+        kind: "purchase",
+        message:
+          "The replacement line is already registered or uses this asset's depreciation account. Resolve the source mapping first.",
+      });
+    const reviewReason =
+      reviewIssues.map((issue) => issue.message).join(" ") || null;
     return {
       ...asset,
       accountName: account?.name ?? "Missing account",
       source,
       sourceVersion: source ? JSON.stringify(sourceSnapshot(source)) : null,
       reviewReason,
+      reviewIssues,
+      canAcceptSource,
       version: String(asset.revision),
     };
   });

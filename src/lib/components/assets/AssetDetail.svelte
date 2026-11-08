@@ -9,6 +9,7 @@
   import { formatDate, formatMinor } from "$lib/format.js";
   import { createResourceStream } from "$lib/sse.js";
   import AssetForm from "./AssetForm.svelte";
+  import AssetReview from "./AssetReview.svelte";
   import type { loadFixedAssetDetail } from "$lib/server/loaders/fixed-assets.js";
 
   let { data }: { data: ReturnType<typeof loadFixedAssetDetail> } = $props();
@@ -53,10 +54,17 @@
         asset.acquisitionDate,
       )}{asset.inServiceDate
         ? ` · In service ${formatDate(asset.inServiceDate)}`
-        : " · Not yet in use"}
+        : " · In-service date not recorded"}
     </p>
   {/snippet}
   {#snippet main()}
+    {#if asset.reviewReason}<AssetReview
+        {asset}
+        accounts={data.accounts}
+        canChange={data.canChange}
+        disabled={dirty || saving}
+        onsaved={saved}
+      />{/if}
     <section class="detail-card">
       <div class="detail-card-head">
         <span class="detail-card-title">Asset details</span>

@@ -479,6 +479,10 @@ describe("Phase 3 fixed asset register", () => {
     const { record, asset } = registerPurchase();
     value(updateRecord(ctx(), record.id, { amount: 7000 }));
     expect(register().assets[0].reviewReason).not.toBeNull();
+    expect(register().assets[0].canAcceptSource).toBe(true);
+    expect(
+      register().assets[0].reviewIssues.map((issue) => issue.kind),
+    ).toEqual(["purchase"]);
     expect(register().assets[0].costMinor).toBe(600000);
     expect(register().unregistered).toHaveLength(0);
     const before = financialState();
@@ -493,7 +497,97 @@ describe("Phase 3 fixed asset register", () => {
     );
     expect(changed.costMinor).toBe(700000);
     expect(register().assets[0].reviewReason).toBeNull();
+    expect(register().assets[0].canAcceptSource).toBe(false);
     expect(financialState()).toEqual(before);
+  });
+  it("keeps descriptive edits separate from source review and preserves stored optional details", () => {
+    const { record, asset } = registerPurchase();
+    const expense = account("Depreciation expense", AccountType.Expense);
+    value(
+      updateFixedAsset(ctx(), asset.id, {
+        ...assetDetailsSchema.parse(asset),
+        serialNumber: "SN-123",
+        description: "Office laptop",
+        businessUseBps: 8000,
+        documentReference: "Existing schedule",
+        bookMethod: "straight_line",
+        usefulLifeMonths: 36,
+        residualMinor: 10000,
+        depreciationExpenseAccountId: expense,
+        expectedVersion: "1",
+        reason: "Existing optional details",
+      }),
+    );
+    value(updateRecord(ctx(), record.id, { amount: 7000 }));
+    const review = register().assets[0];
+    const before = financialState();
+    const changed = value(
+      updateFixedAsset(ctx(), asset.id, {
+        ...assetDetailsSchema.parse(review),
+        name: "Renamed laptop",
+        expectedVersion: review.version,
+        acknowledgeSource: false,
+        reason: "Correct the label only",
+      }),
+    );
+    expect(changed).toMatchObject({
+      costMinor: 600000,
+      sourceSnapshot: asset.sourceSnapshot,
+      serialNumber: "SN-123",
+      businessUseBps: 8000,
+      bookMethod: "straight_line",
+      usefulLifeMonths: 36,
+      residualMinor: 10000,
+      depreciationExpenseAccountId: expense,
+    });
+    const pending = register().assets[0];
+    expect(pending.canAcceptSource).toBe(true);
+    const accepted = value(
+      updateFixedAsset(ctx(), asset.id, {
+        ...assetDetailsSchema.parse(pending),
+        expectedVersion: pending.version,
+        expectedSourceVersion: pending.sourceVersion,
+        acknowledgeSource: true,
+        reason: "Reviewed the corrected purchase",
+      }),
+    );
+    expect(assetDetailsSchema.parse(accepted)).toEqual(
+      assetDetailsSchema.parse(changed),
+    );
+    expect(accepted.costMinor).toBe(700000);
+    expect(register().assets[0].reviewIssues).toEqual([]);
+    expect(financialState()).toEqual(before);
+  });
+  it("requires resolving an invalid depreciation mapping before offering purchase acceptance", () => {
+    const { record, asset } = registerPurchase();
+    value(
+      updateFixedAsset(ctx(), asset.id, {
+        ...assetDetailsSchema.parse(asset),
+        accumulatedDepreciationAccountId: accumulated,
+        expectedVersion: "1",
+        reason: "Map accumulated depreciation",
+      }),
+    );
+    db.update(schema.accounts)
+      .set({ archivedAt: "2026-02-01" })
+      .where(eq(schema.accounts.id, accumulated))
+      .run();
+    value(updateRecord(ctx(), record.id, { amount: 7000 }));
+    const review = register().assets[0];
+    expect(review.reviewIssues.map((issue) => issue.kind)).toEqual([
+      "purchase",
+      "depreciation-account",
+    ]);
+    expect(review.canAcceptSource).toBe(false);
+    value(
+      updateFixedAsset(ctx(), asset.id, {
+        ...assetDetailsSchema.parse(review),
+        accumulatedDepreciationAccountId: null,
+        expectedVersion: review.version,
+        reason: "Remove unused archived mapping",
+      }),
+    );
+    expect(register().assets[0].canAcceptSource).toBe(true);
   });
   it("retains voided sources as review exceptions without hiding their ledger difference", () => {
     const { record, asset } = registerPurchase();
@@ -504,6 +598,8 @@ describe("Phase 3 fixed asset register", () => {
       }),
     );
     expect(register().assets[0].reviewReason).toContain("voided");
+    expect(register().assets[0].canAcceptSource).toBe(false);
+    expect(register().assets[0].reviewIssues[0].kind).toBe("purchase");
     expect(
       register().costReconciliation.find((row) => row.accountId === equipment),
     ).toMatchObject({

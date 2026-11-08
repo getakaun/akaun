@@ -502,7 +502,7 @@
 	{/snippet}
 
 	{#snippet rail()}
-    {#if data.assetData}<RecordAssets data={data.assetData} />{/if}
+		{#if data.assetData}<RecordAssets data={data.assetData} disabled={dirty || saving} />{/if}
 		{#if contact}
 			<section class="detail-card">
 				<div class="detail-card-head">

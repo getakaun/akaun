@@ -1,6 +1,11 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { Dialog } from "bits-ui";
+  import { X } from "@lucide/svelte";
+  import * as Sheet from "$lib/components/ui/sheet/index.js";
+  import { useIsMobile } from "$lib/hooks/useIsMobile.svelte.js";
+  import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
+  import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
+  import "$lib/components/reports/reports.css";
   import { beforeNavigate, goto } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -30,6 +35,7 @@
     disabled?: boolean;
     onsaved: () => Promise<void>;
   } = $props();
+  const screen = useIsMobile();
   let open = $state(false);
   let action = $state<"configure" | "stop">("configure");
   let saving = $state(false);
@@ -249,23 +255,30 @@
         : ""}
     </p>
     <div class="schedule-scroll">
-      <table>
+      <table class="rep-table">
         <thead
           ><tr
-            ><th>Month</th><th>Charge</th><th>Projected NBV</th><th>Status</th
-            ></tr
+            ><th>Month</th><th class="rep-amount">Charge</th><th
+              class="rep-amount">Projected NBV</th
+            ><th>Status</th></tr
           ></thead
         ><tbody>
           {#each showAll ? data.rows : data.rows.slice(0, 12) as row (`${row.profile.id}-${row.month}`)}<tr
-              ><td>{row.month}</td><td>{formatMinor(row.amountMinor)}</td><td
-                >{formatMinor(row.projectedNbvMinor)}</td
+              ><td>{row.month}</td><td class="rep-amount"
+                >{formatMinor(row.amountMinor)}</td
+              ><td class="rep-amount">{formatMinor(row.projectedNbvMinor)}</td
               ><td
                 >{#if row.recordId}<a
                     class="detail-card-action"
                     href={resolve("/(app)/records/[id]", {
                       id: String(row.recordId),
-                    })}>{row.status}</a
-                  >{:else}{row.status}{/if}</td
+                    })}
+                    ><StatusBadge
+                      status={`depreciation-${row.status.toLowerCase().replaceAll(" ", "-")}`}
+                    /></a
+                  >{:else}<StatusBadge
+                    status={`depreciation-${row.status.toLowerCase().replaceAll(" ", "-")}`}
+                  />{/if}</td
               ></tr
             >{/each}
         </tbody>
@@ -314,48 +327,65 @@
     </p>{/if}
 </section>
 
-<Dialog.Root
+<Sheet.Root
   {open}
   onOpenChange={(next) => {
     if (!next) close();
   }}
 >
-  <Dialog.Portal
-    ><Dialog.Overlay class="fixed inset-0 z-50 bg-black/35" />
-    <Dialog.Content
-      class="bg-popover text-popover-foreground fixed top-1/2 left-1/2 z-50 max-h-[90dvh] w-[min(95vw,600px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border p-5 shadow-lg"
-      onEscapeKeydown={(e) => {
-        e.preventDefault();
-        close();
-      }}
-      onInteractOutside={(e) => {
-        e.preventDefault();
-        close();
+  <Sheet.Content
+    side={screen.current ? "bottom" : "right"}
+    style={screen.current
+      ? "height:100dvh; border-radius:0; border-top:none; display:flex; flex-direction:column; overflow:hidden; gap:0;"
+      : "width:500px; max-width:95vw; display:flex; flex-direction:column; overflow:hidden; gap:0;"}
+    onEscapeKeydown={(event) => {
+      event.preventDefault();
+      close();
+    }}
+    onInteractOutside={(event) => {
+      event.preventDefault();
+      close();
+    }}
+  >
+    <div class="sheet-head">
+      <div>
+        <div class="sheet-eyebrow">Depreciation</div>
+        <Sheet.Title class="sheet-title-text"
+          >{action === "stop"
+            ? "Stop future depreciation"
+            : preview
+              ? "Approve depreciation schedule"
+              : "Set up depreciation"}</Sheet.Title
+        ><Sheet.Description class="sr-only"
+          >Review the asset depreciation settings and schedule before approving.</Sheet.Description
+        >
+      </div>
+      <button
+        type="button"
+        class="sheet-close"
+        aria-label="Close depreciation"
+        onclick={close}
+        disabled={saving}><X size={16} /></button
+      >
+    </div>
+    <form
+      class="depreciation-sheet-form"
+      onsubmit={(event) => {
+        event.preventDefault();
+        void request(
+          action === "stop" ? "stop" : preview ? "approve" : "preview",
+        );
       }}
     >
-      <Dialog.Title class="text-base font-semibold"
-        >{action === "stop"
-          ? "Stop future depreciation"
-          : preview
-            ? "Approve depreciation schedule"
-            : "Set up depreciation"}</Dialog.Title
-      >
-      <Dialog.Description class="hint"
-        >{action === "stop"
-          ? "This stops future scheduled charges. It does not dispose of the asset or reverse posted entries."
-          : "Straight line, full monthly charges from the confirmed start month. Existing assets use their remaining balance and remaining useful life."}</Dialog.Description
-      >
-      {#if error}<p class="text-destructive my-3 text-sm" role="alert">
-          {error}
-        </p>{/if}
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          void request(
-            action === "stop" ? "stop" : preview ? "approve" : "preview",
-          );
-        }}
-      >
+      <div class="sheet-body">
+        <p class="field-hint">
+          {action === "stop"
+            ? "This stops future scheduled charges. It does not dispose of the asset or reverse posted entries."
+            : "Straight line, full monthly charges from the confirmed start month. Existing assets use their remaining balance and remaining useful life."}
+        </p>
+        {#if error}<div class="depreciation-error" role="alert">
+            <ReportNotes notes={[error]} firstIsWarning />
+          </div>{/if}
         <fieldset disabled={saving}>
           {#if action === "stop"}<div class="field">
               <span class="field-label" id="dep-stop-month"
@@ -388,18 +418,21 @@
                 (a) => a.id === approvedSettings?.accumulatedAccountId,
               )?.name}
             </p>
-            <div class="schedule-scroll preview-schedule">
-              <table>
+            <div class="schedule-scroll">
+              <table class="rep-table">
                 <thead
                   ><tr
-                    ><th>Month</th><th>Depreciation</th><th>Projected NBV</th
+                    ><th>Month</th><th class="rep-amount">Depreciation</th><th
+                      >Projected NBV</th
                     ></tr
                   ></thead
                 ><tbody
                   >{#each preview.schedule as row (row.month)}<tr
-                      ><td>{row.month}</td><td
+                      ><td>{row.month}</td><td class="rep-amount"
                         >{formatMinor(row.amountMinor)}</td
-                      ><td>{formatMinor(row.projectedNbvMinor)}</td></tr
+                      ><td class="rep-amount"
+                        >{formatMinor(row.projectedNbvMinor)}</td
+                      ></tr
                     >{/each}</tbody
                 >
               </table>
@@ -494,31 +527,39 @@
               </div>{/if}
           {/if}
         </fieldset>
-        <div class="depreciation-actions justify-end">
-          <Button size="sm" variant="outline" disabled={saving} onclick={close}
-            >Cancel</Button
-          >{#if preview}<Button
-              size="sm"
-              variant="outline"
+      </div>
+      <footer class="sheet-foot">
+        <div class="sheet-foot-actions">
+          <button
+            type="button"
+            class="sheet-btn"
+            disabled={saving}
+            onclick={close}>Cancel</button
+          >{#if preview}<button
+              type="button"
+              class="sheet-btn"
               disabled={saving}
               onclick={() => {
                 preview = null;
                 approvedSettings = null;
-              }}>Back to settings</Button
-            >{/if}<Button size="sm" type="submit" disabled={saving || disabled}
+              }}>Back to settings</button
+            >{/if}<button
+            class="sheet-btn sheet-btn-primary"
+            type="submit"
+            disabled={saving || disabled}
             >{saving
               ? "Saving…"
               : action === "stop"
                 ? "Stop depreciation"
                 : preview
                   ? "Approve schedule"
-                  : "Preview schedule"}</Button
+                  : "Preview schedule"}</button
           >
         </div>
-      </form>
-    </Dialog.Content>
-  </Dialog.Portal>
-</Dialog.Root>
+      </footer>
+    </form>
+  </Sheet.Content>
+</Sheet.Root>
 <ConfirmDialog
   bind:open={discardOpen}
   title="Discard depreciation changes?"
@@ -544,22 +585,32 @@
     overflow-x: auto;
     margin-top: 12px;
   }
-  .preview-schedule {
-    max-height: 45vh;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12.5px;
-  }
-  th,
-  td {
-    text-align: left;
-    padding: 9px 8px;
+  .sheet-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 22px 22px 16px;
     border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
   }
-  th {
-    color: var(--muted-foreground);
-    font-weight: 500;
+  .depreciation-sheet-form {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .sheet-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 20px 22px;
+  }
+  .depreciation-error {
+    margin-top: 12px;
+  }
+  .sheet-foot-actions {
+    flex-wrap: wrap;
   }
 </style>

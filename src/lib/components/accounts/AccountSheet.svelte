@@ -1,6 +1,7 @@
 <script lang="ts">
 	import TaxValuesFields from '$lib/components/tax/TaxValuesFields.svelte';
-	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
+	import { submitAccount } from './create-account.js';
 	import { X } from '@lucide/svelte';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
@@ -18,7 +19,10 @@
 	// Mirrors src/lib/server/ledger/account-type.ts's NEEDS_REVIEW_TYPES — an
 	// account of one of these types has no safe default classification, so a
 	// sub-type must be chosen at creation rather than left "needs review".
-	const REQUIRES_SUB_TYPE: AccountTypeCode[] = [AccountType.Asset, AccountType.Liability];
+	const REQUIRES_SUB_TYPE: AccountTypeCode[] = [
+		AccountType.Asset,
+		AccountType.Liability
+	];
 
 	/**
 	 * Adding an account to the chart.
@@ -47,7 +51,9 @@
 	);
 
 	let selectedType = $state<AccountTypeCode>(AccountType.Asset);
-	let selectedSubType = $state<number | null>(null);
+	let selectedSubType = $state<number | null>(
+		AccountSubTypesByType[AccountType.Asset]?.[0] ?? null
+	);
 
 	const subTypes = $derived(AccountSubTypesByType[selectedType] ?? []);
 	const subTypeRequired = $derived(REQUIRES_SUB_TYPE.includes(selectedType));
@@ -59,7 +65,10 @@
 	// option selected (the browser picks the first by default) — matched here
 	// by defaulting to the first choice rather than leaving it unset.
 	$effect(() => {
-		if (selectedSubType != null && !subTypes.includes(selectedSubType as never)) {
+		if (
+			selectedSubType != null &&
+			!subTypes.includes(selectedSubType as never)
+		) {
 			selectedSubType = null;
 		}
 		if (selectedSubType == null && subTypeRequired && subTypes.length > 0) {
@@ -70,15 +79,56 @@
 	// bits-ui's Select treats an empty string as "no selection", so the "not
 	// yet classified" item needs a real sentinel (mirrors ledger/AccountSelect.svelte's NONE_VALUE).
 	const NONE_SUB_TYPE = '__none__';
+	let formElement: HTMLFormElement;
+	let saving = $state(false);
+	let submitError = $state<string | null>(null);
+	const displayedError = $derived(submitError ?? error);
+	$effect(() => {
+		if (open) submitError = null;
+	});
+	function close() {
+		if (!saving) onclose();
+	}
+	async function submit() {
+		if (saving) return;
+		submitError = '';
+		if (!formElement.reportValidity()) {
+			const invalid = formElement.querySelector<HTMLInputElement>(':invalid');
+			submitError =
+				invalid?.validationMessage ?? 'Check the required account details.';
+			invalid?.scrollIntoView({ block: 'center' });
+			return;
+		}
+		const data = new FormData(formElement);
+		saving = true;
+		try {
+			const result = await submitAccount(data);
+			if (!result.ok) {
+				submitError = result.error;
+				return;
+			}
+			onclose();
+			// The API has confirmed creation; SSE also updates the chart if a reload fails.
+			await invalidateAll().catch(() => {});
+		} finally {
+			saving = false;
+		}
+	}
 </script>
 
 <Sheet.Root
 	{open}
 	onOpenChange={(v) => {
-		if (!v) onclose();
+		if (!v) close();
 	}}
 >
 	<Sheet.Content
+		onEscapeKeydown={(event) => {
+			if (saving) event.preventDefault();
+		}}
+		onInteractOutside={(event) => {
+			if (saving) event.preventDefault();
+		}}
 		side={panelSide}
 		style={isMobile
 			? 'height:100dvh; border-radius:0; border-top:none; display:flex; flex-direction:column; overflow:hidden; gap:0;'
@@ -87,116 +137,176 @@
 		<div class="sheet-head">
 			<div>
 				<div class="sheet-eyebrow">New</div>
-				<div class="sheet-title-text">Add account</div>
+				<Sheet.Title class="sheet-title-text">Add account</Sheet.Title>
+				<Sheet.Description class="sr-only"
+					>Create an account in the chart of accounts.</Sheet.Description
+				>
 			</div>
-			<Sheet.Close class="sheet-close"><X size={16} /></Sheet.Close>
+			<button
+				type="button"
+				class="sheet-close"
+				aria-label="Close account"
+				onclick={close}
+				disabled={saving}><X size={16} /></button
+			>
 		</div>
 
-		<form method="POST" action="?/create" use:enhance class="sheet-form">
+		<form
+			bind:this={formElement}
+			method="POST"
+			action="?/create"
+			novalidate
+			onsubmit={(event) => {
+				event.preventDefault();
+				void submit();
+			}}
+			class="sheet-form"
+			aria-busy={saving}
+		>
 			<div class="sheet-body">
-				{#if error}
-					<p class="form-error">{error}</p>
-				{/if}
+				<fieldset disabled={saving}>
+					{#if displayedError}
+						<p class="form-error" role="alert">{displayedError}</p>
+					{/if}
 
-				<div class="field">
-					<label class="field-label" for="account-name">Name *</label>
-					<Input id="account-name" name="name" required maxlength={120} class="w-full" />
-				</div>
-
-				<div class="field">
-					<label class="field-label" for="account-type">Account type *</label>
-					<Select.Root
-						type="single"
-						value={String(selectedType)}
-						onValueChange={(next) => next && (selectedType = Number(next) as AccountTypeCode)}
-					>
-						<Select.Trigger id="account-type" class="w-full justify-between">
-							{AccountTypeDisplayLabels[selectedType]}
-						</Select.Trigger>
-						<Select.Content>
-							{#each types as type (type)}
-								<Select.Item value={String(type)} label={AccountTypeDisplayLabels[type]} />
-							{/each}
-						</Select.Content>
-					</Select.Root>
-					<input type="hidden" name="type" value={selectedType} />
-					<p class="field-hint">
-						The type decides which report the account appears on. You cannot change it after
-						transactions are posted to it.
-					</p>
-				</div>
-
-				<div class="field">
-					<label class="field-label" for="account-code">Code</label>
-					<Input
-						id="account-code"
-						name="code"
-						type="number"
-						step={1}
-						min={AccountCodeRanges[selectedType].start}
-						max={AccountCodeRanges[selectedType].end}
-						aria-describedby="account-code-hint"
-						placeholder="Automatic"
-						class="w-full"
-					/>
-					<p id="account-code-hint" class="field-hint">
-						{AccountCodeRanges[selectedType].start}–{AccountCodeRanges[selectedType].end} for
-						{AccountTypeDisplayLabels[selectedType].toLowerCase()}. Leave blank to assign the lowest
-						available code.
-					</p>
-				</div>
-
-				{#if selectedType === AccountType.Expense}
-          <TaxValuesFields id="new-account-tax" named accountDefault />
-          <p class="field-hint">New expense lines capture this default. Unclassified means no treatment has been established. Classifications are estimates.</p>
-        {/if}
-
-				{#if subTypes.length > 0}
 					<div class="field">
-						<label class="field-label" for="account-sub-type">
-							Sub-type {subTypeRequired ? '*' : ''}
-						</label>
+						<label class="field-label" for="account-name">Name *</label>
+						<Input
+							id="account-name"
+							name="name"
+							required
+							maxlength={120}
+							class="w-full"
+						/>
+					</div>
+
+					<div class="field">
+						<label class="field-label" for="account-type">Account type *</label>
 						<Select.Root
 							type="single"
-							value={selectedSubType == null ? NONE_SUB_TYPE : String(selectedSubType)}
-							onValueChange={(next) => {
-								selectedSubType =
-									next && next !== NONE_SUB_TYPE ? (Number(next) as AccountSubTypeCode) : null;
-							}}
+							value={String(selectedType)}
+							onValueChange={(next) =>
+								next && (selectedType = Number(next) as AccountTypeCode)}
 						>
-							<Select.Trigger id="account-sub-type" class="w-full justify-between">
-								{selectedSubType == null
-									? 'Unclassified'
-									: AccountSubTypeDisplayLabels[selectedSubType]}
+							<Select.Trigger id="account-type" class="w-full justify-between">
+								{AccountTypeDisplayLabels[selectedType]}
 							</Select.Trigger>
 							<Select.Content>
-								{#if !subTypeRequired}
-									<Select.Item value={NONE_SUB_TYPE} label="Unclassified" />
-								{/if}
-								{#each subTypes as subType (subType)}
+								{#each types as type (type)}
 									<Select.Item
-										value={String(subType)}
-										label={AccountSubTypeDisplayLabels[subType]}
+										value={String(type)}
+										label={AccountTypeDisplayLabels[type]}
 									/>
 								{/each}
 							</Select.Content>
 						</Select.Root>
-						<input type="hidden" name="subType" value={selectedSubType ?? ''} />
+						<input type="hidden" name="type" value={selectedType} />
 						<p class="field-hint">
-							{#if subTypeRequired}
-								What kind of {AccountTypeDisplayLabels[selectedType].toLowerCase()} this is.
-							{:else}
-								If you leave it unclassified, the reports show it as operating.
-							{/if}
+							The type decides which report the account appears on. You cannot
+							change it after transactions are posted to it.
 						</p>
 					</div>
-				{/if}
+
+					<div class="field">
+						<label class="field-label" for="account-code">Code</label>
+						<Input
+							id="account-code"
+							name="code"
+							type="number"
+							step={1}
+							min={AccountCodeRanges[selectedType].start}
+							max={AccountCodeRanges[selectedType].end}
+							aria-describedby="account-code-hint"
+							placeholder="Automatic"
+							class="w-full"
+						/>
+						<p id="account-code-hint" class="field-hint">
+							{AccountCodeRanges[selectedType].start}–{AccountCodeRanges[
+								selectedType
+							].end} for
+							{AccountTypeDisplayLabels[selectedType].toLowerCase()}. Leave
+							blank to assign the lowest available code.
+						</p>
+					</div>
+
+					{#if selectedType === AccountType.Expense}
+						<TaxValuesFields id="new-account-tax" named accountDefault />
+						<p class="field-hint">
+							New expense lines capture this default. Unclassified means no
+							treatment has been established. Classifications are estimates.
+						</p>
+					{/if}
+
+					{#if subTypes.length > 0}
+						<div class="field">
+							<label class="field-label" for="account-sub-type">
+								Sub-type {subTypeRequired ? '*' : ''}
+							</label>
+							<Select.Root
+								type="single"
+								value={selectedSubType == null
+									? NONE_SUB_TYPE
+									: String(selectedSubType)}
+								onValueChange={(next) => {
+									selectedSubType =
+										next && next !== NONE_SUB_TYPE
+											? (Number(next) as AccountSubTypeCode)
+											: null;
+								}}
+							>
+								<Select.Trigger
+									id="account-sub-type"
+									class="w-full justify-between"
+								>
+									{selectedSubType == null
+										? 'Unclassified'
+										: AccountSubTypeDisplayLabels[selectedSubType]}
+								</Select.Trigger>
+								<Select.Content>
+									{#if !subTypeRequired}
+										<Select.Item value={NONE_SUB_TYPE} label="Unclassified" />
+									{/if}
+									{#each subTypes as subType (subType)}
+										<Select.Item
+											value={String(subType)}
+											label={AccountSubTypeDisplayLabels[subType]}
+										/>
+									{/each}
+								</Select.Content>
+							</Select.Root>
+							<input
+								type="hidden"
+								name="subType"
+								value={selectedSubType ?? ''}
+							/>
+							<p class="field-hint">
+								{#if subTypeRequired}
+									What kind of {AccountTypeDisplayLabels[
+										selectedType
+									].toLowerCase()} this is.
+								{:else}
+									If you leave it unclassified, the reports show it as
+									operating.
+								{/if}
+							</p>
+						</div>
+					{/if}
+				</fieldset>
 			</div>
 
 			<footer class="sheet-foot">
 				<div class="sheet-foot-actions">
-					<button type="button" class="sheet-btn" onclick={onclose}>Cancel</button>
-					<button type="submit" class="sheet-btn sheet-btn-primary">Create account</button>
+					<button
+						type="button"
+						class="sheet-btn"
+						onclick={close}
+						disabled={saving}>Cancel</button
+					>
+					<button
+						type="submit"
+						class="sheet-btn sheet-btn-primary"
+						disabled={saving}>{saving ? 'Creating…' : 'Create account'}</button
+					>
 				</div>
 			</footer>
 		</form>
@@ -204,7 +314,14 @@
 </Sheet.Root>
 
 <style>
+	fieldset {
+		min-width: 0;
+		border: 0;
+		padding: 0;
+		margin: 0;
+	}
 	.sheet-head {
+		flex-shrink: 0;
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
@@ -212,12 +329,14 @@
 		border-bottom: 1px solid var(--border);
 	}
 	.sheet-form {
+		min-height: 0;
 		flex: 1;
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
 	}
 	.sheet-body {
+		min-height: 0;
 		flex: 1;
 		overflow-y: auto;
 		padding: 20px 22px;

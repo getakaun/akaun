@@ -41,3 +41,11 @@ Approval and further posting pause when the selected accumulated-depreciation ac
 - Type checking reports zero errors/warnings. Targeted ESLint and formatting pass; repository-wide lint retains its existing formatting backlog.
 - Drizzle generation reports no pending schema differences. The existing startup migration tests also exercise the additive 0044 migration in modern and legacy SQLite rename modes, preserving fixture books and restart idempotence.
 - Browser/visual checks are left to the owner under repository policy. The application was not started against a configured book; no deployment or live posting was performed.
+
+## Account creation and visual consistency follow-up
+
+The account drawer now submits explicitly to the existing Accounts API, closes only after a confirmed created account, and displays pending, native-validation and request-error states. It keeps its fields when a request fails and prevents duplicate clicks while saving. Cash is selected from the initial Asset render rather than relying on a later effect to populate the required subtype. The original named action remains as the form fallback. Four isolated request/API tests cover the reported `test` / Asset / Cash / automatic-code case, expense defaults, server refusals and unconfirmed network results.
+
+Monthly depreciation reuses the Reports card/header/toolbar and shared account-table rows, mobile cards, empty states and StatusBadge tones. Actual and preview schedules import the Reports stylesheet directly and reuse its table typography and right-aligned currency cells. Setup/approval/stopping use the same responsive Sheet, scrolling body, fixed footer, button sizes and close control as account/asset creation. Unsaved-change and stale-preview guards remain in place. Browser verification remains with the owner under the repository policy.
+
+Follow-up verification: 34 account-creation/account-service/depreciation tests pass, along with type checking and targeted lint/formatting. No accounting or depreciation calculation rule changed in this follow-up.

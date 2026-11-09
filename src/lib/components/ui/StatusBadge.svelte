@@ -11,6 +11,10 @@
    */
   let { status }: { status: string } = $props();
   const byLabel: Record<string, Tone> = {
+    "depreciation-posted": { label: "Posted", tone: "green" },
+    "depreciation-unposted": { label: "Unposted", tone: "amber" },
+    "depreciation-reversed": { label: "Reversed", tone: "gray" },
+    "depreciation-no-charge": { label: "No charge", tone: "gray" },
     "asset-review": { label: "Needs review", tone: "amber" },
     "asset-linked": { label: "Source linked", tone: "blue" },
     "asset-opening": { label: "Opening values", tone: "gray" },

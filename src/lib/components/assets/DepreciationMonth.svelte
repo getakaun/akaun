@@ -7,6 +7,10 @@
   import MonthPicker from "$lib/components/ui/month-picker/MonthPicker.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
+  import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
+  import EmptyState from "$lib/components/ui/EmptyState.svelte";
+  import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
+  import "$lib/components/reports/reports.css";
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import { shiftMonth, depreciationMonth } from "$lib/depreciation.js";
   import { localToday } from "$lib/local-date.js";
@@ -154,54 +158,35 @@
   }
 </script>
 
-<section aria-labelledby="monthly-depreciation-title">
-  <div class="flex flex-wrap items-end justify-between gap-3 pb-3">
-    <div>
-      <h2 id="monthly-depreciation-title" class="text-base font-semibold">
-        Monthly depreciation
-      </h2>
-      <p class="hint">
-        This run covers all configured assets in the book. Post earlier due
-        months first.
-      </p>
-    </div>
-    <div class="w-[180px]">
-      <span class="field-label" id="depreciation-month-label">Month</span
-      ><MonthPicker
-        bind:value={month}
-        labelledBy="depreciation-month-label"
-        disabled={saving}
-        max={shiftMonth(localToday().slice(0, 7), -1)}
-      />
-    </div>
-  </div>
-  {#if error}<p role="alert" class="text-destructive mb-3 text-sm">{error}</p>
-    <Button size="sm" variant="outline" onclick={() => (refresh += 1)}
-      >Refresh month</Button
-    >{/if}
-  {#if notice}<p role="status" class="hint mb-3">{notice}</p>{/if}
-  {#if loading}<p class="card-empty" role="status">Loading depreciation…</p>
-  {:else if data}
-    {#if data.unpostedMonths.length}<div
-        class="mb-3 flex flex-wrap items-center gap-3"
+<div class="depreciation-workspace">
+  <section class="rep-block" aria-labelledby="monthly-depreciation-title">
+    <header class="rep-block-head">
+      <div>
+        <h2 id="monthly-depreciation-title" class="rep-block-title">
+          Monthly depreciation
+        </h2>
+        <p class="rep-block-sub">
+          Review completed months and post earlier due charges first.
+        </p>
+      </div>
+      <div class="depreciation-month-filter">
+        <span class="field-label" id="depreciation-month-label">Month</span
+        ><MonthPicker
+          bind:value={month}
+          labelledBy="depreciation-month-label"
+          disabled={saving}
+          max={shiftMonth(localToday().slice(0, 7), -1)}
+        />
+      </div>
+    </header>
+    <div class="rep-toolbar depreciation-toolbar">
+      <span class="rep-block-sub"
+        >{data
+          ? `${due.length} unposted · Ready to post ${formatMinor(data.totalMinor)}`
+          : "Reviewing depreciation"}</span
       >
-        <span class="hint"
-          >{data.unpostedMonths.length} completed months have unposted charges.</span
-        >{#if data.unpostedMonths[0] !== month}<Button
-            size="sm"
-            variant="outline"
-            disabled={saving}
-            onclick={() => {
-              if (data) month = data.unpostedMonths[0];
-            }}>Review earliest month · {data.unpostedMonths[0]}</Button
-          >{/if}
-      </div>{/if}
-    <div class="mb-3 flex flex-wrap items-center gap-3">
-      <span class="text-sm"
-        >{due.length} unposted · Ready to post {formatMinor(
-          data.totalMinor,
-        )}</span
-      >{#if data.canPost}<Button
+      <span class="rep-toolbar-spacer"></span>
+      {#if data?.canPost}<Button
           size="sm"
           disabled={saving || !due.length || due.some((row) => !!row.blocked)}
           onclick={() => {
@@ -210,15 +195,43 @@
           }}>Post depreciation</Button
         >{/if}
     </div>
-    <div class="table-card overflow-x-auto">
+    {#if error}<div class="depreciation-feedback" role="alert">
+        <ReportNotes notes={[error]} firstIsWarning /><Button
+          size="sm"
+          variant="outline"
+          onclick={() => (refresh += 1)}>Refresh month</Button
+        >
+      </div>{/if}
+    {#if notice}<div class="depreciation-feedback" role="status">
+        <ReportNotes notes={[notice]} />
+      </div>{/if}
+    {#if data?.unpostedMonths.length}<div class="depreciation-feedback">
+        <p class="rep-block-sub">
+          {data.unpostedMonths.length} completed months have unposted charges.
+        </p>
+        {#if data.unpostedMonths[0] !== month}<Button
+            size="sm"
+            variant="outline"
+            disabled={saving}
+            onclick={() => {
+              if (data) month = data.unpostedMonths[0];
+            }}>Review earliest month · {data.unpostedMonths[0]}</Button
+          >{/if}
+      </div>{/if}
+    {#if loading}<div class="depreciation-feedback">
+        <p class="card-empty" role="status">Loading depreciation…</p>
+      </div>
+    {:else if data}
       <table class="exp-table">
         <thead
           ><tr
-            ><th>Asset</th><th>Depreciation</th><th>Status</th><th>Review</th
-            ></tr
+            ><th>Asset</th><th class="ta-right">Depreciation</th><th>Status</th
+            ><th>Review</th></tr
           ></thead
-        ><tbody>
-          {#each data.rows as row (row.assetId)}<tr
+        >
+        <tbody
+          >{#each data.rows as row (row.assetId)}
+            <tr
               class="exp-row"
               onclick={(event) => {
                 if (!(event.target as HTMLElement).closest("a,button"))
@@ -226,20 +239,28 @@
                     resolve("/(app)/assets/[id]", { id: String(row.assetId) }),
                   );
               }}
-              ><td class="td-primary" data-label="Asset"
+            >
+              <td class="td-primary" data-label="Asset"
                 ><a
                   class="cell-item row-link"
                   href={resolve("/(app)/assets/[id]", {
                     id: String(row.assetId),
-                  })}>{row.name}</a
+                  })}><span class="cell-itemname">{row.name}</span></a
                 ></td
-              ><td class="td-amount" data-label="Depreciation"
+              >
+              <td class="td-amount" data-label="Depreciation"
                 ><span class="amount-num">{formatMinor(row.amountMinor)}</span
                 ></td
-              ><td class="row-break"></td><td data-label="Status"
-                >{row.status}</td
-              ><td data-label="Review"
-                >{#if row.blocked}<span class="text-sm text-amber-700"
+              ><td class="row-break"></td>
+              <td data-label="Status"
+                ><StatusBadge
+                  status={row.blocked
+                    ? "asset-review"
+                    : `depreciation-${row.status.toLowerCase().replaceAll(" ", "-")}`}
+                /></td
+              >
+              <td data-label="Review"
+                >{#if row.blocked}<span class="depreciation-warning"
                     >{row.blocked}</span
                   >{:else if row.recordId}<a
                     class="detail-card-action"
@@ -248,49 +269,56 @@
                     })}>View journal</a
                   >{:else if row.amountMinor === 0}No charge due{:else}{row.automationWarning ??
                     "Ready"}{/if}</td
-              ></tr
-            >
-          {:else}<tr
+              >
+            </tr>
+          {:else}<tr class="empty-row"
               ><td colspan="4"
-                >No approved charges for this month. Open an asset to set up its
-                schedule.</td
+                ><EmptyState
+                  title="No approved charges"
+                  sub="Open an asset to set up its depreciation schedule, or choose a month with unposted charges."
+                /></td
               ></tr
-            >{/each}
-        </tbody>
+            >{/each}</tbody
+        >
       </table>
-    </div>
-    {#if runs.length}<section class="detail-card mt-4">
-        <div class="detail-card-head">
-          <span class="detail-card-title">Posted runs</span>
-        </div>
-        <div class="flex flex-col gap-3">
-          {#each runs as run (run.runId)}<div
-              class="flex flex-wrap items-center justify-between gap-2"
-            >
-              <a
-                class="detail-card-action"
-                href={resolve("/(app)/records/[id]", {
-                  id: String(run.recordId),
-                })}
-                >Depreciation journal #{run.recordId}{run.reversed
-                  ? " · Reversed"
-                  : ""}</a
-              >{#if data.canReverse && !run.reversed}<Button
-                  size="sm"
-                  variant="outline"
-                  disabled={saving}
-                  onclick={() => {
-                    reverseRunId = run.runId;
-                    reason = "";
-                    reversalError = "";
-                    correctionMonth = month;
-                  }}>Reverse whole run</Button
-                >{/if}
-            </div>{/each}
-        </div>
-      </section>{/if}
-  {/if}
-</section>
+      <div class="table-foot">
+        <span
+          >{data.rows.length} scheduled {data.rows.length === 1
+            ? "asset"
+            : "assets"} · {month}</span
+        ><span>This run includes all configured assets in the book.</span>
+      </div>
+    {/if}
+  </section>
+  {#if data && runs.length}<section class="detail-card">
+      <div class="detail-card-head">
+        <span class="detail-card-title">Posted runs</span>
+      </div>
+      <div class="detail-list">
+        {#each runs as run (run.runId)}<div class="detail-row depreciation-run">
+            <a
+              class="detail-card-action"
+              href={resolve("/(app)/records/[id]", {
+                id: String(run.recordId),
+              })}
+              >Depreciation journal #{run.recordId}{run.reversed
+                ? " · Reversed"
+                : ""}</a
+            >{#if data.canReverse && !run.reversed}<Button
+                size="sm"
+                variant="outline"
+                disabled={saving}
+                onclick={() => {
+                  reverseRunId = run.runId;
+                  reason = "";
+                  reversalError = "";
+                  correctionMonth = month;
+                }}>Reverse whole run</Button
+              >{/if}
+          </div>{/each}
+      </div>
+    </section>{/if}
+</div>
 <ConfirmDialog
   bind:open={confirmOpen}
   title="Post monthly depreciation?"
@@ -367,3 +395,40 @@
     ></Dialog.Portal
   ></Dialog.Root
 >
+
+<style>
+  .depreciation-workspace {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .depreciation-month-filter {
+    width: 180px;
+    flex: 0 0 auto;
+  }
+  .depreciation-toolbar {
+    padding: 12px 16px;
+  }
+  .depreciation-feedback {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+  }
+  .depreciation-warning {
+    color: var(--amber);
+  }
+  .depreciation-run {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  @media (max-width: 600px) {
+    .rep-block-head {
+      flex-wrap: wrap;
+    }
+    .depreciation-month-filter {
+      width: 100%;
+    }
+  }
+</style>

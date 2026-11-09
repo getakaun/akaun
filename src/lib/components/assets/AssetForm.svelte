@@ -123,11 +123,6 @@
         (account.active || String(account.id) === fields.accumulatedAccount),
     ),
   );
-  const expenseAccounts = $derived(
-    accounts.filter(
-      (account) => account.type === AccountType.Expense && account.active,
-    ),
-  );
   export async function submit() {
     if (saving) return;
     if (!formElement.reportValidity()) return;
@@ -500,78 +495,6 @@
           reference. Linked purchase documents remain on the original record.
         </p>
       </div>
-    {/if}
-    {#if asset && (asset.bookMethod !== null || asset.usefulLifeMonths !== null || asset.residualMinor !== null || asset.depreciationExpenseAccountId !== null)}
-      <details class="asset-form-section">
-        <summary>Saved depreciation details</summary>
-        <p class="field-hint">
-          Previously saved details are retained. No schedule or journal is
-          generated.
-        </p>
-        <div class="field">
-          <label class="field-label" for="asset-method">Method</label
-          ><Select.Root
-            type="single"
-            value={fields.bookMethod || "__none__"}
-            onValueChange={(value) =>
-              (fields.bookMethod = value === "__none__" ? "" : value)}
-            disabled={!canChange || saving}
-            ><Select.Trigger id="asset-method" class="w-full justify-between"
-              >{fields.bookMethod ? "Straight line" : "Not set"}</Select.Trigger
-            ><Select.Content
-              ><Select.Item value="__none__" label="Not set" /><Select.Item
-                value="straight_line"
-                label="Straight line"
-              /></Select.Content
-            ></Select.Root
-          >
-        </div>
-        <div class="field">
-          <label class="field-label" for="asset-life"
-            >Useful life (months)</label
-          ><Input
-            id="asset-life"
-            bind:value={fields.life}
-            type="number"
-            min={1}
-            max={1200}
-          />
-        </div>
-        <div class="field">
-          <label class="field-label" for="asset-residual">Residual value</label
-          ><Input
-            id="asset-residual"
-            bind:value={fields.residual}
-            inputmode="decimal"
-          />
-        </div>
-        <div class="field">
-          <label class="field-label" for="asset-expense"
-            >Depreciation expense account</label
-          ><Select.Root
-            type="single"
-            value={fields.expenseAccount || "__none__"}
-            onValueChange={(value) =>
-              (fields.expenseAccount = value === "__none__" ? "" : value)}
-            disabled={!canChange || saving}
-          >
-            <Select.Trigger id="asset-expense" class="w-full justify-between"
-              >{accounts.find(
-                (account) => String(account.id) === fields.expenseAccount,
-              )?.name ?? "Not set"}</Select.Trigger
-            >
-            <Select.Content
-              ><Select.Item
-                value="__none__"
-                label="Not set"
-              />{#each expenseAccounts as account (account.id)}<Select.Item
-                  value={String(account.id)}
-                  label={account.name}
-                />{/each}</Select.Content
-            ></Select.Root
-          >
-        </div>
-      </details>
     {/if}
     {#if asset && canChange}
       <div class="field">

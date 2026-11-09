@@ -1,3 +1,4 @@
+import { readAssetDepreciation } from "../application/depreciation.js";
 import { error, redirect } from "@sveltejs/kit";
 import { db } from "../db/client.js";
 import { readFixedAssets } from "../application/fixed-assets.js";
@@ -24,7 +25,9 @@ export function loadFixedAssetDetail(locals: App.Locals, id: number) {
   if (!result.ok) throw redirect(302, "/assets");
   const asset = result.value.assets.find((row) => row.id === id);
   if (!asset) throw redirect(302, "/assets");
+  const depreciation = readAssetDepreciation({ db, locals }, id);
   return {
+    depreciation: depreciation.ok ? depreciation.value : null,
     asset,
     accounts: result.value.accounts,
     canChange: can(locals, "accounts.update"),

@@ -7,6 +7,7 @@ import {
 import { seedAccounts } from "$lib/server/db/seed-accounts.js";
 import { setLogLevel } from "$lib/server/logger.js";
 import { startImportWorker } from "$lib/server/import/worker.js";
+import { startDepreciationWorker } from "$lib/server/depreciation-worker.js";
 
 import { createRequestHandle } from "$lib/server/request-hook.js";
 import { oauth, config } from "$lib/server/oauth/runtime.js";
@@ -32,6 +33,7 @@ export const init = async () => {
   // `db/auto-upgrade.ts`, called before the database is even opened for writing
   // (002 FR-037, research.md R-06).
   startImportWorker();
+  startDepreciationWorker(db);
 };
 
 export const handle = createRequestHandle(db, oauth, config);

@@ -1,3 +1,4 @@
+import { depreciationRecordReason } from "../queries/depreciation.js";
 import { recordRelations } from "../queries/reimbursements.js";
 import { readFixedAssets } from "../application/fixed-assets.js";
 import { assetRecordDeletionReason } from "../queries/fixed-assets.js";
@@ -128,6 +129,21 @@ export function loadRecordDetail(locals: App.Locals, id: number) {
     voidBlockedReason: voidBlockedReason(db, id),
     voidRelation: voidRelationFor(record),
     ...recordFormOptions(locals, [record.contactId, record.supplierContactId]),
+    ...(depreciationRecordReason(db, id)
+      ? {
+          perms: {
+            ...recordFormOptions(locals, [
+              record.contactId,
+              record.supplierContactId,
+            ]).perms,
+            change: false,
+            delete: false,
+            void: false,
+            correctDate: false,
+            correctContact: false,
+          },
+        }
+      : {}),
   };
 }
 

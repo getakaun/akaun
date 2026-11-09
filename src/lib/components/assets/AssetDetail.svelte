@@ -9,10 +9,17 @@
   import { formatDate, formatMinor } from "$lib/format.js";
   import { createResourceStream } from "$lib/sse.js";
   import AssetForm from "./AssetForm.svelte";
+  import AssetDepreciation from "./AssetDepreciation.svelte";
   import AssetReview from "./AssetReview.svelte";
   import type { loadFixedAssetDetail } from "$lib/server/loaders/fixed-assets.js";
 
-  let { data }: { data: ReturnType<typeof loadFixedAssetDetail> } = $props();
+  let {
+    data,
+  }: {
+    data: Omit<ReturnType<typeof loadFixedAssetDetail>, "depreciation"> & {
+      depreciation?: ReturnType<typeof loadFixedAssetDetail>["depreciation"];
+    };
+  } = $props();
   const asset = $derived(data.asset);
   let dirty = $state(false);
   let saving = $state(false);
@@ -58,6 +65,12 @@
     </p>
   {/snippet}
   {#snippet main()}
+    {#if data.depreciation}<AssetDepreciation
+        data={data.depreciation}
+        accounts={data.accounts}
+        disabled={dirty || saving}
+        onsaved={saved}
+      />{/if}
     {#if asset.reviewReason}<AssetReview
         {asset}
         accounts={data.accounts}

@@ -1,3 +1,5 @@
+import { assetSchedule } from "../queries/depreciation.js";
+import { fixedAssets } from "../db/schema.js";
 import { createHash } from "node:crypto";
 import { and, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -147,6 +149,37 @@ function review(ctx: AppContext, monthEnd: string): ClosingPreview {
     })),
   };
   const warnings: ClosingWarning[] = [];
+  const depreciationDue = ctx.db
+    .select({ id: fixedAssets.id, name: fixedAssets.name })
+    .from(fixedAssets)
+    .all()
+    .flatMap((asset) =>
+      assetSchedule(ctx.db, asset.id)
+        .rows.filter(
+          (row) =>
+            row.amountMinor > 0 &&
+            row.status === "Unposted" &&
+            monthEndFor(row.month)! <= monthEnd &&
+            (!current || monthEndFor(row.month)! > current),
+        )
+        .map((row) => ({ asset, row })),
+    );
+  if (depreciationDue.length)
+    warnings.push({
+      id: "depreciation-due",
+      message: `${depreciationDue.length} asset/month depreciation charges remain unposted.`,
+      hint: "Review Assets → Depreciation before closing. This is a warning; closing will prevent later posting into those months.",
+      items: depreciationDue
+        .slice(0, CLOSING_ITEM_LIMIT)
+        .map(({ asset, row }) => ({
+          key: `depreciation-${asset.id}-${row.month}`,
+          label: asset.name,
+          detail: `${row.month} · Unposted depreciation`,
+          amountMinor: row.amountMinor,
+          ref: { kind: "depreciation", month: row.month },
+        })),
+      total: depreciationDue.length,
+    });
   if (current === null)
     warnings.push({
       id: "first-close",

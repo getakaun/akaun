@@ -1,3 +1,4 @@
+import { depreciationProfiles, depreciationPostings } from "../db/schema.js";
 import { eq, and, sql } from "drizzle-orm";
 import { AccountType } from "$lib/enums.js";
 import { assetCreateSchema, assetUpdateSchema } from "$lib/fixed-assets.js";
@@ -314,6 +315,44 @@ export function updateFixedAsset(
     } = parsed.data;
     if (expectedVersion !== String(before.revision))
       return conflict(String(before.revision));
+    const configured = ctx.db
+      .select()
+      .from(depreciationProfiles)
+      .where(eq(depreciationProfiles.assetId, id))
+      .limit(1)
+      .get();
+    if (
+      configured &&
+      (details.bookMethod !== before.bookMethod ||
+        details.usefulLifeMonths !== before.usefulLifeMonths ||
+        details.residualMinor !== before.residualMinor ||
+        details.depreciationExpenseAccountId !==
+          before.depreciationExpenseAccountId)
+    )
+      return fail(
+        "REFUSED",
+        "Change depreciation estimates in the Depreciation section, with a prospective schedule preview.",
+      );
+    const posted = ctx.db
+      .select()
+      .from(depreciationPostings)
+      .where(eq(depreciationPostings.assetId, id))
+      .limit(1)
+      .get();
+    if (
+      posted &&
+      ((accumulatedDepreciationAccountId !== undefined &&
+        accumulatedDepreciationAccountId !==
+          before.accumulatedDepreciationAccountId) ||
+        (legacyOpening &&
+          (legacyOpening.broughtForwardDepMinor !==
+            before.broughtForwardDepMinor ||
+            legacyOpening.openingAsAt !== before.openingAsAt)))
+    )
+      return fail(
+        "REFUSED",
+        "Posted depreciation preserves its opening balance and accumulated-depreciation account. Use an audited ledger correction instead of rewriting that history.",
+      );
     const changes: Partial<FixedAsset> = { ...details };
     if (accumulatedDepreciationAccountId !== undefined)
       changes.accumulatedDepreciationAccountId =

@@ -1310,6 +1310,89 @@ export const fixedAssets = sqliteTable(
   ],
 );
 
+// Approved profiles are versioned: later estimates never rewrite posted periods.
+export const depreciationProfiles = sqliteTable(
+  "depreciation_profiles",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    assetId: integer("asset_id")
+      .notNull()
+      .references(() => fixedAssets.id, { onDelete: "restrict" }),
+    startMonth: text("start_month").notNull(),
+    months: integer("months").notNull(),
+    baseNbvMinor: integer("base_nbv_minor").notNull(),
+    residualMinor: integer("residual_minor").notNull(),
+    expenseAccountId: integer("expense_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    accumulatedAccountId: integer("accumulated_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    mode: text("mode", { enum: ["review", "auto"] }).notNull(),
+    basis: text("basis").notNull(),
+    stoppedFrom: text("stopped_from"),
+    approvedBy: integer("approved_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (t) => [
+    index("depreciation_profile_version").on(t.assetId, t.startMonth),
+    check(
+      "depreciation_profile_amounts",
+      sql`typeof("base_nbv_minor") = 'integer' AND "base_nbv_minor" BETWEEN 0 AND 9007199254740991 AND typeof("residual_minor") = 'integer' AND "residual_minor" BETWEEN 0 AND "base_nbv_minor" AND typeof("months") = 'integer' AND "months" BETWEEN 1 AND 1200`,
+    ),
+    check("depreciation_profile_mode", sql`"mode" IN ('review', 'auto')`),
+  ],
+);
+
+export const depreciationRuns = sqliteTable("depreciation_runs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  month: text("month").notNull(),
+  recordId: integer("record_id")
+    .notNull()
+    .unique()
+    .references(() => ledgerRecords.id, { onDelete: "restrict" }),
+  reversalRecordId: integer("reversal_record_id")
+    .unique()
+    .references(() => ledgerRecords.id, { onDelete: "restrict" }),
+  reversedOn: text("reversed_on"),
+  createdBy: integer("created_by")
+    .notNull()
+    .references(() => users.id, { onDelete: "restrict" }),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
+
+export const depreciationPostings = sqliteTable(
+  "depreciation_postings",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    assetId: integer("asset_id")
+      .notNull()
+      .references(() => fixedAssets.id, { onDelete: "restrict" }),
+    month: text("month").notNull(),
+    profileId: integer("profile_id")
+      .notNull()
+      .references(() => depreciationProfiles.id, { onDelete: "restrict" }),
+    runId: integer("run_id")
+      .notNull()
+      .references(() => depreciationRuns.id, { onDelete: "restrict" }),
+    amountMinor: integer("amount_minor").notNull(),
+  },
+  (t) => [
+    uniqueIndex("depreciation_asset_month").on(t.assetId, t.month),
+    check(
+      "depreciation_posting_amount",
+      sql`typeof("amount_minor") = 'integer' AND "amount_minor" BETWEEN 1 AND 9007199254740991`,
+    ),
+  ],
+);
+
 export const ledgerMovements = sqliteTable(
   "ledger_movements",
   {

@@ -314,6 +314,9 @@ const registeredAsset: RegisteredAsset = {
   reviewReason: null,
   reviewIssues: [],
   canAcceptSource: false,
+  postedDepreciationMinor: 0,
+  accumulatedDepreciationMinor: 0,
+  netBookValueMinor: 600000,
   version: "1",
 };
 

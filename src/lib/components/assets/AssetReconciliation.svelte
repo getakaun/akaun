@@ -140,7 +140,7 @@
   <ReportNotes
     notes={[
       "Registration does not change ledger balances. Review missing openings, source changes and unregistered purchases to explain differences.",
-      "Brought-forward depreciation is recorded at each asset’s opening date. Later manual depreciation remains unallocated; this register does not calculate current depreciation or current net book value.",
+      "Register depreciation includes opening values and posted depreciation runs as at the selected date. Manual adjustments remain reconciliation differences; projected schedule values are not posted balances.",
     ]}
   />
 </div>

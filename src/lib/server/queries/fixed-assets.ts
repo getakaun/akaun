@@ -1,3 +1,4 @@
+import { depreciationTotal } from "./depreciation.js";
 import { asc, eq, lte, sql, or, inArray } from "drizzle-orm";
 import {
   AccountType,
@@ -9,6 +10,7 @@ import type { AssetSourceSnapshot } from "$lib/fixed-assets.js";
 import {
   accounts,
   fixedAssets,
+  depreciationProfiles,
   ledgerMovements,
   ledgerRecords,
 } from "../db/schema.js";
@@ -49,6 +51,16 @@ export function assetAccountReferenceIds(db: LedgerDb): Set<number> {
     ids.add(asset.cost);
     if (asset.accumulated !== null) ids.add(asset.accumulated);
     if (asset.expense !== null) ids.add(asset.expense);
+  }
+  for (const profile of db
+    .select({
+      accumulated: depreciationProfiles.accumulatedAccountId,
+      expense: depreciationProfiles.expenseAccountId,
+    })
+    .from(depreciationProfiles)
+    .all()) {
+    ids.add(profile.accumulated);
+    ids.add(profile.expense);
   }
   return ids;
 }
@@ -185,8 +197,14 @@ export function fixedAssetRegister(db: LedgerDb, asAt: string) {
       ) ??
       bySlot.get(`${asset.sourceRecordId}:${asset.sourceSortOrder}`) ??
       null;
+    const postedDepreciationMinor = depreciationTotal(db, asset.id, asAt);
     const reviewIssues: {
-      kind: "purchase" | "cost-account" | "depreciation-account" | "opening";
+      kind:
+        | "purchase"
+        | "cost-account"
+        | "depreciation-account"
+        | "opening"
+        | "depreciation";
       message: string;
     }[] = [];
     let sourceChanged = false;
@@ -242,6 +260,15 @@ export function fixedAssetRegister(db: LedgerDb, asAt: string) {
             "Accumulated depreciation account is missing or no longer an active Asset account. Review its mapping.",
         });
     }
+    if (
+      asset.broughtForwardDepMinor + postedDepreciationMinor >
+      asset.costMinor
+    )
+      reviewIssues.push({
+        kind: "depreciation",
+        message:
+          "Posted depreciation exceeds the revised cost. Review the depreciation runs and source correction before continuing.",
+      });
     const replacementConflict =
       source !== null &&
       (source.accountId === asset.accumulatedDepreciationAccountId ||
@@ -272,6 +299,13 @@ export function fixedAssetRegister(db: LedgerDb, asAt: string) {
       reviewIssues,
       canAcceptSource,
       version: String(asset.revision),
+      postedDepreciationMinor,
+      accumulatedDepreciationMinor:
+        asset.broughtForwardDepMinor + postedDepreciationMinor,
+      netBookValueMinor:
+        asset.costMinor -
+        asset.broughtForwardDepMinor -
+        postedDepreciationMinor,
     };
   });
   const included = registered.filter(
@@ -351,7 +385,7 @@ export function fixedAssetRegister(db: LedgerDb, asAt: string) {
           .filter(
             (asset) => asset.accumulatedDepreciationAccountId === account.id,
           )
-          .map((asset) => asset.broughtForwardDepMinor),
+          .map((asset) => asset.accumulatedDepreciationMinor),
       );
       const ledgerMinor = -(balanceById.get(account.id) ?? 0);
       return {

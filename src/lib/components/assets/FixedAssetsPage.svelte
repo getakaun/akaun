@@ -13,6 +13,7 @@
   import EmptyState from "$lib/components/ui/EmptyState.svelte";
   import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
   import AssetSheet from "./AssetSheet.svelte";
+  import DepreciationMonth from "./DepreciationMonth.svelte";
   import AssetReconciliation from "./AssetReconciliation.svelte";
   import type { loadFixedAssetsPage } from "$lib/server/loaders/fixed-assets.js";
 
@@ -61,7 +62,8 @@
     if (
       requested === "registered" ||
       requested === "unregistered" ||
-      requested === "reconciliation"
+      requested === "reconciliation" ||
+      requested === "depreciation"
     )
       tab = requested;
     const movement = Number(page.url.searchParams.get("register"));
@@ -148,7 +150,7 @@
     <div class="work-main layout-standard" style="padding-top:12px;">
       <div class="toolbar">
         <div class="status-tabs" style="max-width:100%;">
-          {#each [["registered", "Registered", assets.length], ["unregistered", "Unregistered", purchases.length], ["reconciliation", "Reconciliation", null]] as [value, label, count] (value)}<button
+          {#each [["registered", "Registered", assets.length], ["unregistered", "Unregistered", purchases.length], ["reconciliation", "Reconciliation", null], ["depreciation", "Depreciation", null]] as [value, label, count] (value)}<button
               type="button"
               class="status-tab"
               class:active={tab === value}
@@ -158,30 +160,34 @@
             >{/each}
         </div>
       </div>
-      <form method="GET" class="asset-filters">
-        <span id="assets-as-at-label" class="mini-label">As at</span>
-        <div class="w-[180px]">
-          <DatePicker
-            name="asAt"
-            value={data.register.asAt}
-            labelledBy="assets-as-at-label"
-          />
-        </div>
-        <input type="hidden" name="view" value={tab} />{#if accountId}<input
-            type="hidden"
-            name="account"
-            value={accountId}
-          /><span class="mini-label"
-            >{data.register.accounts.find((account) => account.id === accountId)
-              ?.name}</span
-          ><a
-            class="clear-filters"
-            href={resolve(
-              `/(app)/assets?asAt=${data.register.asAt}&view=${tab}`,
-            )}>All accounts</a
-          >{/if}<Button variant="outline" size="sm" type="submit">Apply</Button>
-      </form>
-      {#if tab === "registered"}
+      {#if tab !== "depreciation"}<form method="GET" class="asset-filters">
+          <span id="assets-as-at-label" class="mini-label">As at</span>
+          <div class="w-[180px]">
+            <DatePicker
+              name="asAt"
+              value={data.register.asAt}
+              labelledBy="assets-as-at-label"
+            />
+          </div>
+          <input type="hidden" name="view" value={tab} />{#if accountId}<input
+              type="hidden"
+              name="account"
+              value={accountId}
+            /><span class="mini-label"
+              >{data.register.accounts.find(
+                (account) => account.id === accountId,
+              )?.name}</span
+            ><a
+              class="clear-filters"
+              href={resolve(
+                `/(app)/assets?asAt=${data.register.asAt}&view=${tab}`,
+              )}>All accounts</a
+            >{/if}<Button variant="outline" size="sm" type="submit"
+            >Apply</Button
+          >
+        </form>{/if}
+      {#if tab === "depreciation"}<DepreciationMonth />
+      {:else if tab === "registered"}
         <div class="result-meta">
           <span
             >{assets.length}
@@ -196,7 +202,9 @@
               ><tr
                 ><th>Asset</th><th>Type</th><th>Cost account</th><th
                   class="ta-right">Cost</th
-                ><th>Acquired</th><th>Review</th></tr
+                ><th class="ta-right">Net book value</th><th>Acquired</th><th
+                  >Review</th
+                ></tr
               ></thead
             ><tbody>
               {#each assets as asset (asset.id)}<tr
@@ -216,7 +224,7 @@
                         class="cell-itemnum"
                         >{assetNumber(asset.id)} · {asset.inServiceDate
                           ? `In service ${formatDate(asset.inServiceDate)}`
-                          : "Not yet in use"}</span
+                          : "In-service date not recorded"}</span
                       ></a
                     ></td
                   >
@@ -226,6 +234,8 @@
                     ><span class="amount-num"
                       >{formatMinor(asset.costMinor)}</span
                     ></td
+                  ><td class="td-amount" data-label="Net book value"
+                    >{formatMinor(asset.netBookValueMinor)}</td
                   ><td class="row-break"></td><td
                     class="td-date"
                     data-label="Acquired"
@@ -235,7 +245,7 @@
                   >
                 </tr>{/each}
               {#if assets.length === 0}<tr class="empty-row"
-                  ><td colspan="6"
+                  ><td colspan="7"
                     ><EmptyState
                       title={search
                         ? "Nothing to show"

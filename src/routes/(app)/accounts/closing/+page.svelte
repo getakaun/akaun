@@ -138,6 +138,8 @@
   /** Where each kind of item is fixed. Ids come from the server; routes stay here. */
   function itemHref(ref: ClosingItemRef): string {
     switch (ref.kind) {
+      case "depreciation":
+        return resolve(`/(app)/assets?view=depreciation&month=${ref.month}`);
       case "record":
         return resolve("/(app)/records/[id]", { id: String(ref.id) });
       case "account":

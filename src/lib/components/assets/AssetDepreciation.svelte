@@ -4,6 +4,8 @@
   import { X } from "@lucide/svelte";
   import * as Sheet from "$lib/components/ui/sheet/index.js";
   import { useIsMobile } from "$lib/hooks/useIsMobile.svelte.js";
+  import { Switch } from "$lib/components/ui/switch/index.js";
+  import "./depreciation.css";
   import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
   import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
   import "$lib/components/reports/reports.css";
@@ -341,8 +343,10 @@
       >Depreciation expense account *</label
     ><Select.Root type="single" bind:value={fields.expense}
       ><Select.Trigger id="dep-expense" class="w-full justify-between"
-        >{expenseAccounts.find((a) => String(a.id) === fields.expense)?.name ??
-          "Choose expense account"}</Select.Trigger
+        ><span class="truncate"
+          >{expenseAccounts.find((a) => String(a.id) === fields.expense)
+            ?.name ?? "Choose expense account"}</span
+        ></Select.Trigger
       ><Select.Content
         >{#each expenseAccounts as account (account.id)}<Select.Item
             value={String(account.id)}
@@ -354,222 +358,232 @@
 {/snippet}
 
 <section class="detail-card" aria-labelledby="depreciation-title">
-  <div class="detail-card-head">
+  <div class="detail-card-head depreciation-card-head">
     <h2 id="depreciation-title" class="detail-card-title">Depreciation</h2>
     <StatusBadge {status} />
   </div>
-  <div class="detail-list">
-    <div class="detail-row">
-      <span class="detail-key">Original cost</span><span class="detail-val"
-        >{formatMinor(data.asset.costMinor)}</span
-      >
+  <div class="depreciation-card-body">
+    <div class="detail-list">
+      <div class="detail-row">
+        <span class="detail-key">Original cost</span><span class="detail-val"
+          >{formatMinor(data.asset.costMinor)}</span
+        >
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Accumulated depreciation</span><span
+          class="detail-val">{formatMinor(data.accumulatedMinor)}</span
+        >
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Net book value · {data.asAt}</span><span
+          class="detail-val">{formatMinor(data.nbvMinor)}</span
+        >
+      </div>
     </div>
-    <div class="detail-row">
-      <span class="detail-key">Accumulated depreciation</span><span
-        class="detail-val">{formatMinor(data.accumulatedMinor)}</span
-      >
-    </div>
-    <div class="detail-row">
-      <span class="detail-key">Net book value · {data.asAt}</span><span
-        class="detail-val">{formatMinor(data.nbvMinor)}</span
-      >
-    </div>
-  </div>
-  {#if data.asset.reviewReason}<p class="hint">
-      Resolve the asset review before posting depreciation.
-    </p>{/if}
-  {#if data.postingIssue}<p class="hint">{data.postingIssue}</p>{/if}
-  {#if data.scheduleReviewReason}<p class="hint">
-      {data.scheduleReviewReason}
-    </p>{/if}
-  {#if data.reconciliation?.differenceMinor}
-    <ReportNotes
-      notes={[
-        `${data.reconciliation.name}: ledger ${formatMinor(data.reconciliation.ledgerMinor)}, explained by assets ${formatMinor(data.reconciliation.explainedMinor)}, difference ${formatMinor(data.reconciliation.differenceMinor)}. Review existing journals and link the amount belonging to this asset before posting again.`,
-      ]}
-      firstIsWarning
-    />
-  {/if}
-  {#if data.reconciliation?.differenceMinor}<a
-      class="detail-card-action"
-      href={resolve("/(app)/records")}>Review existing records</a
-    >{/if}
-  {#if data.allocations.length}
-    <details>
-      <summary class="detail-card-action"
-        >Linked manual depreciation ({data.allocations.length})</summary
-      >
-      {#each data.allocations as allocation (allocation.id)}
-        <div class="detail-row">
-          <a
-            class="detail-card-action"
-            href={resolve("/(app)/records/[id]", {
-              id: String(allocation.recordId),
-            })}
-            >{allocation.fromMonth}–{allocation.throughMonth} · {formatMinor(
-              allocation.amountMinor,
-            )}</a
-          >
-          {#if data.canConfigure && !data.history.length}<button
+    {#if data.asset.reviewReason}<p class="hint">
+        Resolve the asset review before posting depreciation.
+      </p>{/if}
+    {#if data.postingIssue}<p class="hint">{data.postingIssue}</p>{/if}
+    {#if data.scheduleReviewReason}<p class="hint">
+        {data.scheduleReviewReason}
+      </p>{/if}
+    {#if data.reconciliation?.differenceMinor}
+      <ReportNotes
+        notes={[
+          `${data.reconciliation.name}: ledger ${formatMinor(data.reconciliation.ledgerMinor)}, explained by assets ${formatMinor(data.reconciliation.explainedMinor)}, difference ${formatMinor(data.reconciliation.differenceMinor)}. Review existing journals and link the amount belonging to this asset before posting again.`,
+        ]}
+        firstIsWarning
+      />
+    {/if}
+    {#if data.reconciliation?.differenceMinor}<a
+        class="detail-card-action"
+        href={resolve("/(app)/records")}>Review existing records</a
+      >{/if}
+    {#if data.allocations.length}
+      <details class="depreciation-disclosure">
+        <summary>Linked manual depreciation ({data.allocations.length})</summary
+        >
+        <div class="depreciation-disclosure-body depreciation-allocation-list">
+          {#each data.allocations as allocation (allocation.id)}
+            <div class="detail-row">
+              <a
+                class="detail-card-action"
+                href={resolve("/(app)/records/[id]", {
+                  id: String(allocation.recordId),
+                })}
+                >{allocation.fromMonth}–{allocation.throughMonth} · {formatMinor(
+                  allocation.amountMinor,
+                )}</a
+              >
+              {#if data.canConfigure && !data.history.length}<button
+                  type="button"
+                  class="detail-card-action"
+                  disabled={disabled || saving}
+                  onclick={() => {
+                    removeAllocation = allocation.id;
+                    removeOpen = true;
+                  }}>Remove link</button
+                >{/if}
+            </div>
+          {/each}
+        </div>
+      </details>
+    {/if}
+    {#if data.profiles.length}
+      <p class="hint">
+        Straight line · Full monthly charges · {data.profiles.at(-1)?.mode ===
+        "auto"
+          ? "Auto-post monthly after month end"
+          : "Review before posting"}{data.profiles.at(-1)?.stoppedFrom
+          ? ` · Stopped from ${data.profiles.at(-1)?.stoppedFrom}`
+          : ""}
+      </p>
+      <details class="depreciation-disclosure" bind:open={scheduleOpen}>
+        <summary>View schedule and posting history</summary>
+        <div class="depreciation-disclosure-body">
+          <div class="schedule-scroll">
+            <table class="rep-table">
+              <thead
+                ><tr
+                  ><th>Month</th><th class="rep-amount">Charge</th><th
+                    class="rep-amount">Projected NBV</th
+                  ><th>Status</th></tr
+                ></thead
+              ><tbody>
+                {#each showAll ? data.rows : data.rows.slice(0, 12) as row (`${row.profile.id}-${row.month}`)}<tr
+                    ><td>{row.month}</td><td class="rep-amount"
+                      >{formatMinor(row.amountMinor)}</td
+                    ><td class="rep-amount"
+                      >{formatMinor(row.projectedNbvMinor)}</td
+                    ><td
+                      >{#if row.recordId}<a
+                          class="detail-card-action"
+                          href={resolve("/(app)/records/[id]", {
+                            id: String(row.recordId),
+                          })}
+                          ><StatusBadge
+                            status={`depreciation-${row.status.toLowerCase().replaceAll(" ", "-")}`}
+                          /></a
+                        >{:else}<StatusBadge
+                          status={`depreciation-${row.status.toLowerCase().replaceAll(" ", "-")}`}
+                        />{/if}</td
+                    ></tr
+                  >{/each}
+              </tbody>
+            </table>
+          </div>
+          {#if data.rows.length > 12}<button
               type="button"
-              class="detail-card-action"
-              disabled={disabled || saving}
-              onclick={() => {
-                removeAllocation = allocation.id;
-                removeOpen = true;
-              }}>Remove link</button
+              class="list-expand-btn"
+              onclick={() => (showAll = !showAll)}
+              >{showAll
+                ? "Show fewer months"
+                : `Show all ${data.rows.length} months`}</button
             >{/if}
         </div>
-      {/each}
-    </details>
-  {/if}
-  {#if data.profiles.length}
-    <p class="hint">
-      Straight line · Full monthly charges · {data.profiles.at(-1)?.mode ===
-      "auto"
-        ? "Auto-post monthly after month end"
-        : "Review before posting"}{data.profiles.at(-1)?.stoppedFrom
-        ? ` · Stopped from ${data.profiles.at(-1)?.stoppedFrom}`
-        : ""}
-    </p>
-    <details bind:open={scheduleOpen}>
-      <summary class="detail-card-action"
-        >View schedule and posting history</summary
-      >
-      <div class="schedule-scroll">
-        <table class="rep-table">
-          <thead
-            ><tr
-              ><th>Month</th><th class="rep-amount">Charge</th><th
-                class="rep-amount">Projected NBV</th
-              ><th>Status</th></tr
-            ></thead
-          ><tbody>
-            {#each showAll ? data.rows : data.rows.slice(0, 12) as row (`${row.profile.id}-${row.month}`)}<tr
-                ><td>{row.month}</td><td class="rep-amount"
-                  >{formatMinor(row.amountMinor)}</td
-                ><td class="rep-amount">{formatMinor(row.projectedNbvMinor)}</td
-                ><td
-                  >{#if row.recordId}<a
-                      class="detail-card-action"
-                      href={resolve("/(app)/records/[id]", {
-                        id: String(row.recordId),
-                      })}
-                      ><StatusBadge
-                        status={`depreciation-${row.status.toLowerCase().replaceAll(" ", "-")}`}
-                      /></a
-                    >{:else}<StatusBadge
-                      status={`depreciation-${row.status.toLowerCase().replaceAll(" ", "-")}`}
-                    />{/if}</td
-                ></tr
-              >{/each}
-          </tbody>
-        </table>
-      </div>
-      {#if data.rows.length > 12}<button
-          type="button"
-          class="list-expand-btn"
-          onclick={() => (showAll = !showAll)}
-          >{showAll
-            ? "Show fewer months"
-            : `Show all ${data.rows.length} months`}</button
-        >{/if}
-    </details>
-    <p class="hint">
-      Register balances include opening values, linked manual journals and
-      posted runs. Projected values follow the schedule. Stopping depreciation
-      does not record a disposal.
-    </p>
-  {:else}<p class="card-empty">
-      Set up a straight-line schedule when the asset is ready for use.
-    </p>{/if}
-  <div class="depreciation-actions">
-    {#if data.canConfigure}
-      {#if data.asset.reviewReason}<Button
-          size="sm"
-          href="#asset-review"
-          disabled={disabled || saving}>Review asset</Button
-        >
-      {:else if data.reconciliation?.differenceMinor && data.history.length}<Button
-          size="sm"
-          href={resolve("/(app)/records")}
-          disabled={disabled || saving}>Review manual adjustments</Button
-        >
-      {:else if needsAttention}<Button
-          size="sm"
-          disabled={disabled || saving}
-          onclick={() =>
-            begin(
-              data.reconciliation?.differenceMinor
-                ? "manual"
-                : data.postingIssue?.includes("closed") &&
-                    !data.scheduleReviewReason
-                  ? "catch-up"
-                  : "configure",
-            )}>Resolve depreciation</Button
-        >
-      {:else if !latest}<Button
-          size="sm"
-          disabled={disabled || saving}
-          onclick={() => begin("configure")}>Set up depreciation</Button
-        >
-      {:else if data.historyReview.length}<Button
-          size="sm"
-          disabled={disabled || saving}
-          onclick={() => begin("catch-up")}>Review missed months</Button
-        >
-      {:else if latest.stoppedFrom || !pending}<Button
-          size="sm"
-          variant="outline"
-          onclick={() => {
-            scheduleOpen = true;
-            showAll = true;
-          }}>View history</Button
-        >
-      {:else if latest.mode === "review"}<Button
-          size="sm"
-          href={resolve("/(app)/assets?view=depreciation")}
-          >Review monthly depreciation</Button
-        >{/if}
-    {/if}
-    <a
-      class="detail-card-action"
-      href={resolve("/(app)/assets?view=depreciation")}>All monthly runs</a
-    >
-  </div>
-  {#if data.canConfigure}<details>
-      <summary class="detail-card-action">Manage depreciation</summary>
-      <div class="depreciation-actions">
-        {#if data.profiles.length}<Button
+      </details>
+      <p class="hint">
+        Register balances include opening values, linked manual journals and
+        posted runs. Projected values follow the schedule. Stopping depreciation
+        does not record a disposal.
+      </p>
+    {:else}<p class="card-empty">
+        Set up a straight-line schedule when the asset is ready for use.
+      </p>{/if}
+    <div class="depreciation-actions">
+      {#if data.canConfigure}
+        {#if data.asset.reviewReason}<Button
             size="sm"
-            variant="outline"
-            disabled={disabled || saving || !!data.asset.reviewReason}
-            onclick={() => begin("configure")}>Change remaining schedule</Button
+            href="#asset-review"
+            disabled={disabled || saving}>Review asset</Button
           >
-          <Button
+        {:else if data.reconciliation?.differenceMinor && data.history.length}<Button
             size="sm"
-            variant="outline"
+            href={resolve("/(app)/records")}
+            disabled={disabled || saving}>Review manual adjustments</Button
+          >
+        {:else if needsAttention}<Button
+            size="sm"
             disabled={disabled || saving}
-            onclick={() => begin("stop")}>Stop future depreciation</Button
-          >{/if}
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={disabled || saving || !!data.history.length}
-          onclick={() => begin("manual")}
-          >Link existing manual depreciation</Button
-        >
-        {#if data.rows.some((r) => r.status === "Unposted")}<Button
+            onclick={() =>
+              begin(
+                data.reconciliation?.differenceMinor
+                  ? "manual"
+                  : data.postingIssue?.includes("closed") &&
+                      !data.scheduleReviewReason
+                    ? "catch-up"
+                    : "configure",
+              )}>Resolve depreciation</Button
+          >
+        {:else if !latest}<Button
             size="sm"
-            variant="outline"
+            disabled={disabled || saving}
+            onclick={() => begin("configure")}>Set up depreciation</Button
+          >
+        {:else if data.historyReview.length}<Button
+            size="sm"
             disabled={disabled || saving}
             onclick={() => begin("catch-up")}>Review missed months</Button
+          >
+        {:else if latest.stoppedFrom || !pending || !data.hasDue}<Button
+            size="sm"
+            variant="outline"
+            onclick={() => {
+              scheduleOpen = true;
+              showAll = true;
+            }}
+            >{latest.stoppedFrom || !pending
+              ? "View history"
+              : "View schedule"}</Button
+          >
+        {:else if latest.mode === "review"}<Button
+            size="sm"
+            href={resolve("/(app)/assets?view=depreciation")}
+            >Review monthly depreciation</Button
           >{/if}
-      </div>
-    </details>{/if}
-  {#if disabled}<p class="hint">
-      Save or discard asset detail edits before changing depreciation.
-    </p>{/if}
+      {/if}
+      <a
+        class="detail-card-action"
+        href={resolve("/(app)/assets?view=depreciation")}>All monthly runs</a
+      >
+    </div>
+    {#if data.canConfigure}<details class="depreciation-disclosure">
+        <summary>Manage depreciation</summary>
+        <div class="depreciation-disclosure-body">
+          <div class="depreciation-actions">
+            {#if data.profiles.length}<Button
+                size="sm"
+                variant="outline"
+                disabled={disabled || saving || !!data.asset.reviewReason}
+                onclick={() => begin("configure")}
+                >Change remaining schedule</Button
+              >
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={disabled || saving}
+                onclick={() => begin("stop")}>Stop future depreciation</Button
+              >{/if}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={disabled || saving || !!data.history.length}
+              onclick={() => begin("manual")}
+              >Link existing manual depreciation</Button
+            >
+            {#if data.rows.some((r) => r.status === "Unposted")}<Button
+                size="sm"
+                variant="outline"
+                disabled={disabled || saving}
+                onclick={() => begin("catch-up")}>Review missed months</Button
+              >{/if}
+          </div>
+        </div>
+      </details>{/if}
+    {#if disabled}<p class="hint">
+        Save or discard asset detail edits before changing depreciation.
+      </p>{/if}
+  </div>
 </section>
 
 <Sheet.Root
@@ -619,6 +633,7 @@
     </div>
     <form
       class="depreciation-sheet-form"
+      aria-busy={saving}
       onsubmit={(event) => {
         event.preventDefault();
         void request(
@@ -635,7 +650,7 @@
       }}
     >
       <div class="sheet-body">
-        <p class="field-hint">
+        <p class="depreciation-intro">
           {action === "stop"
             ? "This stops future scheduled charges. It does not dispose of the asset or reverse posted entries."
             : action === "catch-up"
@@ -647,7 +662,7 @@
         {#if error}<div class="depreciation-error" role="alert">
             <ReportNotes notes={[error]} firstIsWarning />
           </div>{/if}
-        <fieldset disabled={saving}>
+        <fieldset class="depreciation-fields" disabled={saving}>
           {#if action === "stop"}<div class="field">
               <span class="field-label" id="dep-stop-month"
                 >Stop from month</span
@@ -714,9 +729,11 @@
                   manualThrough = c?.date.slice(0, 7) ?? "";
                 }}
                 ><Select.Trigger id="dep-manual" class="w-full justify-between"
-                  >{manualCandidate
-                    ? `${manualCandidate.date} · ${manualCandidate.description}`
-                    : "Choose existing depreciation journal"}</Select.Trigger
+                  ><span class="truncate"
+                    >{manualCandidate
+                      ? `${manualCandidate.date} · ${manualCandidate.description}`
+                      : "Choose existing depreciation journal"}</span
+                  ></Select.Trigger
                 ><Select.Content
                   >{#each data.manualCandidates as c (c.key)}<Select.Item
                       value={c.key}
@@ -780,84 +797,116 @@
               />
             </div>
           {:else if preview}
+            <dl class="detail-list depreciation-summary">
+              <div class="detail-row">
+                <dt class="detail-key">Remaining book value</dt>
+                <dd class="detail-val">{formatMinor(preview.baseNbvMinor)}</dd>
+              </div>
+              <div class="detail-row">
+                <dt class="detail-key">Residual value</dt>
+                <dd class="detail-val">
+                  {formatMinor(approvedSettings?.residualMinor ?? 0)}
+                </dd>
+              </div>
+              <div class="detail-row">
+                <dt class="detail-key">Monthly charge</dt>
+                <dd class="detail-val">
+                  {formatMinor(preview.schedule[0]?.amountMinor ?? 0)}
+                </dd>
+              </div>
+              <div class="detail-row">
+                <dt class="detail-key">Final month</dt>
+                <dd class="detail-val">{preview.schedule.at(-1)?.month}</dd>
+              </div>
+              <div class="detail-row">
+                <dt class="detail-key">Final book value</dt>
+                <dd class="detail-val">
+                  {formatMinor(preview.schedule.at(-1)?.projectedNbvMinor ?? 0)}
+                </dd>
+              </div>
+            </dl>
             <p class="hint">
-              Remaining net book value: {formatMinor(preview.baseNbvMinor)} · Residual:
-              {formatMinor(approvedSettings?.residualMinor ?? 0)} · {approvedSettings?.mode ===
-              "auto"
-                ? "Future months will post automatically after month end"
-                : "Review before posting each monthly run"}.
+              {approvedSettings?.mode === "auto"
+                ? "Future months will post automatically after month end."
+                : "Review before posting each monthly run."}
             </p>
-            <p class="hint">
-              {accounts.find((a) => a.id === approvedSettings?.expenseAccountId)
-                ?.name} → {accounts.find(
-                (a) => a.id === approvedSettings?.accumulatedAccountId,
-              )?.name ?? preview.accountPlan.name}
-              {preview.accountPlan.create ? " (created on approval)" : ""}
-            </p>
-            <p class="hint">
-              Monthly charge: {formatMinor(
-                preview.schedule[0]?.amountMinor ?? 0,
-              )} · Final month: {preview.schedule.at(-1)?.month} · Final book value:
-              {formatMinor(preview.schedule.at(-1)?.projectedNbvMinor ?? 0)}
-            </p>
-            {#if preview.history.count}
-              <p class="field-label">
-                {preview.history.count} missed months · {preview.history
-                  .from}–{preview.history.through} · {formatMinor(
-                  preview.history.totalMinor,
-                )}
-              </p>
-              <label class="field-hint"
-                ><input
-                  type="radio"
-                  name="dep-history"
-                  checked={!postHistory}
-                  onchange={() => (postHistory = false)}
-                /> Save setup; review missed months later</label
-              >
-              <label class="field-hint"
-                ><input
-                  type="radio"
-                  name="dep-history"
-                  checked={postHistory}
-                  onchange={() => (postHistory = true)}
-                  disabled={!!preview.history.closedMonths.length}
-                /> Approve and post missed months now</label
-              >
-              {#if preview.history.closedMonths.length}<ReportNotes
-                  notes={[
-                    `Closed months: ${preview.history.closedMonths.join(", ")}. You can save setup now and reopen these months before posting.`,
-                  ]}
-                  firstIsWarning
-                />{:else}<p class="hint">
-                  Already recorded depreciation? Go back and link the existing
-                  journals first.
-                </p>{/if}
+            <div class="depreciation-account-summary">
+              <p class="field-label">Posting accounts</p>
               <p class="hint">
-                Automatic posting waits until earlier missed months are
-                resolved.
+                {accounts.find(
+                  (a) => a.id === approvedSettings?.expenseAccountId,
+                )?.name} → {accounts.find(
+                  (a) => a.id === approvedSettings?.accumulatedAccountId,
+                )?.name ?? preview.accountPlan.name}{preview.accountPlan.create
+                  ? " (created on approval)"
+                  : ""}
               </p>
+            </div>
+            {#if preview.history.count}
+              <div
+                class="depreciation-choices"
+                role="radiogroup"
+                aria-labelledby="dep-history-label"
+              >
+                <p class="field-label" id="dep-history-label">
+                  {preview.history.count} missed months · {preview.history
+                    .from}–{preview.history.through} · {formatMinor(
+                    preview.history.totalMinor,
+                  )}
+                </p>
+                <label class="depreciation-choice"
+                  ><input
+                    type="radio"
+                    name="dep-history"
+                    checked={!postHistory}
+                    onchange={() => (postHistory = false)}
+                  /><span>Save setup; review missed months later</span></label
+                >
+                <label class="depreciation-choice"
+                  ><input
+                    type="radio"
+                    name="dep-history"
+                    checked={postHistory}
+                    onchange={() => (postHistory = true)}
+                    disabled={!!preview.history.closedMonths.length}
+                  /><span>Approve and post missed months now</span></label
+                >
+                {#if preview.history.closedMonths.length}<ReportNotes
+                    notes={[
+                      `Closed months: ${preview.history.closedMonths.join(", ")}. You can save setup now and reopen these months before posting.`,
+                    ]}
+                    firstIsWarning
+                  />{:else}<p class="hint">
+                    Already recorded depreciation? Go back and link the existing
+                    journals first.
+                  </p>{/if}
+                <p class="hint">
+                  Automatic posting waits until earlier missed months are
+                  resolved.
+                </p>
+              </div>
             {/if}
-            <details>
-              <summary class="detail-card-action">View full schedule</summary>
-              <div class="schedule-scroll">
-                <table class="rep-table">
-                  <thead
-                    ><tr
-                      ><th>Month</th><th class="rep-amount">Depreciation</th><th
-                        >Projected NBV</th
-                      ></tr
-                    ></thead
-                  ><tbody
-                    >{#each preview.schedule as row (row.month)}<tr
-                        ><td>{row.month}</td><td class="rep-amount"
-                          >{formatMinor(row.amountMinor)}</td
-                        ><td class="rep-amount"
-                          >{formatMinor(row.projectedNbvMinor)}</td
-                        ></tr
-                      >{/each}</tbody
-                  >
-                </table>
+            <details class="depreciation-disclosure">
+              <summary>View full schedule</summary>
+              <div class="depreciation-disclosure-body">
+                <div class="schedule-scroll">
+                  <table class="rep-table">
+                    <thead
+                      ><tr
+                        ><th>Month</th><th class="rep-amount">Depreciation</th
+                        ><th class="rep-amount">Projected NBV</th></tr
+                      ></thead
+                    ><tbody
+                      >{#each preview.schedule as row (row.month)}<tr
+                          ><td>{row.month}</td><td class="rep-amount"
+                            >{formatMinor(row.amountMinor)}</td
+                          ><td class="rep-amount"
+                            >{formatMinor(row.projectedNbvMinor)}</td
+                          ></tr
+                        >{/each}</tbody
+                    >
+                  </table>
+                </div>
               </div>
             </details>
           {:else}
@@ -884,59 +933,70 @@
               />
             </div>
             {#if !data.defaults.expenseAccountId && !data.asset.depreciationExpenseAccountId}{@render expensePicker()}{/if}
-            <div class="field">
-              <label class="field-hint"
-                ><input
-                  type="checkbox"
-                  checked={fields.mode === "auto"}
-                  onchange={(e) =>
-                    (fields.mode = e.currentTarget.checked ? "auto" : "review")}
-                /> Auto-post monthly after month end</label
-              >
-            </div>
-            <details bind:open={advanced}>
-              <summary class="detail-card-action">More options</summary>
-              <p class="hint">
-                Cost account: {accounts.find(
-                  (a) => a.id === data.asset.assetAccountId,
-                )?.name} (from the purchase). Accumulated depreciation is kept separately
-                so the original asset cost stays visible.
-              </p>
-              <div class="field">
-                <label class="field-label" for="dep-residual"
-                  >Residual value</label
-                ><Input
-                  id="dep-residual"
-                  bind:value={fields.residual}
-                  inputmode="decimal"
-                />
+            <div class="depreciation-toggle">
+              <div>
+                <label class="field-label" for="dep-auto"
+                  >Auto-post monthly</label
+                >
+                <p class="field-hint">Post completed months automatically.</p>
               </div>
-              {#if data.defaults.expenseAccountId || data.asset.depreciationExpenseAccountId}{@render expensePicker()}{/if}
-              {#if !data.canCreateAccount && !fields.accumulated}<p
-                  class="hint"
-                >
-                  Choose an existing accumulated-depreciation account. Your
-                  permissions do not allow creating one automatically.
-                </p>{/if}
-              <div class="field">
-                <label class="field-label" for="dep-accum"
-                  >Accumulated depreciation account</label
-                ><Select.Root type="single" bind:value={fields.accumulated}
-                  ><Select.Trigger id="dep-accum" class="w-full justify-between"
-                    >{accumulatedAccounts.find(
-                      (a) => String(a.id) === fields.accumulated,
-                    )?.name ??
-                      "Use saved mapping or create automatically"}</Select.Trigger
-                  ><Select.Content
-                    ><Select.Item
-                      value=""
-                      label="Use saved mapping or create automatically"
-                    />{#each accumulatedAccounts as account (account.id)}<Select.Item
-                        value={String(account.id)}
-                        label={account.name}
-                      />{/each}</Select.Content
-                  ></Select.Root
-                >
+              <Switch
+                id="dep-auto"
+                checked={fields.mode === "auto"}
+                onCheckedChange={(checked) =>
+                  (fields.mode = checked ? "auto" : "review")}
+                disabled={saving}
+              />
+            </div>
+            <details class="depreciation-disclosure" bind:open={advanced}>
+              <summary>More options</summary>
+              <div class="depreciation-disclosure-body">
+                <p class="hint">
+                  Cost account: {accounts.find(
+                    (a) => a.id === data.asset.assetAccountId,
+                  )?.name} (from the purchase). Accumulated depreciation is kept separately
+                  so the original asset cost stays visible.
+                </p>
+                <div class="field">
+                  <label class="field-label" for="dep-residual"
+                    >Residual value</label
+                  ><Input
+                    id="dep-residual"
+                    bind:value={fields.residual}
+                    inputmode="decimal"
+                  />
+                </div>
+                {#if data.defaults.expenseAccountId || data.asset.depreciationExpenseAccountId}{@render expensePicker()}{/if}
+                {#if !data.canCreateAccount && !fields.accumulated}<p
+                    class="hint"
+                  >
+                    Choose an existing accumulated-depreciation account. Your
+                    permissions do not allow creating one automatically.
+                  </p>{/if}
+                <div class="field">
+                  <label class="field-label" for="dep-accum"
+                    >Accumulated depreciation account</label
+                  ><Select.Root type="single" bind:value={fields.accumulated}
+                    ><Select.Trigger
+                      id="dep-accum"
+                      class="w-full justify-between"
+                      ><span class="truncate"
+                        >{accumulatedAccounts.find(
+                          (a) => String(a.id) === fields.accumulated,
+                        )?.name ??
+                          "Use saved mapping or create automatically"}</span
+                      ></Select.Trigger
+                    ><Select.Content
+                      ><Select.Item
+                        value=""
+                        label="Use saved mapping or create automatically"
+                      />{#each accumulatedAccounts as account (account.id)}<Select.Item
+                          value={String(account.id)}
+                          label={account.name}
+                        />{/each}</Select.Content
+                    ></Select.Root
+                  >
+                </div>
               </div>
             </details>
             {#if data.profiles.length}<div class="field">
@@ -953,7 +1013,7 @@
         </fieldset>
       </div>
       <footer class="sheet-foot">
-        <div class="sheet-foot-actions">
+        <div class="sheet-foot-actions depreciation-footer-actions">
           <button
             type="button"
             class="sheet-btn"
@@ -966,7 +1026,7 @@
               onclick={() => {
                 preview = null;
                 approvedSettings = null;
-              }}>Back to settings</button
+              }}>Back</button
             >{/if}<button
             class="sheet-btn sheet-btn-primary"
             type="submit"
@@ -1016,22 +1076,6 @@
 />
 
 <style>
-  fieldset {
-    border: 0;
-    padding: 0;
-    margin: 16px 0 0;
-    min-width: 0;
-  }
-  .depreciation-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 14px;
-  }
-  .schedule-scroll {
-    overflow-x: auto;
-    margin-top: 12px;
-  }
   .sheet-head {
     display: flex;
     align-items: flex-start;
@@ -1046,6 +1090,7 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
+    min-width: 0;
     overflow: hidden;
   }
   .sheet-body {
@@ -1053,11 +1098,8 @@
     min-height: 0;
     overflow-y: auto;
     padding: 20px 22px;
-  }
-  .depreciation-error {
-    margin-top: 12px;
-  }
-  .sheet-foot-actions {
-    flex-wrap: wrap;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
   }
 </style>

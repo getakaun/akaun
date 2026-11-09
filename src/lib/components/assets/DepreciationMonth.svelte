@@ -1,4 +1,5 @@
 <script lang="ts">
+  import "./depreciation.css";
   import { untrack } from "svelte";
   import { page } from "$app/state";
   import { Dialog } from "bits-ui";
@@ -175,6 +176,9 @@
           bind:value={month}
           labelledBy="depreciation-month-label"
           disabled={saving}
+          onchange={() => {
+            notice = "";
+          }}
           max={shiftMonth(localToday().slice(0, 7), -1)}
         />
       </div>
@@ -214,74 +218,80 @@
             variant="outline"
             disabled={saving}
             onclick={() => {
+              notice = "";
               if (data) month = data.unpostedMonths[0];
             }}>Review earliest month · {data.unpostedMonths[0]}</Button
           >{/if}
       </div>{/if}
     {#if loading}<div class="depreciation-feedback">
-        <p class="card-empty" role="status">Loading depreciation…</p>
+        <p class="depreciation-loading" role="status">Loading depreciation…</p>
       </div>
     {:else if data}
-      <table class="exp-table">
-        <thead
-          ><tr
-            ><th>Asset</th><th class="ta-right">Depreciation</th><th>Status</th
-            ><th>Review</th></tr
-          ></thead
-        >
-        <tbody
-          >{#each data.rows as row (row.assetId)}
-            <tr
-              class="exp-row"
-              onclick={(event) => {
-                if (!(event.target as HTMLElement).closest("a,button"))
-                  void goto(
-                    resolve("/(app)/assets/[id]", { id: String(row.assetId) }),
-                  );
-              }}
-            >
-              <td class="td-primary" data-label="Asset"
-                ><a
-                  class="cell-item row-link"
-                  href={resolve("/(app)/assets/[id]", {
-                    id: String(row.assetId),
-                  })}><span class="cell-itemname">{row.name}</span></a
-                ></td
+      <div class="depreciation-table-scroll">
+        <table class="exp-table">
+          <thead
+            ><tr
+              ><th>Asset</th><th class="ta-right">Depreciation</th><th
+                >Status</th
+              ><th>Review</th></tr
+            ></thead
+          >
+          <tbody
+            >{#each data.rows as row (row.assetId)}
+              <tr
+                class="exp-row"
+                onclick={(event) => {
+                  if (!(event.target as HTMLElement).closest("a,button"))
+                    void goto(
+                      resolve("/(app)/assets/[id]", {
+                        id: String(row.assetId),
+                      }),
+                    );
+                }}
               >
-              <td class="td-amount" data-label="Depreciation"
-                ><span class="amount-num">{formatMinor(row.amountMinor)}</span
-                ></td
-              ><td class="row-break"></td>
-              <td data-label="Status"
-                ><StatusBadge
-                  status={row.blocked
-                    ? "asset-review"
-                    : `depreciation-${row.status.toLowerCase().replaceAll(" ", "-")}`}
-                /></td
-              >
-              <td data-label="Review"
-                >{#if row.blocked}<span class="depreciation-warning"
-                    >{row.blocked}</span
-                  >{:else if row.recordId}<a
-                    class="detail-card-action"
-                    href={resolve("/(app)/records/[id]", {
-                      id: String(row.recordId),
-                    })}>View journal</a
-                  >{:else if row.amountMinor === 0}No charge due{:else}{row.automationWarning ??
-                    "Ready"}{/if}</td
-              >
-            </tr>
-          {:else}<tr class="empty-row"
-              ><td colspan="4"
-                ><EmptyState
-                  title="No approved charges"
-                  sub="Open an asset to set up its depreciation schedule, or choose a month with unposted charges."
-                /></td
-              ></tr
-            >{/each}</tbody
-        >
-      </table>
-      <div class="table-foot">
+                <td class="td-primary" data-label="Asset"
+                  ><a
+                    class="cell-item row-link"
+                    href={resolve("/(app)/assets/[id]", {
+                      id: String(row.assetId),
+                    })}><span class="cell-itemname">{row.name}</span></a
+                  ></td
+                >
+                <td class="td-amount" data-label="Depreciation"
+                  ><span class="amount-num">{formatMinor(row.amountMinor)}</span
+                  ></td
+                ><td class="row-break"></td>
+                <td data-label="Status"
+                  ><StatusBadge
+                    status={row.blocked
+                      ? "asset-review"
+                      : `depreciation-${row.status.toLowerCase().replaceAll(" ", "-")}`}
+                  /></td
+                >
+                <td class="depreciation-review" data-label="Review"
+                  >{#if row.blocked}<span class="depreciation-warning"
+                      >{row.blocked}</span
+                    >{:else if row.recordId}<a
+                      class="detail-card-action"
+                      href={resolve("/(app)/records/[id]", {
+                        id: String(row.recordId),
+                      })}>View journal</a
+                    >{:else if row.amountMinor === 0}No charge due{:else}{row.automationWarning ??
+                      "Ready"}{/if}</td
+                >
+              </tr>
+            {:else}<tr class="empty-row"
+                ><td colspan="4"
+                  ><EmptyState
+                    title="No approved charges"
+                    sub="Open an asset to set up its depreciation schedule, or choose a month with unposted charges."
+                  /></td
+                ></tr
+              >{/each}</tbody
+          >
+        </table>
+      </div>
+      <div class="depreciation-table-foot">
         <span
           >{data.rows.length} scheduled {data.rows.length === 1
             ? "asset"
@@ -335,7 +345,7 @@
   }}
   ><Dialog.Portal
     ><Dialog.Overlay class="fixed inset-0 z-50 bg-black/35" /><Dialog.Content
-      class="bg-popover text-popover-foreground fixed top-1/2 left-1/2 z-50 w-[min(95vw,500px)] -translate-x-1/2 -translate-y-1/2 rounded-lg border p-5 shadow-lg"
+      class="bg-popover text-popover-foreground fixed top-1/2 left-1/2 z-50 max-h-[calc(100dvh-32px)] w-[min(95vw,500px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border p-5 shadow-lg"
       onEscapeKeydown={(e) => {
         if (saving) e.preventDefault();
       }}
@@ -350,12 +360,14 @@
         schedule is approved.</Dialog.Description
       >
       <form
+        class="depreciation-reversal-form depreciation-fields"
+        aria-busy={saving}
         onsubmit={(e) => {
           e.preventDefault();
           void reverse();
         }}
       >
-        <div class="field mt-4">
+        <div class="field">
           <span id="dep-reversal-month" class="field-label"
             >Correction month *</span
           ><MonthPicker
@@ -375,10 +387,10 @@
             disabled={saving}
           />
         </div>
-        {#if reversalError}<p role="alert" class="text-destructive text-sm">
-            {reversalError}
-          </p>{/if}
-        <div class="mt-4 flex justify-end gap-2">
+        {#if reversalError}<div role="alert">
+            <ReportNotes notes={[reversalError]} firstIsWarning />
+          </div>{/if}
+        <div class="depreciation-reversal-actions">
           <Button
             variant="outline"
             size="sm"
@@ -398,9 +410,17 @@
 
 <style>
   .depreciation-workspace {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 16px;
+    padding-bottom: 24px;
+  }
+  .depreciation-workspace > section {
+    flex-shrink: 0;
   }
   .depreciation-month-filter {
     width: 180px;
@@ -409,19 +429,83 @@
   .depreciation-toolbar {
     padding: 12px 16px;
   }
+  .depreciation-toolbar > .rep-block-sub {
+    margin: 0;
+  }
   .depreciation-feedback {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    gap: 10px;
+    align-items: flex-start;
+    gap: 12px;
     padding: 12px 16px;
+  }
+  .depreciation-feedback :global(.rep-notes) {
+    flex: 1 1 260px;
+    min-width: 0;
+  }
+  .depreciation-loading {
+    font-size: 12.5px;
+    color: var(--muted-foreground);
+    margin: 0;
+  }
+  .depreciation-table-scroll {
+    overflow-x: auto;
+    min-width: 0;
+  }
+  .depreciation-table-foot {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 6px 16px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--muted-foreground);
+  }
+  .depreciation-review {
+    min-width: 180px;
+    max-width: 360px;
+    overflow-wrap: anywhere;
+    font-size: 12.5px;
+    line-height: 1.5;
   }
   .depreciation-warning {
     color: var(--amber);
   }
   .depreciation-run {
+    align-items: center;
+    justify-content: space-between;
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 12px;
+  }
+  .depreciation-run > a {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .depreciation-reversal-form {
+    margin-top: 16px;
+  }
+  .depreciation-reversal-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  @media (max-width: 767px) {
+    /* Match the list pages: the main page owns mobile scrolling. */
+    .depreciation-workspace {
+      flex: none;
+      overflow: visible;
+    }
+    .depreciation-table-scroll {
+      padding: 12px 12px 2px;
+    }
+    .depreciation-review {
+      min-width: 0;
+      max-width: 100%;
+      margin-top: 6px;
+    }
   }
   @media (max-width: 600px) {
     .rep-block-head {
@@ -429,6 +513,9 @@
     }
     .depreciation-month-filter {
       width: 100%;
+    }
+    .depreciation-run {
+      align-items: flex-start;
     }
   }
 </style>

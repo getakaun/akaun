@@ -43,6 +43,10 @@ import {
   readAssetDepreciation,
   runAutomaticDepreciation,
   DEPRECIATION_WRITE,
+  previewAssetCatchUp,
+  postAssetCatchUp,
+  linkManualDepreciation,
+  unlinkManualDepreciation,
 } from "./depreciation.js";
 import type { AppResult } from "./result.js";
 
@@ -423,7 +427,15 @@ describe("approved monthly book depreciation", () => {
       userIds: [1],
       grants: [...grants],
     });
-    approve(stored.id, { mode: "auto", months: 2 });
+    const profile = approve(stored.id, { mode: "auto", months: 2 });
+    runAutomaticDepreciation({ db });
+    expect(db.select().from(schema.depreciationPostings).all()).toHaveLength(0);
+    // Simulate a profile approved before these months began: only that future
+    // authority, not today's setup approval, allows an unattended catch-up.
+    db.update(schema.depreciationApprovals)
+      .set({ futureFromMonth: "2025-01" })
+      .where(eq(schema.depreciationApprovals.profileId, profile.id))
+      .run();
     runAutomaticDepreciation({ db });
     expect(db.select().from(schema.depreciationPostings).all()).toHaveLength(2);
     expect(depreciationTotal(db, stored.id, "2025-02-28")).toBe(1200000);
@@ -437,7 +449,11 @@ describe("approved monthly book depreciation", () => {
       userIds: [1],
       grants: [...grants],
     });
-    approve(stored.id, { mode: "auto", months: 2 });
+    const profile = approve(stored.id, { mode: "auto", months: 2 });
+    db.update(schema.depreciationApprovals)
+      .set({ futureFromMonth: "2025-01" })
+      .where(eq(schema.depreciationApprovals.profileId, profile.id))
+      .run();
     db.delete(schema.userGroups).where(eq(schema.userGroups.userId, 1)).run();
     runAutomaticDepreciation({ db });
     expect(db.select().from(schema.depreciationPostings).all()).toEqual([]);
@@ -639,6 +655,9 @@ describe("approved monthly book depreciation", () => {
         expectedVersion: preview.version,
       }),
     );
+    db.update(schema.depreciationApprovals)
+      .set({ futureFromMonth: "2025-01" })
+      .run();
     runAutomaticDepreciation({ db });
     const runs = db.select().from(schema.depreciationRuns).all();
     expect(runs.map((run) => run.createdBy).sort()).toEqual([1, 2]);
@@ -694,6 +713,13 @@ describe("approved monthly book depreciation", () => {
     expect(previewDepreciationProfile(ctx(), stored.id, settings()).ok).toBe(
       false,
     );
+    const managed = previewDepreciationProfile(
+      { db, locals: localsFor([...grants, "accounts.create"]) },
+      stored.id,
+      settings({ accumulatedAccountId: null }),
+    );
+    expect(managed.ok).toBe(false);
+    if (!managed.ok) expect(managed.reason).toContain("Review and link");
     value(
       voidRecord(ctx(), manual.id, {
         reason: "Replace manual depreciation with approved schedule",
@@ -724,5 +750,266 @@ describe("approved monthly book depreciation", () => {
         expectedVersion: preview.version,
       }).ok,
     ).toBe(false);
+  });
+  it("creates a managed contra only on approval, remembers explicit mappings, and requires account creation authority", () => {
+    const first = asset();
+    const input = settings({ accumulatedAccountId: null });
+    expect(previewDepreciationProfile(ctx(), first.stored.id, input).ok).toBe(
+      false,
+    );
+    const creator = { db, locals: localsFor([...grants, "accounts.create"]) };
+    const count = db.select().from(schema.accounts).all().length;
+    const preview = value(
+      previewDepreciationProfile(creator, first.stored.id, input),
+    );
+    expect(preview.accountPlan.create).toBe(true);
+    expect(db.select().from(schema.accounts).all()).toHaveLength(count);
+    const profile = value(
+      approveDepreciationProfile(creator, first.stored.id, {
+        settings: input,
+        expectedVersion: preview.version,
+      }),
+    );
+    expect(profile.accumulatedAccountId).not.toBe(cost);
+    expect(db.select().from(schema.accounts).all()).toHaveLength(count + 1);
+    const second = asset();
+    const state = value(readAssetDepreciation(ctx(), second.stored.id));
+    expect(state.defaults).toEqual({
+      expenseAccountId: expense,
+      accumulatedAccountId: profile.accumulatedAccountId,
+    });
+    const reused = value(
+      previewDepreciationProfile(ctx(), second.stored.id, input),
+    );
+    expect(reused.accountPlan.create).toBe(false);
+    expect(
+      value(
+        approveDepreciationProfile(ctx(), second.stored.id, {
+          settings: input,
+          expectedVersion: reused.version,
+        }),
+      ).accumulatedAccountId,
+    ).toBe(profile.accumulatedAccountId);
+  });
+  it("posts historical catch-up only after explicit consent, only for the selected asset, and never a future month", () => {
+    const first = asset();
+    const second = asset();
+    approve(second.stored.id, { months: 2 });
+    const input = settings({ months: 2, mode: "auto" });
+    const preview = value(
+      previewDepreciationProfile(ctx(), first.stored.id, input),
+    );
+    expect(preview.history).toMatchObject({
+      count: 2,
+      from: "2025-01",
+      through: "2025-02",
+      totalMinor: 1200000,
+      closedMonths: [],
+    });
+    value(
+      approveDepreciationProfile(ctx(), first.stored.id, {
+        settings: input,
+        expectedVersion: preview.version,
+        postHistory: true,
+      }),
+    );
+    const posted = db.select().from(schema.depreciationPostings).all();
+    expect(posted).toHaveLength(2);
+    expect(posted.every((p) => p.assetId === first.stored.id)).toBe(true);
+    expect(
+      value(readAssetDepreciation(ctx(), second.stored.id)).historyReview,
+    ).toHaveLength(2);
+    const later = value(previewAssetCatchUp(ctx(), second.stored.id));
+    expect(
+      value(
+        postAssetCatchUp(ctx(), second.stored.id, {
+          expectedVersion: later.version,
+        }),
+      ).posted,
+    ).toBe(2);
+    expect(
+      postAssetCatchUp(ctx(), second.stored.id, {
+        expectedVersion: later.version,
+      }).ok,
+    ).toBe(false);
+    expect(db.select().from(schema.depreciationPostings).all()).toHaveLength(4);
+    const future = asset();
+    approve(future.stored.id, {
+      startMonth: shiftMonth(localToday().slice(0, 7), 1),
+      months: 1,
+    });
+    expect(
+      value(previewAssetCatchUp(ctx(), future.stored.id)).history.count,
+    ).toBe(0);
+  });
+  it("saves a historical setup across closed months but refuses the whole catch-up and rolls back managed accounts", () => {
+    const { stored } = asset();
+    setSetting(db, SETTING_KEYS.accountingClosedThrough, "2025-01-31");
+    const creator = { db, locals: localsFor([...grants, "accounts.create"]) };
+    const input = settings({ months: 2, accumulatedAccountId: null });
+    const count = db.select().from(schema.accounts).all().length;
+    const preview = value(
+      previewDepreciationProfile(creator, stored.id, input),
+    );
+    expect(preview.history.closedMonths).toEqual(["2025-01"]);
+    expect(
+      approveDepreciationProfile(creator, stored.id, {
+        settings: input,
+        expectedVersion: preview.version,
+        postHistory: true,
+      }).ok,
+    ).toBe(false);
+    expect(db.select().from(schema.accounts).all()).toHaveLength(count);
+    expect(db.select().from(schema.depreciationProfiles).all()).toHaveLength(0);
+    value(
+      approveDepreciationProfile(creator, stored.id, {
+        settings: input,
+        expectedVersion: preview.version,
+      }),
+    );
+    const review = value(previewAssetCatchUp(ctx(), stored.id));
+    expect(
+      postAssetCatchUp(ctx(), stored.id, { expectedVersion: review.version })
+        .ok,
+    ).toBe(false);
+    expect(db.select().from(schema.depreciationRuns).all()).toHaveLength(0);
+    setSetting(db, SETTING_KEYS.accountingClosedThrough, "");
+    expect(
+      value(
+        postAssetCatchUp(ctx(), stored.id, {
+          expectedVersion: value(previewAssetCatchUp(ctx(), stored.id)).version,
+        }),
+      ).posted,
+    ).toBe(2);
+  });
+  it("rolls back every historical month if a later catch-up journal fails", () => {
+    const { stored } = asset();
+    approve(stored.id, { months: 2 });
+    raw.exec(
+      "CREATE TRIGGER refuse_feb BEFORE INSERT ON depreciation_runs WHEN NEW.month = '2025-02' BEGIN SELECT RAISE(ABORT, 'simulated later failure'); END",
+    );
+    const before = db.select().from(schema.ledgerRecords).all().length;
+    const review = value(previewAssetCatchUp(ctx(), stored.id));
+    expect(() =>
+      postAssetCatchUp(ctx(), stored.id, { expectedVersion: review.version }),
+    ).toThrow();
+    expect(db.select().from(schema.depreciationPostings).all()).toHaveLength(0);
+    expect(db.select().from(schema.depreciationRuns).all()).toHaveLength(0);
+    expect(db.select().from(schema.ledgerRecords).all()).toHaveLength(before);
+  });
+  it("links existing manual journals without ledger writes, reconciles split assets and prevents reuse or overlapping periods", () => {
+    const first = asset();
+    const second = asset();
+    const manual = value(
+      createRecord(ctx(), {
+        kind: "journal",
+        date: "2025-02-28",
+        description: "Two assets manual depreciation",
+        amount: 200,
+        currency: "MYR",
+        exchangeRate: 1,
+        movements: [
+          { accountId: expense, amountMinor: 20000 },
+          { accountId: accum, amountMinor: -20000 },
+        ],
+      }),
+    ).record;
+    const before = db.select().from(schema.ledgerRecords).all().length;
+    function link(id: number, amountMinor: number) {
+      const state = value(readAssetDepreciation(ctx(), id));
+      return linkManualDepreciation(ctx(), id, {
+        candidateKey: state.manualCandidates.find(
+          (c) => c.recordId === manual.id,
+        )!.key,
+        amountMinor,
+        fromMonth: "2025-01",
+        throughMonth: "2025-02",
+        reason: "Allocate existing journal to this asset",
+        expectedVersion: state.version,
+      });
+    }
+    const allocation = value(link(first.stored.id, 10000));
+    expect(depreciationTotal(db, first.stored.id, "2025-02-27")).toBe(0);
+    expect(depreciationTotal(db, first.stored.id, "2025-02-28")).toBe(10000);
+    expect(link(first.stored.id, 10000).ok).toBe(false);
+    expect(link(second.stored.id, 10001).ok).toBe(false);
+    value(link(second.stored.id, 10000));
+    expect(
+      value(readAssetDepreciation(ctx(), first.stored.id)).reconciliation
+        ?.differenceMinor,
+    ).toBe(0);
+    expect(
+      value(readAssetDepreciation(ctx(), second.stored.id)).manualCandidates,
+    ).toHaveLength(0);
+    expect(db.select().from(schema.ledgerRecords).all()).toHaveLength(before);
+    expect(updateRecord(ctx(), manual.id, { amount: 300 }).ok).toBe(false);
+    expect(
+      voidRecord(ctx(), manual.id, {
+        reason: "Should not void allocated history",
+        expectedVersion: recordVersion(db, manual.id),
+      }).ok,
+    ).toBe(false);
+    expect(deleteRecord(ctx(), manual.id).ok).toBe(false);
+    expect(
+      previewDepreciationProfile(ctx(), first.stored.id, settings()).ok,
+    ).toBe(false);
+    const input = settings({ startMonth: "2025-03" });
+    expect(
+      value(previewDepreciationProfile(ctx(), first.stored.id, input))
+        .baseNbvMinor,
+    ).toBe(1190000);
+    approve(first.stored.id, { startMonth: "2025-03" });
+    post("2025-03");
+    expect(
+      unlinkManualDepreciation(ctx(), first.stored.id, {
+        allocationId: allocation.id,
+        expectedVersion: value(readAssetDepreciation(ctx(), first.stored.id))
+          .version,
+      }).ok,
+    ).toBe(false);
+  });
+  it("can remove a mistaken manual link before posting, stopping dependent forecasts while keeping the original journal", () => {
+    const { stored } = asset();
+    const manual = value(
+      createRecord(ctx(), {
+        kind: "journal",
+        date: "2025-01-31",
+        description: "Manual",
+        amount: 100,
+        currency: "MYR",
+        exchangeRate: 1,
+        movements: [
+          { accountId: expense, amountMinor: 10000 },
+          { accountId: accum, amountMinor: -10000 },
+        ],
+      }),
+    ).record;
+    let state = value(readAssetDepreciation(ctx(), stored.id));
+    const allocation = value(
+      linkManualDepreciation(ctx(), stored.id, {
+        candidateKey: state.manualCandidates[0].key,
+        amountMinor: 10000,
+        fromMonth: "2025-01",
+        throughMonth: "2025-01",
+        reason: "Existing January charge",
+        expectedVersion: state.version,
+      }),
+    );
+    approve(stored.id, { startMonth: "2025-02" });
+    state = value(readAssetDepreciation(ctx(), stored.id));
+    value(
+      unlinkManualDepreciation(ctx(), stored.id, {
+        allocationId: allocation.id,
+        expectedVersion: state.version,
+      }),
+    );
+    expect(assetSchedule(db, stored.id).rows).toHaveLength(0);
+    expect(depreciationTotal(db, stored.id, "2025-12-31")).toBe(0);
+    expect(getRecord(db, manual.id)).not.toBeNull();
+    expect(
+      updateRecord(ctx(), manual.id, {
+        description: "Corrected journal description",
+      }).ok,
+    ).toBe(true);
   });
 });

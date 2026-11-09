@@ -140,4 +140,41 @@ describe("migration 0043 through the startup Drizzle migrator", () => {
       raw.close();
     }
   });
+  it("upgrades existing automatic profiles with a separate future boundary without changing history", () => {
+    const raw = new Database(":memory:");
+    try {
+      fixture(raw);
+      applyMigrationRange(raw, 43, 44);
+      raw.exec(
+        "INSERT INTO users(id,username,email,password_hash) VALUES(1,'migration-user','migration@test','fixture'); INSERT INTO accounts(id,role,type,name,rank) VALUES(4,7,5,'Depreciation expense','d');",
+      );
+      raw.exec(`INSERT INTO depreciation_profiles(id,asset_id,start_month,months,base_nbv_minor,residual_minor,expense_account_id,accumulated_account_id,mode,basis,approved_by,reason)
+        VALUES(4,7,'2026-01',36,600000,0,4,3,'auto','original',1,'Original approval');`);
+      const profile = raw.query("SELECT * FROM depreciation_profiles").all();
+      const before = snapshot(raw);
+      const db = drizzle(raw, { schema });
+      migrate(db, { migrationsFolder: "drizzle" });
+      expect(snapshot(raw)).toEqual(before);
+      expect(raw.query("SELECT * FROM depreciation_profiles").all()).toEqual(
+        profile,
+      );
+      const approval = raw.query("SELECT * FROM depreciation_approvals").get();
+      const currentMonth = raw
+        .query("SELECT strftime('%Y-%m','now','localtime') AS month")
+        .get() as { month: string };
+      expect(approval).toEqual({
+        profile_id: 4,
+        future_from_month: currentMonth.month,
+      });
+      migrate(db, { migrationsFolder: "drizzle" });
+      expect(raw.query("SELECT * FROM depreciation_approvals").all()).toEqual([
+        approval,
+      ]);
+      expect(raw.query("SELECT * FROM depreciation_allocations").all()).toEqual(
+        [],
+      );
+    } finally {
+      raw.close();
+    }
+  });
 });

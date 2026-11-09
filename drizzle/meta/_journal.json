@@ -316,6 +316,13 @@
       "when": 1794218624750,
       "tag": "0044_asset_depreciation",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1794231089559,
+      "tag": "0045_depreciation_approvals",
+      "breakpoints": true
     }
   ]
 }

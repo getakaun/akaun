@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import {
   depreciationProfiles,
+  depreciationAllocations,
   depreciationRuns,
   depreciationPostings,
   ledgerRecords,
@@ -32,6 +33,13 @@ export function depreciationHistory(db: LedgerDb, assetId: number) {
     .where(eq(depreciationPostings.assetId, assetId))
     .all();
 }
+export function manualDepreciation(db: LedgerDb, assetId: number) {
+  return db
+    .select()
+    .from(depreciationAllocations)
+    .where(eq(depreciationAllocations.assetId, assetId))
+    .all();
+}
 export function depreciationTotal(
   db: LedgerDb,
   assetId: number,
@@ -43,6 +51,9 @@ export function depreciationTotal(
       total += BigInt(posting.amountMinor);
     if (run.reversedOn && run.reversedOn <= asAt)
       total -= BigInt(posting.amountMinor);
+  }
+  for (const allocation of manualDepreciation(db, assetId)) {
+    if (allocation.recordDate <= asAt) total += BigInt(allocation.amountMinor);
   }
   const value = Number(total);
   if (!Number.isSafeInteger(value))
@@ -107,6 +118,14 @@ export function depreciationRecordReason(
     .from(ledgerRecords)
     .where(eq(ledgerRecords.id, recordId))
     .get();
+  if (
+    db
+      .select({ id: depreciationAllocations.id })
+      .from(depreciationAllocations)
+      .where(eq(depreciationAllocations.recordId, recordId))
+      .get()
+  )
+    return "This journal is linked to asset depreciation. Remove its allocation from the asset before editing, deleting or voiding it.";
   return record?.kind?.startsWith("asset-depreciation")
     ? DEPRECIATION_RECORD_REASON
     : null;

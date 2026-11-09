@@ -1,4 +1,8 @@
-import { depreciationProfiles, depreciationPostings } from "../db/schema.js";
+import {
+  depreciationProfiles,
+  depreciationPostings,
+  depreciationAllocations,
+} from "../db/schema.js";
 import { eq, and, sql } from "drizzle-orm";
 import { AccountType } from "$lib/enums.js";
 import { assetCreateSchema, assetUpdateSchema } from "$lib/fixed-assets.js";
@@ -340,7 +344,12 @@ export function updateFixedAsset(
       .limit(1)
       .get();
     if (
-      posted &&
+      (posted ||
+        ctx.db
+          .select({ id: depreciationAllocations.id })
+          .from(depreciationAllocations)
+          .where(eq(depreciationAllocations.assetId, id))
+          .get()) &&
       ((accumulatedDepreciationAccountId !== undefined &&
         accumulatedDepreciationAccountId !==
           before.accumulatedDepreciationAccountId) ||

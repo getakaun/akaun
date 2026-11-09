@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { AccountType } from "$lib/enums.js";
+import { AccountType, AccountSubType, LedgerRecordKind } from "$lib/enums.js";
 import { DEFAULT_CURRENCY } from "$lib/currency.js";
 import { monthEndFor } from "$lib/closing.js";
 import { localToday } from "$lib/local-date.js";
@@ -16,6 +16,8 @@ import {
   users,
   fixedAssets,
   depreciationProfiles,
+  depreciationApprovals,
+  depreciationAllocations,
   depreciationRuns,
   depreciationPostings,
   ledgerRecords,
@@ -23,6 +25,7 @@ import {
 } from "../db/schema.js";
 import {
   assetSchedule,
+  manualDepreciation,
   assetDepreciationBasis,
   depreciationTotal,
 } from "../queries/depreciation.js";
@@ -31,6 +34,8 @@ import {
   createRecord as createJournal,
   type DeferredEmits,
 } from "../services/ledger.js";
+import { createAccount } from "../services/accounts.js";
+import { inVoidPair } from "../queries/void-state.js";
 import { recordAudit } from "../audit.js";
 import { actor, requirePermissions, type AppContext } from "./context.js";
 import { ok, fail, invalid, type AppResult } from "./result.js";
@@ -46,6 +51,7 @@ export const DEPRECIATION_WRITE = [
   "records.create",
   "records.adjust",
 ] as const;
+const formatMinor = (minor: number) => (minor / 100).toFixed(2);
 const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 class Refusal extends Error {}
@@ -77,12 +83,16 @@ function assetState(ctx: AppContext, id: number) {
   );
   if (!asset) return refuse("That asset no longer exists.");
   const schedule = assetSchedule(ctx.db, id);
+  const allocations = manualDepreciation(ctx.db, id);
   const version = hash({
+    today: localToday(),
+    closedThrough: closedThrough(ctx.db),
+    allocations,
     asset,
     profiles: schedule.profiles,
     history: schedule.history,
   });
-  return { asset, ...schedule, version };
+  return { asset, ...schedule, allocations, version };
 }
 export function readAssetDepreciation(ctx: AppContext, id: number) {
   const denied = requirePermissions(ctx, ASSET_READ_PERMISSIONS);
@@ -91,8 +101,39 @@ export function readAssetDepreciation(ctx: AppContext, id: number) {
     const state = assetState(ctx, id);
     const asAt = localToday();
     const postedMinor = depreciationTotal(ctx.db, id, asAt);
+    const nextDue = state.rows.find(
+      (r) =>
+        r.status === "Unposted" &&
+        r.amountMinor > 0 &&
+        monthEndFor(r.month)! < asAt,
+    );
+    const nextRow = nextDue
+      ? monthly(ctx, nextDue.month, false, id).rows[0]
+      : null;
     return {
       ...state,
+      hasDue: !!nextDue,
+      postingIssue: nextRow?.blocked ?? nextRow?.automationWarning ?? null,
+      defaults: accountDefaults(ctx, state.asset.assetAccountId),
+      canCreateAccount: canAll(ctx.locals, ["accounts.create"]),
+      manualCandidates: manualCandidates(ctx),
+      reconciliation: reconciliation(
+        ctx,
+        state.asset.accumulatedDepreciationAccountId,
+      ),
+      historyReview: state.rows.filter((row) => {
+        const approval = ctx.db
+          .select()
+          .from(depreciationApprovals)
+          .where(eq(depreciationApprovals.profileId, row.profile.id))
+          .get();
+        return (
+          row.status === "Unposted" &&
+          row.amountMinor > 0 &&
+          monthEndFor(row.month)! < localToday() &&
+          (!approval || row.month < approval.futureFromMonth)
+        );
+      }),
       asAt,
       postedMinor,
       scheduleReviewReason:
@@ -131,9 +172,183 @@ function accountValid(ctx: AppContext, id: number, type: number) {
     !account.mergedIntoAccountId
   );
 }
-function prepare(ctx: AppContext, id: number, settings: DepreciationSettings) {
+function accountDefaults(ctx: AppContext, costId: number) {
+  const approved = ctx.db
+    .select({
+      profile: depreciationProfiles,
+      costId: fixedAssets.assetAccountId,
+    })
+    .from(depreciationProfiles)
+    .innerJoin(fixedAssets, eq(fixedAssets.id, depreciationProfiles.assetId))
+    .all()
+    .sort((a, b) => b.profile.id - a.profile.id);
+  const mapped = approved.find(
+    (row) =>
+      row.costId === costId &&
+      accountValid(ctx, row.profile.accumulatedAccountId, AccountType.Asset),
+  );
+  const expense = approved.find((row) =>
+    accountValid(ctx, row.profile.expenseAccountId, AccountType.Expense),
+  );
+  return {
+    expenseAccountId:
+      mapped &&
+      accountValid(ctx, mapped.profile.expenseAccountId, AccountType.Expense)
+        ? mapped.profile.expenseAccountId
+        : (expense?.profile.expenseAccountId ?? null),
+    accumulatedAccountId: mapped?.profile.accumulatedAccountId ?? null,
+  };
+}
+function reconciliation(ctx: AppContext, accountId: number | null) {
+  if (!accountId) return null;
+  const account = ctx.db
+    .select()
+    .from(accounts)
+    .where(eq(accounts.id, accountId))
+    .get();
+  const ledgerMinor = -ctx.db
+    .select({
+      amount: sql<number>`coalesce(sum(${ledgerMovements.amountMinor}), 0)`,
+    })
+    .from(ledgerMovements)
+    .where(eq(ledgerMovements.accountId, accountId))
+    .get()!.amount;
+  const explained = fixedAssetRegister(ctx.db, "9999-12-31")
+    .assets.filter((a) => a.accumulatedDepreciationAccountId === accountId)
+    .reduce((sum, a) => sum + BigInt(a.accumulatedDepreciationMinor), 0n);
+  return {
+    accountId,
+    name: account?.name ?? "Missing account",
+    ledgerMinor,
+    explainedMinor: Number(explained),
+    differenceMinor: Number(BigInt(ledgerMinor) - explained),
+  };
+}
+function reconciliationMessage(ctx: AppContext, accountId: number) {
+  const r = reconciliation(ctx, accountId)!;
+  return `Reconcile existing manual depreciation on ${r.name}: ledger ${formatMinor(r.ledgerMinor)}, explained by assets ${formatMinor(r.explainedMinor)}, difference ${formatMinor(r.differenceMinor)}. Review and link existing journals on the asset before approving; do not post them again.`;
+}
+function manualCandidates(ctx: AppContext) {
+  const chart = ctx.db.select().from(accounts).all();
+  const allocated = ctx.db.select().from(depreciationAllocations).all();
+  return ctx.db
+    .select()
+    .from(ledgerRecords)
+    .where(
+      sql`${ledgerRecords.kind} = ${LedgerRecordKind.Journal} AND ${ledgerRecords.date} <= ${localToday()} AND NOT ${inVoidPair(ledgerRecords.id)}`,
+    )
+    .all()
+    .filter(
+      (r) =>
+        r.kind === LedgerRecordKind.Journal &&
+        !r.legacyKind?.startsWith("asset-depreciation") &&
+        r.date <= localToday(),
+    )
+    .flatMap((record) => {
+      const totals = new Map<number, bigint>();
+      for (const m of ctx.db
+        .select()
+        .from(ledgerMovements)
+        .where(eq(ledgerMovements.recordId, record.id))
+        .all())
+        totals.set(
+          m.accountId,
+          (totals.get(m.accountId) ?? 0n) + BigInt(m.amountMinor),
+        );
+      const expenses = chart.filter(
+        (a) => a.type === AccountType.Expense && (totals.get(a.id) ?? 0n) > 0n,
+      );
+      const contras = chart.filter(
+        (a) =>
+          a.type === AccountType.Asset &&
+          (a.subType === AccountSubType.OtherNonCurrentAsset ||
+            a.subType === AccountSubType.FixedAsset) &&
+          (totals.get(a.id) ?? 0n) < 0n,
+      );
+      return expenses.flatMap((expense) =>
+        contras.flatMap((contra) => {
+          const usedExpense = allocated
+            .filter(
+              (a) =>
+                a.recordId === record.id && a.expenseAccountId === expense.id,
+            )
+            .reduce((n, a) => n + BigInt(a.amountMinor), 0n);
+          const usedContra = allocated
+            .filter(
+              (a) =>
+                a.recordId === record.id &&
+                a.accumulatedAccountId === contra.id,
+            )
+            .reduce((n, a) => n + BigInt(a.amountMinor), 0n);
+          const expenseRemaining = totals.get(expense.id)! - usedExpense;
+          const contraRemaining = -totals.get(contra.id)! - usedContra;
+          const availableMinor = Number(
+            [
+              expenseRemaining,
+              contraRemaining,
+              BigInt(Number.MAX_SAFE_INTEGER),
+            ].reduce((a, b) => (a < b ? a : b)),
+          );
+          return availableMinor > 0
+            ? [
+                {
+                  key: `${record.id}-${expense.id}-${contra.id}`,
+                  recordId: record.id,
+                  date: record.date,
+                  description: record.description,
+                  expenseAccountId: expense.id,
+                  accumulatedAccountId: contra.id,
+                  expenseName: expense.name,
+                  accumulatedName: contra.name,
+                  availableMinor,
+                },
+              ]
+            : [];
+        }),
+      );
+    });
+}
+function prepare(ctx: AppContext, id: number, input: DepreciationSettings) {
+  const selected = assetState(ctx, id).asset;
+  const remembered = accountDefaults(ctx, selected.assetAccountId);
+  const accumulatedAccountId =
+    input.accumulatedAccountId ??
+    selected.accumulatedDepreciationAccountId ??
+    remembered.accumulatedAccountId;
+  if (!accumulatedAccountId && !canAll(ctx.locals, ["accounts.create"]))
+    refuse(
+      "Choose an existing accumulated-depreciation account in More options, or ask someone with account creation permission to approve setup.",
+    );
+  const settings = {
+    ...input,
+    accumulatedAccountId: accumulatedAccountId ?? 0,
+  };
+  const cost = ctx.db
+    .select()
+    .from(accounts)
+    .where(eq(accounts.id, selected.assetAccountId))
+    .get()!;
+  const accountPlan = {
+    create: !accumulatedAccountId,
+    name: accumulatedAccountId
+      ? (ctx.db
+          .select()
+          .from(accounts)
+          .where(eq(accounts.id, accumulatedAccountId))
+          .get()?.name ?? "Missing account")
+      : `Accumulated depreciation – ${cost.name}`,
+  };
   const state = assetState(ctx, id);
   const { asset, profiles, history, rows } = state;
+  if (
+    accountPlan.create &&
+    manualCandidates(ctx).some(
+      (c) => c.expenseAccountId === settings.expenseAccountId,
+    )
+  )
+    refuse(
+      "Existing unallocated journals use this depreciation expense account. Review and link the depreciation already recorded for this asset first. If those journals belong to other assets, explicitly choose the appropriate accumulated-depreciation account in More options; automatic account creation cannot bypass historical reconciliation.",
+    );
   if (asset.reviewReason)
     refuse("Resolve the asset's review issues before approving depreciation.");
   if (
@@ -141,7 +356,7 @@ function prepare(ctx: AppContext, id: number, settings: DepreciationSettings) {
     (asset.inServiceDate ?? asset.acquisitionDate).slice(0, 7)
   )
     refuse("Depreciation cannot start before the asset is available for use.");
-  assertDatesOpen(ctx.db, [monthEndFor(settings.startMonth)!]);
+
   if (
     history.some(
       ({ posting, run }) =>
@@ -162,6 +377,16 @@ function prepare(ctx: AppContext, id: number, settings: DepreciationSettings) {
   )
     refuse(
       "Post or explicitly stop earlier unposted depreciation before changing the remaining schedule.",
+    );
+  if (
+    state.allocations.some(
+      (a) =>
+        settings.startMonth <= a.throughMonth ||
+        settings.startMonth <= a.recordDate.slice(0, 7),
+    )
+  )
+    refuse(
+      "Start the remaining schedule after all linked manual depreciation periods and journal dates.",
     );
   if (asset.openingAsAt) {
     if (
@@ -186,29 +411,15 @@ function prepare(ctx: AppContext, id: number, settings: DepreciationSettings) {
     }
   }
   const registered = fixedAssetRegister(ctx.db, "9999-12-31").assets;
-  const ledgerAccumulated = -ctx.db
-    .select({
-      amount: sql<number>`coalesce(sum(${ledgerMovements.amountMinor}), 0)`,
-    })
-    .from(ledgerMovements)
-    .where(eq(ledgerMovements.accountId, settings.accumulatedAccountId))
-    .get()!.amount;
-  const knownAccumulated = registered
-    .filter(
-      (row) =>
-        row.accumulatedDepreciationAccountId === settings.accumulatedAccountId,
-    )
-    .reduce((sum, row) => sum + BigInt(row.accumulatedDepreciationMinor), 0n);
   if (
-    !Number.isSafeInteger(ledgerAccumulated) ||
-    BigInt(ledgerAccumulated) !== knownAccumulated
+    settings.accumulatedAccountId &&
+    reconciliation(ctx, settings.accumulatedAccountId)!.differenceMinor
   )
-    refuse(
-      "Reconcile existing manual depreciation on the selected accumulated-depreciation account before approving a schedule. It cannot be allocated automatically.",
-    );
+    refuse(reconciliationMessage(ctx, settings.accumulatedAccountId));
   if (
     !accountValid(ctx, settings.expenseAccountId, AccountType.Expense) ||
-    !accountValid(ctx, settings.accumulatedAccountId, AccountType.Asset) ||
+    (settings.accumulatedAccountId !== 0 &&
+      !accountValid(ctx, settings.accumulatedAccountId, AccountType.Asset)) ||
     settings.accumulatedAccountId === asset.assetAccountId ||
     registered.some(
       (row) => row.assetAccountId === settings.accumulatedAccountId,
@@ -251,11 +462,14 @@ function prepare(ctx: AppContext, id: number, settings: DepreciationSettings) {
   return {
     state,
     settings,
+    accountPlan,
     baseNbvMinor,
     schedule,
     version: hash({
       version: state.version,
       settings,
+      accountPlan,
+      defaults: remembered,
       baseNbvMinor,
       closedThrough: closedThrough(ctx.db),
     }),
@@ -276,6 +490,8 @@ export function previewDepreciationProfile(
       version: prepared.version,
       schedule: prepared.schedule,
       baseNbvMinor: prepared.baseNbvMinor,
+      accountPlan: prepared.accountPlan,
+      history: historicalPreview(ctx, prepared.schedule),
     };
   });
 }
@@ -289,6 +505,7 @@ export function approveDepreciationProfile(
   const parsed = z
     .object({
       settings: depreciationProfileSchema,
+      postHistory: z.boolean().default(false),
       expectedVersion: z.string().min(1),
     })
     .strict()
@@ -300,7 +517,21 @@ export function approveDepreciationProfile(
       refuse(
         "The asset, schedule or closing boundary changed. Preview again before approving.",
       );
-    const settings = parsed.data.settings;
+    const settings = { ...prepared.settings };
+    if (prepared.accountPlan.create) {
+      const result = createAccount(
+        ctx.db,
+        actor(ctx),
+        {
+          name: prepared.accountPlan.name,
+          type: AccountType.Asset,
+          subType: AccountSubType.OtherNonCurrentAsset,
+        },
+        emits,
+      );
+      if (!result.ok) refuse(result.reason);
+      settings.accumulatedAccountId = result.value.id;
+    }
     const profile = ctx.db
       .insert(depreciationProfiles)
       .values({
@@ -331,6 +562,14 @@ export function approveDepreciationProfile(
       })
       .where(eq(fixedAssets.id, id))
       .run();
+    ctx.db
+      .insert(depreciationApprovals)
+      .values({
+        profileId: profile.id,
+        futureFromMonth: localToday().slice(0, 7),
+      })
+      .run();
+    if (parsed.data.postHistory) postAssetHistory(ctx, id, emits);
     recordAudit(ctx.db, {
       userId: actor(ctx),
       recordType: "fixed_asset",
@@ -349,89 +588,119 @@ export function approveDepreciationProfile(
     return profile;
   });
 }
-function monthly(ctx: AppContext, month: string, automatic = false) {
+function monthly(
+  ctx: AppContext,
+  month: string,
+  automatic = false,
+  assetId?: number,
+) {
   const register = fixedAssetRegister(ctx.db, "9999-12-31");
   const boundary = closedThrough(ctx.db);
   const end = monthEndFor(month)!;
   const unpostedMonths = new Set<string>();
-  const rows = register.assets.flatMap((asset) => {
-    const schedule = assetSchedule(ctx.db, asset.id);
-    for (const pending of schedule.rows)
-      if (
-        pending.status === "Unposted" &&
-        pending.amountMinor > 0 &&
-        monthEndFor(pending.month)! < localToday() &&
-        (!automatic ||
-          (pending.profile.mode === "auto" &&
-            pending.profile.approvedBy === actor(ctx)))
-      )
-        unpostedMonths.add(pending.month);
-    const row = schedule.rows.find((item) => item.month === month);
-    if (
-      !row ||
-      (automatic &&
-        (row.profile.mode !== "auto" || row.profile.approvedBy !== actor(ctx)))
-    )
-      return [];
-    const automationWarning =
-      row.profile.mode === "auto" &&
-      !canAll(automationLocals(ctx, row.profile.approvedBy), DEPRECIATION_WRITE)
-        ? "Auto-post paused: approval permissions changed. Review the profile or post manually with current authority."
-        : null;
-    let blocked: string | null = null;
-    if (row.status === "Unposted" && row.amountMinor > 0) {
-      if (end >= localToday())
-        blocked = "Only completed calendar months can be posted.";
-      else if (boundary && end <= boundary)
-        blocked = "Month closed — reopen before posting.";
-      else if (asset.reviewReason) blocked = asset.reviewReason;
-      else if (row.profile.basis !== assetDepreciationBasis(asset))
-        blocked =
-          "The asset's financial basis changed. Approve a prospective schedule before posting.";
-      else if (
-        row.profile.accumulatedAccountId !==
-          asset.accumulatedDepreciationAccountId ||
-        !accountValid(ctx, row.profile.expenseAccountId, AccountType.Expense) ||
-        !accountValid(ctx, row.profile.accumulatedAccountId, AccountType.Asset)
-      )
-        blocked = "Review the depreciation account mappings.";
-      else if (
-        register.depreciationReconciliation.find(
-          (account) => account.accountId === row.profile.accumulatedAccountId,
-        )?.differenceMinor
-      )
-        blocked =
-          "Reconcile unallocated manual depreciation before posting further charges.";
-      else if (
-        schedule.rows.some(
-          (earlier) =>
-            earlier.month < month &&
-            earlier.amountMinor > 0 &&
-            earlier.status === "Unposted",
+  const rows = register.assets
+    .filter((a) => assetId === undefined || a.id === assetId)
+    .flatMap((asset) => {
+      const schedule = assetSchedule(ctx.db, asset.id);
+      for (const pending of schedule.rows)
+        if (
+          pending.status === "Unposted" &&
+          pending.amountMinor > 0 &&
+          monthEndFor(pending.month)! < localToday() &&
+          (!automatic ||
+            (pending.profile.mode === "auto" &&
+              pending.profile.approvedBy === actor(ctx)))
         )
-      )
-        blocked = "Post earlier due months first.";
+          unpostedMonths.add(pending.month);
+      const row = schedule.rows.find((item) => item.month === month);
       if (
-        automatic &&
+        !row ||
+        (automatic &&
+          (row.profile.mode !== "auto" ||
+            row.profile.approvedBy !== actor(ctx)))
+      )
+        return [];
+      const futureFrom = ctx.db
+        .select()
+        .from(depreciationApprovals)
+        .where(eq(depreciationApprovals.profileId, row.profile.id))
+        .get()?.futureFromMonth;
+      const historyApprovalNeeded = !futureFrom || month < futureFrom;
+      const automationWarning =
+        row.profile.mode === "auto" &&
         !canAll(
           automationLocals(ctx, row.profile.approvedBy),
           DEPRECIATION_WRITE,
         )
-      )
-        blocked =
-          "Automatic approval is no longer authorised. Review the profile.";
-    }
-    return [
-      {
-        assetId: asset.id,
-        name: asset.name,
-        assetVersion: asset.version,
-        ...row,
-        blocked,
-        automationWarning,
-      },
-    ];
-  });
+          ? "Auto-post paused: approval permissions changed. Review the profile or post manually with current authority."
+          : null;
+      let blocked: string | null = null;
+      if (row.status === "Unposted" && row.amountMinor > 0) {
+        if (end >= localToday())
+          blocked = "Only completed calendar months can be posted.";
+        else if (boundary && end <= boundary)
+          blocked = "Month closed — reopen before posting.";
+        else if (asset.reviewReason) blocked = asset.reviewReason;
+        else if (row.profile.basis !== assetDepreciationBasis(asset))
+          blocked =
+            "The asset's financial basis changed. Approve a prospective schedule before posting.";
+        else if (
+          row.profile.accumulatedAccountId !==
+            asset.accumulatedDepreciationAccountId ||
+          !accountValid(
+            ctx,
+            row.profile.expenseAccountId,
+            AccountType.Expense,
+          ) ||
+          !accountValid(
+            ctx,
+            row.profile.accumulatedAccountId,
+            AccountType.Asset,
+          )
+        )
+          blocked = "Review the depreciation account mappings.";
+        else if (
+          register.depreciationReconciliation.find(
+            (account) => account.accountId === row.profile.accumulatedAccountId,
+          )?.differenceMinor
+        )
+          blocked = reconciliationMessage(
+            ctx,
+            row.profile.accumulatedAccountId,
+          );
+        else if (
+          schedule.rows.some(
+            (earlier) =>
+              earlier.month < month &&
+              earlier.amountMinor > 0 &&
+              earlier.status === "Unposted",
+          )
+        )
+          blocked = "Post earlier due months first.";
+        if (automatic && historyApprovalNeeded)
+          blocked =
+            "History needs review — approve missed months on the asset before automatic posting.";
+        if (
+          automatic &&
+          !canAll(
+            automationLocals(ctx, row.profile.approvedBy),
+            DEPRECIATION_WRITE,
+          )
+        )
+          blocked =
+            "Automatic approval is no longer authorised. Review the profile.";
+      }
+      return [
+        {
+          assetId: asset.id,
+          name: asset.name,
+          assetVersion: asset.version,
+          ...row,
+          blocked,
+          automationWarning,
+        },
+      ];
+    });
   const due = rows.filter(
     (row) => row.status === "Unposted" && row.amountMinor > 0,
   );
@@ -471,111 +740,373 @@ export function postDepreciationMonth(
     .strict()
     .safeParse(input);
   if (!parsed.success) return invalid(parsed.error);
-  return write(ctx, (emits) => {
-    const preview = monthly(ctx, parsed.data.month, automatic);
-    const due = preview.rows.filter(
-      (row) => row.status === "Unposted" && row.amountMinor > 0,
-    );
-    if (!due.length) return { runId: null, recordId: null, posted: 0 };
-    if (preview.version !== parsed.data.expectedVersion)
-      refuse(
-        "The depreciation preview changed. Review the month again before posting.",
-      );
-    if (!automatic && due.some((row) => row.blocked))
-      refuse("Resolve the listed exceptions before posting this month.");
-    const ready = due.filter((row) => !row.blocked);
-    if (!ready.length) return { runId: null, recordId: null, posted: 0 };
-    const end = monthEndFor(preview.month)!;
-    assertDatesOpen(ctx.db, [end]);
-    const movements = ready.flatMap((row) => [
-      {
-        accountId: row.profile.expenseAccountId,
-        amountMinor: row.amountMinor,
-        label: `Depreciation · ${row.name}`,
-      },
-      {
-        accountId: row.profile.accumulatedAccountId,
-        amountMinor: -row.amountMinor,
-        label: `Accumulated depreciation · ${row.name}`,
-      },
-    ]);
-    const counts = new Map<number, number>();
-    const taxOverrides = ready.map((row) => {
-      const accountId = row.profile.expenseAccountId;
-      const occurrence = counts.get(accountId) ?? 0;
-      counts.set(accountId, occurrence + 1);
-      return {
-        accountId,
-        occurrence,
-        percentageBps: 0,
-        treatment: "non_deductible" as const,
-        reason:
-          "Book depreciation; capital allowances are reviewed separately.",
-      };
-    });
-    const result = createJournal(
-      ctx.db,
-      actor(ctx),
-      {
-        kind: "journal",
-        date: end,
-        description: `Asset depreciation · ${preview.month}`,
-        amount: preview.totalMinor / 100,
-        currency:
-          getSetting(ctx.db, SETTING_KEYS.currencyCode) || DEFAULT_CURRENCY,
-        exchangeRate: 1,
-        movements,
-        taxOverrides,
-      },
+  return write(ctx, (emits) =>
+    postMonth(
+      ctx,
+      parsed.data.month,
+      parsed.data.expectedVersion,
       emits,
+      automatic,
+    ),
+  );
+}
+function postMonth(
+  ctx: AppContext,
+  month: string,
+  expectedVersion: string | null,
+  emits: DeferredEmits,
+  automatic = false,
+  assetId?: number,
+) {
+  const preview = monthly(ctx, month, automatic, assetId);
+  const due = preview.rows.filter(
+    (row) => row.status === "Unposted" && row.amountMinor > 0,
+  );
+  if (!due.length) return { runId: null, recordId: null, posted: 0 };
+  if (expectedVersion !== null && preview.version !== expectedVersion)
+    refuse(
+      "The depreciation preview changed. Review the month again before posting.",
     );
-    if (!result.ok) return refuse(result.reason);
-    const run = ctx.db
-      .insert(depreciationRuns)
+  if (!automatic && due.some((row) => row.blocked))
+    refuse(due.find((row) => row.blocked)!.blocked!);
+  const ready = due.filter((row) => !row.blocked);
+  if (!ready.length) return { runId: null, recordId: null, posted: 0 };
+  const end = monthEndFor(preview.month)!;
+  assertDatesOpen(ctx.db, [end]);
+  const movements = ready.flatMap((row) => [
+    {
+      accountId: row.profile.expenseAccountId,
+      amountMinor: row.amountMinor,
+      label: `Depreciation · ${row.name}`,
+    },
+    {
+      accountId: row.profile.accumulatedAccountId,
+      amountMinor: -row.amountMinor,
+      label: `Accumulated depreciation · ${row.name}`,
+    },
+  ]);
+  const counts = new Map<number, number>();
+  const taxOverrides = ready.map((row) => {
+    const accountId = row.profile.expenseAccountId;
+    const occurrence = counts.get(accountId) ?? 0;
+    counts.set(accountId, occurrence + 1);
+    return {
+      accountId,
+      occurrence,
+      percentageBps: 0,
+      treatment: "non_deductible" as const,
+      reason: "Book depreciation; capital allowances are reviewed separately.",
+    };
+  });
+  const result = createJournal(
+    ctx.db,
+    actor(ctx),
+    {
+      kind: "journal",
+      date: end,
+      description: `Asset depreciation · ${preview.month}`,
+      amount: preview.totalMinor / 100,
+      currency:
+        getSetting(ctx.db, SETTING_KEYS.currencyCode) || DEFAULT_CURRENCY,
+      exchangeRate: 1,
+      movements,
+      taxOverrides,
+    },
+    emits,
+  );
+  if (!result.ok) return refuse(result.reason);
+  const run = ctx.db
+    .insert(depreciationRuns)
+    .values({
+      month: preview.month,
+      recordId: result.value.id,
+      createdBy: actor(ctx),
+    })
+    .returning()
+    .get();
+  ctx.db
+    .update(ledgerRecords)
+    .set({ legacyKind: "asset-depreciation", legacyId: run.id })
+    .where(eq(ledgerRecords.id, run.recordId))
+    .run();
+  for (const row of ready) {
+    ctx.db
+      .insert(depreciationPostings)
       .values({
+        assetId: row.assetId,
         month: preview.month,
-        recordId: result.value.id,
-        createdBy: actor(ctx),
+        profileId: row.profile.id,
+        runId: run.id,
+        amountMinor: row.amountMinor,
+      })
+      .run();
+    recordAudit(ctx.db, {
+      userId: actor(ctx),
+      recordType: "fixed_asset",
+      recordId: row.assetId,
+      action: "update",
+      changes: [
+        {
+          field: "postedDepreciation",
+          before: null,
+          after: {
+            month: preview.month,
+            amountMinor: row.amountMinor,
+            recordId: run.recordId,
+            profileId: row.profile.id,
+          },
+        },
+      ],
+      deferredEmits: emits,
+    });
+  }
+  return { runId: run.id, recordId: run.recordId, posted: ready.length };
+}
+function historicalPreview(
+  ctx: AppContext,
+  rows: { month: string; amountMinor: number }[],
+) {
+  const boundary = closedThrough(ctx.db);
+  const missed = rows.filter(
+    (r) => r.amountMinor > 0 && monthEndFor(r.month)! < localToday(),
+  );
+  return {
+    count: missed.length,
+    from: missed[0]?.month ?? null,
+    through: missed.at(-1)?.month ?? null,
+    totalMinor: Number(missed.reduce((n, r) => n + BigInt(r.amountMinor), 0n)),
+    closedMonths: missed
+      .filter((r) => boundary && monthEndFor(r.month)! <= boundary)
+      .map((r) => r.month),
+  };
+}
+function postAssetHistory(ctx: AppContext, id: number, emits: DeferredEmits) {
+  const state = assetState(ctx, id);
+  const rows = state.rows.filter((r) => r.status === "Unposted");
+  const history = historicalPreview(ctx, rows);
+  if (history.closedMonths.length)
+    refuse(
+      `Historical months are closed: ${history.closedMonths.join(", ")}. Save setup and review history after reopening; nothing was posted.`,
+    );
+  let posted = 0;
+  for (const row of rows
+    .filter((r) => r.amountMinor > 0 && monthEndFor(r.month)! < localToday())
+    .sort((a, b) => a.month.localeCompare(b.month)))
+    posted += postMonth(ctx, row.month, null, emits, false, id).posted;
+  return { posted };
+}
+export function previewAssetCatchUp(ctx: AppContext, id: number) {
+  const denied = requirePermissions(ctx, DEPRECIATION_WRITE);
+  if (denied) return denied;
+  return readTransaction(ctx, () => {
+    const state = assetState(ctx, id);
+    return {
+      version: state.version,
+      history: historicalPreview(
+        ctx,
+        state.rows.filter((r) => r.status === "Unposted"),
+      ),
+      months: state.rows
+        .filter(
+          (r) =>
+            r.status === "Unposted" &&
+            r.amountMinor > 0 &&
+            monthEndFor(r.month)! < localToday(),
+        )
+        .map((r) => ({
+          month: r.month,
+          amountMinor: r.amountMinor,
+          blocked: (() => {
+            const reason = monthly(ctx, r.month, false, id).rows[0]?.blocked;
+            // This one-asset batch handles chronological dependencies itself.
+            return reason === "Post earlier due months first."
+              ? null
+              : (reason ?? null);
+          })(),
+        })),
+    };
+  });
+}
+export function postAssetCatchUp(ctx: AppContext, id: number, input: unknown) {
+  const denied = requirePermissions(ctx, DEPRECIATION_WRITE);
+  if (denied) return denied;
+  const parsed = z
+    .object({ expectedVersion: z.string().min(1) })
+    .strict()
+    .safeParse(input);
+  if (!parsed.success) return invalid(parsed.error);
+  return write(ctx, (emits) => {
+    if (assetState(ctx, id).version !== parsed.data.expectedVersion)
+      refuse("The asset changed. Review missed months again.");
+    return postAssetHistory(ctx, id, emits);
+  });
+}
+export function linkManualDepreciation(
+  ctx: AppContext,
+  id: number,
+  input: unknown,
+) {
+  const denied = requirePermissions(ctx, DEPRECIATION_WRITE);
+  if (denied) return denied;
+  const parsed = z
+    .object({
+      candidateKey: z.string(),
+      amountMinor: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      fromMonth: depreciationMonth,
+      throughMonth: depreciationMonth,
+      reason: z.string().trim().min(1).max(1000),
+      expectedVersion: z.string(),
+    })
+    .strict()
+    .safeParse(input);
+  if (!parsed.success) return invalid(parsed.error);
+  return write(ctx, (emits) => {
+    const state = assetState(ctx, id);
+    const data = parsed.data;
+    if (state.version !== data.expectedVersion)
+      refuse("The asset changed. Reload before linking history.");
+    if (state.history.length)
+      refuse(
+        "Link manual history before engine postings. Reverse dependent runs and review the opening balance before changing existing posted history.",
+      );
+    const candidate = manualCandidates(ctx).find(
+      (c) => c.key === data.candidateKey,
+    );
+    if (!candidate || data.amountMinor > candidate.availableMinor)
+      refuse(
+        "The journal changed or that amount is already allocated. Reload and review it again.",
+      );
+    if (
+      data.fromMonth > data.throughMonth ||
+      data.throughMonth > candidate.date.slice(0, 7) ||
+      data.fromMonth <
+        (state.asset.inServiceDate ?? state.asset.acquisitionDate).slice(0, 7)
+    )
+      refuse(
+        "Choose covered months between the in-service month and the journal month.",
+      );
+    if (
+      state.asset.openingAsAt &&
+      (candidate.date <= state.asset.openingAsAt ||
+        data.fromMonth <= state.asset.openingAsAt.slice(0, 7))
+    )
+      refuse(
+        "Opening depreciation is already included. Only link journals and periods after the opening date.",
+      );
+    if (
+      state.allocations.some(
+        (a) =>
+          data.fromMonth <= a.throughMonth && data.throughMonth >= a.fromMonth,
+      )
+    )
+      refuse("Those months already have linked manual depreciation.");
+    const registered = fixedAssetRegister(ctx.db, "9999-12-31").assets;
+    if (
+      registered.some(
+        (a) => a.assetAccountId === candidate.accumulatedAccountId,
+      ) ||
+      (state.asset.accumulatedDepreciationAccountId &&
+        state.asset.accumulatedDepreciationAccountId !==
+          candidate.accumulatedAccountId)
+    )
+      refuse(
+        "Use the asset's separate accumulated-depreciation account, not a cost account.",
+      );
+    if (data.amountMinor > state.asset.netBookValueMinor)
+      refuse("The allocation exceeds this asset's remaining book value.");
+    const allocation = ctx.db
+      .insert(depreciationAllocations)
+      .values({
+        assetId: id,
+        recordId: candidate.recordId,
+        expenseAccountId: candidate.expenseAccountId,
+        accumulatedAccountId: candidate.accumulatedAccountId,
+        amountMinor: data.amountMinor,
+        fromMonth: data.fromMonth,
+        throughMonth: data.throughMonth,
+        recordDate: candidate.date,
+        approvedBy: actor(ctx),
+        reason: data.reason,
       })
       .returning()
       .get();
-    ctx.db
-      .update(ledgerRecords)
-      .set({ legacyKind: "asset-depreciation", legacyId: run.id })
-      .where(eq(ledgerRecords.id, run.recordId))
-      .run();
-    for (const row of ready) {
+    for (const profile of state.profiles)
       ctx.db
-        .insert(depreciationPostings)
-        .values({
-          assetId: row.assetId,
-          month: preview.month,
-          profileId: row.profile.id,
-          runId: run.id,
-          amountMinor: row.amountMinor,
-        })
+        .update(depreciationProfiles)
+        .set({ stoppedFrom: profile.startMonth })
+        .where(eq(depreciationProfiles.id, profile.id))
         .run();
-      recordAudit(ctx.db, {
-        userId: actor(ctx),
-        recordType: "fixed_asset",
-        recordId: row.assetId,
-        action: "update",
-        changes: [
-          {
-            field: "postedDepreciation",
-            before: null,
-            after: {
-              month: preview.month,
-              amountMinor: row.amountMinor,
-              recordId: run.recordId,
-              profileId: row.profile.id,
-            },
-          },
-        ],
-        deferredEmits: emits,
-      });
-    }
-    return { runId: run.id, recordId: run.recordId, posted: ready.length };
+    ctx.db
+      .update(fixedAssets)
+      .set({
+        accumulatedDepreciationAccountId: candidate.accumulatedAccountId,
+        depreciationExpenseAccountId: candidate.expenseAccountId,
+        revision: state.asset.revision + 1,
+        updatedBy: actor(ctx),
+      })
+      .where(eq(fixedAssets.id, id))
+      .run();
+    recordAudit(ctx.db, {
+      userId: actor(ctx),
+      recordType: "fixed_asset",
+      recordId: id,
+      action: "update",
+      changes: [
+        { field: "linkedManualDepreciation", before: null, after: allocation },
+      ],
+      deferredEmits: emits,
+    });
+    return allocation;
+  });
+}
+export function unlinkManualDepreciation(
+  ctx: AppContext,
+  id: number,
+  input: unknown,
+) {
+  const denied = requirePermissions(ctx, DEPRECIATION_WRITE);
+  if (denied) return denied;
+  const parsed = z
+    .object({
+      allocationId: z.number().int().positive(),
+      expectedVersion: z.string(),
+    })
+    .strict()
+    .safeParse(input);
+  if (!parsed.success) return invalid(parsed.error);
+  return write(ctx, (emits) => {
+    const state = assetState(ctx, id);
+    if (state.version !== parsed.data.expectedVersion)
+      refuse("The asset changed. Reload before removing history.");
+    if (state.history.length)
+      refuse(
+        "Posted runs depend on this history. Review and reverse dependent runs before changing its opening basis.",
+      );
+    const allocation = state.allocations.find(
+      (a) => a.id === parsed.data.allocationId,
+    );
+    if (!allocation) refuse("That allocation no longer exists.");
+    ctx.db
+      .delete(depreciationAllocations)
+      .where(eq(depreciationAllocations.id, allocation.id))
+      .run();
+    for (const profile of state.profiles)
+      ctx.db
+        .update(depreciationProfiles)
+        .set({ stoppedFrom: profile.startMonth })
+        .where(eq(depreciationProfiles.id, profile.id))
+        .run();
+    recordAudit(ctx.db, {
+      userId: actor(ctx),
+      recordType: "fixed_asset",
+      recordId: id,
+      action: "update",
+      changes: [
+        { field: "linkedManualDepreciation", before: allocation, after: null },
+      ],
+      deferredEmits: emits,
+    });
+    return { removed: true };
   });
 }
 export function stopDepreciation(ctx: AppContext, id: number, input: unknown) {

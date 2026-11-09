@@ -11,6 +11,7 @@ import {
   accounts,
   fixedAssets,
   depreciationProfiles,
+  depreciationAllocations,
   ledgerMovements,
   ledgerRecords,
 } from "../db/schema.js";
@@ -61,6 +62,16 @@ export function assetAccountReferenceIds(db: LedgerDb): Set<number> {
     .all()) {
     ids.add(profile.accumulated);
     ids.add(profile.expense);
+  }
+  for (const allocation of db
+    .select({
+      expenseAccountId: depreciationAllocations.expenseAccountId,
+      accumulatedAccountId: depreciationAllocations.accumulatedAccountId,
+    })
+    .from(depreciationAllocations)
+    .all()) {
+    ids.add(allocation.expenseAccountId);
+    ids.add(allocation.accumulatedAccountId);
   }
   return ids;
 }

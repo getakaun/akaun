@@ -1393,6 +1393,52 @@ export const depreciationPostings = sqliteTable(
   ],
 );
 
+// Future automation has a separate approval boundary from historical catch-up.
+// Missing rows (profiles approved before this feature) require history review.
+export const depreciationApprovals = sqliteTable("depreciation_approvals", {
+  profileId: integer("profile_id")
+    .primaryKey()
+    .references(() => depreciationProfiles.id, { onDelete: "restrict" }),
+  futureFromMonth: text("future_from_month").notNull(),
+});
+
+// Allocation of an existing journal is evidence only: never a second ledger posting.
+export const depreciationAllocations = sqliteTable(
+  "depreciation_allocations",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    assetId: integer("asset_id")
+      .notNull()
+      .references(() => fixedAssets.id, { onDelete: "restrict" }),
+    recordId: integer("record_id")
+      .notNull()
+      .references(() => ledgerRecords.id, { onDelete: "restrict" }),
+    expenseAccountId: integer("expense_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    accumulatedAccountId: integer("accumulated_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    amountMinor: integer("amount_minor").notNull(),
+    fromMonth: text("from_month").notNull(),
+    throughMonth: text("through_month").notNull(),
+    recordDate: text("record_date").notNull(),
+    approvedBy: integer("approved_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  () => [
+    check(
+      "depreciation_allocation_amount",
+      sql`typeof("amount_minor") = 'integer' AND "amount_minor" BETWEEN 1 AND 9007199254740991`,
+    ),
+  ],
+);
+
 export const ledgerMovements = sqliteTable(
   "ledger_movements",
   {

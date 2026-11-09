@@ -45,7 +45,7 @@
 			const { failedCount } = (await attachRef?.uploadAll(saved.id)) ?? { failedCount: 0 };
 			uploading = false;
 			if (failedCount > 0) {
-				toast(
+				toast.success(
 					`Record saved. ${failedCount} attachment${failedCount === 1 ? '' : 's'} did not upload — add them again from the record.`
 				);
 			}

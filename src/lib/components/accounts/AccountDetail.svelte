@@ -217,7 +217,7 @@
 					}, 80);
 				}
 			} else if (m.type === 'account-deleted' && m.id === account.id) {
-				toast('That account was deleted.');
+				toast.success('That account was deleted.');
 				void goto(resolve('/(app)/accounts'), { replaceState: true });
 			}
 		}
@@ -232,7 +232,7 @@
 		}}
 		onapplied={async (result) => {
 			taxApplyOpen = false;
-			toast(
+			toast.success(
 				`Classified ${result.updatedLineCount} entries. ${result.remainingCount} eligible entries remain.`
 			);
 			await invalidateAll();

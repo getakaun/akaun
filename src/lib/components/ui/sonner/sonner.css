@@ -1,0 +1,31 @@
+/* Feed Sonner's rich-color variables rather than overriding its toast layout,
+   icons, descriptions or close-button styles separately. */
+[data-sonner-toaster] {
+  --app-toast-success-bg: #ecfdf3;
+  --app-toast-success-text: #166534;
+  --app-toast-success-border: #86efac;
+  --app-toast-warning-bg: #fef9c3;
+  --app-toast-warning-text: #854d0e;
+  --app-toast-warning-border: #facc15;
+  --app-toast-error-bg: #fff0e1;
+  --app-toast-error-text: #9a3412;
+  --app-toast-error-border: #fb923c;
+  --app-toast-info-bg: #eff6ff;
+  --app-toast-info-text: #1e40af;
+  --app-toast-info-border: #93c5fd;
+}
+
+[data-sonner-toaster][data-sonner-theme="dark"] {
+  --app-toast-success-bg: #052e16;
+  --app-toast-success-text: #bbf7d0;
+  --app-toast-success-border: #22c55e;
+  --app-toast-warning-bg: #422006;
+  --app-toast-warning-text: #fef08a;
+  --app-toast-warning-border: #eab308;
+  --app-toast-error-bg: #431407;
+  --app-toast-error-text: #fed7aa;
+  --app-toast-error-border: #f97316;
+  --app-toast-info-bg: #172554;
+  --app-toast-info-text: #bfdbfe;
+  --app-toast-info-border: #3b82f6;
+}

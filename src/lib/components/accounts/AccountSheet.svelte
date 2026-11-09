@@ -2,6 +2,7 @@
 	import TaxValuesFields from '$lib/components/tax/TaxValuesFields.svelte';
 	import { invalidateAll } from '$app/navigation';
 	import { submitAccount } from './create-account.js';
+	import { toast } from 'svelte-sonner';
 	import { X } from '@lucide/svelte';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
@@ -105,8 +106,10 @@
 			const result = await submitAccount(data);
 			if (!result.ok) {
 				submitError = result.error;
+				toast.error(result.error);
 				return;
 			}
+			toast.success('Account created');
 			onclose();
 			// The API has confirmed creation; SSE also updates the chart if a reload fails.
 			await invalidateAll().catch(() => {});

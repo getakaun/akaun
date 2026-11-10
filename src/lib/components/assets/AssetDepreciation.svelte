@@ -368,6 +368,41 @@
         >
       </div>
     </div>
+    <section class="depreciation-progress" aria-label="Posting progress">
+      <h3 class="detail-card-title">Posting progress</h3>
+      <div class="detail-list depreciation-summary">
+        <div class="detail-row">
+          <span class="detail-key">Last posted</span>
+          <span class="detail-val"
+            >{data.asset.depreciation.lastPostedMonth ??
+              "No depreciation posted"}</span
+          >
+        </div>
+        {#if data.asset.depreciation.mode}
+          <div class="detail-row">
+            <span class="detail-key">Pending months</span>
+            <span class="detail-val"
+              >{data.asset.depreciation.dueCount
+                ? `${data.asset.depreciation.dueCount} ${data.asset.depreciation.dueCount === 1 ? "month" : "months"} · from ${data.asset.depreciation.firstDueMonth}`
+                : "None"}</span
+            >
+          </div>
+          {#if data.asset.depreciation.nextMonth}<div class="detail-row">
+              <span class="detail-key">Next scheduled</span>
+              <span class="detail-val">{data.asset.depreciation.nextMonth}</span
+              >
+            </div>{/if}
+          <div class="detail-row">
+            <span class="detail-key">Posting mode</span>
+            <span class="detail-val"
+              >{data.asset.depreciation.mode === "auto"
+                ? "Auto-post monthly"
+                : "Review before posting"}</span
+            >
+          </div>
+        {/if}
+      </div>
+    </section>
     {#if data.asset.reviewReason}<p class="hint">
         Resolve the asset review before posting depreciation.
       </p>{/if}
@@ -1081,6 +1116,15 @@
 />
 
 <style>
+  .depreciation-progress {
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+    min-width: 0;
+  }
+  .depreciation-progress h3 {
+    margin: 0 0 12px;
+  }
+
   .sheet-head {
     display: flex;
     align-items: flex-start;

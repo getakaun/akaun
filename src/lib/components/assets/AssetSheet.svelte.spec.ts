@@ -368,7 +368,12 @@ it("opens an asset on the standard detail page with Activity and a dirty-only sa
     vi.fn(async () => Response.json([])),
   );
   render(AssetDetail, {
-    data: { asset: registeredAsset, accounts, canChange: true },
+    data: {
+      asset: registeredAsset,
+      accounts,
+      canChange: true,
+      depreciation: depreciationData(),
+    },
   });
   await expect
     .element(page.getByRole("heading", { name: "Laptop", exact: true }))
@@ -896,5 +901,57 @@ it.each([1280, 390])(
     await expect
       .element(page.getByText(longReference, { exact: true }))
       .not.toBeInTheDocument();
+  },
+);
+
+it.each([1280, 390])(
+  "puts lifecycle details in the depreciation card instead of the header at %ipx",
+  async (width) => {
+    await page.viewport(width, 844);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json([])),
+    );
+    const asset: RegisteredAsset = {
+      ...registeredAsset,
+      depreciation: {
+        status: "depreciation-pending",
+        dueCount: 3,
+        firstDueMonth: "2026-06",
+        lastPostedMonth: "2026-05",
+        nextMonth: "2026-09",
+        mode: "auto",
+        reviewReason: null,
+      },
+    };
+    render(AssetDetail, {
+      data: {
+        asset,
+        accounts,
+        canChange: true,
+        depreciation: { ...depreciationData(), asset },
+      },
+    });
+    const progress = page.getByRole("region", {
+      name: "Posting progress",
+      exact: true,
+    });
+    await expect.element(progress).toBeVisible();
+    const hero = document.querySelector<HTMLElement>(".detail-hero")!;
+    expect(hero.textContent).toContain("Pending posting");
+    expect(hero.textContent).not.toContain("2026-05");
+    expect(hero.textContent).not.toContain("Auto-post monthly");
+    expect(hero.textContent).not.toContain("3 months");
+    const section = progress.element() as HTMLElement;
+    expect(
+      section.closest("section.detail-card")?.getAttribute("aria-labelledby"),
+    ).toBe("depreciation-title");
+    expect(section.textContent).toContain("Last posted");
+    expect(section.textContent).toContain("2026-05");
+    expect(section.textContent).toContain("3 months · from 2026-06");
+    expect(section.textContent).toContain("2026-09");
+    expect(section.textContent).toContain("Auto-post monthly");
+    expect(section.scrollWidth).toBeLessThanOrEqual(section.clientWidth + 1);
+    expect(section.getBoundingClientRect().right).toBeLessThanOrEqual(width);
   },
 );

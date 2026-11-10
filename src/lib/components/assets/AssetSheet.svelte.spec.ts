@@ -1,6 +1,6 @@
 import { page } from "vitest/browser";
 import { afterEach, expect, it, vi } from "vitest";
-import { render } from "vitest-browser-svelte";
+import { cleanup, render } from "vitest-browser-svelte";
 import { AccountSubType, AccountType, LedgerRecordKind } from "$lib/enums.js";
 import AssetSheet from "./AssetSheet.svelte";
 import FixedAssetsPage from "./FixedAssetsPage.svelte";
@@ -21,6 +21,8 @@ vi.mock("$app/state", () => ({
 }));
 vi.mock("$lib/sse.js", () => ({ createResourceStream: vi.fn() }));
 afterEach(async () => {
+  // Unmount sheets before resizing so their modal layers finish cleaning up.
+  cleanup();
   vi.unstubAllGlobals();
   await page.viewport(1280, 900);
 });
@@ -780,3 +782,107 @@ it("keeps asset setup status visible on phone row cards", async () => {
   )!;
   expect(statusCell.getBoundingClientRect().right).toBeLessThanOrEqual(390);
 });
+
+it.each([1280, 390])(
+  "keeps structured asset activity compact and readable at %ipx",
+  async (width) => {
+    await page.viewport(width, 844);
+    const longReference = "supporting-document-".repeat(150);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json([
+          {
+            id: 100,
+            action: "update",
+            createdAt: "2026-11-10 08:00:00",
+            userId: 1,
+            userName: "Alice",
+            via: "session",
+            credentialLabel: null,
+            changes: [
+              {
+                field: "depreciationProfile",
+                before: null,
+                after: {
+                  months: 36,
+                  residualMinor: 123456,
+                  mode: "auto",
+                  basis: JSON.stringify([
+                    600000,
+                    1,
+                    "2026-01-15",
+                    null,
+                    null,
+                    0,
+                  ]),
+                },
+              },
+              {
+                field: "documentReference",
+                before: "Old reference",
+                after: longReference,
+              },
+            ],
+          },
+        ]),
+      ),
+    );
+    render(AssetDetail, {
+      data: { asset: registeredAsset, accounts, canChange: true },
+    });
+    const viewChanges = page.getByRole("button", {
+      name: "View changes",
+      exact: true,
+    });
+    await expect.element(viewChanges).toBeVisible();
+    await expect
+      .element(page.getByText("updated this asset", { exact: false }))
+      .toBeVisible();
+    await expect
+      .element(page.getByText(longReference, { exact: true }))
+      .not.toBeInTheDocument();
+    const activity = document.querySelector<HTMLElement>(".audit-list")!;
+    expect(activity.scrollWidth).toBeLessThanOrEqual(activity.clientWidth + 1);
+    await viewChanges.click();
+    await expect
+      .element(page.getByRole("dialog", { name: "Activity details" }))
+      .toBeVisible();
+    await expect
+      .element(
+        page.getByText("Depreciation setup · Useful life (months)", {
+          exact: true,
+        }),
+      )
+      .toBeVisible();
+    await expect
+      .element(
+        page.getByText("Depreciation setup · Financial basis · Original cost", {
+          exact: true,
+        }),
+      )
+      .toBeVisible();
+    await expect
+      .element(page.getByText("1,234.56", { exact: true }))
+      .toBeVisible();
+    await expect
+      .element(page.getByText("Auto-post monthly", { exact: true }))
+      .toBeVisible();
+    await expect
+      .element(page.getByText("Old reference", { exact: true }))
+      .toBeVisible();
+    await expect
+      .element(page.getByText(longReference, { exact: true }))
+      .toBeVisible();
+    const dialog = page
+      .getByRole("dialog", { name: "Activity details" })
+      .element() as HTMLElement;
+    expect(dialog.getBoundingClientRect().right).toBeLessThanOrEqual(width);
+    expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth + 1);
+    expect(dialog.getBoundingClientRect().height).toBeLessThanOrEqual(844);
+    await page.getByRole("button", { name: "Close activity details" }).click();
+    await expect
+      .element(page.getByRole("dialog", { name: "Activity details" }))
+      .not.toBeInTheDocument();
+  },
+);

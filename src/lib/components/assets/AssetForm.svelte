@@ -136,8 +136,15 @@
       legacy &&
       (!fields.assetAccount || !fields.acquisitionDate || !fields.openingAsAt)
     ) {
-      error =
-        "Choose an asset cost account, acquisition date and opening date.";
+      error = "Choose an asset cost account, purchase date and opening date.";
+      return;
+    }
+    if (
+      ((legacy && (assetMoneyMinor(fields.openingDep) ?? 0) > 0) ||
+        asset?.accumulatedDepreciationAccountId) &&
+      !fields.accumulatedAccount
+    ) {
+      error = "Choose an existing accumulated depreciation account.";
       return;
     }
     const businessUseBps =
@@ -254,15 +261,15 @@
           >
         </div>
         <div class="detail-row">
-          <span class="detail-key">Asset account</span><span class="detail-val"
+          <span class="detail-key">Asset cost account</span><span
+            class="detail-val"
             >{accounts.find(
               (account) => String(account.id) === fields.assetAccount,
             )?.name ?? "Missing account"}</span
           >
         </div>
         <div class="detail-row">
-          <span class="detail-key">Registered cost</span><span
-            class="detail-val"
+          <span class="detail-key">Original cost</span><span class="detail-val"
             >{formatMinor(asset?.costMinor ?? source?.amountMinor ?? 0)}</span
           >
         </div>
@@ -322,12 +329,12 @@
           <Select.Trigger id="asset-account" class="w-full justify-between"
             >{accounts.find(
               (account) => String(account.id) === fields.assetAccount,
-            )?.name ?? "Choose account"}</Select.Trigger
+            )?.name ?? "Choose asset cost account"}</Select.Trigger
           >
           <Select.Content
             ><Select.Item
               value="__none__"
-              label="Choose account"
+              label="Choose asset cost account"
             />{#each costAccounts as account (account.id)}<Select.Item
                 value={String(account.id)}
                 label={account.name}
@@ -349,7 +356,7 @@
       </div>
       <div class="field">
         <span class="field-label" id="asset-acquired-label"
-          >Acquisition date *</span
+          >Purchase date *</span
         ><DatePicker
           bind:value={fields.acquisitionDate}
           labelledBy="asset-acquired-label"
@@ -419,34 +426,29 @@
     {#if (legacy && (assetMoneyMinor(fields.openingDep) ?? 0) > 0) || (asset && asset.accumulatedDepreciationAccountId !== null)}
       <div class="field">
         <label class="field-label" for="asset-accumulated"
-          >Accumulated depreciation account {legacy &&
-          (assetMoneyMinor(fields.openingDep) ?? 0) > 0
-            ? "*"
-            : "(optional)"}</label
+          >Accumulated depreciation account *</label
         ><Select.Root
           type="single"
-          value={fields.accumulatedAccount || "__none__"}
-          onValueChange={(value) =>
-            (fields.accumulatedAccount = value === "__none__" ? "" : value)}
+          bind:value={fields.accumulatedAccount}
+          required
           disabled={!canChange || saving}
         >
           <Select.Trigger id="asset-accumulated" class="w-full justify-between"
             >{accounts.find(
               (account) => String(account.id) === fields.accumulatedAccount,
-            )?.name ?? "Not set"}</Select.Trigger
+            )?.name ??
+              "Choose accumulated depreciation account"}</Select.Trigger
           >
           <Select.Content
-            ><Select.Item
-              value="__none__"
-              label="Not set"
-            />{#each assetAccounts.filter((account) => String(account.id) !== fields.assetAccount) as account (account.id)}<Select.Item
+            >{#each assetAccounts.filter((account) => String(account.id) !== fields.assetAccount) as account (account.id)}<Select.Item
                 value={String(account.id)}
                 label={account.name}
               />{/each}</Select.Content
           ></Select.Root
         >
         <p class="field-hint">
-          A separate Asset account. Registration posts no depreciation.
+          Choose a separate non-current asset account. Create missing accounts
+          in Accounts before continuing. Registration posts no depreciation.
         </p>
       </div>
     {/if}

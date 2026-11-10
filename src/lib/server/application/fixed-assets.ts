@@ -149,7 +149,7 @@ export function registerFixedAsset(
       if (!enteredDate || !enteredAccount || !enteredCost || !openingAsAt)
         return fail(
           "INVALID_INPUT",
-          "Existing assets need acquisition date, account, original cost and an opening as-at date.",
+          "Existing assets need purchase date, asset cost account, original cost and an opening as-at date.",
         );
       acquisitionDate = enteredDate;
       costMinor = enteredCost;
@@ -157,7 +157,7 @@ export function registerFixedAsset(
       if (openingAsAt < acquisitionDate)
         return fail(
           "INVALID_INPUT",
-          "Opening date must be on or after acquisition.",
+          "Opening date must be on or after purchase.",
         );
       if (!details.documentReference && openingRecordId === null)
         return fail(
@@ -218,7 +218,7 @@ export function registerFixedAsset(
     )
       return fail(
         "INVALID_INPUT",
-        "In-service date must be on or after acquisition.",
+        "In-service date must be on or after purchase.",
       );
     if (details.residualMinor !== null && details.residualMinor > costMinor)
       return fail(
@@ -362,7 +362,7 @@ export function updateFixedAsset(
     )
       return fail(
         "REFUSED",
-        "Posted depreciation preserves its opening balance and accumulated-depreciation account. Use an audited ledger correction instead of rewriting that history.",
+        "Posted depreciation preserves its opening balance and accumulated depreciation account. Use an audited ledger correction instead of rewriting that history.",
       );
     const changes: Partial<FixedAsset> = { ...details };
     if (accumulatedDepreciationAccountId !== undefined)
@@ -524,7 +524,7 @@ export function updateFixedAsset(
     if (details.inServiceDate && details.inServiceDate < acquisition)
       return fail(
         "INVALID_INPUT",
-        "In-service date must be on or after acquisition.",
+        "In-service date must be on or after purchase.",
       );
     if (details.residualMinor !== null && details.residualMinor > cost)
       return fail(

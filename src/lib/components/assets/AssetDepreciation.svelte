@@ -184,7 +184,7 @@
     preview = null;
     catchUp = null;
     postHistory = false;
-    advanced = !data.canCreateAccount && !fields.accumulated;
+    advanced = false;
     manualKey = "";
     manualAmount = "";
     manualFrom = "";
@@ -251,9 +251,12 @@
     if (saving || disabled) return;
     error = "";
     const residualMinor = assetMoneyMinor(fields.residual);
-    if (kind === "preview" && (residualMinor === null || !fields.expense)) {
+    if (
+      kind === "preview" &&
+      (residualMinor === null || !fields.expense || !fields.accumulated)
+    ) {
       error =
-        "Enter a valid residual value and choose a depreciation expense account.";
+        "Enter a valid residual value and choose existing depreciation expense and accumulated depreciation accounts.";
       return;
     }
     const settings: DepreciationSettings = {
@@ -261,9 +264,7 @@
       months: Number(fields.months),
       residualMinor: residualMinor ?? 0,
       expenseAccountId: Number(fields.expense),
-      accumulatedAccountId: fields.accumulated
-        ? Number(fields.accumulated)
-        : null,
+      accumulatedAccountId: Number(fields.accumulated),
       mode: fields.mode,
       reason: fields.reason,
     };
@@ -345,11 +346,11 @@
   <div class="field">
     <label class="field-label" for="dep-expense"
       >Depreciation expense account *</label
-    ><Select.Root type="single" bind:value={fields.expense}
+    ><Select.Root type="single" bind:value={fields.expense} required
       ><Select.Trigger id="dep-expense" class="w-full justify-between"
         ><span class="truncate"
           >{expenseAccounts.find((a) => String(a.id) === fields.expense)
-            ?.name ?? "Choose expense account"}</span
+            ?.name ?? "Choose depreciation expense account"}</span
         ></Select.Trigger
       ><Select.Content
         >{#each expenseAccounts as account (account.id)}<Select.Item
@@ -450,7 +451,7 @@
               <thead
                 ><tr
                   ><th>Month</th><th class="rep-amount">Charge</th><th
-                    class="rep-amount">Projected NBV</th
+                    class="rep-amount">Projected net book value</th
                   ><th>Status</th></tr
                 ></thead
               ><tbody>
@@ -836,15 +837,24 @@
             </p>
             <div class="depreciation-account-summary">
               <p class="field-label">Posting accounts</p>
-              <p class="hint">
-                {accounts.find(
-                  (a) => a.id === approvedSettings?.expenseAccountId,
-                )?.name} → {accounts.find(
-                  (a) => a.id === approvedSettings?.accumulatedAccountId,
-                )?.name ?? preview.accountPlan.name}{preview.accountPlan.create
-                  ? " (created on approval)"
-                  : ""}
-              </p>
+              <dl class="detail-list">
+                <div class="detail-row">
+                  <dt class="detail-key">Depreciation expense account</dt>
+                  <dd class="detail-val">
+                    {accounts.find(
+                      (a) => a.id === approvedSettings?.expenseAccountId,
+                    )?.name}
+                  </dd>
+                </div>
+                <div class="detail-row">
+                  <dt class="detail-key">Accumulated depreciation account</dt>
+                  <dd class="detail-val">
+                    {accounts.find(
+                      (a) => a.id === approvedSettings?.accumulatedAccountId,
+                    )?.name}
+                  </dd>
+                </div>
+              </dl>
             </div>
             {#if preview.history.count}
               <div
@@ -898,7 +908,8 @@
                     <thead
                       ><tr
                         ><th>Month</th><th class="rep-amount">Depreciation</th
-                        ><th class="rep-amount">Projected NBV</th></tr
+                        ><th class="rep-amount">Projected net book value</th
+                        ></tr
                       ></thead
                     ><tbody
                       >{#each preview.schedule as row (row.month)}<tr
@@ -936,7 +947,45 @@
                 required
               />
             </div>
-            {#if !data.defaults.expenseAccountId && !data.asset.depreciationExpenseAccountId}{@render expensePicker()}{/if}
+            {@render expensePicker()}
+            <div class="field">
+              <label class="field-label" for="dep-accum"
+                >Accumulated depreciation account *</label
+              >
+              <Select.Root
+                type="single"
+                bind:value={fields.accumulated}
+                required
+              >
+                <Select.Trigger id="dep-accum" class="w-full justify-between">
+                  <span class="truncate"
+                    >{accumulatedAccounts.find(
+                      (a) => String(a.id) === fields.accumulated,
+                    )?.name ?? "Choose accumulated depreciation account"}</span
+                  >
+                </Select.Trigger>
+                <Select.Content>
+                  {#each accumulatedAccounts as account (account.id)}
+                    <Select.Item
+                      value={String(account.id)}
+                      label={account.name}
+                    />
+                  {/each}
+                </Select.Content>
+              </Select.Root>
+              <p class="field-hint">
+                Choose a separate non-current asset account. It keeps
+                accumulated depreciation separate from the original cost.
+              </p>
+            </div>
+            <p class="field-hint">
+              Both posting accounts must already exist. <a
+                class="detail-card-action"
+                href={resolve("/(app)/accounts")}
+                >Create missing accounts in Accounts</a
+              >, then return to set up depreciation.
+            </p>
+
             <div class="depreciation-toggle">
               <div>
                 <label class="field-label" for="dep-auto"
@@ -956,7 +1005,7 @@
               <summary>More options</summary>
               <div class="depreciation-disclosure-body">
                 <p class="hint">
-                  Cost account: {accounts.find(
+                  Asset cost account: {accounts.find(
                     (a) => a.id === data.asset.assetAccountId,
                   )?.name} (from the purchase). Accumulated depreciation is kept separately
                   so the original asset cost stays visible.
@@ -969,37 +1018,6 @@
                     bind:value={fields.residual}
                     inputmode="decimal"
                   />
-                </div>
-                {#if data.defaults.expenseAccountId || data.asset.depreciationExpenseAccountId}{@render expensePicker()}{/if}
-                {#if !data.canCreateAccount && !fields.accumulated}<p
-                    class="hint"
-                  >
-                    Choose an existing accumulated-depreciation account. Your
-                    permissions do not allow creating one automatically.
-                  </p>{/if}
-                <div class="field">
-                  <label class="field-label" for="dep-accum"
-                    >Accumulated depreciation account</label
-                  ><Select.Root type="single" bind:value={fields.accumulated}
-                    ><Select.Trigger
-                      id="dep-accum"
-                      class="w-full justify-between"
-                      ><span class="truncate"
-                        >{accumulatedAccounts.find(
-                          (a) => String(a.id) === fields.accumulated,
-                        )?.name ??
-                          "Use saved mapping or create automatically"}</span
-                      ></Select.Trigger
-                    ><Select.Content
-                      ><Select.Item
-                        value=""
-                        label="Use saved mapping or create automatically"
-                      />{#each accumulatedAccounts as account (account.id)}<Select.Item
-                          value={String(account.id)}
-                          label={account.name}
-                        />{/each}</Select.Content
-                    ></Select.Root
-                  >
                 </div>
               </div>
             </details>

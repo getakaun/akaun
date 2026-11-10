@@ -5,6 +5,8 @@ import { AccountSubType, AccountType, LedgerRecordKind } from "$lib/enums.js";
 import AssetSheet from "./AssetSheet.svelte";
 import FixedAssetsPage from "./FixedAssetsPage.svelte";
 import AssetDetail from "./AssetDetail.svelte";
+import AssetDepreciation from "./AssetDepreciation.svelte";
+import type { ComponentProps } from "svelte";
 import type { RegisteredAsset } from "$lib/server/queries/fixed-assets.js";
 import "../../../routes/layout.css";
 
@@ -112,7 +114,9 @@ it("shows reconciliation exceptions to readers while withholding registration ac
     .getByRole("button", { name: "Reconciliation", exact: true })
     .click();
   await expect
-    .element(page.getByRole("heading", { name: "Gross cost reconciliation" }))
+    .element(
+      page.getByRole("heading", { name: "Original cost reconciliation" }),
+    )
     .toBeVisible();
   await expect
     .element(page.getByText("1 unregistered · 0 source reviews"))
@@ -144,7 +148,7 @@ it("registers a saved purchase with source-derived cost and no opening or ledger
     .element(page.getByRole("region", { name: "Saved purchase details" }))
     .toBeVisible();
   await expect
-    .element(page.getByLabelText("Acquisition date *"))
+    .element(page.getByLabelText("Purchase date *"))
     .not.toBeInTheDocument();
   await page
     .getByRole("button", { name: "Register asset", exact: true })
@@ -342,7 +346,7 @@ it("uses the shared account dropdown and calendar in the create drawer", async (
     .toHaveTextContent("Computer equipment");
   expect(document.querySelector(".asset-form select")).toBeNull();
   await page
-    .getByRole("button", { name: "Acquisition date *", exact: true })
+    .getByRole("button", { name: "Purchase date *", exact: true })
     .click();
   await expect.element(page.getByRole("grid")).toBeVisible();
 });
@@ -506,12 +510,21 @@ it("preserves a saved custom type and retired fields when editing", async () => 
     ...registeredAsset,
     assetType: "Specialist laboratory equipment",
     serialNumber: "LAB-123",
+    accumulatedDepreciationAccountId: 2,
   };
   const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) =>
     Response.json(init?.method === "PATCH" ? { ...asset, revision: 2 } : []),
   );
   vi.stubGlobal("fetch", fetchMock);
   render(AssetDetail, { data: { asset, accounts, canChange: true } });
+  await expect
+    .element(
+      page.getByRole("button", {
+        name: "Accumulated depreciation account *",
+        exact: true,
+      }),
+    )
+    .toHaveTextContent("Accumulated depreciation");
   await page.getByRole("button", { name: "Asset type *", exact: true }).click();
   await expect
     .element(page.getByRole("option", { name: asset.assetType, exact: true }))
@@ -540,4 +553,152 @@ it("preserves a saved custom type and retired fields when editing", async () => 
     inServiceDate: "2026-02-01",
     description: "Updated description",
   });
+});
+
+const postingAccounts = [
+  ...accounts,
+  {
+    id: 3,
+    name: "Depreciation expense",
+    type: AccountType.Expense,
+    subType: null,
+    active: true,
+  },
+];
+function depreciationData(): ComponentProps<typeof AssetDepreciation>["data"] {
+  return {
+    asset: registeredAsset,
+    profiles: [],
+    rows: [],
+    history: [],
+    allocations: [],
+    version: "dep-v1",
+    hasDue: false,
+    postingIssue: null,
+    defaults: { expenseAccountId: null, accumulatedAccountId: null },
+    manualCandidates: [],
+    reconciliation: null,
+    historyReview: [],
+    asAt: "2026-11-10",
+    postedMinor: 0,
+    scheduleReviewReason: null,
+    accumulatedMinor: 0,
+    nbvMinor: 600000,
+    canConfigure: true,
+    canReverse: true,
+  };
+}
+
+it("requires existing posting accounts before previewing depreciation", async () => {
+  const fetchMock = vi.fn(async () =>
+    Response.json({
+      version: "preview-v1",
+      baseNbvMinor: 600000,
+      schedule: [
+        { month: "2026-02", amountMinor: 16666, projectedNbvMinor: 583334 },
+      ],
+      history: {
+        count: 0,
+        closedMonths: [],
+        totalMinor: 0,
+        from: null,
+        through: null,
+      },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  render(AssetDepreciation, {
+    data: depreciationData(),
+    accounts: postingAccounts,
+    onsaved: vi.fn(async () => {}),
+  });
+  await page
+    .getByRole("button", { name: "Set up depreciation", exact: true })
+    .click();
+  await expect
+    .element(
+      page.getByRole("button", {
+        name: "Depreciation expense account *",
+        exact: true,
+      }),
+    )
+    .toBeVisible();
+  await expect
+    .element(
+      page.getByRole("button", {
+        name: "Accumulated depreciation account *",
+        exact: true,
+      }),
+    )
+    .toBeVisible();
+  await expect
+    .element(
+      page.getByRole("link", { name: "Create missing accounts in Accounts" }),
+    )
+    .toHaveAttribute("href", "/accounts");
+  await page
+    .getByRole("button", { name: "Preview schedule", exact: true })
+    .click();
+  expect(fetchMock).not.toHaveBeenCalled();
+  await page
+    .getByRole("button", {
+      name: "Depreciation expense account *",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("option", { name: "Depreciation expense", exact: true })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "Accumulated depreciation account *",
+      exact: true,
+    })
+    .click();
+  await expect
+    .element(
+      page.getByRole("option", { name: "Computer equipment", exact: true }),
+    )
+    .not.toBeInTheDocument();
+  await page
+    .getByRole("option", { name: "Accumulated depreciation", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Preview schedule", exact: true })
+    .click();
+  await expect.poll(() => fetchMock.mock.calls.length).toBe(1);
+  const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(JSON.parse(String(init.body))).toMatchObject({
+    action: "preview",
+    input: { expenseAccountId: 3, accumulatedAccountId: 2 },
+  });
+});
+
+it("shows saved posting accounts directly when setting up depreciation", async () => {
+  const data = depreciationData();
+  data.defaults = { expenseAccountId: 3, accumulatedAccountId: 2 };
+  render(AssetDepreciation, {
+    data,
+    accounts: postingAccounts,
+    onsaved: vi.fn(async () => {}),
+  });
+  await page
+    .getByRole("button", { name: "Set up depreciation", exact: true })
+    .click();
+  await expect
+    .element(
+      page.getByRole("button", {
+        name: "Depreciation expense account *",
+        exact: true,
+      }),
+    )
+    .toHaveTextContent("Depreciation expense");
+  await expect
+    .element(
+      page.getByRole("button", {
+        name: "Accumulated depreciation account *",
+        exact: true,
+      }),
+    )
+    .toHaveTextContent("Accumulated depreciation");
 });

@@ -32,7 +32,7 @@
   const shown = $derived(preview ?? asset);
   const comparison = $derived([
     {
-      label: "Cost",
+      label: "Original cost",
       before: formatMinor(shown.costMinor),
       after: shown.source
         ? formatMinor(shown.source.amountMinor)
@@ -46,7 +46,7 @@
       changed: shown.acquisitionDate !== shown.source?.recordDate,
     },
     {
-      label: "Asset account",
+      label: "Asset cost account",
       before:
         accounts.find((account) => account.id === shown.assetAccountId)?.name ??
         "Missing account",

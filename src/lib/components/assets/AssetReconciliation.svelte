@@ -21,7 +21,7 @@
   <section class="rep-block">
     <header class="rep-block-head">
       <div>
-        <h2 class="rep-block-title">Gross cost reconciliation</h2>
+        <h2 class="rep-block-title">Original cost reconciliation</h2>
         <p class="rep-block-sub">
           Ledger balance minus registered cost · {formatDate(register.asAt)}
         </p>
@@ -130,7 +130,7 @@
             ><td colspan="4"
               ><EmptyState
                 title="No depreciation accounts mapped"
-                sub="Map an accumulated depreciation account when registering opening depreciation."
+                sub="Choose an existing accumulated depreciation account when recording opening depreciation or setting up depreciation. Create missing accounts in Accounts first."
               /></td
             ></tr
           >{/if}</tbody

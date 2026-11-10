@@ -35,7 +35,6 @@ import {
   createRecord as createJournal,
   type DeferredEmits,
 } from "../services/ledger.js";
-import { createAccount } from "../services/accounts.js";
 import { inVoidPair } from "../queries/void-state.js";
 import { recordAudit } from "../audit.js";
 import { actor, requirePermissions, type AppContext } from "./context.js";
@@ -116,7 +115,6 @@ export function readAssetDepreciation(ctx: AppContext, id: number) {
       hasDue: !!nextDue,
       postingIssue: nextRow?.blocked ?? nextRow?.automationWarning ?? null,
       defaults: accountDefaults(ctx, state.asset.assetAccountId),
-      canCreateAccount: canAll(ctx.locals, ["accounts.create"]),
       manualCandidates: manualCandidates(ctx),
       reconciliation: reconciliation(
         ctx,
@@ -311,46 +309,9 @@ function manualCandidates(ctx: AppContext) {
     });
 }
 function prepare(ctx: AppContext, id: number, input: DepreciationSettings) {
-  const selected = assetState(ctx, id).asset;
-  const remembered = accountDefaults(ctx, selected.assetAccountId);
-  const accumulatedAccountId =
-    input.accumulatedAccountId ??
-    selected.accumulatedDepreciationAccountId ??
-    remembered.accumulatedAccountId;
-  if (!accumulatedAccountId && !canAll(ctx.locals, ["accounts.create"]))
-    refuse(
-      "Choose an existing accumulated-depreciation account in More options, or ask someone with account creation permission to approve setup.",
-    );
-  const settings = {
-    ...input,
-    accumulatedAccountId: accumulatedAccountId ?? 0,
-  };
-  const cost = ctx.db
-    .select()
-    .from(accounts)
-    .where(eq(accounts.id, selected.assetAccountId))
-    .get()!;
-  const accountPlan = {
-    create: !accumulatedAccountId,
-    name: accumulatedAccountId
-      ? (ctx.db
-          .select()
-          .from(accounts)
-          .where(eq(accounts.id, accumulatedAccountId))
-          .get()?.name ?? "Missing account")
-      : `Accumulated depreciation – ${cost.name}`,
-  };
+  const settings = input;
   const state = assetState(ctx, id);
   const { asset, profiles, history, rows } = state;
-  if (
-    accountPlan.create &&
-    manualCandidates(ctx).some(
-      (c) => c.expenseAccountId === settings.expenseAccountId,
-    )
-  )
-    refuse(
-      "Existing unallocated journals use this depreciation expense account. Review and link the depreciation already recorded for this asset first. If those journals belong to other assets, explicitly choose the appropriate accumulated-depreciation account in More options; automatic account creation cannot bypass historical reconciliation.",
-    );
   if (asset.reviewReason)
     refuse("Resolve the asset's review issues before approving depreciation.");
   if (
@@ -420,8 +381,7 @@ function prepare(ctx: AppContext, id: number, input: DepreciationSettings) {
     refuse(reconciliationMessage(ctx, settings.accumulatedAccountId));
   if (
     !accountValid(ctx, settings.expenseAccountId, AccountType.Expense) ||
-    (settings.accumulatedAccountId !== 0 &&
-      !accountValid(ctx, settings.accumulatedAccountId, AccountType.Asset)) ||
+    !accountValid(ctx, settings.accumulatedAccountId, AccountType.Asset) ||
     settings.accumulatedAccountId === asset.assetAccountId ||
     registered.some(
       (row) => row.assetAccountId === settings.accumulatedAccountId,
@@ -435,7 +395,7 @@ function prepare(ctx: AppContext, id: number, input: DepreciationSettings) {
     asset.accumulatedDepreciationAccountId !== settings.accumulatedAccountId
   )
     refuse(
-      "Use the asset's existing accumulated-depreciation account. Correct its mapping separately before approval.",
+      "Use the asset's existing accumulated depreciation account. Correct its mapping separately before approval.",
     );
   if (
     profiles.some(
@@ -445,7 +405,7 @@ function prepare(ctx: AppContext, id: number, input: DepreciationSettings) {
     history.length
   )
     refuse(
-      "Keep the accumulated-depreciation account used by posted history; transferring historical balances requires a separate reviewed adjustment.",
+      "Keep the accumulated depreciation account used by posted history; transferring historical balances requires a separate reviewed adjustment.",
     );
   if (settings.mode === "auto" && (ctx.locals.credential || ctx.locals.oauth))
     refuse(
@@ -464,14 +424,11 @@ function prepare(ctx: AppContext, id: number, input: DepreciationSettings) {
   return {
     state,
     settings,
-    accountPlan,
     baseNbvMinor,
     schedule,
     version: hash({
       version: state.version,
       settings,
-      accountPlan,
-      defaults: remembered,
       baseNbvMinor,
       closedThrough: closedThrough(ctx.db),
     }),
@@ -492,7 +449,6 @@ export function previewDepreciationProfile(
       version: prepared.version,
       schedule: prepared.schedule,
       baseNbvMinor: prepared.baseNbvMinor,
-      accountPlan: prepared.accountPlan,
       history: historicalPreview(ctx, prepared.schedule),
     };
   });
@@ -520,20 +476,6 @@ export function approveDepreciationProfile(
         "The asset, schedule or closing boundary changed. Preview again before approving.",
       );
     const settings = { ...prepared.settings };
-    if (prepared.accountPlan.create) {
-      const result = createAccount(
-        ctx.db,
-        actor(ctx),
-        {
-          name: prepared.accountPlan.name,
-          type: AccountType.Asset,
-          subType: AccountSubType.OtherNonCurrentAsset,
-        },
-        emits,
-      );
-      if (!result.ok) refuse(result.reason);
-      settings.accumulatedAccountId = result.value.id;
-    }
     const profile = ctx.db
       .insert(depreciationProfiles)
       .values({
@@ -1012,7 +954,7 @@ export function linkManualDepreciation(
           candidate.accumulatedAccountId)
     )
       refuse(
-        "Use the asset's separate accumulated-depreciation account, not a cost account.",
+        "Use the asset's separate accumulated depreciation account, not a cost account.",
       );
     if (data.amountMinor > state.asset.netBookValueMinor)
       refuse("The allocation exceeds this asset's remaining book value.");

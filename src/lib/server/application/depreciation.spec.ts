@@ -752,7 +752,7 @@ describe("approved monthly book depreciation", () => {
       settings({ accumulatedAccountId: null }),
     );
     expect(managed.ok).toBe(false);
-    if (!managed.ok) expect(managed.reason).toContain("Review and link");
+    if (!managed.ok) expect(managed.code).toBe("INVALID_INPUT");
     value(
       voidRecord(ctx(), manual.id, {
         reason: "Replace manual depreciation with approved schedule",
@@ -784,45 +784,59 @@ describe("approved monthly book depreciation", () => {
       }).ok,
     ).toBe(false);
   });
-  it("creates a managed contra only on approval, remembers explicit mappings, and requires account creation authority", () => {
+  it("requires explicit existing posting accounts even with account creation permission", () => {
     const first = asset();
-    const input = settings({ accumulatedAccountId: null });
-    expect(previewDepreciationProfile(ctx(), first.stored.id, input).ok).toBe(
-      false,
-    );
     const creator = { db, locals: localsFor([...grants, "accounts.create"]) };
     const count = db.select().from(schema.accounts).all().length;
-    const preview = value(
-      previewDepreciationProfile(creator, first.stored.id, input),
-    );
-    expect(preview.accountPlan.create).toBe(true);
+    for (const overrides of [
+      { accumulatedAccountId: null },
+      { accumulatedAccountId: undefined },
+      { accumulatedAccountId: 0 },
+      { accumulatedAccountId: 999999 },
+      { expenseAccountId: null },
+      { expenseAccountId: 999999 },
+    ]) {
+      const input = settings(overrides);
+      expect(
+        previewDepreciationProfile(creator, first.stored.id, input).ok,
+      ).toBe(false);
+      expect(
+        approveDepreciationProfile(creator, first.stored.id, {
+          settings: input,
+          expectedVersion: "old-preview",
+        }).ok,
+      ).toBe(false);
+    }
     expect(db.select().from(schema.accounts).all()).toHaveLength(count);
+    expect(db.select().from(schema.depreciationProfiles).all()).toHaveLength(0);
+    // Setup works without accounts.create when both accounts are selected.
+    const preview = value(
+      previewDepreciationProfile(ctx(), first.stored.id, settings()),
+    );
     const profile = value(
-      approveDepreciationProfile(creator, first.stored.id, {
-        settings: input,
+      approveDepreciationProfile(ctx(), first.stored.id, {
+        settings: settings(),
         expectedVersion: preview.version,
       }),
     );
-    expect(profile.accumulatedAccountId).not.toBe(cost);
-    expect(db.select().from(schema.accounts).all()).toHaveLength(count + 1);
+    expect(profile.accumulatedAccountId).toBe(accum);
+    expect(db.select().from(schema.accounts).all()).toHaveLength(count);
     const second = asset();
     const state = value(readAssetDepreciation(ctx(), second.stored.id));
     expect(state.defaults).toEqual({
       expenseAccountId: expense,
-      accumulatedAccountId: profile.accumulatedAccountId,
+      accumulatedAccountId: accum,
     });
-    const reused = value(
-      previewDepreciationProfile(ctx(), second.stored.id, input),
-    );
-    expect(reused.accountPlan.create).toBe(false);
+    // Defaults help the UI preselect accounts; requests must still include a selection.
     expect(
-      value(
-        approveDepreciationProfile(ctx(), second.stored.id, {
-          settings: input,
-          expectedVersion: reused.version,
-        }),
-      ).accumulatedAccountId,
-    ).toBe(profile.accumulatedAccountId);
+      previewDepreciationProfile(
+        creator,
+        second.stored.id,
+        settings({ accumulatedAccountId: null }),
+      ).ok,
+    ).toBe(false);
+    approve(second.stored.id);
+    expect(db.select().from(schema.accounts).all()).toHaveLength(count);
   });
   it("posts historical catch-up only after explicit consent, only for the selected asset, and never a future month", () => {
     const first = asset();
@@ -875,11 +889,11 @@ describe("approved monthly book depreciation", () => {
       value(previewAssetCatchUp(ctx(), future.stored.id)).history.count,
     ).toBe(0);
   });
-  it("saves a historical setup across closed months but refuses the whole catch-up and rolls back managed accounts", () => {
+  it("saves a historical setup across closed months but refuses the whole catch-up without changing accounts", () => {
     const { stored } = asset();
     setSetting(db, SETTING_KEYS.accountingClosedThrough, "2025-01-31");
     const creator = { db, locals: localsFor([...grants, "accounts.create"]) };
-    const input = settings({ months: 2, accumulatedAccountId: null });
+    const input = settings({ months: 2 });
     const count = db.select().from(schema.accounts).all().length;
     const preview = value(
       previewDepreciationProfile(creator, stored.id, input),

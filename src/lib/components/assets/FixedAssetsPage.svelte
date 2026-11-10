@@ -200,11 +200,10 @@
           <table class="exp-table">
             <thead
               ><tr
-                ><th>Asset</th><th>Type</th><th>Cost account</th><th
-                  class="ta-right">Cost</th
-                ><th class="ta-right">Net book value</th><th>Acquired</th><th
-                  >Review</th
-                ></tr
+                ><th>Asset</th><th>Type</th><th>Asset cost account</th><th
+                  class="ta-right">Original cost</th
+                ><th class="ta-right">Net book value</th><th>Purchase date</th
+                ><th>Review</th></tr
               ></thead
             ><tbody>
               {#each assets as asset (asset.id)}<tr
@@ -229,8 +228,8 @@
                     ></td
                   >
                   <td data-label="Type">{asset.assetType}</td><td
-                    data-label="Cost account">{asset.accountName}</td
-                  ><td class="td-amount" data-label="Cost"
+                    data-label="Asset cost account">{asset.accountName}</td
+                  ><td class="td-amount" data-label="Original cost"
                     ><span class="amount-num"
                       >{formatMinor(asset.costMinor)}</span
                     ></td
@@ -238,7 +237,7 @@
                     >{formatMinor(asset.netBookValueMinor)}</td
                   ><td class="row-break"></td><td
                     class="td-date"
-                    data-label="Acquired"
+                    data-label="Purchase date"
                     >{formatDate(asset.acquisitionDate)}</td
                   ><td data-label="Review"
                     ><StatusBadge status={assetReviewStatus(asset)} /></td
@@ -291,7 +290,7 @@
             <thead
               ><tr
                 ><th>Purchase</th><th>Account</th><th>Date</th><th
-                  class="ta-right">Cost</th
+                  class="ta-right">Original cost</th
                 ><th></th></tr
               ></thead
             ><tbody>
@@ -309,7 +308,7 @@
                   ><td data-label="Account">{line.accountName}</td><td
                     class="td-date"
                     data-label="Date">{formatDate(line.recordDate)}</td
-                  ><td class="td-amount" data-label="Cost"
+                  ><td class="td-amount" data-label="Original cost"
                     ><span class="amount-num"
                       >{formatMinor(line.amountMinor)}</span
                     ></td

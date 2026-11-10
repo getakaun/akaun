@@ -57,7 +57,7 @@
       ><StatusBadge status={assetReviewStatus(asset)} />
     </div>
     <p class="detail-hero-note">
-      Recorded cost · Acquired {formatDate(
+      Original cost · Purchased {formatDate(
         asset.acquisitionDate,
       )}{asset.inServiceDate
         ? ` · In service ${formatDate(asset.inServiceDate)}`
@@ -156,7 +156,9 @@
             >
           </div>
           <div class="detail-row">
-            <span class="detail-key">Depreciation</span><span class="detail-val"
+            <span class="detail-key"
+              >Accumulated depreciation brought forward</span
+            ><span class="detail-val"
               >{formatMinor(asset.broughtForwardDepMinor)}</span
             >
           </div>

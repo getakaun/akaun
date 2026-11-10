@@ -1,3 +1,5 @@
+import { createHash, randomUUID } from "node:crypto";
+import { downloadMcpFile, signFileToken } from "./file-links.js";
 import { reset, hit } from "../rate-limit.js";
 import { MAX_FILE_BYTES, FILE_READ_LIMIT } from "./file-read-policy.js";
 import { getRecord } from "../queries/ledger.js";
@@ -2538,9 +2540,12 @@ for (const era of ["legacy", "modern"] as const) {
           .get()!.id;
       }
 
-      beforeEach(() => reset("mcp-attachment:1"));
+      beforeEach(() => {
+        reset("mcp-attachment:1");
+        reset("mcp-file-download:1");
+      });
 
-      it("reads original bytes with reconciliation-only access and no output schema", async () => {
+      it("returns download links with reconciliation-only access and a structured output schema", async () => {
         const token = issueTestToken(db, 1, ["reconciliation.read"]);
         const client = await connect({
           token,
@@ -2550,38 +2555,26 @@ for (const era of ["legacy", "modern"] as const) {
         expect(
           listed.find((t) => t.name === "get_bank_statement_file")
             ?.outputSchema,
-        ).toBeUndefined();
+        ).toBeDefined();
         expect(listed.map((t) => t.name)).toContain("get_bank_statement_file");
         expect(listed.map((t) => t.name)).not.toContain("get_bank_statement");
         const initialAudit = db.select().from(auditLog).all().length;
         const fixtures = [
-          [
-            "pdf",
-            Buffer.from("%PDF-1.7 source"),
-            "application/pdf",
-            "resource",
-          ],
+          ["pdf", Buffer.from("%PDF-1.7 source"), "application/pdf"],
           [
             "png",
             Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 7]),
             "image/png",
-            "image",
           ],
-          ["jpg", Buffer.from([255, 216, 255, 7]), "image/jpeg", "image"],
-          [
-            "csv",
-            Buffer.from("Date,Amount\n2026-09-01,12.50\n"),
-            "text/csv",
-            "resource",
-          ],
+          ["jpg", Buffer.from([255, 216, 255, 7]), "image/jpeg"],
+          ["csv", Buffer.from("Date,Amount\n2026-09-01,12.50\n"), "text/csv"],
           [
             "xlsx",
             Buffer.from([80, 75, 3, 4, 7]),
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "resource",
           ],
         ] as const;
-        for (const [ext, bytes, mime, type] of fixtures) {
+        for (const [ext, bytes, mime] of fixtures) {
           const statementId = await statementFile(
             `reconciliation/private/source.${ext}`,
             bytes,
@@ -2595,24 +2588,45 @@ for (const era of ["legacy", "modern"] as const) {
           );
           expect(metadata).toMatchObject({
             statementId,
-            originalFilename: `original.${ext}`,
+            filename: `original.${ext}`,
             mimeType: mime,
-            sizeBytes: bytes.length,
+            size: bytes.length,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
           });
-          expect(result.content).toMatchObject([
-            { type: "text" },
-            type === "image"
-              ? { type, mimeType: mime, data: bytes.toString("base64") }
-              : {
-                  type,
-                  resource: {
-                    uri: `akaun://bank-statements/${statementId}/file`,
-                    mimeType: mime,
-                    blob: bytes.toString("base64"),
-                  },
-                },
+          expect(result.structuredContent).toEqual(metadata);
+          expect(result.content).toHaveLength(1);
+          expect(new URL(metadata.downloadUrl).origin).toBe(origin);
+          expect(Date.parse(metadata.expiresAt) - Date.now()).toBeGreaterThan(
+            115_000,
+          );
+          const downloadToken = new URL(metadata.downloadUrl).pathname
+            .split("/")
+            .pop()!;
+          const request = new Request(metadata.downloadUrl);
+          const responses = await Promise.all(
+            [0, 1].map(() =>
+              downloadMcpFile(db, store, downloadToken, request),
+            ),
+          );
+          expect(responses.map((response) => response.status).sort()).toEqual([
+            200, 410,
           ]);
-          expect(JSON.stringify(result)).toContain("untrusted");
+          const response = responses.find(
+            (response) => response.status === 200,
+          )!;
+          expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+          expect(response.headers.get("Content-Type")).toBe(mime);
+          expect(response.headers.get("Content-Length")).toBe(
+            String(bytes.length),
+          );
+          expect(response.headers.get("Content-Disposition")).toContain(
+            `attachment; filename="original.${ext}"`,
+          );
+          expect(response.headers.get("Cache-Control")).toBe("no-store");
+          expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
+          expect(response.headers.get("X-Content-Type-Options")).toBe(
+            "nosniff",
+          );
           expect(JSON.stringify(result)).not.toContain(
             "reconciliation/private",
           );
@@ -2661,10 +2675,19 @@ for (const era of ["legacy", "modern"] as const) {
           statementId: exact,
         });
         expect(result.isError).toBeFalsy();
-        expect(result.content).toMatchObject([
-          { type: "text" },
-          { type: "resource", resource: { blob: bytes.toString("base64") } },
-        ]);
+        const metadata = JSON.parse(result.content![0].text!);
+        expect(metadata.size).toBe(MAX_FILE_BYTES);
+        const downloadToken = new URL(metadata.downloadUrl).pathname
+          .split("/")
+          .pop()!;
+        const response = await downloadMcpFile(
+          db,
+          store,
+          downloadToken,
+          new Request(metadata.downloadUrl),
+        );
+        expect(response.status).toBe(200);
+        expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
         const large = await statementFile(
           "reconciliation/large.pdf",
           Buffer.concat([bytes, Buffer.from("x")]),
@@ -2676,6 +2699,60 @@ for (const era of ["legacy", "modern"] as const) {
             }),
           ),
         ).toContain("OUTPUT_TOO_LARGE");
+      });
+
+      it("rejects expired, tampered, missing, revoked and oversized statement downloads", async () => {
+        const statementId = await statementFile(
+          "reconciliation/private.pdf",
+          Buffer.from("%PDF-source"),
+        );
+        const claims = {
+          userId: 1,
+          statementId,
+          exp: Math.floor(Date.now() / 1000) + 120,
+          jti: randomUUID(),
+        };
+        const download = (token: string) =>
+          downloadMcpFile(
+            db,
+            store,
+            token,
+            new Request(`${origin}/api/mcp-files/${token}`),
+          );
+        const token = signFileToken(claims);
+        expect(
+          (await download(signFileToken({ ...claims, exp: 1 }))).status,
+        ).toBe(410);
+        expect((await download(`${token.slice(0, -2)}xx`)).status).toBe(403);
+        expect(
+          (await download(signFileToken({ ...claims, userId: 999999 }))).status,
+        ).toBe(403);
+        expect(
+          (await download(signFileToken({ ...claims, statementId: 999999 })))
+            .status,
+        ).toBe(404);
+        db.delete(groupGrants)
+          .where(eq(groupGrants.permission, "reconciliation.read"))
+          .run();
+        expect((await download(token)).status).toBe(403);
+        grantGroup(db, {
+          name: "restored-reconciliation",
+          userIds: [1],
+          grants: ["reconciliation.read"],
+        });
+        await store.put(
+          "reconciliation/private.pdf",
+          Buffer.alloc(MAX_FILE_BYTES + 1),
+        );
+        expect((await download(token)).status).toBe(404);
+        await store.put(
+          "reconciliation/private.pdf",
+          Buffer.from("%PDF-source"),
+        );
+        db.delete(bankStatements)
+          .where(eq(bankStatements.id, statementId))
+          .run();
+        expect((await download(token)).status).toBe(404);
       });
 
       it("shares the attachment read throttle and hides the tool without reconciliation access", async () => {

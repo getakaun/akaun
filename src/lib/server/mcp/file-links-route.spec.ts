@@ -35,71 +35,91 @@ vi.mock("$lib/server/file-storage.js", () => ({
   },
 }));
 
-it("rejects HEAD without accessing the database or consuming the GET token", async () => {
-  const sqlite = new Database(":memory:");
-  const root = mkdtempSync(join(tmpdir(), "akaun-file-link-route-"));
-  try {
-    const db = drizzle(sqlite, { schema });
-    migrate(db, { migrationsFolder: "drizzle" });
-    db.insert(schema.users)
-      .values({
-        id: 1,
-        email: "reader@test",
-        username: "reader",
-        passwordHash: "unused",
-      })
-      .run();
-    grantGroup(db, { name: "readers", userIds: [1], grants: ["records.read"] });
-    db.insert(schema.ledgerRecords)
-      .values({ id: 1, kind: 1, date: "2026-09-01", amount: 10 })
-      .run();
-    db.insert(schema.recordAttachments)
-      .values({
-        id: 1,
-        recordId: 1,
-        filename: "receipt.pdf",
-        displayName: "receipt.pdf",
-      })
-      .run();
-    fixture.db = db;
-    fixture.store = new LocalBlobStore(root);
-    const bytes = Buffer.from("%PDF-1.7 receipt");
-    await fixture.store.put("receipt.pdf", bytes);
-    const token = signFileToken({
-      userId: 1,
-      recordId: 1,
-      attachmentId: 1,
-      exp: Math.floor(Date.now() / 1000) + 120,
-      jti: randomUUID(),
-    });
-    const event = (method: string) =>
-      ({
-        params: { token },
-        request: new Request(`https://akaun.test/api/mcp-files/${token}`, {
-          method,
-        }),
-      }) as RequestEvent<{ token: string }, "/api/mcp-files/[token]">;
+it.each(["attachment", "statement"])(
+  "rejects HEAD without accessing the database or consuming the %s GET token",
+  async (kind) => {
+    const sqlite = new Database(":memory:");
+    const root = mkdtempSync(join(tmpdir(), "akaun-file-link-route-"));
+    try {
+      const db = drizzle(sqlite, { schema });
+      migrate(db, { migrationsFolder: "drizzle" });
+      db.insert(schema.users)
+        .values({
+          id: 1,
+          email: "reader@test",
+          username: "reader",
+          passwordHash: "unused",
+        })
+        .run();
+      grantGroup(db, {
+        name: "readers",
+        userIds: [1],
+        grants: ["records.read", "reconciliation.read"],
+      });
+      db.insert(schema.ledgerRecords)
+        .values({ id: 1, kind: 1, date: "2026-09-01", amount: 10 })
+        .run();
+      db.insert(schema.recordAttachments)
+        .values({
+          id: 1,
+          recordId: 1,
+          filename: "receipt.pdf",
+          displayName: "receipt.pdf",
+        })
+        .run();
+      fixture.db = db;
+      fixture.store = new LocalBlobStore(root);
+      const bytes = Buffer.from("%PDF-1.7 receipt");
+      await fixture.store.put("receipt.pdf", bytes);
+      db.insert(schema.accounts)
+        .values({ id: 1, role: 1, name: "Bank", rank: "a" })
+        .run();
+      db.insert(schema.bankStatements)
+        .values({
+          id: 1,
+          originalFilename: "receipt.pdf",
+          storedFilePath: "receipt.pdf",
+          accountId: 1,
+          uploadedBy: 1,
+        })
+        .run();
+      const token = signFileToken({
+        userId: 1,
+        ...(kind === "statement"
+          ? { statementId: 1 }
+          : { recordId: 1, attachmentId: 1 }),
+        exp: Math.floor(Date.now() / 1000) + 120,
+        jti: randomUUID(),
+      });
+      const event = (method: string) =>
+        ({
+          params: { token },
+          request: new Request(`https://akaun.test/api/mcp-files/${token}`, {
+            method,
+          }),
+        }) as RequestEvent<{ token: string }, "/api/mcp-files/[token]">;
 
-    fixture.dbAccess.mockClear();
-    fixture.fileStore.mockClear();
-    const head = await HEAD(event("HEAD"));
-    expect(head.status).toBe(405);
-    expect(head.headers.get("Allow")).toBe("GET");
-    expect(head.body).toBeNull();
-    expect(fixture.dbAccess).not.toHaveBeenCalled();
-    expect(fixture.fileStore).not.toHaveBeenCalled();
-    expect(db.select().from(schema.mcpFileLinkUses).all()).toEqual([]);
+      fixture.dbAccess.mockClear();
+      fixture.fileStore.mockClear();
+      const head = await HEAD(event("HEAD"));
+      expect(head.status).toBe(405);
+      expect(head.headers.get("Allow")).toBe("GET");
+      expect(head.body).toBeNull();
+      expect(fixture.dbAccess).not.toHaveBeenCalled();
+      expect(fixture.fileStore).not.toHaveBeenCalled();
+      expect(db.select().from(schema.mcpFileLinkUses).all()).toEqual([]);
 
-    reset("mcp-file-download:1");
-    const get = await GET(event("GET"));
-    expect(get.status).toBe(200);
-    expect(Buffer.from(await get.arrayBuffer())).toEqual(bytes);
-    expect((await GET(event("GET"))).status).toBe(410);
-  } finally {
-    fixture.db = undefined;
-    fixture.store = undefined;
-    reset("mcp-file-download:1");
-    sqlite.close();
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+      reset("mcp-file-download:1");
+      const get = await GET(event("GET"));
+      expect(get.status).toBe(200);
+      expect(Buffer.from(await get.arrayBuffer())).toEqual(bytes);
+      expect((await GET(event("GET"))).status).toBe(410);
+    } finally {
+      fixture.db = undefined;
+      fixture.store = undefined;
+      reset("mcp-file-download:1");
+      sqlite.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

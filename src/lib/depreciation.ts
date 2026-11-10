@@ -1,5 +1,23 @@
+import { AccountType, AccountSubType } from "$lib/enums.js";
 import { z } from "zod";
 import { monthEndFor } from "$lib/closing.js";
+
+const ACCUMULATED_DEPRECIATION_SUBTYPES = new Set<number>([
+  AccountSubType.FixedAsset,
+  AccountSubType.IntangibleAsset,
+  AccountSubType.OtherNonCurrentAsset,
+]);
+/** Depreciation offsets non-current assets; it must never credit a cash or current account. */
+export function isAccumulatedDepreciationAccount(account: {
+  type: number | null;
+  subType: number | null;
+}) {
+  return (
+    account.type === AccountType.Asset &&
+    account.subType !== null &&
+    ACCUMULATED_DEPRECIATION_SUBTYPES.has(account.subType)
+  );
+}
 
 export const depreciationMonth = z
   .string()

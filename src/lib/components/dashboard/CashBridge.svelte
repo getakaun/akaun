@@ -5,7 +5,7 @@
   /**
    * From net profit to the change in cash, as a waterfall (007 FR-007).
    *
-   * Profit and cash part ways for three reasons, and each gets a step:
+   * Profit and cash part ways through non-cash expenses (including depreciation),
    * timing (sales not yet collected, bills not yet paid, stock), spending on
    * things the business keeps (a machine leaves the bank at once but is not an
    * expense), and financing (loans, owners' money). Every figure is read off
@@ -31,8 +31,8 @@
         total: true,
       },
       {
-        label: "Working capital changes",
-        hint: "Changes in receivables, payables and inventory",
+        label: "Non-cash and timing adjustments",
+        hint: "Depreciation and changes in receivables, payables and inventory",
         amountMinor: bridge.operatingMinor - bridge.netProfitMinor,
         total: false,
       },
@@ -105,18 +105,22 @@
     <li class:total={step.total}>
       <div class="label">
         <span class="name">{step.label}</span>
-        <span class="hint">{step.hint}</span>
+        <span class="hint" title={step.hint}>{step.hint}</span>
       </div>
       <div class="track" aria-hidden="true">
         <span class="zero" style="left:{pos(0)}%"></span>
         <span
           class="fill"
           class:neg={step.amountMinor < 0}
-          style="left:{left}%; width:max({width}%, {step.amountMinor === 0 ? 0 : 2}px)"
+          style="left:{left}%; width:max({width}%, {step.amountMinor === 0
+            ? 0
+            : 2}px)"
         ></span>
       </div>
       <span class="num amount" class:neg={step.amountMinor < 0}>
-        {step.amountMinor < 0 ? "−" : step.total ? "" : "+"}{formatMinor(Math.abs(step.amountMinor))}
+        {step.amountMinor < 0 ? "−" : step.total ? "" : "+"}{formatMinor(
+          Math.abs(step.amountMinor),
+        )}
       </span>
     </li>
   {/each}

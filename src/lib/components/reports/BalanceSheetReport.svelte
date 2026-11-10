@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { ChevronRight } from '@lucide/svelte';
 	import { formatDate, formatMinor } from '$lib/format.js';
-	import type { BalanceSheetReport, BalanceSheetSection } from '$lib/server/ledger/types.js';
+	import type {
+		BalanceSheetReport,
+		BalanceSheetSection
+	} from '$lib/server/ledger/types.js';
 	import ReportNotes from './ReportNotes.svelte';
 	import { openAccountHistory } from './report-links.js';
 	import './reports.css';
@@ -112,13 +115,17 @@
 <div class="rep-scroll">
 	<div class="rep-result">
 		<div>
-			<div class="rep-result-label">Total assets, as at {formatDate(report.asAt)}</div>
+			<div class="rep-result-label">
+				Total assets, as at {formatDate(report.asAt)}
+			</div>
 			<div class="rep-result-sub">
 				{#if report.balances}
-					Total assets equal total liabilities plus equity. The balance sheet is in balance.
+					Total assets equal total liabilities plus equity. The balance sheet is
+					in balance.
 				{:else}
-					The balance sheet is out of balance by {formatMinor(report.differenceMinor)}. Total
-					assets do not equal total liabilities plus equity.
+					The balance sheet is out of balance by {formatMinor(
+						report.differenceMinor
+					)}. Total assets do not equal total liabilities plus equity.
 				{/if}
 			</div>
 		</div>
@@ -132,7 +139,10 @@
 			<div class="rep-block-head">
 				<div>
 					<div class="rep-block-title">Assets</div>
-					<div class="rep-block-sub">Cash and cash equivalents, receivables and other resources that the business controls</div>
+					<div class="rep-block-sub">
+						Cash and cash equivalents, receivables and other resources that the
+						business controls
+					</div>
 				</div>
 			</div>
 			{@render sectionTable(report.owned)}
@@ -153,5 +163,11 @@
 		</div>
 	</div>
 
-	<ReportNotes notes={report.notes} firstIsWarning={!report.balances} />
+	<ReportNotes
+		notes={[
+			...report.notes,
+			'Asset balances include recorded accumulated depreciation as a deduction from original cost. Scheduled depreciation is excluded until posted.'
+		]}
+		firstIsWarning={!report.balances}
+	/>
 </div>

@@ -3,6 +3,7 @@ import {
   depreciationPostings,
   depreciationAllocations,
 } from "../db/schema.js";
+import { isAccumulatedDepreciationAccount } from "$lib/depreciation.js";
 import { eq, and, sql } from "drizzle-orm";
 import { AccountType } from "$lib/enums.js";
 import { assetCreateSchema, assetUpdateSchema } from "$lib/fixed-assets.js";
@@ -63,6 +64,7 @@ function mappedAccount(
     !!account &&
     account.id === id &&
     account.type === type &&
+    (type !== AccountType.Asset || isAccumulatedDepreciationAccount(account)) &&
     account.archivedAt === null &&
     account.mergedIntoAccountId === null
   );
@@ -236,7 +238,7 @@ export function registerFixedAsset(
     )
       return fail(
         "INVALID_INPUT",
-        "Choose a separate Asset account for accumulated depreciation, unused as a registered cost account.",
+        "Choose a separate non-current Asset account for accumulated depreciation, unused as a registered cost account.",
       );
     if (broughtForwardDepMinor > 0 && accumulatedDepreciationAccountId === null)
       return fail(
@@ -509,7 +511,7 @@ export function updateFixedAsset(
     )
       return fail(
         "INVALID_INPUT",
-        "Choose a separate active Asset account for accumulated depreciation, unused as a registered cost account.",
+        "Choose a separate active non-current Asset account for accumulated depreciation, unused as a registered cost account.",
       );
     if (
       (changes.broughtForwardDepMinor ?? before.broughtForwardDepMinor) > 0 &&

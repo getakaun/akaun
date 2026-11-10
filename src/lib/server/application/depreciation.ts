@@ -6,6 +6,7 @@ import { DEFAULT_CURRENCY } from "$lib/currency.js";
 import { monthEndFor } from "$lib/closing.js";
 import { localToday } from "$lib/local-date.js";
 import {
+  isAccumulatedDepreciationAccount,
   depreciationMonth,
   depreciationProfileSchema,
   straightLineSchedule,
@@ -168,6 +169,7 @@ function accountValid(ctx: AppContext, id: number, type: number) {
   return (
     account &&
     account.type === type &&
+    (type !== AccountType.Asset || isAccumulatedDepreciationAccount(account)) &&
     !account.archivedAt &&
     !account.mergedIntoAccountId
   );
@@ -426,7 +428,7 @@ function prepare(ctx: AppContext, id: number, input: DepreciationSettings) {
     )
   )
     refuse(
-      "Choose an active depreciation Expense account and a separate Asset account for accumulated depreciation, unused as registered cost.",
+      "Choose an active depreciation Expense account and a separate non-current Asset account for accumulated depreciation, unused as registered cost. Cash, bank and current-asset accounts cannot be used.",
     );
   if (
     asset.accumulatedDepreciationAccountId &&

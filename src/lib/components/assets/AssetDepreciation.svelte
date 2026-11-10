@@ -18,7 +18,11 @@
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import { AccountType } from "$lib/enums.js";
   import { assetMoneyInput, assetMoneyMinor } from "$lib/fixed-assets.js";
-  import { shiftMonth, type DepreciationSettings } from "$lib/depreciation.js";
+  import {
+    isAccumulatedDepreciationAccount,
+    shiftMonth,
+    type DepreciationSettings,
+  } from "$lib/depreciation.js";
   import { localToday } from "$lib/local-date.js";
   import { formatMinor } from "$lib/format.js";
   import type { readAssetDepreciation } from "$lib/server/application/depreciation.js";
@@ -109,7 +113,7 @@
     accounts.filter(
       (a) =>
         a.active &&
-        a.type === AccountType.Asset &&
+        isAccumulatedDepreciationAccount(a) &&
         a.id !== data.asset.assetAccountId,
     ),
   );

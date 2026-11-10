@@ -9,6 +9,7 @@ import {
   AccountType,
   AccountSubType,
   DefaultAccountPurpose,
+  Role,
 } from "$lib/enums.js";
 import { localToday } from "$lib/local-date.js";
 import { straightLineSchedule, shiftMonth } from "$lib/depreciation.js";
@@ -48,6 +49,27 @@ import {
   linkManualDepreciation,
   unlinkManualDepreciation,
 } from "./depreciation.js";
+import {
+  accountTotalsByRanges,
+  balanceSheetReport,
+  cashBalancesAsAt,
+  cashFlowReport,
+  cashOnHandAsAt,
+  partnerStatementReport,
+  profitLossReport,
+} from "../queries/reports.js";
+import {
+  cashBridge,
+  monthlySeries,
+  netMarginPct,
+  topLinesWithOther,
+} from "../queries/dashboard.js";
+import {
+  balanceSheetCsv,
+  cashFlowCsv,
+  profitLossCsv,
+} from "../ledger/reports/csv.js";
+import { expenseTaxReport } from "../queries/expense-tax-report.js";
 import type { AppResult } from "./result.js";
 
 let raw: Database;
@@ -620,12 +642,23 @@ describe("approved monthly book depreciation", () => {
         ],
       }),
     );
+    expect(
+      profitLossReport(db, "2024-01-01", "2024-12-31").totalExpensesMinor,
+    ).toBe(0);
+    expect(balanceSheetReport(db, "2024-12-31").owned.totalMinor).toBe(800000);
+    expect(cashFlowReport(db, "2024-01-01", "2024-12-31").netChangeMinor).toBe(
+      0,
+    );
     const profile = approve(legacy.id, { months: 24 });
     expect(profile.baseNbvMinor).toBe(800000);
     post("2025-01");
     const assetView = value(readFixedAssets(ctx(), "2025-01-31")).assets[0];
     expect(assetView.accumulatedDepreciationMinor).toBe(433333);
     expect(assetView.netBookValueMinor).toBe(766667);
+    expect(
+      profitLossReport(db, "2025-01-01", "2025-01-31").totalExpensesMinor,
+    ).toBe(33333);
+    expect(balanceSheetReport(db, "2025-01-31").owned.totalMinor).toBe(766667);
     expect(
       value(readFixedAssets(ctx(), "2025-01-31")).depreciationReconciliation[0]
         .differenceMinor,
@@ -1011,5 +1044,348 @@ describe("approved monthly book depreciation", () => {
         description: "Corrected journal description",
       }).ok,
     ).toBe(true);
+  });
+  it("keeps posted depreciation consistent across reports, dashboard figures, cash and CSV", () => {
+    const equity = account("Capital", AccountType.Equity);
+    const revenue = account("Sales", AccountType.Revenue);
+    const partners = db
+      .insert(schema.contacts)
+      .values([
+        { entityType: 1, legalName: "Partner A" },
+        { entityType: 1, legalName: "Partner B" },
+      ])
+      .returning()
+      .all();
+    db.insert(schema.contactRoles)
+      .values(partners.map((p) => ({ contactId: p.id, role: Role.Partner })))
+      .run();
+    value(
+      createRecord(ctx(), {
+        kind: "journal",
+        date: "2024-12-31",
+        description: "Initial capital",
+        amount: 20000,
+        currency: "MYR",
+        exchangeRate: 1,
+        movements: [
+          { accountId: bank, amountMinor: 2000000 },
+          { accountId: equity, amountMinor: -2000000 },
+        ],
+      }),
+    );
+    const { stored } = asset();
+    value(
+      createRecord(ctx(), {
+        kind: "journal",
+        date: "2025-01-15",
+        description: "Cash sales",
+        amount: 2000,
+        currency: "MYR",
+        exchangeRate: 1,
+        movements: [
+          { accountId: bank, amountMinor: 200000 },
+          { accountId: revenue, amountMinor: -200000 },
+        ],
+      }),
+    );
+    const before = {
+      pl: profitLossReport(db, "2025-01-01", "2025-01-31"),
+      bs: balanceSheetReport(db, "2025-01-31"),
+      cf: cashFlowReport(db, "2025-01-01", "2025-01-31"),
+    };
+    approve(stored.id);
+    expect({
+      pl: profitLossReport(db, "2025-01-01", "2025-01-31"),
+      bs: balanceSheetReport(db, "2025-01-31"),
+      cf: cashFlowReport(db, "2025-01-01", "2025-01-31"),
+    }).toEqual(before);
+    post("2025-01");
+    const pl = profitLossReport(db, "2025-01-01", "2025-01-31");
+    const bs = balanceSheetReport(db, "2025-01-31");
+    const cf = cashFlowReport(db, "2025-01-01", "2025-01-31");
+    expect(pl).toMatchObject({
+      totalIncomeMinor: 200000,
+      totalExpensesMinor: 33333,
+      resultMinor: 166667,
+    });
+    expect(pl.expenses).toContainEqual({
+      accountId: expense,
+      accountName: "Depreciation expense",
+      amountMinor: 33333,
+    });
+    expect(bs.owned.lines).toContainEqual({
+      accountId: cost,
+      accountName: "Computer equipment",
+      amountMinor: 1200000,
+    });
+    expect(bs.owned.lines).toContainEqual({
+      accountId: accum,
+      accountName: "Accumulated depreciation",
+      amountMinor: -33333,
+    });
+    expect(bs.owned.totalMinor).toBe(2166667);
+    expect(bs.accumulatedResultMinor).toBe(166667);
+    expect(bs.ownersStake.totalMinor).toBe(2166667);
+    expect(bs).toMatchObject({ balances: true, differenceMinor: 0 });
+    expect(
+      bs.owned.subsections?.find((s) => s.label === "Non-current")?.totalMinor,
+    ).toBe(1166667);
+    expect(cf).toEqual(before.cf);
+    expect(cf).toMatchObject({
+      openingCashMinor: 2000000,
+      closingCashMinor: 1000000,
+      netChangeMinor: -1000000,
+      ties: true,
+      differenceMinor: 0,
+    });
+    expect(cf.operating.totalMinor).toBe(200000);
+    expect(cf.investing.totalMinor).toBe(-1200000);
+    expect(cashBridge(pl, cf)).toMatchObject({
+      netProfitMinor: 166667,
+      operatingMinor: 200000,
+      investingMinor: -1200000,
+      freeCashFlowMinor: -1000000,
+      netChangeMinor: -1000000,
+    });
+    expect(cf.operating.totalMinor - pl.resultMinor).toBe(33333);
+    expect(netMarginPct(pl)).toBe(166667 / 200000);
+    expect(topLinesWithOther(pl.expenses, [], 6)).toContainEqual({
+      accountId: expense,
+      name: "Depreciation expense",
+      amountMinor: 33333,
+      prevMinor: 0,
+    });
+    const months = [
+      { key: "2025-01", label: "Jan", from: "2025-01-01", to: "2025-01-31" },
+      { key: "2025-02", label: "Feb", from: "2025-02-01", to: "2025-02-28" },
+    ];
+    expect(
+      monthlySeries(
+        months,
+        accountTotalsByRanges(
+          db,
+          months.map((m) => ({ dateFrom: m.from, dateTo: m.to })),
+        ),
+      ),
+    ).toMatchObject([
+      { expensesMinor: 33333, resultMinor: 166667 },
+      { expensesMinor: 0, resultMinor: 0 },
+    ]);
+    expect(
+      cashBalancesAsAt(db, ["2024-12-31", "2025-01-30", "2025-01-31"]),
+    ).toEqual([2000000, 1000000, 1000000]);
+    expect(cashOnHandAsAt(db, "2025-01-31")).toBe(1000000);
+    expect(
+      profitLossReport(db, "2025-01-01", "2025-01-30").totalExpensesMinor,
+    ).toBe(0);
+    expect(
+      balanceSheetReport(db, "2025-01-30").owned.lines.some(
+        (l) => l.accountId === accum,
+      ),
+    ).toBe(false);
+    expect(profitLossCsv(pl).rows).toContainEqual([
+      "Expenses",
+      "Depreciation expense",
+      333.33,
+    ]);
+    expect(
+      balanceSheetCsv(bs).rows.some(
+        (row) =>
+          row.includes("Accumulated depreciation") && row.includes(-333.33),
+      ),
+    ).toBe(true);
+    expect(cashFlowCsv(cf).rows).toEqual(cashFlowCsv(before.cf).rows);
+    expect(expenseTaxReport(db, "2025-01-01", "2025-01-31")).toMatchObject({
+      expenseMinor: 33333,
+      deductibleMinor: 0,
+      addBackMinor: 33333,
+      unresolvedLineCount: 0,
+    });
+    const shares = partnerStatementReport(
+      db,
+      "2025-01-01",
+      "2025-01-31",
+    ).partners;
+    expect(shares).toHaveLength(2);
+    expect(shares.reduce((sum, p) => sum + p.shareOfResultMinor, 0)).toBe(
+      pl.resultMinor,
+    );
+  });
+  it("dates catch-up charges and cross-period reversals correctly in every statement", () => {
+    const { stored } = asset();
+    approve(stored.id, { months: 3 });
+    const snapshot = value(previewAssetCatchUp(ctx(), stored.id));
+    value(
+      postAssetCatchUp(ctx(), stored.id, { expectedVersion: snapshot.version }),
+    );
+    for (const month of ["2025-01", "2025-02", "2025-03"])
+      expect(
+        profitLossReport(
+          db,
+          `${month}-01`,
+          month === "2025-02" ? "2025-02-28" : `${month}-31`,
+        ).totalExpensesMinor,
+      ).toBe(400000);
+    expect(
+      balanceSheetReport(db, "2025-03-31").owned.lines.find(
+        (l) => l.accountId === accum,
+      )?.amountMinor,
+    ).toBe(-1200000);
+    expect(
+      value(readFixedAssets(ctx(), "2025-03-31")).assets[0].netBookValueMinor,
+    ).toBe(0);
+    expect(cashFlowReport(db, "2025-02-01", "2025-03-31")).toMatchObject({
+      netChangeMinor: 0,
+      ties: true,
+    });
+    const march = value(previewDepreciationMonth(ctx(), "2025-03")).rows[0];
+    const original = profitLossReport(db, "2025-03-01", "2025-03-31");
+    setSetting(db, SETTING_KEYS.accountingClosedThrough, "2025-03-31");
+    value(
+      reverseDepreciationRun(ctx(), march.runId!, {
+        month: "2025-04",
+        reason: "Correct depreciation without changing closed March",
+      }),
+    );
+    expect(profitLossReport(db, "2025-03-01", "2025-03-31")).toEqual(original);
+    expect(profitLossReport(db, "2025-04-01", "2025-04-30")).toMatchObject({
+      totalExpensesMinor: -400000,
+      resultMinor: 400000,
+    });
+    expect(
+      balanceSheetReport(db, "2025-04-30").owned.lines.find(
+        (l) => l.accountId === accum,
+      )?.amountMinor,
+    ).toBe(-800000);
+    expect(balanceSheetReport(db, "2025-04-30").balances).toBe(true);
+    expect(
+      value(readFixedAssets(ctx(), "2025-04-30")).assets[0].netBookValueMinor,
+    ).toBe(400000);
+    expect(cashFlowReport(db, "2025-04-01", "2025-04-30")).toMatchObject({
+      netChangeMinor: 0,
+      ties: true,
+    });
+    expect(expenseTaxReport(db, "2025-04-01", "2025-04-30")).toMatchObject({
+      expenseMinor: -400000,
+      deductibleMinor: 0,
+      addBackMinor: -400000,
+    });
+  });
+  it("linking manual depreciation does not count it a second time in reports or the dashboard", () => {
+    const { stored } = asset();
+    const journal = value(
+      createRecord(ctx(), {
+        kind: "journal",
+        date: "2025-01-31",
+        description: "Existing depreciation",
+        amount: 100,
+        currency: "MYR",
+        exchangeRate: 1,
+        movements: [
+          { accountId: expense, amountMinor: 10000 },
+          { accountId: accum, amountMinor: -10000 },
+        ],
+      }),
+    ).record;
+    const before = {
+      pl: profitLossReport(db, "2025-01-01", "2025-01-31"),
+      bs: balanceSheetReport(db, "2025-01-31"),
+      cf: cashFlowReport(db, "2025-01-01", "2025-01-31"),
+    };
+    const state = value(readAssetDepreciation(ctx(), stored.id));
+    value(
+      linkManualDepreciation(ctx(), stored.id, {
+        candidateKey: state.manualCandidates.find(
+          (c) => c.recordId === journal.id,
+        )!.key,
+        amountMinor: 10000,
+        fromMonth: "2025-01",
+        throughMonth: "2025-01",
+        reason: "Link the existing charge",
+        expectedVersion: state.version,
+      }),
+    );
+    expect({
+      pl: profitLossReport(db, "2025-01-01", "2025-01-31"),
+      bs: balanceSheetReport(db, "2025-01-31"),
+      cf: cashFlowReport(db, "2025-01-01", "2025-01-31"),
+    }).toEqual(before);
+    approve(stored.id, { startMonth: "2025-02", months: 2 });
+    post("2025-02");
+    expect(
+      profitLossReport(db, "2025-01-01", "2025-02-28").totalExpensesMinor,
+    ).toBe(605000);
+    expect(
+      balanceSheetReport(db, "2025-02-28").owned.lines.find(
+        (l) => l.accountId === accum,
+      )?.amountMinor,
+    ).toBe(-605000);
+    expect(
+      value(readFixedAssets(ctx(), "2025-02-28")).assets[0].netBookValueMinor,
+    ).toBe(595000);
+    expect(cashFlowReport(db, "2025-02-01", "2025-02-28")).toMatchObject({
+      netChangeMinor: 0,
+      ties: true,
+    });
+  });
+  it("rejects cash, bank and current-asset contra mappings so non-cash depreciation cannot alter cash reports", () => {
+    const { stored } = asset();
+    for (const subType of [
+      AccountSubType.Cash,
+      AccountSubType.Bank,
+      AccountSubType.Receivable,
+      AccountSubType.OtherCurrentAsset,
+    ]) {
+      const id = account(
+        `Incorrect contra ${subType}`,
+        AccountType.Asset,
+        subType,
+      );
+      const preview = previewDepreciationProfile(
+        ctx(),
+        stored.id,
+        settings({ accumulatedAccountId: id }),
+      );
+      expect(preview.ok).toBe(false);
+      if (!preview.ok) expect(preview.reason).toContain("non-current");
+      const registration = registerFixedAsset(ctx(), {
+        name: "Older machine",
+        assetType: "Machinery",
+        inServiceDate: "2023-01-01",
+        sourceMovementId: null,
+        acquisitionDate: "2023-01-01",
+        assetAccountId: cost,
+        costMinor: 1200000,
+        openingAsAt: "2024-12-31",
+        broughtForwardDepMinor: 10000,
+        accumulatedDepreciationAccountId: id,
+        documentReference: "Accountant schedule",
+      });
+      expect(registration.ok).toBe(false);
+      if (!registration.ok)
+        expect(registration.reason).toContain("non-current");
+    }
+    approve(stored.id);
+    // A later chart edit must pause the existing schedule too.
+    db.update(schema.accounts)
+      .set({ subType: AccountSubType.Bank })
+      .where(eq(schema.accounts.id, accum))
+      .run();
+    const preview = value(previewDepreciationMonth(ctx(), "2025-01"));
+    expect(preview.rows[0].blocked).toContain("mapping");
+    expect(
+      postDepreciationMonth(ctx(), {
+        month: "2025-01",
+        expectedVersion: preview.version,
+      }).ok,
+    ).toBe(false);
+    expect(db.select().from(schema.depreciationPostings).all()).toHaveLength(0);
+    const cashBefore = cashFlowReport(db, "2025-01-01", "2025-01-31");
+    db.update(schema.accounts)
+      .set({ subType: AccountSubType.OtherNonCurrentAsset })
+      .where(eq(schema.accounts.id, accum))
+      .run();
+    expect(post("2025-01").posted).toBe(1);
+    expect(cashFlowReport(db, "2025-01-01", "2025-01-31")).toEqual(cashBefore);
   });
 });

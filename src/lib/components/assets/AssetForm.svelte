@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isAccumulatedDepreciationAccount } from "$lib/depreciation.js";
   import { untrack } from "svelte";
   import { resolve } from "$app/paths";
   import { Input } from "$lib/components/ui/input/index.js";
@@ -119,8 +120,8 @@
   const assetAccounts = $derived(
     accounts.filter(
       (account) =>
-        account.type === AccountType.Asset &&
-        (account.active || String(account.id) === fields.accumulatedAccount),
+        (isAccumulatedDepreciationAccount(account) && account.active) ||
+        String(account.id) === fields.accumulatedAccount,
     ),
   );
   export async function submit() {

@@ -1,3 +1,4 @@
+import { isAccumulatedDepreciationAccount } from "$lib/depreciation.js";
 import { depreciationTotal } from "./depreciation.js";
 import { asc, eq, lte, sql, or, inArray } from "drizzle-orm";
 import {
@@ -264,11 +265,15 @@ export function fixedAssetRegister(db: LedgerDb, asAt: string) {
       });
     if (asset.accumulatedDepreciationAccountId !== null) {
       const contra = chartById.get(asset.accumulatedDepreciationAccountId);
-      if (!contra || contra.type !== AccountType.Asset || !contra.active)
+      if (
+        !contra ||
+        !isAccumulatedDepreciationAccount(contra) ||
+        !contra.active
+      )
         reviewIssues.push({
           kind: "depreciation-account",
           message:
-            "Accumulated depreciation account is missing or no longer an active Asset account. Review its mapping.",
+            "Accumulated depreciation account is missing or no longer an active non-current Asset account. Review its mapping.",
         });
     }
     if (

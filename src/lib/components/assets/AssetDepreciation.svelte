@@ -87,23 +87,6 @@
   const pending = $derived(
     data.rows.some((r) => r.status === "Unposted" && r.amountMinor > 0),
   );
-  const status = $derived(
-    needsAttention
-      ? "depreciation-attention"
-      : latest?.stoppedFrom
-        ? "depreciation-stopped"
-        : !latest
-          ? "depreciation-setup"
-          : !pending
-            ? "depreciation-complete"
-            : data.historyReview.length
-              ? "depreciation-history"
-              : latest.mode === "auto"
-                ? "depreciation-auto"
-                : data.hasDue
-                  ? "depreciation-ready"
-                  : "depreciation-scheduled",
-  );
   let approvedSettings = $state<DepreciationSettings | null>(null);
   let stopVersion = "";
   const expenseAccounts = $derived(
@@ -365,7 +348,7 @@
 <section class="detail-card" aria-labelledby="depreciation-title">
   <div class="detail-card-head depreciation-card-head">
     <h2 id="depreciation-title" class="detail-card-title">Depreciation</h2>
-    <StatusBadge {status} />
+    <StatusBadge status={data.asset.depreciation.status} />
   </div>
   <div class="depreciation-card-body">
     <div class="detail-list">

@@ -68,6 +68,14 @@ export function assetSchedule(db: LedgerDb, assetId: number) {
     .all()
     .sort((a, b) => a.startMonth.localeCompare(b.startMonth) || a.id - b.id);
   const history = depreciationHistory(db, assetId);
+  return buildAssetSchedule(profiles, history);
+}
+
+/** Reuse the same schedule rules when reading the whole register in a batch. */
+export function buildAssetSchedule(
+  profiles: DepreciationProfile[],
+  history: ReturnType<typeof depreciationHistory>,
+) {
   const rows = profiles.flatMap((profile, index) =>
     straightLineSchedule(
       profile.baseNbvMinor,

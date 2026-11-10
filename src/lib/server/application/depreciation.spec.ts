@@ -1403,3 +1403,112 @@ describe("approved monthly book depreciation", () => {
     expect(cashFlowReport(db, "2025-01-01", "2025-01-31")).toEqual(cashBefore);
   });
 });
+
+describe("registered asset depreciation overview", () => {
+  const overview = (id: number, asAt: string) =>
+    value(readFixedAssets(ctx(), asAt)).assets.find((asset) => asset.id === id)!
+      .depreciation;
+  it("shows setup, scheduled, pending and posted progress as of the selected date", () => {
+    const { stored } = asset();
+    expect(overview(stored.id, "2025-01-31")).toMatchObject({
+      status: "depreciation-setup",
+      dueCount: 0,
+      lastPostedMonth: null,
+    });
+    approve(stored.id, { months: 2, residualMinor: 100000 });
+    expect(overview(stored.id, "2025-01-30")).toMatchObject({
+      status: "depreciation-scheduled",
+      dueCount: 0,
+      nextMonth: "2025-01",
+      lastPostedMonth: null,
+    });
+    expect(overview(stored.id, "2025-01-31")).toMatchObject({
+      status: "depreciation-pending",
+      dueCount: 1,
+      firstDueMonth: "2025-01",
+      nextMonth: "2025-02",
+    });
+    expect(overview(stored.id, "2025-02-28").dueCount).toBe(2);
+    post("2025-01");
+    expect(overview(stored.id, "2025-01-31")).toMatchObject({
+      status: "depreciation-current",
+      dueCount: 0,
+      lastPostedMonth: "2025-01",
+      nextMonth: "2025-02",
+    });
+    expect(overview(stored.id, "2025-02-28")).toMatchObject({
+      status: "depreciation-pending",
+      dueCount: 1,
+      lastPostedMonth: "2025-01",
+    });
+    post("2025-02");
+    expect(overview(stored.id, "2025-02-28")).toMatchObject({
+      status: "depreciation-complete",
+      dueCount: 0,
+      lastPostedMonth: "2025-02",
+      nextMonth: null,
+    });
+    // Later postings do not make a historical reporting date look fully depreciated.
+    expect(overview(stored.id, "2025-01-31")).toMatchObject({
+      status: "depreciation-current",
+      nextMonth: "2025-02",
+    });
+    expect(overview(stored.id, "2025-01-30")).toMatchObject({
+      status: "depreciation-scheduled",
+      nextMonth: "2025-01",
+      lastPostedMonth: null,
+    });
+  });
+  it("does not turn future scheduled months into pending postings", () => {
+    const { stored } = asset();
+    const startMonth = shiftMonth(localToday().slice(0, 7), 1);
+    approve(stored.id, { startMonth, months: 2 });
+    expect(overview(stored.id, "9999-12-31")).toMatchObject({
+      status: "depreciation-scheduled",
+      dueCount: 0,
+      nextMonth: startMonth,
+      lastPostedMonth: null,
+    });
+  });
+  it("keeps pending auto-post months and integrity warnings visible", () => {
+    const { stored, record } = asset();
+    approve(stored.id, { months: 2, mode: "auto" });
+    expect(overview(stored.id, "2025-02-28")).toMatchObject({
+      status: "depreciation-pending",
+      mode: "auto",
+      dueCount: 2,
+    });
+    value(updateRecord(ctx(), record.id, { amount: 13000 }));
+    const state = overview(stored.id, "2025-02-28");
+    expect(state.status).toBe("depreciation-pending");
+    expect(state.reviewReason).toContain("Source");
+    expect(state.lastPostedMonth).toBeNull();
+  });
+  it("shows stopped schedules and reversed charges without claiming full depreciation", () => {
+    const { stored } = asset();
+    approve(stored.id, { months: 2 });
+    const run = post("2025-01");
+    value(
+      stopDepreciation(ctx(), stored.id, {
+        month: "2025-02",
+        reason: "Pause further depreciation",
+        expectedVersion: value(readAssetDepreciation(ctx(), stored.id)).version,
+      }),
+    );
+    expect(overview(stored.id, "2025-02-28")).toMatchObject({
+      status: "depreciation-stopped",
+      dueCount: 0,
+      lastPostedMonth: "2025-01",
+    });
+    value(
+      reverseDepreciationRun(ctx(), run.runId!, {
+        month: "2025-02",
+        reason: "Correct the posted amount",
+      }),
+    );
+    const state = overview(stored.id, "2025-02-28");
+    expect(state.status).toBe("depreciation-stopped");
+    expect(state.lastPostedMonth).toBeNull();
+    expect(state.reviewReason).toContain("reversed");
+  });
+});

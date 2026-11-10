@@ -4,8 +4,8 @@
   import { ChevronRight } from "@lucide/svelte";
   import DetailPage from "$lib/components/ui/DetailPage.svelte";
   import AuditTrail from "$lib/components/ui/AuditTrail.svelte";
-  import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
-  import { assetNumber, assetReviewStatus } from "$lib/fixed-assets.js";
+  import AssetStatus from "./AssetStatus.svelte";
+  import { assetNumber } from "$lib/fixed-assets.js";
   import { formatDate, formatMinor } from "$lib/format.js";
   import { createResourceStream } from "$lib/sse.js";
   import AssetForm from "./AssetForm.svelte";
@@ -54,7 +54,7 @@
     <h1 class="detail-hero-title">{asset.name}</h1>
     <div class="detail-hero-figure">
       <span class="detail-hero-amount">{formatMinor(asset.costMinor)}</span
-      ><StatusBadge status={assetReviewStatus(asset)} />
+      ><AssetStatus overview={asset.depreciation} />
     </div>
     <p class="detail-hero-note">
       Original cost · Purchased {formatDate(

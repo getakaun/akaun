@@ -324,6 +324,15 @@ const registeredAsset: RegisteredAsset = {
   accumulatedDepreciationMinor: 0,
   netBookValueMinor: 600000,
   version: "1",
+  depreciation: {
+    status: "depreciation-setup",
+    dueCount: 0,
+    firstDueMonth: null,
+    lastPostedMonth: null,
+    nextMonth: null,
+    mode: null,
+    reviewReason: null,
+  },
 };
 
 it("uses the shared account dropdown and calendar in the create drawer", async () => {
@@ -701,4 +710,70 @@ it("shows saved posting accounts directly when setting up depreciation", async (
       }),
     )
     .toHaveTextContent("Accumulated depreciation");
+});
+
+it("shows depreciation progress and review warnings in the registered asset status column", async () => {
+  await page.viewport(1280, 900);
+  const data = registerData(true);
+  const asset: RegisteredAsset = {
+    ...registeredAsset,
+    depreciation: {
+      status: "depreciation-pending",
+      dueCount: 3,
+      firstDueMonth: "2026-06",
+      lastPostedMonth: "2026-05",
+      nextMonth: "2026-09",
+      mode: "auto",
+      reviewReason:
+        "Source purchase details changed. Review before accepting new values.",
+    },
+  };
+  render(FixedAssetsPage, {
+    data: { ...data, register: { ...data.register, assets: [asset] } },
+  });
+  await expect
+    .element(page.getByRole("columnheader", { name: "Status", exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByRole("columnheader", { name: "Review", exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByText("Pending posting", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("Needs review", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("3 months pending · from 2026-06", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("Last posted 2026-05", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("Auto-post enabled", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("Source linked", { exact: true }))
+    .not.toBeInTheDocument();
+});
+
+it("keeps asset setup status visible on phone row cards", async () => {
+  await page.viewport(390, 844);
+  const data = registerData(true);
+  render(FixedAssetsPage, {
+    data: {
+      ...data,
+      register: { ...data.register, assets: [registeredAsset] },
+    },
+  });
+  await expect
+    .element(page.getByText("Setup needed", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("No depreciation posted", { exact: true }))
+    .toBeVisible();
+  const statusCell = document.querySelector<HTMLElement>(
+    '[data-label="Status"]',
+  )!;
+  expect(statusCell.getBoundingClientRect().right).toBeLessThanOrEqual(390);
 });

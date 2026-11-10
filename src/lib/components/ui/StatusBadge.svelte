@@ -13,7 +13,9 @@
   const byLabel: Record<string, Tone> = {
     "depreciation-attention": { label: "Needs attention", tone: "amber" },
     "depreciation-stopped": { label: "Stopped", tone: "gray" },
-    "depreciation-setup": { label: "Not configured", tone: "gray" },
+    "depreciation-setup": { label: "Setup needed", tone: "gray" },
+    "depreciation-pending": { label: "Pending posting", tone: "amber" },
+    "depreciation-current": { label: "Up to date", tone: "green" },
     "depreciation-history": { label: "History needs review", tone: "amber" },
     "depreciation-auto": { label: "Auto enabled", tone: "green" },
     "depreciation-scheduled": { label: "Scheduled", tone: "blue" },

@@ -320,9 +320,10 @@ export function changesSummary(
   return shown.join("; ") + (more > 0 ? `; and ${more} more` : "");
 }
 
-/** `created_at` is UTC `YYYY-MM-DD HH:MM:SS`; shown in the viewer's time. */
+/** SQLite timestamps are UTC; ISO timestamps retain their explicit timezone. */
 export function auditTime(createdAt: string): Date {
-  return new Date(`${createdAt.replace(" ", "T")}Z`);
+  const iso = createdAt.replace(" ", "T");
+  return new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(iso) ? iso : `${iso}Z`);
 }
 
 export function formatAuditTime(createdAt: string): string {

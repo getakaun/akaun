@@ -3,6 +3,10 @@
   import { beforeNavigate, goto } from "$app/navigation";
   import { X } from "@lucide/svelte";
   import * as Sheet from "$lib/components/ui/sheet/index.js";
+  import * as Select from "$lib/components/ui/select/index.js";
+  import { Textarea } from "$lib/components/ui/textarea/index.js";
+  import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
+  import "./tax-worksheets.css";
   import { Input } from "$lib/components/ui/input/index.js";
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import DatePicker from "$lib/components/ui/date-picker/DatePicker.svelte";
@@ -263,7 +267,7 @@
   <Sheet.Content
     side={screen.current ? "bottom" : "right"}
     style={screen.current
-      ? "height:100dvh;border-radius:0;display:flex;flex-direction:column;overflow:hidden;gap:0;"
+      ? "height:100dvh;border-radius:0;border-top:none;display:flex;flex-direction:column;overflow:hidden;gap:0;"
       : "width:500px;max-width:95vw;display:flex;flex-direction:column;overflow:hidden;gap:0;"}
   >
     <div class="tax-sheet-head">
@@ -353,23 +357,54 @@
         {:else if mode === "manual"}
           <div class="field">
             <label class="field-label" for="tax-kind">Adjustment category</label
-            ><select id="tax-kind" bind:value={kind} disabled={saving}
-              >{#each taxManualKinds as k (k)}<option value={k}
-                  >{taxManualLabels[k]}</option
-                >{/each}</select
             >
+            <Select.Root
+              type="single"
+              value={kind}
+              onValueChange={(value) => {
+                if (taxManualKinds.includes(value as TaxManualKind))
+                  kind = value as TaxManualKind;
+              }}
+              disabled={saving}
+            >
+              <Select.Trigger id="tax-kind" class="w-full justify-between"
+                >{taxManualLabels[kind]}</Select.Trigger
+              >
+              <Select.Content
+                >{#each taxManualKinds as k (k)}<Select.Item
+                    value={k}
+                    label={taxManualLabels[k]}
+                  />{/each}</Select.Content
+              >
+            </Select.Root>
           </div>
           {#if kind === "other"}<div class="field">
               <label class="field-label" for="tax-direction"
                 >Effect on tax result</label
-              ><select
-                id="tax-direction"
-                bind:value={direction}
-                disabled={saving}
-                ><option value="decrease">Decrease</option><option
-                  value="increase">Increase</option
-                ></select
               >
+              <Select.Root
+                type="single"
+                value={direction}
+                onValueChange={(value) => {
+                  if (value === "increase" || value === "decrease")
+                    direction = value;
+                }}
+                disabled={saving}
+              >
+                <Select.Trigger
+                  id="tax-direction"
+                  class="w-full justify-between"
+                  >{direction === "increase"
+                    ? "Increase"
+                    : "Decrease"}</Select.Trigger
+                >
+                <Select.Content
+                  ><Select.Item value="decrease" label="Decrease" /><Select.Item
+                    value="increase"
+                    label="Increase"
+                  /></Select.Content
+                >
+              </Select.Root>
             </div>{/if}
           {#if carry}
             <div class="field">
@@ -443,15 +478,15 @@
         {/if}
         {#if mode !== "create"}
           <div class="field">
-            <label class="field-label" for="tax-reason">Reason</label><textarea
+            <label class="field-label" for="tax-reason">Reason</label><Textarea
               id="tax-reason"
               bind:value={reason}
-              minlength="10"
-              maxlength="2000"
+              minlength={10}
+              maxlength={2000}
               required
-              rows="3"
+              rows={3}
               disabled={saving}
-            ></textarea>
+            />
           </div>
         {/if}
         {#if mode === "source" || mode === "manual"}
@@ -468,14 +503,16 @@
             />
           </div>
         {/if}
-        {#if error}<p role="alert" class="tax-error">{error}</p>{/if}
+        {#if error}<div role="alert">
+            <ReportNotes notes={[error]} firstIsWarning />
+          </div>{/if}
       </form>
     </div>
     <footer class="sheet-foot">
       <p class="sheet-foot-note">
         Tax preparation only. Accounting balances stay unchanged.
       </p>
-      <div class="sheet-foot-actions">
+      <div class="sheet-foot-actions tax-actions">
         <button
           type="button"
           class="sheet-btn"
@@ -535,25 +572,8 @@
     font-size: 13px;
     line-height: 1.6;
   }
-  .tax-error {
-    color: var(--destructive);
-    font-size: 13px;
-  }
-  select,
-  textarea {
-    width: 100%;
-    min-width: 0;
-    padding: 8px 12px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--card);
-    color: var(--foreground);
-    font: inherit;
-    font-size: 13.5px;
-  }
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+  .tax-form .field,
+  .tax-form > .field-hint {
+    margin: 0;
   }
 </style>

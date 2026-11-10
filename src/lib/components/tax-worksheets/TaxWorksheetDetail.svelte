@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { SvelteMap } from "svelte/reactivity";
   import { goto, invalidateAll } from "$app/navigation";
   import { resolve } from "$app/paths";
-  import { Download, Printer, Plus } from "@lucide/svelte";
+  import { Download, Printer, ChevronRight } from "@lucide/svelte";
   import DetailPage from "$lib/components/ui/DetailPage.svelte";
   import AuditTrail from "$lib/components/ui/AuditTrail.svelte";
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
@@ -14,13 +13,19 @@
     TAX_PREPARATION_NOTE,
     formatTaxMinor,
     taxManualLabels,
-    safeTaxSum,
   } from "$lib/tax-worksheet.js";
-  import { TaxTreatmentLabels } from "$lib/expense-tax.js";
   import TaxWorksheetSheet from "./TaxWorksheetSheet.svelte";
   import type { loadTaxWorksheet } from "$lib/server/loaders/tax-worksheets.js";
   import type { TaxWorksheetDetail as Detail } from "$lib/server/queries/tax-worksheets.js";
-  import "$lib/components/reports/reports.css";
+  import { toast } from "svelte-sonner";
+  import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
+  import ListExpand, {
+    visibleItems,
+  } from "$lib/components/ui/ListExpand.svelte";
+  import { formatAuditTime } from "$lib/components/audit/audit-format.js";
+  import TaxExpenses from "./TaxExpenses.svelte";
+  import TaxAdjustments from "./TaxAdjustments.svelte";
+  import "./tax-worksheets.css";
   let { data }: { data: ReturnType<typeof loadTaxWorksheet> } = $props();
   const d = $derived(data.detail);
   const r = $derived(d.revision);
@@ -36,45 +41,11 @@
   let adjustmentId = $state<number | null>(null);
   let saving = $state(false);
   let error = $state("");
-  let notice = $state("");
-  let onlyReview = $state(true);
+  let revisionsExpanded = $state(false);
   let confirm = $state<"review" | "finalise" | "resume" | null>(null);
   let confirmOpen = $state(false);
   let confirmedVersion = 0;
   let auditRef = $state<{ refresh: () => Promise<void> } | null>(null);
-  const groups = $derived.by(() => {
-    const grouped = new SvelteMap<
-      number,
-      {
-        accountId: number;
-        name: string;
-        expenseMinor: number;
-        addBackMinor: number;
-        lines: typeof t.lines;
-      }
-    >();
-    for (const source of t.lines) {
-      if (onlyReview && !source.unresolved) continue;
-      const group = grouped.get(source.accountId) ?? {
-        accountId: source.accountId,
-        name: source.accountName,
-        expenseMinor: 0,
-        addBackMinor: 0,
-        lines: [],
-      };
-      group.lines.push(source);
-      group.expenseMinor = safeTaxSum([
-        group.expenseMinor,
-        source.expenseMinor,
-      ]);
-      group.addBackMinor = safeTaxSum([
-        group.addBackMinor,
-        source.addBackMinor ?? 0,
-      ]);
-      grouped.set(source.accountId, group);
-    }
-    return [...grouped.values()];
-  });
   createResourceStream("/api/tax/stream", () => {
     void invalidateAll();
     void auditRef?.refresh();
@@ -87,7 +58,6 @@
   async function command(action: string) {
     saving = true;
     error = "";
-    notice = "";
     try {
       const response = await fetch(`/api/tax/${d.worksheet.id}`, {
         method: "POST",
@@ -101,12 +71,13 @@
       }
       await invalidateAll();
       await auditRef?.refresh();
-      notice =
+      toast.success(
         action === "finalise"
           ? "Revision finalised."
           : action === "review"
             ? "Worksheet marked reviewed."
-            : "Worksheet returned to draft.";
+            : "Worksheet returned to draft.",
+      );
     } catch {
       error =
         "The result could not be confirmed. Refresh the worksheet before retrying.";
@@ -124,26 +95,28 @@
       await goto(resolve("/(app)/tax/[id]", { id: String(d.worksheet.id) }));
     await invalidateAll();
     await auditRef?.refresh();
-    notice = "Annual tax worksheet saved.";
+    toast.success("Annual tax worksheet saved.");
   }
 </script>
 
 <DetailPage backHref={resolve("/(app)/tax")} backLabel="Annual tax">
   {#snippet actions()}
-    <a
-      class="sheet-btn"
+    <Button
+      variant="outline"
+      size="sm"
       href={resolve(
         `/api/tax/${d.worksheet.id}?revision=${r.revision}&format=csv`,
       )}
-      download><Download size={14} />CSV</a
+      download><Download size={14} />Export CSV</Button
     >
-    <a
-      class="sheet-btn"
+    <Button
+      variant="outline"
+      size="sm"
       href={resolve(
         `/api/tax/${d.worksheet.id}?revision=${r.revision}&format=html`,
       )}
       target="_blank"
-      rel="noopener noreferrer"><Printer size={14} />Print / PDF</a
+      rel="noopener noreferrer"><Printer size={14} />Print / PDF</Button
     >
   {/snippet}
   {#snippet hero()}
@@ -161,312 +134,275 @@
         d.worksheet.dateTo,
       )}
     </p>
-    <p class="tax-note">{TAX_PREPARATION_NOTE}</p>
   {/snippet}
   {#snippet main()}
-    {#if error}<p class="tax-error" role="alert">{error}</p>{/if}
-    {#if notice}<p class="tax-success" role="status">{notice}</p>{/if}
+    {#if error}<div role="alert">
+        <ReportNotes notes={[error]} firstIsWarning />
+      </div>{/if}
     {#if d.stale}
-      <section class="detail-card">
+      <section class="detail-card" aria-labelledby="tax-changes-title">
         <div class="detail-card-head">
-          <span class="detail-card-title">Accounting records changed</span>
+          <h2 id="tax-changes-title" class="detail-card-title">
+            Accounting records changed
+          </h2>
         </div>
-        <div class="tax-card-body">
-          <p>
-            {r.status === "finalised"
-              ? "This finalised revision keeps its original figures. Create an amendment to include later accounting changes."
-              : "Review the differences before refreshing this draft. Reviewed status will be cleared."}
-          </p>
-          {#if d.profitChanged}<p>
-              Accounting profit: {money(r.snapshot.profitMinor)} → {money(
-                d.liveProfitMinor,
-              )}
-            </p>{/if}
-          <details>
-            <summary>{d.changes.length} changed expense line(s)</summary>
-            <ul>
-              {#each d.changes as change (change.movementId)}<li>
-                  {change.after?.recordNumber ??
-                    change.before?.recordNumber ??
-                    `Record ${change.after?.recordId ?? change.before?.recordId}`}
-                  · {change.after?.label ??
-                    change.after?.description ??
-                    change.before?.description} — {change.before
-                    ? money(change.before.expenseMinor)
-                    : "New"} → {change.after
-                    ? money(change.after.expenseMinor)
-                    : "Removed"}{change.before &&
-                  change.after &&
-                  change.before.expenseMinor === change.after.expenseMinor
-                    ? " (classification or source details changed)"
-                    : ""}
-                </li>{/each}
-            </ul>
-          </details>
-          {#if editable}<Button
-              variant="outline"
-              disabled={saving}
-              onclick={() => (mode = "refresh")}
-              >Review and refresh figures</Button
-            >{/if}
+        <div class="tax-stack">
+          <ReportNotes
+            notes={[
+              r.status === "finalised"
+                ? "This revision keeps its finalised figures. Create an amendment to include later accounting changes."
+                : "Review the changes below before refreshing. Refreshing returns the worksheet to draft.",
+            ]}
+            firstIsWarning
+          />
+          {#if d.profitChanged}<dl class="detail-list tax-summary">
+              <div class="detail-row">
+                <dt class="detail-key">Saved accounting profit</dt>
+                <dd class="detail-val tax-amount">
+                  {money(r.snapshot.profitMinor)}
+                </dd>
+              </div>
+              <div class="detail-row">
+                <dt class="detail-key">Current accounting profit</dt>
+                <dd class="detail-val tax-amount">
+                  {money(d.liveProfitMinor)}
+                </dd>
+              </div>
+            </dl>{/if}
+          {#if d.changes.length}<details class="tax-disclosure">
+              <summary>Changed expense lines ({d.changes.length})</summary>
+              <div class="tax-disclosure-body">
+                <ul class="tax-support-list">
+                  {#each d.changes as change (change.movementId)}<li>
+                      <span class="tax-item-title"
+                        >{change.after?.label ??
+                          change.after?.description ??
+                          change.before?.label ??
+                          change.before?.description}</span
+                      >
+                      <p class="field-hint">
+                        {change.after?.recordNumber ??
+                          change.before?.recordNumber ??
+                          `Record ${change.after?.recordId ?? change.before?.recordId}`}
+                      </p>
+                      <p class="hint">
+                        {change.before
+                          ? money(change.before.expenseMinor)
+                          : "New expense"} → {change.after
+                          ? money(change.after.expenseMinor)
+                          : "Removed"}{change.before &&
+                        change.after &&
+                        change.before.expenseMinor === change.after.expenseMinor
+                          ? " · Classification or source details changed"
+                          : ""}
+                      </p>
+                    </li>{/each}
+                </ul>
+              </div>
+            </details>{/if}
+          {#if editable}<div class="tax-actions">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={saving}
+                onclick={() => (mode = "refresh")}>Review and refresh</Button
+              >
+            </div>{/if}
         </div>
       </section>
     {/if}
-    {#each r.snapshot.notes as note (note)}<p class="tax-note">{note}</p>{/each}
-    <section class="rep-block">
-      <div class="rep-block-head">
-        <div>
-          <h2 class="rep-block-title">From accounting profit to tax result</h2>
-          <p class="rep-block-sub">
-            Saved accounting figures with annual tax adjustments
-          </p>
-        </div>
+    <section class="detail-card" aria-labelledby="tax-summary-title">
+      <div class="detail-card-head">
+        <h2 id="tax-summary-title" class="detail-card-title">Tax summary</h2>
       </div>
-      <table class="rep-table">
-        <tbody>
-          <tr
-            ><td>Accounting profit</td><td class="rep-amount"
-              >{money(r.snapshot.profitMinor)}</td
-            ></tr
-          >
-          <tr
-            ><td>Original estimated add-backs</td><td class="rep-amount"
-              >{money(t.baseAddBackMinor)}</td
-            ></tr
-          >
-          <tr
-            ><td>Annual treatment corrections</td><td class="rep-amount"
-              >{money(t.correctionMinor)}</td
-            ></tr
-          >
-          <tr class="rep-total"
-            ><td>Effective expense add-backs</td><td class="rep-amount"
-              >{money(t.addBackMinor)}</td
-            ></tr
-          >
-          {#each d.adjustments.filter((a) => a.kind !== "source" && a.withdrawnAt === null) as a (a.id)}<tr
-              ><td
-                >{a.kind === "source" ? "" : taxManualLabels[a.kind]}{a.originYa
-                  ? ` · YA ${a.originYa}`
-                  : ""}</td
-              ><td class="rep-amount"
-                >{money(
-                  a.direction === "increase" ? a.amountMinor : -a.amountMinor,
-                )}</td
-              ></tr
-            >{/each}
-          <tr class="rep-total"
-            ><td>Preparatory tax result</td><td class="rep-amount"
-              >{money(t.resultMinor)}</td
-            ></tr
-          >
-        </tbody>
-      </table>
-      {#if t.unresolvedCount}<p class="tax-card-body tax-note">
-          Incomplete: {t.unresolvedCount} expense line(s), net {money(
-            t.unresolvedMinor,
-          )}, still need annual classification. They are excluded from add-back
-          estimates. Review and finalisation remain unavailable.
-        </p>{/if}
-    </section>
-    <section class="detail-card">
-      <div class="detail-card-head tax-wrap">
-        <h2 class="detail-card-title">Expenses to review</h2>
-        <label class="tax-toggle"
-          ><input type="checkbox" bind:checked={onlyReview} />Needs review only</label
-        >
-      </div>
-      {#if groups.length === 0}<p class="tax-card-body tax-note">
-          {onlyReview
-            ? "No unresolved expense lines. Turn off the filter to inspect all saved classifications."
-            : "No expense lines in this accounting period."}
-        </p>{/if}
-      {#each groups as group (group.accountId)}
-        <details class="tax-group" open={onlyReview}>
-          <summary
-            ><strong>{group.name}</strong><span
-              >{group.lines.length} line(s) · {money(group.expenseMinor)}</span
-            ></summary
-          >
-          {#each group.lines as source (source.movementId)}
-            <div class="tax-source">
-              <div>
-                <strong>{source.label ?? source.description}</strong>
-                <p class="tax-note">
-                  {formatDate(source.date)} · {money(
-                    source.expenseMinor,
-                  )}{source.voided ? " · Void pair" : ""}
-                </p>
-                {#if data.canReadRecords}<a
-                    class="related-link"
-                    href={resolve("/(app)/records/[id]", {
-                      id: String(source.recordId),
-                    })}>{source.recordNumber ?? `Record ${source.recordId}`}</a
-                  >{:else}<span
-                    >{source.recordNumber ?? `Record ${source.recordId}`}</span
-                  >{/if}
-              </div>
-              <div class="tax-source-values">
-                <p>
-                  Saved: {source.classification?.percentageBps == null
-                    ? "Unclassified"
-                    : `${source.classification.percentageBps / 100}%`}
-                </p>
-                <p>
-                  Annual: {source.effectivePercentageBps == null
-                    ? "Needs review"
-                    : `${source.effectivePercentageBps / 100}%`} · {TaxTreatmentLabels[
-                    source.effectiveTreatment
-                  ]}
-                </p>
-                <p>
-                  Add-back: {source.addBackMinor === null
-                    ? "Unresolved"
-                    : money(source.addBackMinor)}
-                </p>
-                {#if editable && !source.voided}<button
-                    class="related-link"
-                    type="button"
-                    onclick={() => correct(source)}
-                    disabled={saving || d.stale}>Change annual treatment</button
-                  >{/if}
-              </div>
-            </div>
-          {/each}
-        </details>
-      {/each}
-    </section>
-    <section class="detail-card">
-      <div class="detail-card-head tax-wrap">
-        <h2 class="detail-card-title">Annual adjustments</h2>
-        {#if editable}<Button
-            variant="outline"
-            size="sm"
-            onclick={() => (mode = "manual")}
-            disabled={saving}><Plus size={14} />Add adjustment</Button
-          >{/if}
-      </div>
-      {#if !d.adjustments.some((a) => a.withdrawnAt === null)}<p
-          class="tax-card-body tax-note"
-        >
-          No annual adjustments. Saved expense classifications still contribute
-          their add-backs.
-        </p>{/if}
-      {#each d.adjustments.filter((a) => a.withdrawnAt === null) as a (a.id)}<div
-          class="tax-adjustment"
-        >
-          <strong
-            >{a.kind === "source"
-              ? `Annual treatment · expense line ${a.sourceMovementId}`
-              : taxManualLabels[a.kind]}</strong
-          >
-          <p>
-            {a.kind === "source"
-              ? `${a.percentageBps! / 100}% deductible`
-              : `${a.direction === "increase" ? "Increase" : "Decrease"} ${money(a.amountMinor)}`}
-          </p>
-          {#if a.originYa}<p>
-              YA {a.originYa} balance: {money(a.balanceMinor)} · utilised: {money(
-                a.amountMinor,
-              )} · remaining: {money(a.balanceMinor - a.amountMinor)}
-            </p>{/if}
-          <p>{a.reason}</p>
-          <p class="tax-note">
-            {a.evidence} · {a.actorName} · {formatDate(
-              a.createdAt.slice(0, 10),
-            )}
-          </p>
-          {#if editable}<button
-              type="button"
-              class="related-link"
-              onclick={() => {
-                adjustmentId = a.id;
-                mode = "withdraw";
-              }}
-              disabled={saving}>Withdraw adjustment</button
-            >{/if}
-        </div>{/each}
-      {#if d.adjustments.some((a) => a.withdrawnAt !== null)}<details
-          class="tax-group"
-        >
-          <summary>Withdrawn and replaced adjustments</summary
-          >{#each d.adjustments.filter((a) => a.withdrawnAt !== null) as a (a.id)}<div
-              class="tax-adjustment"
+      <div class="tax-stack">
+        <dl class="detail-list tax-summary">
+          <div class="detail-row">
+            <dt class="detail-key">Accounting profit</dt>
+            <dd class="detail-val tax-amount">
+              {money(r.snapshot.profitMinor)}
+            </dd>
+          </div>
+          <div class="detail-row">
+            <dt class="detail-key">Expense add-backs</dt>
+            <dd class="detail-val tax-amount">{money(t.addBackMinor)}</dd>
+          </div>
+          {#each d.adjustments.filter((a) => a.kind !== "source" && a.withdrawnAt === null) as a (a.id)}<div
+              class="detail-row"
             >
-              <strong
-                >Adjustment {a.id} · {a.kind === "source"
-                  ? "Annual treatment"
-                  : taxManualLabels[a.kind]}</strong
-              >
-              <p>{a.reason}</p>
-              <p class="tax-note">
-                {a.actorName} · {a.createdAt} · {a.evidence}
-              </p>
-              <p>Withdrawn {a.withdrawnAt}: {a.withdrawalReason}</p>
+              <dt class="detail-key">
+                {a.kind === "source" ? "" : taxManualLabels[a.kind]}{a.originYa
+                  ? ` · YA ${a.originYa}`
+                  : ""}
+              </dt>
+              <dd class="detail-val tax-amount">
+                {money(
+                  a.direction === "increase" ? a.amountMinor : -a.amountMinor,
+                )}
+              </dd>
             </div>{/each}
-        </details>{/if}
+          <div class="detail-row tax-result">
+            <dt class="detail-key">Preparatory tax result</dt>
+            <dd class="detail-val tax-amount">{money(t.resultMinor)}</dd>
+          </div>
+        </dl>
+        <details class="tax-disclosure">
+          <summary>Add-back breakdown</summary>
+          <div class="tax-disclosure-body">
+            <dl class="detail-list tax-summary">
+              <div class="detail-row">
+                <dt class="detail-key">Saved classification estimates</dt>
+                <dd class="detail-val tax-amount">
+                  {money(t.baseAddBackMinor)}
+                </dd>
+              </div>
+              <div class="detail-row">
+                <dt class="detail-key">Annual treatment corrections</dt>
+                <dd class="detail-val tax-amount">
+                  {money(t.correctionMinor)}
+                </dd>
+              </div>
+              <div class="detail-row">
+                <dt class="detail-key">Effective expense add-backs</dt>
+                <dd class="detail-val tax-amount">{money(t.addBackMinor)}</dd>
+              </div>
+            </dl>
+          </div>
+        </details>
+        {#if t.unresolvedCount}<ReportNotes
+            notes={[
+              `${t.unresolvedCount} expense line(s), net ${money(t.unresolvedMinor)}, need annual classification. They are excluded from add-back estimates. Resolve them before reviewing or finalising.`,
+            ]}
+            firstIsWarning
+          />{/if}
+      </div>
     </section>
+    <TaxExpenses
+      lines={t.lines}
+      currency={r.snapshot.currency}
+      canChange={editable}
+      canReadRecords={data.canReadRecords}
+      disabled={saving || d.stale}
+      onchange={correct}
+    />
+    <TaxAdjustments
+      adjustments={d.adjustments}
+      lines={t.lines}
+      currency={r.snapshot.currency}
+      canChange={editable}
+      disabled={saving}
+      onadd={() => (mode = "manual")}
+      onwithdraw={(id) => {
+        adjustmentId = id;
+        mode = "withdraw";
+      }}
+    />
+    <ReportNotes notes={[TAX_PREPARATION_NOTE, ...r.snapshot.notes]} />
   {/snippet}
   {#snippet rail()}
-    <section class="detail-card">
+    <section class="detail-card" aria-labelledby="tax-review-title">
       <div class="detail-card-head">
-        <h2 class="detail-card-title">Review and finalise</h2>
+        <h2 id="tax-review-title" class="detail-card-title">
+          Review and finalise
+        </h2>
       </div>
-      <div class="tax-card-body">
-        <p>
+      <div class="tax-stack">
+        <p class="hint">
           {r.status === "draft"
-            ? "Resolve expense classifications and check manual claims before review."
+            ? "Check expense classifications and manual claims, then mark the worksheet reviewed."
             : r.status === "reviewed"
-              ? "Review is recorded. Finalisation locks this revision."
-              : "This revision is locked. An amendment creates a separate draft."}
+              ? "Review is recorded. Finalise to lock this revision."
+              : "This revision is locked. Create an amendment for further changes."}
         </p>
         {#if d.isLatest}
-          {#if r.status === "draft" && data.canReview}<Button
-              disabled={saving || d.stale || t.unresolvedCount > 0}
-              onclick={() => ask("review")}>Mark reviewed</Button
-            >{/if}
-          {#if r.status === "reviewed" && data.canFinalise}<Button
-              disabled={saving || d.stale || t.unresolvedCount > 0}
-              onclick={() => ask("finalise")}>Finalise worksheet</Button
-            >{/if}
-          {#if r.status === "reviewed" && data.canUpdate}<Button
-              variant="outline"
-              disabled={saving}
-              onclick={() => ask("resume")}>Return to draft</Button
-            >{/if}
-          {#if r.status === "finalised" && data.canAmend}<Button
-              variant="outline"
-              disabled={saving}
-              onclick={() => (mode = "amend")}>Create amendment</Button
-            >{/if}
-        {:else}<p class="tax-note">
-            Viewing a retained revision. Open the latest revision to continue.
-          </p>{/if}
-        <p class="tax-note">
-          Captured: {r.capturedAt}{r.reviewedAt
-            ? ` · Reviewed: ${r.reviewedAt}`
-            : ""}{r.finalisedAt ? ` · Finalised: ${r.finalisedAt}` : ""}
-        </p>
+          <div class="tax-actions">
+            {#if r.status === "draft" && data.canReview}<Button
+                size="sm"
+                disabled={saving || d.stale || t.unresolvedCount > 0}
+                onclick={() => ask("review")}
+                >{saving ? "Saving…" : "Mark reviewed"}</Button
+              >{/if}
+            {#if r.status === "reviewed" && data.canFinalise}<Button
+                size="sm"
+                disabled={saving || d.stale || t.unresolvedCount > 0}
+                onclick={() => ask("finalise")}
+                >{saving ? "Saving…" : "Finalise worksheet"}</Button
+              >{/if}
+            {#if r.status === "reviewed" && data.canUpdate}<button
+                type="button"
+                class="detail-card-action"
+                disabled={saving}
+                onclick={() => ask("resume")}>Return to draft</button
+              >{/if}
+            {#if r.status === "finalised" && data.canAmend}<Button
+                size="sm"
+                variant="outline"
+                disabled={saving}
+                onclick={() => (mode = "amend")}>Create amendment</Button
+              >{/if}
+          </div>
+          {#if d.stale && r.status !== "finalised"}<p class="field-hint">
+              Refresh the changed accounting figures before continuing.
+            </p>{:else if t.unresolvedCount && r.status !== "finalised"}<p
+              class="field-hint"
+            >
+              {t.unresolvedCount} expense line(s) still need classification.
+            </p>{/if}
+        {:else}<div>
+            <p class="hint">You are viewing a retained revision.</p>
+            <a
+              class="detail-card-action"
+              href={resolve("/(app)/tax/[id]", { id: String(d.worksheet.id) })}
+              >Open latest revision<ChevronRight size={13} /></a
+            >
+          </div>{/if}
+        <dl class="detail-list tax-summary">
+          <div class="detail-row">
+            <dt class="detail-key">Captured</dt>
+            <dd class="detail-val tax-date">{formatAuditTime(r.capturedAt)}</dd>
+          </div>
+          {#if r.reviewedAt}<div class="detail-row">
+              <dt class="detail-key">Reviewed</dt>
+              <dd class="detail-val tax-date">
+                {formatAuditTime(r.reviewedAt)}
+              </dd>
+            </div>{/if}
+          {#if r.finalisedAt}<div class="detail-row">
+              <dt class="detail-key">Finalised</dt>
+              <dd class="detail-val tax-date">
+                {formatAuditTime(r.finalisedAt)}
+              </dd>
+            </div>{/if}
+        </dl>
       </div>
     </section>
-    <section class="detail-card">
+    <section class="detail-card" aria-labelledby="tax-revisions-title">
       <div class="detail-card-head">
-        <h2 class="detail-card-title">Revisions</h2>
+        <h2 id="tax-revisions-title" class="detail-card-title">Revisions</h2>
       </div>
-      <div class="tax-card-body">
-        {#each d.revisions as revision (revision.id)}<div>
-            <a
-              class="related-link"
+      <div class="tax-stack">
+        {#each visibleItems(d.revisions, revisionsExpanded) as revision (revision.id)}
+          {#snippet revisionLabel()}<span class="tax-revision-label"
+              >Revision {revision.revision}{#if revision.amendmentReason}<span
+                  class="field-hint">{revision.amendmentReason}</span
+                >{/if}</span
+            ><StatusBadge status={`tax-${revision.status}`} />{/snippet}
+          {#if revision.id === r.id}<div
+              class="tax-revision-link tax-revision-current"
+              aria-current="page"
+            >
+              {@render revisionLabel()}
+            </div>{:else}<a
+              class="related-link tax-revision-link"
               href={resolve(
                 `/tax/${d.worksheet.id}?revision=${revision.revision}`,
-              )}>Revision {revision.revision}</a
-            >
-            · {revision.status}{#if revision.amendmentReason}<p
-                class="tax-note"
-              >
-                {revision.amendmentReason}
-              </p>{/if}
-          </div>{/each}
+              )}>{@render revisionLabel()}<ChevronRight size={13} /></a
+            >{/if}
+        {/each}
+        <ListExpand
+          total={d.revisions.length}
+          bind:expanded={revisionsExpanded}
+        />
       </div>
     </section>
     <section class="detail-card">
@@ -507,76 +443,3 @@
     if (action) void command(action);
   }}
 />
-
-<style>
-  .tax-card-body {
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    font-size: 13px;
-    line-height: 1.6;
-  }
-  .tax-note {
-    color: var(--muted-foreground);
-    font-size: 12px;
-    line-height: 1.6;
-    overflow-wrap: anywhere;
-  }
-  .tax-error {
-    color: var(--destructive);
-    font-size: 13px;
-  }
-  .tax-success {
-    color: var(--primary);
-    font-size: 13px;
-  }
-  .tax-wrap {
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-  .tax-toggle {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    font-size: 12px;
-  }
-  .tax-group {
-    padding: 12px 16px;
-    border-top: 1px solid var(--border);
-  }
-  .tax-group summary {
-    cursor: pointer;
-    font-size: 13px;
-  }
-  .tax-group summary span {
-    display: block;
-    color: var(--muted-foreground);
-    font-size: 12px;
-    margin-top: 4px;
-  }
-  .tax-source,
-  .tax-adjustment {
-    padding: 14px 16px;
-    border-top: 1px solid var(--border);
-    font-size: 13px;
-    line-height: 1.6;
-    overflow-wrap: anywhere;
-  }
-  .tax-source {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-    padding-left: 0;
-    padding-right: 0;
-  }
-  .tax-source-values {
-    text-align: right;
-  }
-  @media (max-width: 767px) {
-    .tax-source-values {
-      text-align: left;
-    }
-  }
-</style>

@@ -831,39 +831,38 @@ it.each([1280, 390])(
     render(AssetDetail, {
       data: { asset: registeredAsset, accounts, canChange: true },
     });
-    const viewChanges = page.getByRole("button", {
-      name: "View changes",
+    const viewMore = page.getByRole("button", {
+      name: "View more",
       exact: true,
     });
-    await expect.element(viewChanges).toBeVisible();
+    await expect.element(viewMore).toBeVisible();
+    await expect.element(viewMore).toHaveAttribute("aria-expanded", "false");
     await expect
-      .element(page.getByText("updated this asset", { exact: false }))
+      .element(
+        page.getByText("Depreciation setup · Useful life (months):", {
+          exact: true,
+        }),
+      )
+      .toBeVisible();
+    await expect.element(page.getByText("36", { exact: true })).toBeVisible();
+    await expect
+      .element(page.getByText("1,234.56", { exact: true }))
       .toBeVisible();
     await expect
       .element(page.getByText(longReference, { exact: true }))
       .not.toBeInTheDocument();
     const activity = document.querySelector<HTMLElement>(".audit-list")!;
     expect(activity.scrollWidth).toBeLessThanOrEqual(activity.clientWidth + 1);
-    await viewChanges.click();
-    await expect
-      .element(page.getByRole("dialog", { name: "Activity details" }))
-      .toBeVisible();
-    await expect
-      .element(
-        page.getByText("Depreciation setup · Useful life (months)", {
-          exact: true,
-        }),
-      )
-      .toBeVisible();
+    const collapsedHeight = activity.getBoundingClientRect().height;
+    await viewMore.click();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
     await expect
       .element(
-        page.getByText("Depreciation setup · Financial basis · Original cost", {
-          exact: true,
-        }),
+        page.getByText(
+          "Depreciation setup · Financial basis · Original cost:",
+          { exact: true },
+        ),
       )
-      .toBeVisible();
-    await expect
-      .element(page.getByText("1,234.56", { exact: true }))
       .toBeVisible();
     await expect
       .element(page.getByText("Auto-post monthly", { exact: true }))
@@ -874,15 +873,20 @@ it.each([1280, 390])(
     await expect
       .element(page.getByText(longReference, { exact: true }))
       .toBeVisible();
-    const dialog = page
-      .getByRole("dialog", { name: "Activity details" })
-      .element() as HTMLElement;
-    expect(dialog.getBoundingClientRect().right).toBeLessThanOrEqual(width);
-    expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth + 1);
-    expect(dialog.getBoundingClientRect().height).toBeLessThanOrEqual(844);
-    await page.getByRole("button", { name: "Close activity details" }).click();
+    expect(activity.scrollWidth).toBeLessThanOrEqual(activity.clientWidth + 1);
+    expect(activity.getBoundingClientRect().right).toBeLessThanOrEqual(width);
+    expect(activity.getBoundingClientRect().height).toBeGreaterThan(
+      collapsedHeight,
+    );
+    const viewLess = page.getByRole("button", {
+      name: "View less",
+      exact: true,
+    });
+    await expect.element(viewLess).toHaveAttribute("aria-expanded", "true");
+    await viewLess.click();
+    await expect.element(viewMore).toHaveAttribute("aria-expanded", "false");
     await expect
-      .element(page.getByRole("dialog", { name: "Activity details" }))
+      .element(page.getByText(longReference, { exact: true }))
       .not.toBeInTheDocument();
   },
 );

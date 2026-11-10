@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invalidateAll } from "$app/navigation";
+  import { goto, invalidateAll } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { Plus, Receipt } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -49,9 +49,14 @@
             ></thead
           ><tbody
             >{#each data.worksheets as w (w.id)}<tr
+                class="worksheet-row"
+                onclick={(event) => {
+                  if (!(event.target as HTMLElement).closest("a,button"))
+                    void goto(resolve("/(app)/tax/[id]", { id: String(w.id) }));
+                }}
                 ><td
                   ><a
-                    class="related-link"
+                    class="worksheet-link"
                     href={resolve("/(app)/tax/[id]", { id: String(w.id) })}
                     >YA {w.ya}</a
                   ></td
@@ -71,3 +76,18 @@
       await invalidateAll();
     }}
   />{/if}
+
+<style>
+  .worksheet-row {
+    cursor: pointer;
+  }
+  .worksheet-row:hover,
+  .worksheet-row:focus-within {
+    background: var(--accent);
+  }
+  .worksheet-link {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+  }
+</style>

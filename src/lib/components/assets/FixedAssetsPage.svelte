@@ -247,7 +247,11 @@
                       class="asset-status-link"
                       href={resolve("/(app)/assets/[id]", {
                         id: String(asset.id),
-                      })}><AssetStatus overview={asset.depreciation} /></a
+                      })}
+                      ><AssetStatus
+                        overview={asset.depreciation}
+                        showDetails={false}
+                      /></a
                     ></td
                   >
                 </tr>{/each}

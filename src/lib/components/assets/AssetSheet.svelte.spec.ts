@@ -372,6 +372,9 @@ it("opens an asset on the standard detail page with Activity and a dirty-only sa
     .element(page.getByRole("heading", { name: "Laptop", exact: true }))
     .toBeVisible();
   expect(document.querySelector(".detail-grid")).not.toBeNull();
+  await expect
+    .element(page.getByText("No depreciation posted", { exact: true }))
+    .toBeVisible();
   await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
   await expect
     .element(page.getByText("Activity", { exact: true }))
@@ -712,7 +715,7 @@ it("shows saved posting accounts directly when setting up depreciation", async (
     .toHaveTextContent("Accumulated depreciation");
 });
 
-it("shows depreciation progress and review warnings in the registered asset status column", async () => {
+it("shows only status chips and review warnings in the registered asset status column", async () => {
   await page.viewport(1280, 900);
   const data = registerData(true);
   const asset: RegisteredAsset = {
@@ -745,13 +748,13 @@ it("shows depreciation progress and review warnings in the registered asset stat
     .toBeVisible();
   await expect
     .element(page.getByText("3 months pending · from 2026-06", { exact: true }))
-    .toBeVisible();
+    .not.toBeInTheDocument();
   await expect
     .element(page.getByText("Last posted 2026-05", { exact: true }))
-    .toBeVisible();
+    .not.toBeInTheDocument();
   await expect
     .element(page.getByText("Auto-post enabled", { exact: true }))
-    .toBeVisible();
+    .not.toBeInTheDocument();
   await expect
     .element(page.getByText("Source linked", { exact: true }))
     .not.toBeInTheDocument();
@@ -771,7 +774,7 @@ it("keeps asset setup status visible on phone row cards", async () => {
     .toBeVisible();
   await expect
     .element(page.getByText("No depreciation posted", { exact: true }))
-    .toBeVisible();
+    .not.toBeInTheDocument();
   const statusCell = document.querySelector<HTMLElement>(
     '[data-label="Status"]',
   )!;

@@ -345,6 +345,7 @@ function existing(db: Db, table: string, ids: string[]): Set<string> {
 
 /** id → `/feature/id` for the record pages that exist. */
 const PAGE_OF: Partial<Record<RecordType, [table: string, path: string]>> = {
+  tax_worksheet: ["tax_worksheets", "/tax"],
   record: ["ledger_records", "/records"],
   account: ["accounts", "/accounts"],
   contact: ["contacts", "/contacts"],

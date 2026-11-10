@@ -1,0 +1,225 @@
+/* Use the shared detail card's padding and the same content rhythm as Assets. */
+.tax-stack,
+.tax-disclosure-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  min-width: 0;
+}
+.tax-stack > .hint,
+.tax-stack > .field-hint,
+.tax-stack > .detail-list,
+.tax-summary {
+  margin-top: 0;
+}
+.tax-summary {
+  border-top: 0;
+}
+.tax-summary .detail-key {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+}
+.tax-summary .detail-val {
+  flex: 0 1 auto;
+  min-width: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.tax-summary > .detail-row:first-child {
+  padding-top: 0;
+}
+.tax-summary > .detail-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.tax-summary dd {
+  margin: 0;
+}
+.tax-summary .tax-result {
+  font-weight: 600;
+}
+.tax-summary .tax-result .detail-key {
+  color: var(--foreground);
+}
+.tax-actions,
+.tax-card-head {
+  flex-wrap: wrap;
+}
+.tax-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tax-actions > * {
+  max-width: 100%;
+}
+.tax-disclosure {
+  min-width: 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.tax-disclosure > summary {
+  display: list-item;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.tax-disclosure > summary::marker {
+  color: var(--muted-foreground);
+}
+.tax-disclosure > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.tax-disclosure-body {
+  padding-top: 16px;
+}
+.tax-group-heading {
+  display: inline-flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  width: calc(100% - 22px);
+}
+.tax-group-heading .field-hint {
+  display: block;
+}
+.tax-group-total,
+.tax-amount {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-family: "Geist Mono", monospace;
+  font-size: 13px;
+}
+.tax-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.tax-table-wrap .rep-table th,
+.tax-table-wrap .rep-table td {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+.tax-table-wrap .rep-table td {
+  vertical-align: top;
+}
+
+.tax-record-link {
+  color: inherit;
+  text-decoration: none;
+}
+.tax-record-link:hover {
+  text-decoration: underline;
+}
+.tax-record-link:focus-visible,
+.tax-revision-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.tax-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.tax-filter label {
+  cursor: pointer;
+}
+.tax-item {
+  min-width: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.tax-item + .tax-item {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.tax-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tax-item-title {
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.tax-item:not(.tax-stack) .detail-list {
+  margin-top: 12px;
+}
+.tax-item-note {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.tax-date {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.tax-revision-link {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  color: inherit;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.tax-revision-current {
+  background: var(--muted);
+}
+.tax-revision-label {
+  flex: 1;
+  min-width: 0;
+}
+.tax-revision-label .field-hint {
+  display: block;
+}
+.tax-support-list {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+@media (max-width: 767px) {
+  .tax-group-heading {
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+  .tax-item-head {
+    flex-wrap: wrap;
+  }
+  .tax-actions > button {
+    white-space: normal;
+    height: auto;
+    min-height: 32px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+}
+
+.tax-table-wrap .rep-amount .field-hint {
+  white-space: normal;
+  font-family: "Geist", "Geist Fallback", system-ui, sans-serif;
+}
+.tax-stack .detail-card-action:disabled,
+.tax-item .detail-card-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+.sheet-foot-actions.tax-actions > .sheet-btn {
+  min-height: 34px;
+}

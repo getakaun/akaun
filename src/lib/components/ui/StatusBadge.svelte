@@ -11,6 +11,9 @@
    */
   let { status }: { status: string } = $props();
   const byLabel: Record<string, Tone> = {
+    "tax-draft": { label: "Draft", tone: "gray" },
+    "tax-reviewed": { label: "Reviewed", tone: "blue" },
+    "tax-finalised": { label: "Finalised", tone: "green" },
     "depreciation-attention": { label: "Needs attention", tone: "amber" },
     "depreciation-stopped": { label: "Stopped", tone: "gray" },
     "depreciation-setup": { label: "Setup needed", tone: "gray" },

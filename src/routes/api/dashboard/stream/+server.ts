@@ -18,7 +18,8 @@ import { eventStream } from "$lib/server/sse-stream.js";
  *
  * Accounts, imports and bank statements feed the "needs attention" list and
  * the cash figures (an account classified as Bank becomes cash), so they
- * signal too (007 FR-015). Every import job change is forwarded, including a
+ * signal too (007 FR-015). An initial signal catches changes between SSR and
+ * connection, and missed writes after reconnecting. Every import job change is forwarded, including a
  * job sent back from review to be read again; the page debounces them.
  */
 export const GET: RequestHandler = ({ locals }) => {
@@ -28,51 +29,54 @@ export const GET: RequestHandler = ({ locals }) => {
 
   const changed = "data-changed";
 
-  return eventStream([
-    {
-      emitter: ledgerEvents,
-      events: {
-        "record-update": changed,
-        "record-deleted": changed,
-        "settlement-changed": changed,
+  return eventStream(
+    [
+      {
+        emitter: ledgerEvents,
+        events: {
+          "record-update": changed,
+          "record-deleted": changed,
+          "settlement-changed": changed,
+        },
+        signalOnly: true,
       },
-      signalOnly: true,
-    },
-    {
-      emitter: accountEvents,
-      events: {
-        "account-update": changed,
-        "account-deleted": changed,
-        "accounts-refresh": changed,
+      {
+        emitter: accountEvents,
+        events: {
+          "account-update": changed,
+          "account-deleted": changed,
+          "accounts-refresh": changed,
+        },
+        signalOnly: true,
       },
-      signalOnly: true,
-    },
-    {
-      emitter: importEvents,
-      events: { "job-update": changed, "job-deleted": changed },
-      signalOnly: true,
-    },
-    {
-      emitter: reconciliationEvents,
-      events: {
-        "allocation-update": changed,
-        "allocations-bulk-update": changed,
-        "lines-added": changed,
-        "line-update": changed,
-        "line-deleted": changed,
-        "statement-deleted": changed,
+      {
+        emitter: importEvents,
+        events: { "job-update": changed, "job-deleted": changed },
+        signalOnly: true,
       },
-      signalOnly: true,
-    },
-    {
-      emitter: quotationEvents,
-      events: { "quotation-update": changed, "quotation-delete": changed },
-      signalOnly: true,
-    },
-    {
-      emitter: invoiceEvents,
-      events: { "invoice-update": changed, "invoice-delete": changed },
-      signalOnly: true,
-    },
-  ]);
+      {
+        emitter: reconciliationEvents,
+        events: {
+          "allocation-update": changed,
+          "allocations-bulk-update": changed,
+          "lines-added": changed,
+          "line-update": changed,
+          "line-deleted": changed,
+          "statement-deleted": changed,
+        },
+        signalOnly: true,
+      },
+      {
+        emitter: quotationEvents,
+        events: { "quotation-update": changed, "quotation-delete": changed },
+        signalOnly: true,
+      },
+      {
+        emitter: invoiceEvents,
+        events: { "invoice-update": changed, "invoice-delete": changed },
+        signalOnly: true,
+      },
+    ],
+    () => ({ type: changed }),
+  );
 };

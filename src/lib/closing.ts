@@ -5,6 +5,7 @@ export type ClosingStatus = { closedThrough: string | null };
  * into its own links, and an API caller gets ids it can use.
  */
 export type ClosingItemRef =
+  | { kind: "depreciation"; month: string }
   | { kind: "record"; id: number }
   | { kind: "account"; id: number }
   | { kind: "invoice"; id: number }

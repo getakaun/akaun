@@ -1,3 +1,4 @@
+import { DEPRECIATION_RECORD_REASON } from "./depreciation.js";
 import {
   activeAllocation,
   hasAllocationHistory,
@@ -586,8 +587,10 @@ function toRecordView(
       derived.closedThrough && row.date <= derived.closedThrough
         ? derived.closedThrough
         : null,
-    locked: lock.locked,
-    lockedReason: lock.reason,
+    locked: lock.locked || !!row.legacyKind?.startsWith("asset-depreciation"),
+    lockedReason: row.legacyKind?.startsWith("asset-depreciation")
+      ? DEPRECIATION_RECORD_REASON
+      : lock.reason,
     reconciled: lockState.reconciled,
     // Every side of every record on the page is already loaded by deriveFor(),
     // so the count a row needs costs no extra query (FR-003).

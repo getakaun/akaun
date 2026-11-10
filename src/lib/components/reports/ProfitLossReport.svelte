@@ -44,14 +44,20 @@
 <div class="rep-scroll">
 	<div class="rep-result">
 		<div>
-			<div class="rep-result-label">{report.resultMinor < 0 ? 'Net loss' : 'Net profit'}</div>
+			<div class="rep-result-label">
+				{report.resultMinor < 0 ? 'Net loss' : 'Net profit'}
+			</div>
 			<div class="rep-result-sub">
 				Revenue less expenses, {formatDate(report.dateFrom)} to {formatDate(
 					report.dateTo
 				)}
 			</div>
 		</div>
-		<div class="rep-result-val" class:good={report.resultMinor > 0} class:bad={report.resultMinor < 0}>
+		<div
+			class="rep-result-val"
+			class:good={report.resultMinor > 0}
+			class:bad={report.resultMinor < 0}
+		>
 			{formatMinor(report.resultMinor)}
 		</div>
 	</div>
@@ -118,5 +124,10 @@
 		</div>
 	{/if}
 
-	<ReportNotes notes={report.notes} />
+	<ReportNotes
+		notes={[
+			...report.notes,
+			'Expenses include posted depreciation. Scheduled depreciation is included only after posting.'
+		]}
+	/>
 </div>

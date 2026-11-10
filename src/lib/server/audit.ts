@@ -9,6 +9,7 @@ import { auditEvents } from "./audit-events.js";
 type Db = BunSQLiteDatabase<any>;
 
 export type RecordType =
+  | "fixed_asset"
   | "contact"
   | "quotation"
   | "invoice"
@@ -45,6 +46,7 @@ export type { AuditVia };
  * The Audit Log page itself shows every kind, and needs `audit.read`.
  */
 export const AUDIT_PERMISSION: Record<RecordType, LeafPermission> = {
+  fixed_asset: "records.read",
   record: "records.read",
   account: "accounts.read",
   settlement: "records.read",
@@ -183,6 +185,8 @@ function labelOf(db: Db, query: SQL): string | null {
 function currentLabel(db: Db, type: RecordType, id: string): string | null {
   const one = (query: SQL) => labelOf(db, query);
   switch (type) {
+    case "fixed_asset":
+      return one(sql`SELECT name AS label FROM fixed_assets WHERE id = ${id}`);
     case "record":
       return one(
         sql`SELECT trim(coalesce(record_number, '') || ' ' || description) AS label FROM ledger_records WHERE id = ${id}`,

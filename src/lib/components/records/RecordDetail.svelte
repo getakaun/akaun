@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RecordAssets from '$lib/components/assets/RecordAssets.svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { Ban, ChevronRight, FileText, Scale, Undo2, Users } from '@lucide/svelte';
@@ -151,7 +152,7 @@
 			? MONTH_CLOSED_REASON
 			: fromInvoice
 				? 'Cancel the invoice instead'
-				: (historyDeleteReason ?? (record.locked ? (record.lockedReason ?? '') : null))
+				: (data.fixedAssetDeletionReason ?? historyDeleteReason ?? (record.locked ? (record.lockedReason ?? '') : null))
 	);
 	const isPayment = $derived(record.kind === LedgerRecordKind.Payment);
 	const paymentControl = $derived(
@@ -242,7 +243,7 @@
 	 * reasons, so it is read again rather than patched here.
 	 */
 	async function afterVoid() {
-		toast('The record was voided.');
+		toast.success('The record was voided.');
 		await invalidateAll();
 		void auditTrailRef?.refresh();
 	}
@@ -291,7 +292,7 @@
 		} else if (m.type === 'record-deleted' && m.id === record.id) {
 			// Staying on the page of a record that is gone is worse than a drawer
 			// closing. `replaceState` so the back button cannot land here either.
-			toast('That record was deleted.');
+			toast.success('That record was deleted.');
 			void goto(resolve('/(app)/records'), { replaceState: true });
 		} else if (
 			(m.type === 'settlement-changed' &&
@@ -501,6 +502,7 @@
 	{/snippet}
 
 	{#snippet rail()}
+		{#if data.assetData}<RecordAssets data={data.assetData} disabled={dirty || saving} />{/if}
 		{#if contact}
 			<section class="detail-card">
 				<div class="detail-card-head">
@@ -701,7 +703,7 @@
 		onclose={() => (dateCorrectionOpen = false)}
 		oncorrected={() => {
 			auditTrailRef?.refresh();
-			toast('The record date was corrected.');
+			toast.success('The record date was corrected.');
 		}}
 	/>
 {/if}
@@ -712,7 +714,7 @@
 		onclose={() => (amountCorrectionOpen = false)}
 		oncorrected={() => {
 			auditTrailRef?.refresh();
-			toast('The reimbursement amount was corrected.');
+			toast.success('The reimbursement amount was corrected.');
 		}}
 	/>
 {/if}

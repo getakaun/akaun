@@ -281,8 +281,8 @@
             <CashBridge bridge={data.cash.bridge} />
             <p class="dash-note">
               An equipment purchase is capital expenditure. The cash goes out at once, but the cost is not an
-              expense. Akaun does not calculate depreciation. To put the cost into profit, record depreciation
-              with a journal entry.
+              expense. Posted depreciation reduces profit without reducing cash. Set up depreciation in
+              Assets; scheduled charges affect these figures only after they are posted.
             </p>
             {#if !data.cash.ties}
               <p class="dash-note bad">The cash flow statement does not reconcile. Open the report to find the cause.</p>

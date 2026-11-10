@@ -1,0 +1,249 @@
+/* Shared rhythm for asset depreciation, setup, historical review and corrections.
+   Keep the existing card / sheet chrome in layout.css; only module content lives here. */
+.depreciation-card-body,
+.depreciation-fields,
+.depreciation-disclosure-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  min-width: 0;
+}
+
+.depreciation-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.depreciation-fields .field,
+.depreciation-card-body > .hint,
+.depreciation-fields > .hint,
+.depreciation-disclosure-body > .hint {
+  margin: 0;
+}
+
+.depreciation-card-head {
+  flex-wrap: wrap;
+}
+
+.depreciation-card-body > .detail-list,
+.depreciation-summary {
+  margin-top: 0;
+  border-top: 0;
+}
+
+.depreciation-card-body > .detail-list > .detail-row:last-child,
+.depreciation-summary > .detail-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.depreciation-card-body > .detail-list .detail-key,
+.depreciation-summary .detail-key {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+}
+
+.depreciation-card-body > .detail-list .detail-val,
+.depreciation-summary .detail-val {
+  flex: 0 1 auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.depreciation-card-body > .detail-list > .detail-row:first-child,
+.depreciation-summary > .detail-row:first-child {
+  padding-top: 0;
+}
+
+.depreciation-intro {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.depreciation-disclosure {
+  min-width: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.depreciation-disclosure > summary {
+  display: list-item;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--foreground);
+}
+
+.depreciation-disclosure > summary::marker {
+  color: var(--muted-foreground);
+}
+
+.depreciation-disclosure > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.depreciation-disclosure-body {
+  padding-top: 16px;
+}
+
+.depreciation-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.depreciation-actions > *,
+.depreciation-fields [data-slot="select-trigger"] {
+  max-width: 100%;
+}
+
+.depreciation-actions > button {
+  white-space: normal;
+  height: auto;
+  min-height: 32px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  line-height: 1.4;
+}
+
+.depreciation-footer-actions {
+  flex-wrap: wrap;
+}
+
+.depreciation-footer-actions > .sheet-btn {
+  white-space: normal;
+  height: auto;
+  min-height: 34px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  line-height: 1.4;
+  justify-content: center;
+  max-width: 100%;
+  text-align: center;
+}
+
+.depreciation-summary dd {
+  margin: 0;
+}
+
+.depreciation-allocation-list {
+  display: block;
+}
+
+.depreciation-allocation-list > .detail-row {
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.depreciation-allocation-list > .detail-row:first-child {
+  padding-top: 0;
+}
+
+.depreciation-allocation-list > .detail-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.depreciation-account-summary {
+  overflow-wrap: anywhere;
+}
+
+.depreciation-choices {
+  display: grid;
+  gap: 12px;
+}
+
+.depreciation-choices > .field-label {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.depreciation-choices > .hint {
+  margin: 0;
+}
+
+.depreciation-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.depreciation-choice > input {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: var(--primary);
+}
+
+.depreciation-choice > input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.depreciation-choice:has(input:checked) {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.depreciation-choice:has(input:disabled) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.depreciation-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.depreciation-toggle .field-label {
+  margin-bottom: 0;
+  cursor: pointer;
+}
+
+.depreciation-toggle .field-hint {
+  line-height: 1.5;
+}
+
+.depreciation-card-body .schedule-scroll,
+.depreciation-fields .schedule-scroll {
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.depreciation-disclosure-body > .list-expand-btn {
+  justify-self: start;
+  margin-top: 0;
+}
+
+@media (max-width: 480px) {
+  .depreciation-footer-actions:has(> :nth-child(3)) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .depreciation-footer-actions:has(> :nth-child(3)) > .sheet-btn-primary {
+    grid-column: 1 / -1;
+  }
+}

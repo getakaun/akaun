@@ -471,6 +471,11 @@ export function registerRecordWrites(server: McpServer, context: McpContext) {
           "FORBIDDEN",
           "You do not have permission to read this data.",
         );
+      if (recordType === "fixed_asset" && !can(context.locals, "accounts.read"))
+        throw new McpToolError(
+          "FORBIDDEN",
+          "You do not have permission to read this data.",
+        );
       const entries = getAuditTrail(context.db, recordType, recordId);
       return {
         entries: entries.slice(0, limit),

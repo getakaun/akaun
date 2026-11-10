@@ -39,6 +39,10 @@ import type {
 } from "../ledger/types.js";
 import { resolveMovementLabel } from "../ledger/movement-label.js";
 import { inVoidPair, notVoided } from "./void-state.js";
+import {
+  assetAccountReferenceIds,
+  ASSET_ACCOUNT_DELETE_REASON,
+} from "./fixed-assets.js";
 
 /**
  * Reading the chart of accounts.
@@ -159,11 +163,14 @@ export function listAccounts(
       .map((row) => row.accountId),
   );
   const accountRows = rows.map(toAccountRow);
+  const assetAccountIds = assetAccountReferenceIds(db);
 
   const views = accountRows.map((row) => {
     const totalsFor = totalsById.get(row.id);
     const movementCount = totalsFor?.movementCount ?? 0;
-    const reason = cannotDeleteReason(row, movementCount);
+    const reason =
+      cannotDeleteReason(row, movementCount) ??
+      (assetAccountIds.has(row.id) ? ASSET_ACCOUNT_DELETE_REASON : null);
     const balanceMinor = totalsFor?.balanceMinor ?? 0;
     return {
       ...row,
@@ -234,10 +241,9 @@ export function canDeleteAccount(
 ): { ok: boolean; reason: string | null } {
   const raw = db.select().from(accounts).where(eq(accounts.id, id)).get();
   if (!raw) return { ok: false, reason: "That account no longer exists." };
-  const reason = cannotDeleteReason(
-    toAccountRow(raw),
-    movementCountFor(db, id),
-  );
+  const reason =
+    cannotDeleteReason(toAccountRow(raw), movementCountFor(db, id)) ??
+    (assetAccountReferenceIds(db).has(id) ? ASSET_ACCOUNT_DELETE_REASON : null);
   return { ok: reason === null, reason };
 }
 

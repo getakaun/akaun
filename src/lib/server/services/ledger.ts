@@ -1,4 +1,6 @@
+import { depreciationRecordReason } from "../queries/depreciation.js";
 import { ExpenseTaxError } from "../queries/expense-tax.js";
+import { assetRecordDeletionReason } from "../queries/fixed-assets.js";
 import { closedPeriodReason } from "../closing/policy.js";
 import { isMoneyPotAccount } from "../ledger/account-type.js";
 import {
@@ -444,6 +446,8 @@ export function patchRecordInTransaction(
   deferredEmits: DeferredEmits,
   taxReviewBatch?: { id: string; movementIds: number[] },
 ): Refusable<RecordView> {
+  const depreciationReason = depreciationRecordReason(db, id);
+  if (depreciationReason) return { ok: false, reason: depreciationReason };
   if (
     db
       .select()
@@ -1010,6 +1014,8 @@ function removeRecordInTransaction(
   actingUserId: number,
   opts: { allowReadOnlyKind?: boolean; deferredEmits?: DeferredEmits } = {},
 ): Refusable<null> {
+  const depreciationReason = depreciationRecordReason(db, id);
+  if (depreciationReason) return { ok: false, reason: depreciationReason };
   if (
     db
       .select()
@@ -1041,6 +1047,9 @@ function removeRecordInTransaction(
   if (!allowed.ok) return allowed;
   const historyReason = allocationHistoryDeletionReason(db, id);
   if (historyReason) return { ok: false, reason: historyReason };
+
+  const assetReason = assetRecordDeletionReason(db, id);
+  if (assetReason) return { ok: false, reason: assetReason };
 
   const before = snapshotForAudit(db, id);
   const touched = existing.movements.map((m) => m.accountId);
@@ -1075,6 +1084,8 @@ function removeRecordInTransaction(
  * written, because the reversal carries the original's date.
  */
 export function voidRefusal(db: LedgerDb, id: number): string | null {
+  const depreciationReason = depreciationRecordReason(db, id);
+  if (depreciationReason) return depreciationReason;
   const existing = getRecord(db, id);
   if (!existing) return "That record no longer exists.";
   if (existing.reversesRecordId !== null)

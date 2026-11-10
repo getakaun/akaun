@@ -295,6 +295,34 @@
       "when": 1793870393239,
       "tag": "0041_expense_tax_classification",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1794042939245,
+      "tag": "0042_fixed_assets",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1794067700783,
+      "tag": "0043_fixed_asset_integer_checks",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1794218624750,
+      "tag": "0044_asset_depreciation",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1794231089559,
+      "tag": "0045_depreciation_approvals",
+      "breakpoints": true
     }
   ]
 }

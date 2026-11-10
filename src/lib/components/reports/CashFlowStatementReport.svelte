@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { formatDate, formatMinor } from '$lib/format.js';
-	import type { CashFlowReport, CashFlowSection } from '$lib/server/ledger/types.js';
+	import type {
+		CashFlowReport,
+		CashFlowSection
+	} from '$lib/server/ledger/types.js';
 	import ReportNotes from './ReportNotes.svelte';
 	import './reports.css';
 
@@ -37,19 +40,22 @@
 	<div class="rep-result">
 		<div>
 			<div class="rep-result-label">
-				Net change in cash, {formatDate(report.dateFrom)} to {formatDate(report.dateTo)}
+				Net change in cash, {formatDate(report.dateFrom)} to {formatDate(
+					report.dateTo
+				)}
 			</div>
 			<div class="rep-result-sub">
 				{#if report.ties}
-					Opening cash and cash equivalents of {formatMinor(report.openingCashMinor)} plus the net
-					change gives closing cash and cash equivalents of {formatMinor(report.closingCashMinor)}.
-					The statement reconciles.
-				{:else}
-					The statement does not reconcile. The net change does not explain the change from {formatMinor(
+					Opening cash and cash equivalents of {formatMinor(
 						report.openingCashMinor
-					)} to {formatMinor(report.closingCashMinor)}. The difference is {formatMinor(
-						report.differenceMinor
-					)}.
+					)} plus the net change gives closing cash and cash equivalents of {formatMinor(
+						report.closingCashMinor
+					)}. The statement reconciles.
+				{:else}
+					The statement does not reconcile. The net change does not explain the
+					change from {formatMinor(report.openingCashMinor)} to {formatMinor(
+						report.closingCashMinor
+					)}. The difference is {formatMinor(report.differenceMinor)}.
 				{/if}
 			</div>
 		</div>
@@ -109,5 +115,11 @@
 		</div>
 	{/if}
 
-	<ReportNotes notes={report.notes} firstIsWarning={!report.ties} />
+	<ReportNotes
+		notes={[
+			...report.notes,
+			'This statement shows cash movements. Non-cash depreciation journals do not reduce cash; cash paid for equipment is investing activity.'
+		]}
+		firstIsWarning={!report.ties}
+	/>
 </div>

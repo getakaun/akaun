@@ -9,6 +9,8 @@ import * as schema from "./db/schema.js";
 import { userNavPreferences, users } from "./db/schema.js";
 import { DEFAULT_NAV_ITEMS } from "$lib/nav-config.js";
 import { getUserNavOrder, setUserNavOrder } from "./navPreferences.js";
+import { canAll } from "./permissions.js";
+import { localsFor } from "./permissions/test-locals.js";
 
 /**
  * A saved navigation preference naming a screen that no longer exists must
@@ -61,6 +63,31 @@ function savePreference(
 }
 
 describe("a saved nav preference naming a removed screen", () => {
+  it("adds the Assets module to existing saved navigation with its required reads", () => {
+    savePreference("records", 0, true);
+    const assets = getUserNavOrder(db, 1).find((item) => item.id === "assets")!;
+    expect(assets).toMatchObject({
+      label: "Assets",
+      href: "/assets",
+      permission: "accounts.read",
+      requires: ["records.read"],
+      showOnMobile: false,
+    });
+    const required = [assets.permission, ...(assets.requires ?? [])];
+    expect(canAll(localsFor(["accounts.read"]), required)).toBe(false);
+    expect(canAll(localsFor(["accounts.read", "records.read"]), required)).toBe(
+      true,
+    );
+    setUserNavOrder(db, 1, [
+      { itemId: "assets", showOnMobile: true },
+      { itemId: "records", showOnMobile: false },
+    ]);
+    expect(getUserNavOrder(db, 1)[0]).toMatchObject({
+      id: "assets",
+      showOnMobile: true,
+      requires: ["records.read"],
+    });
+  });
   it("skips the removed screens and still returns a working menu", () => {
     // Exactly what a user who reordered their menu before this release has.
     savePreference("expenses", 0, true);

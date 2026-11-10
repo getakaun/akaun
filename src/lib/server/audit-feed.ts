@@ -378,6 +378,24 @@ export function resolveAuditLinks(
       continue;
     }
     switch (type as RecordType) {
+      case "fixed_asset": {
+        const numeric = ids.filter((id) => /^\d+$/.test(id)).map(Number);
+        if (!numeric.length) break;
+        const assets = db.all<{ id: number; asAt: string }>(
+          sql`SELECT id, coalesce(opening_as_at, acquisition_date) AS asAt FROM fixed_assets WHERE id IN (${sql.join(
+            numeric.map((id) => sql`${id}`),
+            sql`, `,
+          )})`,
+        );
+        const dates = new Map(
+          assets.map((asset) => [String(asset.id), asset.asAt]),
+        );
+        for (const row of group) {
+          const date = dates.get(row.recordId);
+          if (date) links.set(row.id, `/assets/${row.recordId}`);
+        }
+        break;
+      }
       case "reconciliation": {
         const numeric = ids.filter((id) => /^\d+$/.test(id)).map(Number);
         if (!numeric.length) break;

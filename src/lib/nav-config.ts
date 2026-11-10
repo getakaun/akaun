@@ -7,6 +7,7 @@ import {
   Receipt,
   Landmark,
   ChartColumn,
+  Package,
 } from "@lucide/svelte";
 import type { Component } from "svelte";
 import type { LeafPermission } from "$lib/permissions/catalog.js";
@@ -18,6 +19,8 @@ export type NavItem = {
   Icon: Component<{ size?: number | string }>;
   /** What a user must be able to do to see this item in the navigation. */
   permission: LeafPermission;
+  /** Additional reads needed by a module that combines existing resources. */
+  requires?: readonly LeafPermission[];
 };
 
 export const DEFAULT_NAV_ITEMS: NavItem[] = [
@@ -75,6 +78,14 @@ export const DEFAULT_NAV_ITEMS: NavItem[] = [
     href: "/accounts",
     Icon: Landmark,
     permission: "accounts.read",
+  },
+  {
+    id: "assets",
+    label: "Assets",
+    href: "/assets",
+    Icon: Package,
+    permission: "accounts.read",
+    requires: ["records.read"],
   },
   {
     id: "reports",

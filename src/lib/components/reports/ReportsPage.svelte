@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { Download } from "@lucide/svelte";
-  import { goto } from "$app/navigation";
+  import { createResourceStream } from "$lib/sse.js";
+  import { goto, invalidateAll } from "$app/navigation";
   import { resolve } from "$app/paths";
   import DatePicker from "$lib/components/ui/date-picker/DatePicker.svelte";
   import { useIsMobile } from "$lib/hooks/useIsMobile.svelte.js";
@@ -25,6 +26,17 @@
    * same promise every record detail makes.
    */
   let { data }: { data: ReportsPageData } = $props();
+
+  // Catch-up can commit many journals at once; refresh the selected report once
+  // the burst settles, preserving its URL and date range. Never poll.
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  createResourceStream("/api/reports/stream", () => {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      void invalidateAll();
+    }, 250);
+  });
+  onDestroy(() => clearTimeout(refreshTimer));
 
   const screen = useIsMobile();
   const isMobile = $derived(screen.current);

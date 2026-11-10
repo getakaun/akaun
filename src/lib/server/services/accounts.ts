@@ -1,4 +1,8 @@
 import { taxDefaultError } from "$lib/expense-tax.js";
+import {
+  assetAccountReferenceIds,
+  ASSET_ACCOUNT_DELETE_REASON,
+} from "../queries/fixed-assets.js";
 import { assertDatesOpen, closedPeriodReason } from "../closing/policy.js";
 import { and, eq, sql } from "drizzle-orm";
 import { notVoided } from "../queries/void-state.js";
@@ -418,6 +422,8 @@ export function removeAccount(
 ): Refusable<null> {
   const existing = db.select().from(accounts).where(eq(accounts.id, id)).get();
   if (!existing) return { ok: false, reason: "That account no longer exists." };
+  if (assetAccountReferenceIds(db).has(id))
+    return { ok: false, reason: ASSET_ACCOUNT_DELETE_REASON };
   if (existing.isSystem)
     return {
       ok: false,
@@ -468,7 +474,7 @@ function dependencyState(db: LedgerDb, id: number) {
         .from(accountDefaults)
         .where(eq(accountDefaults.accountId, id))
         .get()?.n ?? 0,
-    otherDependencyCount: 0,
+    otherDependencyCount: assetAccountReferenceIds(db).has(id) ? 1 : 0,
   };
 }
 

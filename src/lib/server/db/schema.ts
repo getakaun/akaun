@@ -11,6 +11,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import type { ExpenseTaxSnapshot, TaxTreatment } from "$lib/expense-tax.js";
+import type { AssetSourceSnapshot } from "$lib/fixed-assets.js";
 
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -1220,6 +1221,224 @@ export const importRecordProfiles = sqliteTable(
 );
 
 // One side of a record: an amount against one account.
+export const fixedAssets = sqliteTable(
+  "fixed_assets",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    assetType: text("asset_type").notNull(),
+    serialNumber: text("serial_number").notNull().default(""),
+    acquisitionDate: text("acquisition_date").notNull(),
+    inServiceDate: text("in_service_date"),
+    assetAccountId: integer("asset_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    costMinor: integer("cost_minor").notNull(),
+    // Movement IDs may disappear during an audited source edit. Keep their identity
+    // as evidence, without blocking the ledger's existing movement rebuild path.
+    sourceMovementId: integer("source_movement_id"),
+    sourceRecordId: integer("source_record_id").references(
+      () => ledgerRecords.id,
+      { onDelete: "restrict" },
+    ),
+    sourceSortOrder: integer("source_sort_order"),
+    sourceSnapshot: text("source_snapshot", {
+      mode: "json",
+    }).$type<AssetSourceSnapshot>(),
+    openingAsAt: text("opening_as_at"),
+    broughtForwardDepMinor: integer("brought_forward_dep_minor")
+      .notNull()
+      .default(0),
+    accumulatedDepreciationAccountId: integer(
+      "accumulated_depreciation_account_id",
+    ).references(() => accounts.id, { onDelete: "restrict" }),
+    openingRecordId: integer("opening_record_id").references(
+      () => ledgerRecords.id,
+      { onDelete: "restrict" },
+    ),
+    businessUseBps: integer("business_use_bps"),
+    documentReference: text("document_reference").notNull().default(""),
+    bookMethod: text("book_method"),
+    usefulLifeMonths: integer("useful_life_months"),
+    residualMinor: integer("residual_minor"),
+    depreciationExpenseAccountId: integer(
+      "depreciation_expense_account_id",
+    ).references(() => accounts.id, { onDelete: "restrict" }),
+    createdBy: integer("created_by").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    updatedBy: integer("updated_by").notNull(),
+    revision: integer("revision").notNull().default(1),
+  },
+  (t) => [
+    uniqueIndex("fixed_assets_source_movement_unique").on(t.sourceMovementId),
+    uniqueIndex("fixed_assets_source_slot_unique").on(
+      t.sourceRecordId,
+      t.sourceSortOrder,
+    ),
+    index("fixed_assets_account_idx").on(t.assetAccountId),
+    check(
+      "fixed_assets_cost_check",
+      sql`typeof(${t.costMinor}) = 'integer' AND ${t.costMinor} > 0 AND ${t.costMinor} <= 9007199254740991`,
+    ),
+    check(
+      "fixed_assets_dep_check",
+      sql`typeof(${t.broughtForwardDepMinor}) = 'integer' AND ${t.broughtForwardDepMinor} BETWEEN 0 AND ${t.costMinor}`,
+    ),
+    check(
+      "fixed_assets_business_check",
+      sql`${t.businessUseBps} IS NULL OR (typeof(${t.businessUseBps}) = 'integer' AND ${t.businessUseBps} BETWEEN 0 AND 10000)`,
+    ),
+    check(
+      "fixed_assets_source_check",
+      sql`(${t.sourceRecordId} IS NOT NULL AND ${t.sourceMovementId} IS NOT NULL AND ${t.sourceSortOrder} IS NOT NULL AND ${t.sourceSnapshot} IS NOT NULL AND ${t.openingAsAt} IS NULL AND ${t.broughtForwardDepMinor} = 0 AND ${t.openingRecordId} IS NULL) OR (${t.sourceRecordId} IS NULL AND ${t.sourceMovementId} IS NULL AND ${t.sourceSortOrder} IS NULL AND ${t.sourceSnapshot} IS NULL AND ${t.openingAsAt} IS NOT NULL)`,
+    ),
+    check(
+      "fixed_assets_accounts_check",
+      sql`${t.accumulatedDepreciationAccountId} IS NULL OR ${t.accumulatedDepreciationAccountId} <> ${t.assetAccountId}`,
+    ),
+    check(
+      "fixed_assets_dep_mapping_check",
+      sql`${t.broughtForwardDepMinor} = 0 OR ${t.accumulatedDepreciationAccountId} IS NOT NULL`,
+    ),
+    check(
+      "fixed_assets_residual_check",
+      sql`${t.residualMinor} IS NULL OR (typeof(${t.residualMinor}) = 'integer' AND ${t.residualMinor} BETWEEN 0 AND ${t.costMinor})`,
+    ),
+  ],
+);
+
+// Approved profiles are versioned: later estimates never rewrite posted periods.
+export const depreciationProfiles = sqliteTable(
+  "depreciation_profiles",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    assetId: integer("asset_id")
+      .notNull()
+      .references(() => fixedAssets.id, { onDelete: "restrict" }),
+    startMonth: text("start_month").notNull(),
+    months: integer("months").notNull(),
+    baseNbvMinor: integer("base_nbv_minor").notNull(),
+    residualMinor: integer("residual_minor").notNull(),
+    expenseAccountId: integer("expense_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    accumulatedAccountId: integer("accumulated_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    mode: text("mode", { enum: ["review", "auto"] }).notNull(),
+    basis: text("basis").notNull(),
+    stoppedFrom: text("stopped_from"),
+    approvedBy: integer("approved_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (t) => [
+    index("depreciation_profile_version").on(t.assetId, t.startMonth),
+    check(
+      "depreciation_profile_amounts",
+      sql`typeof("base_nbv_minor") = 'integer' AND "base_nbv_minor" BETWEEN 0 AND 9007199254740991 AND typeof("residual_minor") = 'integer' AND "residual_minor" BETWEEN 0 AND "base_nbv_minor" AND typeof("months") = 'integer' AND "months" BETWEEN 1 AND 1200`,
+    ),
+    check("depreciation_profile_mode", sql`"mode" IN ('review', 'auto')`),
+  ],
+);
+
+export const depreciationRuns = sqliteTable("depreciation_runs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  month: text("month").notNull(),
+  recordId: integer("record_id")
+    .notNull()
+    .unique()
+    .references(() => ledgerRecords.id, { onDelete: "restrict" }),
+  reversalRecordId: integer("reversal_record_id")
+    .unique()
+    .references(() => ledgerRecords.id, { onDelete: "restrict" }),
+  reversedOn: text("reversed_on"),
+  createdBy: integer("created_by")
+    .notNull()
+    .references(() => users.id, { onDelete: "restrict" }),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
+
+export const depreciationPostings = sqliteTable(
+  "depreciation_postings",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    assetId: integer("asset_id")
+      .notNull()
+      .references(() => fixedAssets.id, { onDelete: "restrict" }),
+    month: text("month").notNull(),
+    profileId: integer("profile_id")
+      .notNull()
+      .references(() => depreciationProfiles.id, { onDelete: "restrict" }),
+    runId: integer("run_id")
+      .notNull()
+      .references(() => depreciationRuns.id, { onDelete: "restrict" }),
+    amountMinor: integer("amount_minor").notNull(),
+  },
+  (t) => [
+    uniqueIndex("depreciation_asset_month").on(t.assetId, t.month),
+    check(
+      "depreciation_posting_amount",
+      sql`typeof("amount_minor") = 'integer' AND "amount_minor" BETWEEN 1 AND 9007199254740991`,
+    ),
+  ],
+);
+
+// Future automation has a separate approval boundary from historical catch-up.
+// Missing rows (profiles approved before this feature) require history review.
+export const depreciationApprovals = sqliteTable("depreciation_approvals", {
+  profileId: integer("profile_id")
+    .primaryKey()
+    .references(() => depreciationProfiles.id, { onDelete: "restrict" }),
+  futureFromMonth: text("future_from_month").notNull(),
+});
+
+// Allocation of an existing journal is evidence only: never a second ledger posting.
+export const depreciationAllocations = sqliteTable(
+  "depreciation_allocations",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    assetId: integer("asset_id")
+      .notNull()
+      .references(() => fixedAssets.id, { onDelete: "restrict" }),
+    recordId: integer("record_id")
+      .notNull()
+      .references(() => ledgerRecords.id, { onDelete: "restrict" }),
+    expenseAccountId: integer("expense_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    accumulatedAccountId: integer("accumulated_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    amountMinor: integer("amount_minor").notNull(),
+    fromMonth: text("from_month").notNull(),
+    throughMonth: text("through_month").notNull(),
+    recordDate: text("record_date").notNull(),
+    approvedBy: integer("approved_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  () => [
+    check(
+      "depreciation_allocation_amount",
+      sql`typeof("amount_minor") = 'integer' AND "amount_minor" BETWEEN 1 AND 9007199254740991`,
+    ),
+  ],
+);
+
 export const ledgerMovements = sqliteTable(
   "ledger_movements",
   {

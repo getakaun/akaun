@@ -11,6 +11,21 @@
    */
   let { status }: { status: string } = $props();
   const byLabel: Record<string, Tone> = {
+    "depreciation-attention": { label: "Needs attention", tone: "amber" },
+    "depreciation-stopped": { label: "Stopped", tone: "gray" },
+    "depreciation-setup": { label: "Not configured", tone: "gray" },
+    "depreciation-history": { label: "History needs review", tone: "amber" },
+    "depreciation-auto": { label: "Auto enabled", tone: "green" },
+    "depreciation-scheduled": { label: "Scheduled", tone: "blue" },
+    "depreciation-ready": { label: "Ready to post", tone: "blue" },
+    "depreciation-complete": { label: "Fully depreciated", tone: "gray" },
+    "depreciation-posted": { label: "Posted", tone: "green" },
+    "depreciation-unposted": { label: "Unposted", tone: "amber" },
+    "depreciation-reversed": { label: "Reversed", tone: "gray" },
+    "depreciation-no-charge": { label: "No charge", tone: "gray" },
+    "asset-review": { label: "Needs review", tone: "amber" },
+    "asset-linked": { label: "Source linked", tone: "blue" },
+    "asset-opening": { label: "Opening values", tone: "gray" },
     unpaid: { label: "Unpaid", tone: "red" },
     pending: { label: "Pending", tone: "amber" },
     paid: { label: "Paid", tone: "green" },

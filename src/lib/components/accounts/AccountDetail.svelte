@@ -7,7 +7,7 @@
 	import { enhance } from '$app/forms';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { ChevronRight, Landmark, Scale, Trash2, Wallet } from '@lucide/svelte';
+	import { ChevronRight, Landmark, Package, Scale, Trash2, Wallet } from '@lucide/svelte';
 	import { toast } from 'svelte-sonner';
 	import DetailPage from '$lib/components/ui/DetailPage.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
@@ -20,6 +20,7 @@
 	import { formatDate, formatMinor } from '$lib/format.js';
 	import {
 		AccountCodeRanges,
+    AccountSubType,
 		AccountSubTypeDisplayLabels,
 		AccountSubTypesByType,
 		AccountType,
@@ -216,7 +217,7 @@
 					}, 80);
 				}
 			} else if (m.type === 'account-deleted' && m.id === account.id) {
-				toast('That account was deleted.');
+				toast.success('That account was deleted.');
 				void goto(resolve('/(app)/accounts'), { replaceState: true });
 			}
 		}
@@ -231,7 +232,7 @@
 		}}
 		onapplied={async (result) => {
 			taxApplyOpen = false;
-			toast(
+			toast.success(
 				`Classified ${result.updatedLineCount} entries. ${result.remainingCount} eligible entries remain.`
 			);
 			await invalidateAll();
@@ -461,6 +462,9 @@
 	{/snippet}
 
 	{#snippet rail()}
+    {#if data.perms.fixedAssets && account.type === AccountType.Asset && account.subType === AccountSubType.FixedAsset}
+      <section class="detail-card"><div class="detail-card-head"><span class="detail-card-title">Fixed assets</span></div><a class="related-link ob-card" href={resolve(`/(app)/assets?account=${account.id}`)}><span class="ob-icon"><Package size={15} /></span><span class="ob-main"><span class="ob-title">Asset register</span><span class="ob-sub">Linked assets and reconciliation</span></span><ChevronRight size={14} color="var(--muted-foreground)" /></a></section>
+    {/if}
 		<section class="detail-card">
 			<div class="detail-card-head"><span class="detail-card-title">Opening balance</span></div>
 			<button class="related-link ob-card" onclick={() => (openingOpen = true)} disabled={!data.perms.change}>

@@ -868,6 +868,14 @@ it.each([1280, 390])(
       .element(page.getByText("Auto-post monthly", { exact: true }))
       .toBeVisible();
     await expect
+      .element(
+        page.getByText(
+          "Depreciation setup · Financial basis · In service date:",
+          { exact: true },
+        ),
+      )
+      .not.toBeInTheDocument();
+    await expect
       .element(page.getByText("Old reference", { exact: true }))
       .toBeVisible();
     await expect

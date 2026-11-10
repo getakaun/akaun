@@ -71,3 +71,27 @@ it("names JSON-encoded basis values and keeps removed and added values", () => {
     { label: "Purchase details · Account", before: "5", after: "—" },
   ]);
 });
+
+it("hides unchanged displayed values, including empty fields in new snapshots", () => {
+  expect(
+    auditChangeRows("fixed_asset", [
+      { field: "name", before: "Laptop", after: "Laptop" },
+      { field: "description", before: null, after: "" },
+      { field: "sourceSnapshot", before: {}, after: { inServiceDate: null } },
+      { field: "months", before: "36", after: 36 },
+      {
+        field: "depreciationProfile",
+        before: null,
+        after: { stoppedFrom: null, months: 36 },
+      },
+      { field: "residualMinor", before: 0, after: 10000 },
+    ]),
+  ).toEqual([
+    {
+      label: "Depreciation setup · Useful life (months)",
+      before: "—",
+      after: "36",
+    },
+    { label: "Residual value", before: "0.00", after: "100.00" },
+  ]);
+});

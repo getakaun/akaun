@@ -113,5 +113,6 @@ export function auditChangeRows(
   }
   for (const change of changes)
     visit(change.field, [label(change.field)], change.before, change.after);
-  return rows;
+  // Missing, null and empty values all display as a dash; omit identical display values too.
+  return rows.filter((row) => row.before !== row.after);
 }

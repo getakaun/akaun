@@ -224,7 +224,7 @@
                         class="cell-itemnum"
                         >{assetNumber(asset.id)} · {asset.inServiceDate
                           ? `In service ${formatDate(asset.inServiceDate)}`
-                          : "In-service date not recorded"}</span
+                          : `Purchased ${formatDate(asset.acquisitionDate)}`}</span
                       ></a
                     ></td
                   >

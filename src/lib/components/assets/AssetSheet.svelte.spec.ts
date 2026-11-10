@@ -157,6 +157,8 @@ it("registers a saved purchase with source-derived cost and no opening or ledger
   expect(url).toBe("/api/fixed-assets");
   const body = JSON.parse(String(init.body));
   expect(body.sourceMovementId).toBe(12);
+  expect(body.inServiceDate).toBeNull();
+  expect(body.serialNumber).toBe("");
   expect(body).not.toHaveProperty("costMinor");
   expect(body).not.toHaveProperty("openingAsAt");
   await expect
@@ -409,6 +411,8 @@ it("saves detail edits through the existing versioned asset operation", async ()
     name: "Office laptop",
     expectedVersion: "1",
     reason: "Update equipment label",
+    inServiceDate: registeredAsset.inServiceDate,
+    serialNumber: registeredAsset.serialNumber,
   });
   await expect
     .element(page.getByRole("button", { name: "Save changes", exact: true }))
@@ -438,4 +442,102 @@ it("uses the same mobile row cards and header search as Accounts", async () => {
   await expect
     .element(page.getByText("Nothing to show", { exact: true }))
     .toBeVisible();
+});
+
+it("shows description directly and saves a preset asset type from the shared select", async () => {
+  const fetchMock = vi.fn(async () =>
+    Response.json({ id: 1 }, { status: 201 }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  render(AssetSheet, {
+    source,
+    accounts,
+    canChange: true,
+    onclose: vi.fn(),
+    onsaved: vi.fn(async () => {}),
+  });
+  await expect.element(page.getByLabelText("Description")).toBeVisible();
+  await expect
+    .element(page.getByLabelText("Serial number"))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByText("In-service date", { exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByText("More details", { exact: true }))
+    .not.toBeInTheDocument();
+  await page
+    .getByLabelText("Description")
+    .fill("Delivery van for customer orders");
+  await page.getByRole("button", { name: "Asset type *", exact: true }).click();
+  for (const type of [
+    "Computer equipment",
+    "Office equipment",
+    "Furniture",
+    "Fixtures and fittings",
+    "Motor vehicle",
+    "Machinery",
+    "Buildings",
+    "Land",
+    "Other",
+  ]) {
+    await expect
+      .element(page.getByRole("option", { name: type, exact: true }))
+      .toBeVisible();
+  }
+  await page
+    .getByRole("option", { name: "Motor vehicle", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Register asset", exact: true })
+    .click();
+  await expect.poll(() => fetchMock.mock.calls.length).toBe(1);
+  const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(JSON.parse(String(init.body))).toMatchObject({
+    assetType: "Motor vehicle",
+    description: "Delivery van for customer orders",
+    inServiceDate: null,
+    serialNumber: "",
+  });
+});
+
+it("preserves a saved custom type and retired fields when editing", async () => {
+  const asset = {
+    ...registeredAsset,
+    assetType: "Specialist laboratory equipment",
+    serialNumber: "LAB-123",
+  };
+  const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) =>
+    Response.json(init?.method === "PATCH" ? { ...asset, revision: 2 } : []),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  render(AssetDetail, { data: { asset, accounts, canChange: true } });
+  await page.getByRole("button", { name: "Asset type *", exact: true }).click();
+  await expect
+    .element(page.getByRole("option", { name: asset.assetType, exact: true }))
+    .toBeVisible();
+  await page
+    .getByRole("option", { name: asset.assetType, exact: true })
+    .click();
+  await page.getByLabelText("Description").fill("Updated description");
+  await page
+    .getByLabelText("Reason for change *")
+    .fill("Clarify asset purpose");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect
+    .poll(
+      () =>
+        fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH")
+          .length,
+    )
+    .toBe(1);
+  const [, init] = fetchMock.mock.calls.find(
+    ([, init]) => init?.method === "PATCH",
+  )!;
+  expect(JSON.parse(String(init?.body))).toMatchObject({
+    assetType: asset.assetType,
+    serialNumber: "LAB-123",
+    inServiceDate: "2026-02-01",
+    description: "Updated description",
+  });
 });

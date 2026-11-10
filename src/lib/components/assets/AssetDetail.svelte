@@ -61,7 +61,7 @@
         asset.acquisitionDate,
       )}{asset.inServiceDate
         ? ` · In service ${formatDate(asset.inServiceDate)}`
-        : " · In-service date not recorded"}
+        : ""}
     </p>
   {/snippet}
   {#snippet main()}

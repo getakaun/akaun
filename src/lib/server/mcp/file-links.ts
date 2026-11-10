@@ -14,6 +14,7 @@ import type { BlobStore } from "../storage/blob-store.js";
 import { can, resolveAccess } from "../permissions.js";
 import { permissionForKind } from "../ledger/record-permissions.js";
 import { getAttachment, getRecord } from "../queries/ledger.js";
+import { getStatement } from "../queries/reconciliation.js";
 import { storedFileResponse } from "../stored-file-response.js";
 import { createLogger } from "../logger.js";
 import { hit } from "../rate-limit.js";
@@ -40,15 +41,28 @@ export function fileLinkConfig(
   return { secret: secret || developmentSecret, ttl };
 }
 
-const claimsSchema = z
-  .object({
-    userId: z.number().int().positive(),
-    recordId: z.number().int().positive(),
-    attachmentId: z.number().int().positive(),
-    exp: z.number().int().positive(),
-    jti: z.uuid(),
-  })
-  .strict();
+const commonClaims = {
+  userId: z.number().int().positive(),
+  exp: z.number().int().positive(),
+  jti: z.uuid(),
+};
+// Keep existing attachment tokens valid; strict alternatives prevent a token
+// from naming both an attachment and a statement.
+const claimsSchema = z.union([
+  z
+    .object({
+      ...commonClaims,
+      recordId: z.number().int().positive(),
+      attachmentId: z.number().int().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      ...commonClaims,
+      statementId: z.number().int().positive(),
+    })
+    .strict(),
+]);
 type Claims = z.infer<typeof claimsSchema>;
 
 export const attachmentLinkSchema = z.object({
@@ -61,6 +75,10 @@ export const attachmentLinkSchema = z.object({
   downloadUrl: z.url(),
   expiresAt: z.iso.datetime(),
 });
+
+export const statementLinkSchema = attachmentLinkSchema
+  .omit({ recordId: true, attachmentId: true })
+  .extend({ statementId: z.number().int().positive() });
 
 export function signFileToken(claims: Claims): string {
   const payload = Buffer.from(
@@ -78,14 +96,24 @@ export function issueFileLink(
   attachmentId: number,
   requestOrigin?: string,
 ) {
+  return issueLink(userId, { recordId, attachmentId }, requestOrigin);
+}
+
+export function issueStatementFileLink(
+  userId: number,
+  statementId: number,
+  requestOrigin?: string,
+) {
+  return issueLink(userId, { statementId }, requestOrigin);
+}
+
+function issueLink(
+  userId: number,
+  target: { recordId: number; attachmentId: number } | { statementId: number },
+  requestOrigin?: string,
+) {
   const exp = Math.floor(Date.now() / 1000) + fileLinkConfig().ttl;
-  const token = signFileToken({
-    userId,
-    recordId,
-    attachmentId,
-    exp,
-    jti: randomUUID(),
-  });
+  const token = signFileToken({ userId, ...target, exp, jti: randomUUID() });
   const base = publicEnv.PUBLIC_BASE_URL || env.ORIGIN || requestOrigin;
   if (!base) throw new Error("File links require a request origin");
   return {
@@ -137,12 +165,13 @@ export async function downloadMcpFile(
   try {
     const claims = verifyFileToken(token);
     if (!claims) return refused(403);
-    const { userId, recordId, attachmentId, exp, jti } = claims;
+    const { userId, exp, jti } = claims;
+    const target =
+      "statementId" in claims
+        ? { statementId: claims.statementId }
+        : { recordId: claims.recordId, attachmentId: claims.attachmentId };
     const outcome = (result: string) =>
-      log.info(
-        { userId, recordId, attachmentId, outcome: result },
-        "MCP file download",
-      );
+      log.info({ userId, ...target, outcome: result }, "MCP file download");
     if (exp <= Math.floor(Date.now() / 1000)) {
       outcome("expired");
       return refused(410);
@@ -159,26 +188,44 @@ export async function downloadMcpFile(
     }
     // There is no disabled/active column: only existing users can authenticate.
     const user = db.select().from(users).where(eq(users.id, userId)).get();
-    const record = getRecord(db, recordId);
     if (!user) {
       outcome("forbidden");
       return refused(403);
     }
-    if (!record) {
-      outcome("missing");
-      return refused(404);
-    }
     const locals = { user, ...resolveAccess(db, userId) };
-    if (!can(locals, permissionForKind(record.kind, "read"))) {
-      outcome("forbidden");
-      return refused(403);
+    let filename: string;
+    let displayName: string;
+    if ("statementId" in claims) {
+      if (!can(locals, "reconciliation.read")) {
+        outcome("forbidden");
+        return refused(403);
+      }
+      const statement = getStatement(db, claims.statementId);
+      if (!statement?.storedFilePath) {
+        outcome("missing");
+        return refused(404);
+      }
+      filename = statement.storedFilePath;
+      displayName = statement.originalFilename;
+    } else {
+      const record = getRecord(db, claims.recordId);
+      if (!record) {
+        outcome("missing");
+        return refused(404);
+      }
+      if (!can(locals, permissionForKind(record.kind, "read"))) {
+        outcome("forbidden");
+        return refused(403);
+      }
+      const attachment = getAttachment(db, claims.attachmentId);
+      if (!attachment || attachment.recordId !== claims.recordId) {
+        outcome("missing");
+        return refused(404);
+      }
+      filename = attachment.filename;
+      displayName = attachment.displayName;
     }
-    const attachment = getAttachment(db, attachmentId);
-    if (!attachment || attachment.recordId !== recordId) {
-      outcome("missing");
-      return refused(404);
-    }
-    const stat = await store.stat(attachment.filename);
+    const stat = await store.stat(filename);
     if (exp <= Math.floor(Date.now() / 1000)) {
       outcome("expired");
       return refused(410);
@@ -205,8 +252,8 @@ export async function downloadMcpFile(
     const response = await storedFileResponse(
       store,
       request,
-      attachment.filename,
-      attachment.displayName,
+      filename,
+      displayName,
       { download: true },
     );
     for (const [key, value] of Object.entries(headers))

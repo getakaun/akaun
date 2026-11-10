@@ -88,6 +88,13 @@ export const DEFAULT_NAV_ITEMS: NavItem[] = [
     requires: ["records.read"],
   },
   {
+    id: "tax",
+    label: "Tax",
+    href: "/tax",
+    Icon: Receipt,
+    permission: "tax.read",
+  },
+  {
     id: "reports",
     label: "Reports",
     href: "/reports",

@@ -268,6 +268,39 @@ export const PERMISSION_CATALOG = {
       delete: remove("unused accounts"),
     },
   },
+  tax: {
+    label: "Annual tax",
+    noun: "annual tax worksheets",
+    description: "Prepare annual tax adjustments independently of the books.",
+    children: {
+      read: read("annual tax worksheets and their supporting evidence"),
+      create: create("annual tax worksheets"),
+      update: update("draft tax worksheets and tax-only adjustments"),
+      review: {
+        label: "Review",
+        description: "Mark annual tax preparation as reviewed.",
+        verb: "review",
+        sensitive: true,
+      },
+      finalise: {
+        label: "Finalise",
+        description: "Lock a reviewed annual tax worksheet.",
+        verb: "finalise",
+        explicit: true,
+        sensitive: true,
+        delegable: false,
+      },
+      amend: {
+        label: "Amend",
+        description:
+          "Create a reasoned amendment retaining the finalised version.",
+        verb: "amend",
+        explicit: true,
+        sensitive: true,
+        delegable: false,
+      },
+    },
+  },
   reports: {
     label: "Reports",
     noun: "reports",

@@ -69,6 +69,8 @@ import {
   cashFlowCsv,
   profitLossCsv,
 } from "../ledger/reports/csv.js";
+import { taxWorksheetTotals } from "$lib/tax-worksheet.js";
+import { captureTaxSources } from "../queries/tax-worksheets.js";
 import { expenseTaxReport } from "../queries/expense-tax-report.js";
 import type { AppResult } from "./result.js";
 
@@ -1214,6 +1216,15 @@ describe("approved monthly book depreciation", () => {
       deductibleMinor: 0,
       addBackMinor: 33333,
       unresolvedLineCount: 0,
+    });
+    expect(
+      taxWorksheetTotals(captureTaxSources(db, "2025-01-01", "2025-01-31"), []),
+    ).toMatchObject({
+      baseAddBackMinor: 33333,
+      correctionMinor: 0,
+      addBackMinor: 33333,
+      resultMinor: 200000,
+      unresolvedCount: 0,
     });
     const shares = partnerStatementReport(
       db,

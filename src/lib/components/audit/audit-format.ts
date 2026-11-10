@@ -30,6 +30,7 @@ export type AuditVia = "session" | "pat" | "oauth" | "system";
 export type AuditChange = { field: string; before: unknown; after: unknown };
 
 export const RECORD_TYPE_LABELS: Record<string, string> = {
+  tax_worksheet: "Annual tax worksheet",
   fixed_asset: "Fixed asset",
   record: "Record",
   account: "Account",

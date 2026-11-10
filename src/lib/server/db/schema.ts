@@ -11,6 +11,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import type { ExpenseTaxSnapshot, TaxTreatment } from "$lib/expense-tax.js";
+import type { TaxSourceSnapshot } from "$lib/tax-worksheet.js";
 import type { AssetSourceSnapshot } from "$lib/fixed-assets.js";
 
 export const users = sqliteTable("users", {
@@ -1601,3 +1602,141 @@ export const mcpFileLinkUses = sqliteTable("mcp_file_link_uses", {
   jti: text("jti").primaryKey(),
   expiresAt: integer("expires_at").notNull(),
 });
+
+// Annual tax evidence is independent of live source row lifetimes and GL posting.
+export const taxWorksheets = sqliteTable(
+  "tax_worksheets",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    ya: integer("ya").notNull().unique(),
+    dateFrom: text("date_from").notNull(),
+    dateTo: text("date_to").notNull(),
+    requestKey: text("request_key").notNull().unique(),
+    createdBy: integer("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: text("created_at").notNull(),
+  },
+  () => [check("tax_period_order", sql`"date_from" <= "date_to"`)],
+);
+
+export const taxWorksheetRevisions = sqliteTable(
+  "tax_worksheet_revisions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    worksheetId: integer("worksheet_id")
+      .notNull()
+      .references(() => taxWorksheets.id, { onDelete: "restrict" }),
+    revision: integer("revision").notNull(),
+    version: integer("version").notNull().default(1),
+    status: text("status")
+      .$type<"draft" | "reviewed" | "finalised">()
+      .notNull()
+      .default("draft"),
+    snapshot: text("snapshot", { mode: "json" })
+      .$type<TaxSourceSnapshot>()
+      .notNull(),
+    sourceHash: text("source_hash").notNull(),
+    capturedAt: text("captured_at").notNull(),
+    amendmentReason: text("amendment_reason"),
+    requestKey: text("request_key").notNull().unique(),
+    reviewedBy: integer("reviewed_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    reviewedAt: text("reviewed_at"),
+    finalisedBy: integer("finalised_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    finalisedAt: text("finalised_at"),
+  },
+  (t) => [
+    uniqueIndex("tax_revision_number").on(t.worksheetId, t.revision),
+    check(
+      "tax_revision_status",
+      sql`"status" IN ('draft', 'reviewed', 'finalised')`,
+    ),
+    check(
+      "tax_revision_numbers",
+      sql`typeof("revision") = 'integer' AND "revision" > 0 AND typeof("version") = 'integer' AND "version" > 0`,
+    ),
+    check("tax_revision_json", sql`json_valid("snapshot")`),
+    check(
+      "tax_revision_lock",
+      sql`("status" = 'draft' AND "reviewed_at" IS NULL AND "finalised_at" IS NULL) OR ("status" = 'reviewed' AND "reviewed_at" IS NOT NULL AND "finalised_at" IS NULL) OR ("status" = 'finalised' AND "reviewed_at" IS NOT NULL AND "finalised_at" IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const taxWorksheetAdjustments = sqliteTable(
+  "tax_worksheet_adjustments",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    revisionId: integer("revision_id")
+      .notNull()
+      .references(() => taxWorksheetRevisions.id, { onDelete: "restrict" }),
+    kind: text("kind")
+      .$type<
+        | "source"
+        | "other"
+        | "capital_allowance"
+        | "allowance_brought_forward"
+        | "loss_brought_forward"
+      >()
+      .notNull(),
+    sourceMovementId: integer("source_movement_id"),
+    percentageBps: integer("percentage_bps"),
+    treatment: text("treatment").$type<TaxTreatment>(),
+    amountMinor: integer("amount_minor").notNull().default(0),
+    direction: text("direction")
+      .$type<"increase" | "decrease">()
+      .notNull()
+      .default("decrease"),
+    balanceMinor: integer("balance_minor").notNull().default(0),
+    originYa: integer("origin_ya"),
+    reason: text("reason").notNull(),
+    evidence: text("evidence").notNull(),
+    requestKey: text("request_key").notNull(),
+    createdBy: integer("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    actorName: text("actor_name").notNull(),
+    createdAt: text("created_at").notNull(),
+    withdrawnAt: text("withdrawn_at"),
+    withdrawalReason: text("withdrawal_reason"),
+  },
+  (t) => [
+    uniqueIndex("tax_adjustment_request").on(t.revisionId, t.requestKey),
+    uniqueIndex("tax_active_source_correction")
+      .on(t.revisionId, t.sourceMovementId)
+      .where(sql`"withdrawn_at" IS NULL AND "kind" = 'source'`),
+    uniqueIndex("tax_current_allowance_claim")
+      .on(t.revisionId)
+      .where(sql`"withdrawn_at" IS NULL AND "kind" = 'capital_allowance'`),
+    uniqueIndex("tax_carry_origin")
+      .on(t.revisionId, t.kind, t.originYa)
+      .where(
+        sql`"withdrawn_at" IS NULL AND "kind" IN ('allowance_brought_forward', 'loss_brought_forward')`,
+      ),
+    index("tax_adjustment_revision").on(t.revisionId),
+    check(
+      "tax_adjustment_kind",
+      sql`"kind" IN ('source', 'other', 'capital_allowance', 'allowance_brought_forward', 'loss_brought_forward')`,
+    ),
+    check(
+      "tax_adjustment_direction",
+      sql`"direction" IN ('increase', 'decrease')`,
+    ),
+    check(
+      "tax_adjustment_amount",
+      sql`typeof("amount_minor") = 'integer' AND "amount_minor" BETWEEN 0 AND 9007199254740991 AND typeof("balance_minor") = 'integer' AND "balance_minor" BETWEEN 0 AND 9007199254740991`,
+    ),
+    check(
+      "tax_manual_claim",
+      sql`coalesce("kind" = 'source' OR ("kind" = 'other' AND "amount_minor" > 0 AND "balance_minor" = 0 AND "origin_ya" IS NULL) OR ("kind" = 'capital_allowance' AND "direction" = 'decrease' AND "amount_minor" > 0 AND "balance_minor" = 0 AND "origin_ya" IS NULL) OR ("kind" IN ('allowance_brought_forward', 'loss_brought_forward') AND "direction" = 'decrease' AND typeof("origin_ya") = 'integer' AND "origin_ya" BETWEEN 2000 AND 9999 AND "amount_minor" <= "balance_minor"), 0)`,
+    ),
+    check(
+      "tax_adjustment_source",
+      sql`coalesce(("kind" = 'source' AND typeof("source_movement_id") = 'integer' AND "source_movement_id" > 0 AND typeof("percentage_bps") = 'integer' AND "balance_minor" = 0 AND "origin_ya" IS NULL AND (("treatment" = 'ordinary_deductible' AND "percentage_bps" = 10000) OR ("treatment" = 'partial' AND "percentage_bps" BETWEEN 1 AND 9999) OR ("treatment" IN ('non_deductible', 'capital_expenditure') AND "percentage_bps" = 0))) OR ("kind" <> 'source' AND "source_movement_id" IS NULL AND "percentage_bps" IS NULL AND "treatment" IS NULL), 0)`,
+    ),
+  ],
+);

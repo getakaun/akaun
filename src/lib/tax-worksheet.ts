@@ -159,6 +159,7 @@ export function safeTaxSum(values: number[]): number {
 export function taxWorksheetTotals(
   snapshot: TaxSourceSnapshot,
   adjustments: TaxAdjustment[],
+  capital: { effectMinor: number } | null = null,
 ) {
   const active = adjustments.filter((a) => a.withdrawnAt === null);
   const corrections = new Map(
@@ -221,7 +222,13 @@ export function taxWorksheetTotals(
     unresolvedMinor: safeTaxSum(
       lines.filter((l) => l.unresolved).map((l) => l.expenseMinor),
     ),
-    resultMinor: safeTaxSum([snapshot.profitMinor, addBackMinor, manualMinor]),
+    capitalMinor: capital?.effectMinor ?? 0,
+    resultMinor: safeTaxSum([
+      snapshot.profitMinor,
+      addBackMinor,
+      manualMinor,
+      capital?.effectMinor ?? 0,
+    ]),
   };
 }
 

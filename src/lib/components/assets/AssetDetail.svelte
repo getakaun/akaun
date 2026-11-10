@@ -16,7 +16,11 @@
   let {
     data,
   }: {
-    data: Omit<ReturnType<typeof loadFixedAssetDetail>, "depreciation"> & {
+    data: Omit<
+      ReturnType<typeof loadFixedAssetDetail>,
+      "depreciation" | "taxHistory"
+    > & {
+      taxHistory?: ReturnType<typeof loadFixedAssetDetail>["taxHistory"];
       depreciation?: ReturnType<typeof loadFixedAssetDetail>["depreciation"];
     };
   } = $props();
@@ -94,6 +98,18 @@
     </section>
   {/snippet}
   {#snippet rail()}
+    {#if data.taxHistory?.length}<section class="detail-card">
+        <div class="detail-card-head">
+          <h2 class="detail-card-title">Tax schedules</h2>
+        </div>
+        {#each data.taxHistory as tax (`${tax.worksheetId}:${tax.revision}`)}<a
+            class="related-link"
+            href={resolve(`/tax/${tax.worksheetId}?revision=${tax.revision}`)}
+            >YA {tax.ya} · Revision {tax.revision} · {tax.status}<ChevronRight
+              size={14}
+            /></a
+          >{/each}
+      </section>{/if}
     <section class="detail-card">
       <div class="detail-card-head">
         <span class="detail-card-title">Related records</span>

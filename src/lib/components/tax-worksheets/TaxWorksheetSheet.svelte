@@ -371,7 +371,7 @@
                 >{taxManualLabels[kind]}</Select.Trigger
               >
               <Select.Content
-                >{#each taxManualKinds as k (k)}<Select.Item
+                >{#each taxManualKinds.filter((k) => !initial?.capital.active || !["capital_allowance", "allowance_brought_forward"].includes(k)) as k (k)}<Select.Item
                     value={k}
                     label={taxManualLabels[k]}
                   />{/each}</Select.Content

@@ -18,6 +18,7 @@ import type { LedgerDb, CsvTable } from "../ledger/types.js";
 import { getSetting, SETTING_KEYS } from "../settings.js";
 import { expenseTaxReport } from "./expense-tax-report.js";
 import { profitLossReport } from "./reports.js";
+import { capitalDetail, capitalExportLines } from "./capital-allowances.js";
 
 export const taxHash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -120,6 +121,7 @@ export function taxWorksheetDetail(
   const live = compareLive
     ? captureTaxSources(db, worksheet.dateFrom, worksheet.dateTo)
     : revision.snapshot;
+  const capital = capitalDetail(db, worksheet, revision.id, compareLive);
   return {
     worksheet,
     revision,
@@ -135,7 +137,12 @@ export function taxWorksheetDetail(
     ),
     isLatest: revision.id === revisions[0].id,
     adjustments,
-    totals: taxWorksheetTotals(revision.snapshot, adjustments),
+    totals: taxWorksheetTotals(
+      revision.snapshot,
+      adjustments,
+      capital.active ? capital.totals : null,
+    ),
+    capital,
     stale: taxHash(live) !== revision.sourceHash,
     liveHash: taxHash(live),
     changes: taxSourceChanges(revision.snapshot, live),
@@ -236,6 +243,18 @@ export function taxWorksheetCsv(detail: TaxWorksheetDetail): CsvTable {
       a.id,
       a.withdrawalReason,
     ]);
+  if (detail.capital.schedule) {
+    rows.push(["Summary", "Asset schedule effect", money(t.capitalMinor)]);
+    rows.push(
+      ...capitalExportLines(
+        detail.capital.schedule,
+        detail.capital.active,
+        w.ya,
+        w.dateFrom,
+        w.dateTo,
+      ).map(([label, value]) => ["Capital allowances", label, value]),
+    );
+  }
   const columns = [
     "Section",
     "Description",
@@ -314,13 +333,28 @@ export function taxWorksheetHtml(detail: TaxWorksheetDetail): string {
         a.kind === "source" ? "" : taxManualLabels[a.kind],
         money(a.direction === "increase" ? a.amountMinor : -a.amountMinor),
       ]),
+    ...(detail.capital.active
+      ? [["Asset schedule effect", money(t.capitalMinor)]]
+      : []),
     ["Preparatory tax result", money(t.resultMinor)],
     ["Unresolved lines", t.unresolvedCount],
     ["Unresolved amount", money(t.unresolvedMinor)],
   ]
     .map(row)
     .join("")}</tbody></table>
-  <h2>Profit &amp; Loss evidence</h2><table><thead><tr><th>Type</th><th>Account</th><th>Amount</th></tr></thead><tbody>${r.snapshot.profitLines.map((l) => row([l.type, l.accountName, money(l.amountMinor)])).join("")}</tbody></table>
+  ${
+    detail.capital.schedule
+      ? `<h2>Capital allowance schedule</h2><table><thead><tr><th>Working</th><th>Value</th></tr></thead><tbody>${capitalExportLines(
+          detail.capital.schedule,
+          detail.capital.active,
+          w.ya,
+          w.dateFrom,
+          w.dateTo,
+        )
+          .map((line) => row(line))
+          .join("")}</tbody></table>`
+      : ""
+  }<h2>Profit &amp; Loss evidence</h2><table><thead><tr><th>Type</th><th>Account</th><th>Amount</th></tr></thead><tbody>${r.snapshot.profitLines.map((l) => row([l.type, l.accountName, money(l.amountMinor)])).join("")}</tbody></table>
   <h2>Expense classifications</h2><table><thead><tr><th>Date / record</th><th>Expense / account</th><th>Book expense</th><th>Saved %</th><th>Annual % / treatment</th><th>Add-back</th></tr></thead><tbody>${t.lines.map((l) => row([`${l.date} / ${l.recordNumber ?? l.recordId} / line ${l.movementId}`, `${l.label ?? l.description} / ${l.accountName}`, money(l.expenseMinor), l.classification?.percentageBps == null ? "Unclassified" : l.classification.percentageBps / 100, `${l.effectivePercentageBps == null ? "—" : l.effectivePercentageBps / 100} / ${TaxTreatmentLabels[l.effectiveTreatment]}${l.voided ? " / Void pair" : ""}`, money(l.addBackMinor)])).join("")}</tbody></table>
   <h2>Adjustments and retained history</h2><table><thead><tr><th>Entry</th><th>Decision / amount</th><th>Reason / evidence</th><th>Actor / timestamp</th><th>Status</th></tr></thead><tbody>${adjustments.map((a) => row([`${a.id} / ${a.kind === "source" ? `Expense line ${a.sourceMovementId}` : taxManualLabels[a.kind]}`, a.kind === "source" ? `${a.percentageBps! / 100}% / ${a.treatment}` : `${a.direction} ${money(a.amountMinor)}${a.originYa ? ` / origin YA ${a.originYa}, balance ${money(a.balanceMinor)}` : ""}`, `${a.reason} / ${a.evidence}`, `${a.actorName} / ${a.createdAt}`, a.withdrawnAt ? `Withdrawn ${a.withdrawnAt}: ${a.withdrawalReason}` : "Active"])).join("")}</tbody></table>${r.snapshot.notes.map((n) => `<p class="muted">${escape(n)}</p>`).join("")}</body></html>`;
 }

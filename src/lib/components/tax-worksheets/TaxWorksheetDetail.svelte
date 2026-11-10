@@ -23,6 +23,7 @@
     visibleItems,
   } from "$lib/components/ui/ListExpand.svelte";
   import { formatAuditTime } from "$lib/components/audit/audit-format.js";
+  import CapitalAllowances from "./CapitalAllowances.svelte";
   import TaxExpenses from "./TaxExpenses.svelte";
   import TaxAdjustments from "./TaxAdjustments.svelte";
   import "./tax-worksheets.css";
@@ -241,6 +242,10 @@
                 )}
               </dd>
             </div>{/each}
+          {#if d.capital.active}<div class="detail-row">
+              <dt class="detail-key">Asset allowance schedule</dt>
+              <dd class="detail-val tax-amount">{money(t.capitalMinor)}</dd>
+            </div>{/if}
           <div class="detail-row tax-result">
             <dt class="detail-key">Preparatory tax result</dt>
             <dd class="detail-val tax-amount">{money(t.resultMinor)}</dd>
@@ -285,6 +290,12 @@
       disabled={saving || d.stale}
       onchange={correct}
     />
+    <CapitalAllowances
+      detail={d}
+      {editable}
+      canReadAssets={data.canReadAssets}
+      onsaved={saved}
+    />
     <TaxAdjustments
       adjustments={d.adjustments}
       lines={t.lines}
@@ -318,13 +329,25 @@
           <div class="tax-actions">
             {#if r.status === "draft" && data.canReview}<Button
                 size="sm"
-                disabled={saving || d.stale || t.unresolvedCount > 0}
+                disabled={saving ||
+                  d.stale ||
+                  t.unresolvedCount > 0 ||
+                  (d.capital.active &&
+                    (d.capital.assetsStale ||
+                      d.capital.predecessorStale ||
+                      !!d.capital.totals?.problems.length))}
                 onclick={() => ask("review")}
                 >{saving ? "Saving…" : "Mark reviewed"}</Button
               >{/if}
             {#if r.status === "reviewed" && data.canFinalise}<Button
                 size="sm"
-                disabled={saving || d.stale || t.unresolvedCount > 0}
+                disabled={saving ||
+                  d.stale ||
+                  t.unresolvedCount > 0 ||
+                  (d.capital.active &&
+                    (d.capital.assetsStale ||
+                      d.capital.predecessorStale ||
+                      !!d.capital.totals?.problems.length))}
                 onclick={() => ask("finalise")}
                 >{saving ? "Saving…" : "Finalise worksheet"}</Button
               >{/if}
@@ -356,6 +379,11 @@
               >Open latest revision<ChevronRight size={13} /></a
             >
           </div>{/if}
+        {#if d.capital.active && (d.capital.assetsStale || d.capital.predecessorStale || d.capital.totals?.problems.length)}<p
+            class="field-hint"
+          >
+            Complete the capital allowance review before continuing.
+          </p>{/if}
         <dl class="detail-list tax-summary">
           <div class="detail-row">
             <dt class="detail-key">Captured</dt>

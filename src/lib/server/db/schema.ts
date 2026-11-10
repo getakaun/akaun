@@ -11,6 +11,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import type { ExpenseTaxSnapshot, TaxTreatment } from "$lib/expense-tax.js";
+import type { CapitalSchedule } from "$lib/capital-allowance.js";
 import type { TaxSourceSnapshot } from "$lib/tax-worksheet.js";
 import type { AssetSourceSnapshot } from "$lib/fixed-assets.js";
 
@@ -1740,3 +1741,32 @@ export const taxWorksheetAdjustments = sqliteTable(
     ),
   ],
 );
+
+/** Revision-owned manual tax evidence; never a source of book depreciation journals. */
+export const taxCapitalSchedules = sqliteTable(
+  "tax_capital_schedules",
+  {
+    revisionId: integer("revision_id")
+      .primaryKey()
+      .references(() => taxWorksheetRevisions.id, { onDelete: "restrict" }),
+    active: integer("active", { mode: "boolean" }).notNull(),
+    evidence: text("evidence", { mode: "json" })
+      .$type<CapitalSchedule>()
+      .notNull(),
+  },
+  () => [
+    check("tax_capital_active", sql`"active" IN (0, 1)`),
+    check(
+      "tax_capital_json",
+      sql`CASE WHEN json_valid("evidence") THEN coalesce(json_extract("evidence", '$.calculationVersion') = 1 AND json_extract("evidence", '$.currency') = 'MYR' AND json_type("evidence", '$.rows') = 'array' AND json_type("evidence", '$.assets') = 'array' AND json_type("evidence", '$.utilisation') = 'array', 0) ELSE 0 END`,
+    ),
+  ],
+);
+
+export const taxCapitalCommands = sqliteTable("tax_capital_commands", {
+  requestKey: text("request_key").primaryKey(),
+  revisionId: integer("revision_id")
+    .notNull()
+    .references(() => taxWorksheetRevisions.id, { onDelete: "restrict" }),
+  payloadHash: text("payload_hash").notNull(),
+});

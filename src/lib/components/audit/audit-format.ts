@@ -155,6 +155,9 @@ function nameOf(map: NameMap, value: unknown): string {
 
 // Fields whose names do not read well when split.
 const FIELD_LABELS: Record<string, string> = {
+  capitalAllowanceSchedule: "Capital allowance schedule",
+  capitalAllowanceReason: "Reason",
+  replacedManualAllowances: "Replaced manual allowance entries",
   closedThrough: "Closed through",
   closingAction: "Closing action",
   automatedChecks: "Automatic checks",
@@ -235,6 +238,17 @@ export function formatValue(
   value: unknown,
 ): string {
   if (value === null || value === undefined || value === "") return "—";
+  if (
+    recordType === "tax_worksheet" &&
+    field === "capitalAllowanceSchedule" &&
+    typeof value === "object"
+  ) {
+    const schedule = value as {
+      active?: boolean;
+      evidence?: { rows?: unknown[]; evidence?: string };
+    };
+    return `${schedule.active ? "Asset schedule active" : "Manual totals active"} · ${schedule.evidence?.rows?.length ?? 0} assets${schedule.evidence?.evidence ? ` · ${schedule.evidence.evidence}` : ""}`;
+  }
   const names = enumFor(recordType, field);
   if (names) {
     if (Array.isArray(value))

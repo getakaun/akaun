@@ -752,7 +752,7 @@ describe("approved monthly book depreciation", () => {
       settings({ accumulatedAccountId: null }),
     );
     expect(managed.ok).toBe(false);
-    if (!managed.ok) expect(managed.reason).toContain("Review and link");
+    if (!managed.ok) expect(managed.code).toBe("INVALID_INPUT");
     value(
       voidRecord(ctx(), manual.id, {
         reason: "Replace manual depreciation with approved schedule",
@@ -784,45 +784,59 @@ describe("approved monthly book depreciation", () => {
       }).ok,
     ).toBe(false);
   });
-  it("creates a managed contra only on approval, remembers explicit mappings, and requires account creation authority", () => {
+  it("requires explicit existing posting accounts even with account creation permission", () => {
     const first = asset();
-    const input = settings({ accumulatedAccountId: null });
-    expect(previewDepreciationProfile(ctx(), first.stored.id, input).ok).toBe(
-      false,
-    );
     const creator = { db, locals: localsFor([...grants, "accounts.create"]) };
     const count = db.select().from(schema.accounts).all().length;
-    const preview = value(
-      previewDepreciationProfile(creator, first.stored.id, input),
-    );
-    expect(preview.accountPlan.create).toBe(true);
+    for (const overrides of [
+      { accumulatedAccountId: null },
+      { accumulatedAccountId: undefined },
+      { accumulatedAccountId: 0 },
+      { accumulatedAccountId: 999999 },
+      { expenseAccountId: null },
+      { expenseAccountId: 999999 },
+    ]) {
+      const input = settings(overrides);
+      expect(
+        previewDepreciationProfile(creator, first.stored.id, input).ok,
+      ).toBe(false);
+      expect(
+        approveDepreciationProfile(creator, first.stored.id, {
+          settings: input,
+          expectedVersion: "old-preview",
+        }).ok,
+      ).toBe(false);
+    }
     expect(db.select().from(schema.accounts).all()).toHaveLength(count);
+    expect(db.select().from(schema.depreciationProfiles).all()).toHaveLength(0);
+    // Setup works without accounts.create when both accounts are selected.
+    const preview = value(
+      previewDepreciationProfile(ctx(), first.stored.id, settings()),
+    );
     const profile = value(
-      approveDepreciationProfile(creator, first.stored.id, {
-        settings: input,
+      approveDepreciationProfile(ctx(), first.stored.id, {
+        settings: settings(),
         expectedVersion: preview.version,
       }),
     );
-    expect(profile.accumulatedAccountId).not.toBe(cost);
-    expect(db.select().from(schema.accounts).all()).toHaveLength(count + 1);
+    expect(profile.accumulatedAccountId).toBe(accum);
+    expect(db.select().from(schema.accounts).all()).toHaveLength(count);
     const second = asset();
     const state = value(readAssetDepreciation(ctx(), second.stored.id));
     expect(state.defaults).toEqual({
       expenseAccountId: expense,
-      accumulatedAccountId: profile.accumulatedAccountId,
+      accumulatedAccountId: accum,
     });
-    const reused = value(
-      previewDepreciationProfile(ctx(), second.stored.id, input),
-    );
-    expect(reused.accountPlan.create).toBe(false);
+    // Defaults help the UI preselect accounts; requests must still include a selection.
     expect(
-      value(
-        approveDepreciationProfile(ctx(), second.stored.id, {
-          settings: input,
-          expectedVersion: reused.version,
-        }),
-      ).accumulatedAccountId,
-    ).toBe(profile.accumulatedAccountId);
+      previewDepreciationProfile(
+        creator,
+        second.stored.id,
+        settings({ accumulatedAccountId: null }),
+      ).ok,
+    ).toBe(false);
+    approve(second.stored.id);
+    expect(db.select().from(schema.accounts).all()).toHaveLength(count);
   });
   it("posts historical catch-up only after explicit consent, only for the selected asset, and never a future month", () => {
     const first = asset();
@@ -875,11 +889,11 @@ describe("approved monthly book depreciation", () => {
       value(previewAssetCatchUp(ctx(), future.stored.id)).history.count,
     ).toBe(0);
   });
-  it("saves a historical setup across closed months but refuses the whole catch-up and rolls back managed accounts", () => {
+  it("saves a historical setup across closed months but refuses the whole catch-up without changing accounts", () => {
     const { stored } = asset();
     setSetting(db, SETTING_KEYS.accountingClosedThrough, "2025-01-31");
     const creator = { db, locals: localsFor([...grants, "accounts.create"]) };
-    const input = settings({ months: 2, accumulatedAccountId: null });
+    const input = settings({ months: 2 });
     const count = db.select().from(schema.accounts).all().length;
     const preview = value(
       previewDepreciationProfile(creator, stored.id, input),
@@ -1387,5 +1401,114 @@ describe("approved monthly book depreciation", () => {
       .run();
     expect(post("2025-01").posted).toBe(1);
     expect(cashFlowReport(db, "2025-01-01", "2025-01-31")).toEqual(cashBefore);
+  });
+});
+
+describe("registered asset depreciation overview", () => {
+  const overview = (id: number, asAt: string) =>
+    value(readFixedAssets(ctx(), asAt)).assets.find((asset) => asset.id === id)!
+      .depreciation;
+  it("shows setup, scheduled, pending and posted progress as of the selected date", () => {
+    const { stored } = asset();
+    expect(overview(stored.id, "2025-01-31")).toMatchObject({
+      status: "depreciation-setup",
+      dueCount: 0,
+      lastPostedMonth: null,
+    });
+    approve(stored.id, { months: 2, residualMinor: 100000 });
+    expect(overview(stored.id, "2025-01-30")).toMatchObject({
+      status: "depreciation-scheduled",
+      dueCount: 0,
+      nextMonth: "2025-01",
+      lastPostedMonth: null,
+    });
+    expect(overview(stored.id, "2025-01-31")).toMatchObject({
+      status: "depreciation-pending",
+      dueCount: 1,
+      firstDueMonth: "2025-01",
+      nextMonth: "2025-02",
+    });
+    expect(overview(stored.id, "2025-02-28").dueCount).toBe(2);
+    post("2025-01");
+    expect(overview(stored.id, "2025-01-31")).toMatchObject({
+      status: "depreciation-current",
+      dueCount: 0,
+      lastPostedMonth: "2025-01",
+      nextMonth: "2025-02",
+    });
+    expect(overview(stored.id, "2025-02-28")).toMatchObject({
+      status: "depreciation-pending",
+      dueCount: 1,
+      lastPostedMonth: "2025-01",
+    });
+    post("2025-02");
+    expect(overview(stored.id, "2025-02-28")).toMatchObject({
+      status: "depreciation-complete",
+      dueCount: 0,
+      lastPostedMonth: "2025-02",
+      nextMonth: null,
+    });
+    // Later postings do not make a historical reporting date look fully depreciated.
+    expect(overview(stored.id, "2025-01-31")).toMatchObject({
+      status: "depreciation-current",
+      nextMonth: "2025-02",
+    });
+    expect(overview(stored.id, "2025-01-30")).toMatchObject({
+      status: "depreciation-scheduled",
+      nextMonth: "2025-01",
+      lastPostedMonth: null,
+    });
+  });
+  it("does not turn future scheduled months into pending postings", () => {
+    const { stored } = asset();
+    const startMonth = shiftMonth(localToday().slice(0, 7), 1);
+    approve(stored.id, { startMonth, months: 2 });
+    expect(overview(stored.id, "9999-12-31")).toMatchObject({
+      status: "depreciation-scheduled",
+      dueCount: 0,
+      nextMonth: startMonth,
+      lastPostedMonth: null,
+    });
+  });
+  it("keeps pending auto-post months and integrity warnings visible", () => {
+    const { stored, record } = asset();
+    approve(stored.id, { months: 2, mode: "auto" });
+    expect(overview(stored.id, "2025-02-28")).toMatchObject({
+      status: "depreciation-pending",
+      mode: "auto",
+      dueCount: 2,
+    });
+    value(updateRecord(ctx(), record.id, { amount: 13000 }));
+    const state = overview(stored.id, "2025-02-28");
+    expect(state.status).toBe("depreciation-pending");
+    expect(state.reviewReason).toContain("Source");
+    expect(state.lastPostedMonth).toBeNull();
+  });
+  it("shows stopped schedules and reversed charges without claiming full depreciation", () => {
+    const { stored } = asset();
+    approve(stored.id, { months: 2 });
+    const run = post("2025-01");
+    value(
+      stopDepreciation(ctx(), stored.id, {
+        month: "2025-02",
+        reason: "Pause further depreciation",
+        expectedVersion: value(readAssetDepreciation(ctx(), stored.id)).version,
+      }),
+    );
+    expect(overview(stored.id, "2025-02-28")).toMatchObject({
+      status: "depreciation-stopped",
+      dueCount: 0,
+      lastPostedMonth: "2025-01",
+    });
+    value(
+      reverseDepreciationRun(ctx(), run.runId!, {
+        month: "2025-02",
+        reason: "Correct the posted amount",
+      }),
+    );
+    const state = overview(stored.id, "2025-02-28");
+    expect(state.status).toBe("depreciation-stopped");
+    expect(state.lastPostedMonth).toBeNull();
+    expect(state.reviewReason).toContain("reversed");
   });
 });

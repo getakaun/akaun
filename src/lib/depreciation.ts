@@ -28,7 +28,9 @@ export const depreciationProfileSchema = z
     months: z.number().int().min(1).max(1200),
     residualMinor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     expenseAccountId: z.number().int().positive(),
-    accumulatedAccountId: z.number().int().positive().nullable(),
+    accumulatedAccountId: z.number().int().positive({
+      message: "Choose an existing accumulated depreciation account.",
+    }),
     mode: z.enum(["review", "auto"]),
     reason: z.string().trim().min(1).max(1000),
   })
@@ -79,3 +81,19 @@ export function straightLineSchedule(
     };
   });
 }
+
+export type AssetDepreciationOverview = {
+  status:
+    | "depreciation-setup"
+    | "depreciation-scheduled"
+    | "depreciation-pending"
+    | "depreciation-current"
+    | "depreciation-complete"
+    | "depreciation-stopped";
+  dueCount: number;
+  firstDueMonth: string | null;
+  lastPostedMonth: string | null;
+  nextMonth: string | null;
+  mode: "review" | "auto" | null;
+  reviewReason: string | null;
+};

@@ -9,7 +9,7 @@
   import {
     assetMoneyMinor,
     assetMoneyInput,
-    ASSET_TYPE_SUGGESTIONS,
+    ASSET_TYPE_OPTIONS,
   } from "$lib/fixed-assets.js";
   import OpeningRecordSelect from "./OpeningRecordSelect.svelte";
   import { percentageToBps } from "$lib/expense-tax.js";
@@ -50,19 +50,17 @@
       name: asset?.name ?? source?.label ?? source?.description ?? "",
       assetType:
         asset?.assetType ??
-        ASSET_TYPE_SUGGESTIONS.find((type) =>
+        ASSET_TYPE_OPTIONS.find((type) =>
           (source?.accountName ?? "")
             .toLowerCase()
             .includes(type.toLowerCase()),
         ) ??
         "Other",
       description: asset?.description ?? "",
-      serialNumber: asset?.serialNumber ?? "",
       acquisitionDate:
         asset?.acquisitionDate ??
         source?.recordDate ??
         new Date().toISOString().slice(0, 10),
-      inServiceDate: asset?.inServiceDate ?? "",
       cost: asset
         ? assetMoneyInput(asset.costMinor)
         : source
@@ -124,6 +122,12 @@
         String(account.id) === fields.accumulatedAccount,
     ),
   );
+  // Keep a previously saved custom type selectable when editing older assets.
+  const assetTypes = $derived(
+    asset?.assetType && !ASSET_TYPE_OPTIONS.includes(asset.assetType)
+      ? [...ASSET_TYPE_OPTIONS, asset.assetType]
+      : ASSET_TYPE_OPTIONS,
+  );
   export async function submit() {
     if (saving) return;
     if (!formElement.reportValidity()) return;
@@ -132,8 +136,15 @@
       legacy &&
       (!fields.assetAccount || !fields.acquisitionDate || !fields.openingAsAt)
     ) {
-      error =
-        "Choose an asset cost account, acquisition date and opening date.";
+      error = "Choose an asset cost account, purchase date and opening date.";
+      return;
+    }
+    if (
+      ((legacy && (assetMoneyMinor(fields.openingDep) ?? 0) > 0) ||
+        asset?.accumulatedDepreciationAccountId) &&
+      !fields.accumulatedAccount
+    ) {
+      error = "Choose an existing accumulated depreciation account.";
       return;
     }
     const businessUseBps =
@@ -155,8 +166,9 @@
       name: fields.name,
       assetType: fields.assetType,
       description: fields.description,
-      serialNumber: fields.serialNumber,
-      inServiceDate: fields.inServiceDate || null,
+      serialNumber: asset?.serialNumber ?? "",
+      // A null date makes depreciation use the purchase date. Preserve existing dates.
+      inServiceDate: asset?.inServiceDate ?? null,
       businessUseBps,
       documentReference: fields.documentReference,
       bookMethod: fields.bookMethod || null,
@@ -249,15 +261,15 @@
           >
         </div>
         <div class="detail-row">
-          <span class="detail-key">Asset account</span><span class="detail-val"
+          <span class="detail-key">Asset cost account</span><span
+            class="detail-val"
             >{accounts.find(
               (account) => String(account.id) === fields.assetAccount,
             )?.name ?? "Missing account"}</span
           >
         </div>
         <div class="detail-row">
-          <span class="detail-key">Registered cost</span><span
-            class="detail-val"
+          <span class="detail-key">Original cost</span><span class="detail-val"
             >{formatMinor(asset?.costMinor ?? source?.amountMinor ?? 0)}</span
           >
         </div>
@@ -277,16 +289,30 @@
       />
     </div>
     <div class="field">
-      <label class="field-label" for="asset-type">Asset type *</label><Input
-        id="asset-type"
+      <label class="field-label" for="asset-type">Asset type *</label>
+      <Select.Root
+        type="single"
         bind:value={fields.assetType}
-        list="asset-type-suggestions"
+        disabled={!canChange || saving}
         required
-        maxlength={100}
-      /><datalist id="asset-type-suggestions"
-        >{#each ASSET_TYPE_SUGGESTIONS as type (type)}<option value={type}
-          ></option>{/each}</datalist
       >
+        <Select.Trigger id="asset-type" class="w-full justify-between"
+          >{fields.assetType}</Select.Trigger
+        >
+        <Select.Content>
+          {#each assetTypes as type (type)}
+            <Select.Item value={type} label={type} />
+          {/each}
+        </Select.Content>
+      </Select.Root>
+    </div>
+    <div class="field">
+      <label class="field-label" for="asset-description">Description</label>
+      <Textarea
+        id="asset-description"
+        bind:value={fields.description}
+        maxlength={2000}
+      />
     </div>
     {#if legacy}
       <div class="field">
@@ -303,12 +329,12 @@
           <Select.Trigger id="asset-account" class="w-full justify-between"
             >{accounts.find(
               (account) => String(account.id) === fields.assetAccount,
-            )?.name ?? "Choose account"}</Select.Trigger
+            )?.name ?? "Choose asset cost account"}</Select.Trigger
           >
           <Select.Content
             ><Select.Item
               value="__none__"
-              label="Choose account"
+              label="Choose asset cost account"
             />{#each costAccounts as account (account.id)}<Select.Item
                 value={String(account.id)}
                 label={account.name}
@@ -330,7 +356,7 @@
       </div>
       <div class="field">
         <span class="field-label" id="asset-acquired-label"
-          >Acquisition date *</span
+          >Purchase date *</span
         ><DatePicker
           bind:value={fields.acquisitionDate}
           labelledBy="asset-acquired-label"
@@ -400,86 +426,45 @@
     {#if (legacy && (assetMoneyMinor(fields.openingDep) ?? 0) > 0) || (asset && asset.accumulatedDepreciationAccountId !== null)}
       <div class="field">
         <label class="field-label" for="asset-accumulated"
-          >Accumulated depreciation account {legacy &&
-          (assetMoneyMinor(fields.openingDep) ?? 0) > 0
-            ? "*"
-            : "(optional)"}</label
+          >Accumulated depreciation account *</label
         ><Select.Root
           type="single"
-          value={fields.accumulatedAccount || "__none__"}
-          onValueChange={(value) =>
-            (fields.accumulatedAccount = value === "__none__" ? "" : value)}
+          bind:value={fields.accumulatedAccount}
+          required
           disabled={!canChange || saving}
         >
           <Select.Trigger id="asset-accumulated" class="w-full justify-between"
             >{accounts.find(
               (account) => String(account.id) === fields.accumulatedAccount,
-            )?.name ?? "Not set"}</Select.Trigger
+            )?.name ??
+              "Choose accumulated depreciation account"}</Select.Trigger
           >
           <Select.Content
-            ><Select.Item
-              value="__none__"
-              label="Not set"
-            />{#each assetAccounts.filter((account) => String(account.id) !== fields.assetAccount) as account (account.id)}<Select.Item
+            >{#each assetAccounts.filter((account) => String(account.id) !== fields.assetAccount) as account (account.id)}<Select.Item
                 value={String(account.id)}
                 label={account.name}
               />{/each}</Select.Content
           ></Select.Root
         >
         <p class="field-hint">
-          A separate Asset account. Registration posts no depreciation.
+          Choose a separate non-current asset account. Create missing accounts
+          in Accounts before continuing. Registration posts no depreciation.
         </p>
       </div>
     {/if}
-    <details class="asset-form-section">
-      <summary>More details</summary>
-      <div class="field">
-        <span class="field-label" id="asset-in-service-label"
-          >In-service date</span
-        ><DatePicker
-          bind:value={fields.inServiceDate}
-          labelledBy="asset-in-service-label"
-          disabled={!canChange || saving}
-          min={fields.acquisitionDate}
-          clearable
-          clearLabel="Clear in-service date"
+    {#if asset}<div class="field">
+        <label class="field-label" for="asset-business">Business use (%)</label
+        ><Input
+          id="asset-business"
+          bind:value={fields.businessUse}
+          inputmode="decimal"
         />
         <p class="field-hint">
-          Leave blank if the in-service date is not recorded.
+          For review only. This does not reduce asset cost or determine tax
+          eligibility.
         </p>
       </div>
-
-      <div class="field">
-        <label class="field-label" for="asset-serial">Serial number</label
-        ><Input
-          id="asset-serial"
-          bind:value={fields.serialNumber}
-          maxlength={200}
-        />
-      </div>
-      <div class="field">
-        <label class="field-label" for="asset-description">Description</label
-        ><Textarea
-          id="asset-description"
-          bind:value={fields.description}
-          maxlength={2000}
-        ></Textarea>
-      </div>
-      {#if asset}<div class="field">
-          <label class="field-label" for="asset-business"
-            >Business use (%)</label
-          ><Input
-            id="asset-business"
-            bind:value={fields.businessUse}
-            inputmode="decimal"
-          />
-          <p class="field-hint">
-            For review only. This does not reduce asset cost or determine tax
-            eligibility.
-          </p>
-        </div>
-      {/if}
-    </details>
+    {/if}
     {#if legacy || asset}<div class="field">
         <label class="field-label" for="asset-document"
           >Supporting-document reference {legacy && !fields.openingRecord

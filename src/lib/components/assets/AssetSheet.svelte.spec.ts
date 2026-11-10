@@ -1,10 +1,12 @@
 import { page } from "vitest/browser";
 import { afterEach, expect, it, vi } from "vitest";
-import { render } from "vitest-browser-svelte";
+import { cleanup, render } from "vitest-browser-svelte";
 import { AccountSubType, AccountType, LedgerRecordKind } from "$lib/enums.js";
 import AssetSheet from "./AssetSheet.svelte";
 import FixedAssetsPage from "./FixedAssetsPage.svelte";
 import AssetDetail from "./AssetDetail.svelte";
+import AssetDepreciation from "./AssetDepreciation.svelte";
+import type { ComponentProps } from "svelte";
 import type { RegisteredAsset } from "$lib/server/queries/fixed-assets.js";
 import "../../../routes/layout.css";
 
@@ -19,6 +21,8 @@ vi.mock("$app/state", () => ({
 }));
 vi.mock("$lib/sse.js", () => ({ createResourceStream: vi.fn() }));
 afterEach(async () => {
+  // Unmount sheets before resizing so their modal layers finish cleaning up.
+  cleanup();
   vi.unstubAllGlobals();
   await page.viewport(1280, 900);
 });
@@ -112,7 +116,9 @@ it("shows reconciliation exceptions to readers while withholding registration ac
     .getByRole("button", { name: "Reconciliation", exact: true })
     .click();
   await expect
-    .element(page.getByRole("heading", { name: "Gross cost reconciliation" }))
+    .element(
+      page.getByRole("heading", { name: "Original cost reconciliation" }),
+    )
     .toBeVisible();
   await expect
     .element(page.getByText("1 unregistered · 0 source reviews"))
@@ -144,7 +150,7 @@ it("registers a saved purchase with source-derived cost and no opening or ledger
     .element(page.getByRole("region", { name: "Saved purchase details" }))
     .toBeVisible();
   await expect
-    .element(page.getByLabelText("Acquisition date *"))
+    .element(page.getByLabelText("Purchase date *"))
     .not.toBeInTheDocument();
   await page
     .getByRole("button", { name: "Register asset", exact: true })
@@ -157,6 +163,8 @@ it("registers a saved purchase with source-derived cost and no opening or ledger
   expect(url).toBe("/api/fixed-assets");
   const body = JSON.parse(String(init.body));
   expect(body.sourceMovementId).toBe(12);
+  expect(body.inServiceDate).toBeNull();
+  expect(body.serialNumber).toBe("");
   expect(body).not.toHaveProperty("costMinor");
   expect(body).not.toHaveProperty("openingAsAt");
   await expect
@@ -318,6 +326,15 @@ const registeredAsset: RegisteredAsset = {
   accumulatedDepreciationMinor: 0,
   netBookValueMinor: 600000,
   version: "1",
+  depreciation: {
+    status: "depreciation-setup",
+    dueCount: 0,
+    firstDueMonth: null,
+    lastPostedMonth: null,
+    nextMonth: null,
+    mode: null,
+    reviewReason: null,
+  },
 };
 
 it("uses the shared account dropdown and calendar in the create drawer", async () => {
@@ -340,7 +357,7 @@ it("uses the shared account dropdown and calendar in the create drawer", async (
     .toHaveTextContent("Computer equipment");
   expect(document.querySelector(".asset-form select")).toBeNull();
   await page
-    .getByRole("button", { name: "Acquisition date *", exact: true })
+    .getByRole("button", { name: "Purchase date *", exact: true })
     .click();
   await expect.element(page.getByRole("grid")).toBeVisible();
 });
@@ -351,12 +368,20 @@ it("opens an asset on the standard detail page with Activity and a dirty-only sa
     vi.fn(async () => Response.json([])),
   );
   render(AssetDetail, {
-    data: { asset: registeredAsset, accounts, canChange: true },
+    data: {
+      asset: registeredAsset,
+      accounts,
+      canChange: true,
+      depreciation: depreciationData(),
+    },
   });
   await expect
     .element(page.getByRole("heading", { name: "Laptop", exact: true }))
     .toBeVisible();
   expect(document.querySelector(".detail-grid")).not.toBeNull();
+  await expect
+    .element(page.getByText("No depreciation posted", { exact: true }))
+    .toBeVisible();
   await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
   await expect
     .element(page.getByText("Activity", { exact: true }))
@@ -409,6 +434,8 @@ it("saves detail edits through the existing versioned asset operation", async ()
     name: "Office laptop",
     expectedVersion: "1",
     reason: "Update equipment label",
+    inServiceDate: registeredAsset.inServiceDate,
+    serialNumber: registeredAsset.serialNumber,
   });
   await expect
     .element(page.getByRole("button", { name: "Save changes", exact: true }))
@@ -439,3 +466,492 @@ it("uses the same mobile row cards and header search as Accounts", async () => {
     .element(page.getByText("Nothing to show", { exact: true }))
     .toBeVisible();
 });
+
+it("shows description directly and saves a preset asset type from the shared select", async () => {
+  const fetchMock = vi.fn(async () =>
+    Response.json({ id: 1 }, { status: 201 }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  render(AssetSheet, {
+    source,
+    accounts,
+    canChange: true,
+    onclose: vi.fn(),
+    onsaved: vi.fn(async () => {}),
+  });
+  await expect.element(page.getByLabelText("Description")).toBeVisible();
+  await expect
+    .element(page.getByLabelText("Serial number"))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByText("In-service date", { exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByText("More details", { exact: true }))
+    .not.toBeInTheDocument();
+  await page
+    .getByLabelText("Description")
+    .fill("Delivery van for customer orders");
+  await page.getByRole("button", { name: "Asset type *", exact: true }).click();
+  for (const type of [
+    "Computer equipment",
+    "Office equipment",
+    "Furniture",
+    "Fixtures and fittings",
+    "Motor vehicle",
+    "Machinery",
+    "Buildings",
+    "Land",
+    "Other",
+  ]) {
+    await expect
+      .element(page.getByRole("option", { name: type, exact: true }))
+      .toBeVisible();
+  }
+  await page
+    .getByRole("option", { name: "Motor vehicle", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Register asset", exact: true })
+    .click();
+  await expect.poll(() => fetchMock.mock.calls.length).toBe(1);
+  const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(JSON.parse(String(init.body))).toMatchObject({
+    assetType: "Motor vehicle",
+    description: "Delivery van for customer orders",
+    inServiceDate: null,
+    serialNumber: "",
+  });
+});
+
+it("preserves a saved custom type and retired fields when editing", async () => {
+  const asset = {
+    ...registeredAsset,
+    assetType: "Specialist laboratory equipment",
+    serialNumber: "LAB-123",
+    accumulatedDepreciationAccountId: 2,
+  };
+  const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) =>
+    Response.json(init?.method === "PATCH" ? { ...asset, revision: 2 } : []),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  render(AssetDetail, { data: { asset, accounts, canChange: true } });
+  await expect
+    .element(
+      page.getByRole("button", {
+        name: "Accumulated depreciation account *",
+        exact: true,
+      }),
+    )
+    .toHaveTextContent("Accumulated depreciation");
+  await page.getByRole("button", { name: "Asset type *", exact: true }).click();
+  await expect
+    .element(page.getByRole("option", { name: asset.assetType, exact: true }))
+    .toBeVisible();
+  await page
+    .getByRole("option", { name: asset.assetType, exact: true })
+    .click();
+  await page.getByLabelText("Description").fill("Updated description");
+  await page
+    .getByLabelText("Reason for change *")
+    .fill("Clarify asset purpose");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect
+    .poll(
+      () =>
+        fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH")
+          .length,
+    )
+    .toBe(1);
+  const [, init] = fetchMock.mock.calls.find(
+    ([, init]) => init?.method === "PATCH",
+  )!;
+  expect(JSON.parse(String(init?.body))).toMatchObject({
+    assetType: asset.assetType,
+    serialNumber: "LAB-123",
+    inServiceDate: "2026-02-01",
+    description: "Updated description",
+  });
+});
+
+const postingAccounts = [
+  ...accounts,
+  {
+    id: 3,
+    name: "Depreciation expense",
+    type: AccountType.Expense,
+    subType: null,
+    active: true,
+  },
+];
+function depreciationData(): ComponentProps<typeof AssetDepreciation>["data"] {
+  return {
+    asset: registeredAsset,
+    profiles: [],
+    rows: [],
+    history: [],
+    allocations: [],
+    version: "dep-v1",
+    hasDue: false,
+    postingIssue: null,
+    defaults: { expenseAccountId: null, accumulatedAccountId: null },
+    manualCandidates: [],
+    reconciliation: null,
+    historyReview: [],
+    asAt: "2026-11-10",
+    postedMinor: 0,
+    scheduleReviewReason: null,
+    accumulatedMinor: 0,
+    nbvMinor: 600000,
+    canConfigure: true,
+    canReverse: true,
+  };
+}
+
+it("requires existing posting accounts before previewing depreciation", async () => {
+  const fetchMock = vi.fn(async () =>
+    Response.json({
+      version: "preview-v1",
+      baseNbvMinor: 600000,
+      schedule: [
+        { month: "2026-02", amountMinor: 16666, projectedNbvMinor: 583334 },
+      ],
+      history: {
+        count: 0,
+        closedMonths: [],
+        totalMinor: 0,
+        from: null,
+        through: null,
+      },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  render(AssetDepreciation, {
+    data: depreciationData(),
+    accounts: postingAccounts,
+    onsaved: vi.fn(async () => {}),
+  });
+  await page
+    .getByRole("button", { name: "Set up depreciation", exact: true })
+    .click();
+  await expect
+    .element(
+      page.getByRole("button", {
+        name: "Depreciation expense account *",
+        exact: true,
+      }),
+    )
+    .toBeVisible();
+  await expect
+    .element(
+      page.getByRole("button", {
+        name: "Accumulated depreciation account *",
+        exact: true,
+      }),
+    )
+    .toBeVisible();
+  await expect
+    .element(
+      page.getByRole("link", { name: "Create missing accounts in Accounts" }),
+    )
+    .toHaveAttribute("href", "/accounts");
+  await page
+    .getByRole("button", { name: "Preview schedule", exact: true })
+    .click();
+  expect(fetchMock).not.toHaveBeenCalled();
+  await page
+    .getByRole("button", {
+      name: "Depreciation expense account *",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("option", { name: "Depreciation expense", exact: true })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "Accumulated depreciation account *",
+      exact: true,
+    })
+    .click();
+  await expect
+    .element(
+      page.getByRole("option", { name: "Computer equipment", exact: true }),
+    )
+    .not.toBeInTheDocument();
+  await page
+    .getByRole("option", { name: "Accumulated depreciation", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Preview schedule", exact: true })
+    .click();
+  await expect.poll(() => fetchMock.mock.calls.length).toBe(1);
+  const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(JSON.parse(String(init.body))).toMatchObject({
+    action: "preview",
+    input: { expenseAccountId: 3, accumulatedAccountId: 2 },
+  });
+});
+
+it("shows saved posting accounts directly when setting up depreciation", async () => {
+  const data = depreciationData();
+  data.defaults = { expenseAccountId: 3, accumulatedAccountId: 2 };
+  render(AssetDepreciation, {
+    data,
+    accounts: postingAccounts,
+    onsaved: vi.fn(async () => {}),
+  });
+  await page
+    .getByRole("button", { name: "Set up depreciation", exact: true })
+    .click();
+  await expect
+    .element(
+      page.getByRole("button", {
+        name: "Depreciation expense account *",
+        exact: true,
+      }),
+    )
+    .toHaveTextContent("Depreciation expense");
+  await expect
+    .element(
+      page.getByRole("button", {
+        name: "Accumulated depreciation account *",
+        exact: true,
+      }),
+    )
+    .toHaveTextContent("Accumulated depreciation");
+});
+
+it("shows only status chips and review warnings in the registered asset status column", async () => {
+  await page.viewport(1280, 900);
+  const data = registerData(true);
+  const asset: RegisteredAsset = {
+    ...registeredAsset,
+    depreciation: {
+      status: "depreciation-pending",
+      dueCount: 3,
+      firstDueMonth: "2026-06",
+      lastPostedMonth: "2026-05",
+      nextMonth: "2026-09",
+      mode: "auto",
+      reviewReason:
+        "Source purchase details changed. Review before accepting new values.",
+    },
+  };
+  render(FixedAssetsPage, {
+    data: { ...data, register: { ...data.register, assets: [asset] } },
+  });
+  await expect
+    .element(page.getByRole("columnheader", { name: "Status", exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByRole("columnheader", { name: "Review", exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByText("Pending posting", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("Needs review", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("3 months pending · from 2026-06", { exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByText("Last posted 2026-05", { exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByText("Auto-post enabled", { exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByText("Source linked", { exact: true }))
+    .not.toBeInTheDocument();
+});
+
+it("keeps asset setup status visible on phone row cards", async () => {
+  await page.viewport(390, 844);
+  const data = registerData(true);
+  render(FixedAssetsPage, {
+    data: {
+      ...data,
+      register: { ...data.register, assets: [registeredAsset] },
+    },
+  });
+  await expect
+    .element(page.getByText("Setup needed", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("No depreciation posted", { exact: true }))
+    .not.toBeInTheDocument();
+  const statusCell = document.querySelector<HTMLElement>(
+    '[data-label="Status"]',
+  )!;
+  expect(statusCell.getBoundingClientRect().right).toBeLessThanOrEqual(390);
+});
+
+it.each([1280, 390])(
+  "keeps structured asset activity compact and readable at %ipx",
+  async (width) => {
+    await page.viewport(width, 844);
+    const longReference = "supporting-document-".repeat(150);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json([
+          {
+            id: 100,
+            action: "update",
+            createdAt: "2026-11-10 08:00:00",
+            userId: 1,
+            userName: "Alice",
+            via: "session",
+            credentialLabel: null,
+            changes: [
+              {
+                field: "depreciationProfile",
+                before: null,
+                after: {
+                  months: 36,
+                  residualMinor: 123456,
+                  mode: "auto",
+                  basis: JSON.stringify([
+                    600000,
+                    1,
+                    "2026-01-15",
+                    null,
+                    null,
+                    0,
+                  ]),
+                },
+              },
+              {
+                field: "documentReference",
+                before: "Old reference",
+                after: longReference,
+              },
+            ],
+          },
+        ]),
+      ),
+    );
+    render(AssetDetail, {
+      data: { asset: registeredAsset, accounts, canChange: true },
+    });
+    const viewMore = page.getByRole("button", {
+      name: "View more",
+      exact: true,
+    });
+    await expect.element(viewMore).toBeVisible();
+    await expect.element(viewMore).toHaveAttribute("aria-expanded", "false");
+    await expect
+      .element(
+        page.getByText("Depreciation setup · Useful life (months):", {
+          exact: true,
+        }),
+      )
+      .toBeVisible();
+    await expect.element(page.getByText("36", { exact: true })).toBeVisible();
+    await expect
+      .element(page.getByText("1,234.56", { exact: true }))
+      .toBeVisible();
+    await expect
+      .element(page.getByText(longReference, { exact: true }))
+      .not.toBeInTheDocument();
+    const activity = document.querySelector<HTMLElement>(".audit-list")!;
+    expect(activity.scrollWidth).toBeLessThanOrEqual(activity.clientWidth + 1);
+    const collapsedHeight = activity.getBoundingClientRect().height;
+    await viewMore.click();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    await expect
+      .element(
+        page.getByText(
+          "Depreciation setup · Financial basis · Original cost:",
+          { exact: true },
+        ),
+      )
+      .toBeVisible();
+    await expect
+      .element(page.getByText("Auto-post monthly", { exact: true }))
+      .toBeVisible();
+    await expect
+      .element(
+        page.getByText(
+          "Depreciation setup · Financial basis · In service date:",
+          { exact: true },
+        ),
+      )
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByText("Old reference", { exact: true }))
+      .toBeVisible();
+    await expect
+      .element(page.getByText(longReference, { exact: true }))
+      .toBeVisible();
+    expect(activity.scrollWidth).toBeLessThanOrEqual(activity.clientWidth + 1);
+    expect(activity.getBoundingClientRect().right).toBeLessThanOrEqual(width);
+    expect(activity.getBoundingClientRect().height).toBeGreaterThan(
+      collapsedHeight,
+    );
+    const viewLess = page.getByRole("button", {
+      name: "View less",
+      exact: true,
+    });
+    await expect.element(viewLess).toHaveAttribute("aria-expanded", "true");
+    await viewLess.click();
+    await expect.element(viewMore).toHaveAttribute("aria-expanded", "false");
+    await expect
+      .element(page.getByText(longReference, { exact: true }))
+      .not.toBeInTheDocument();
+  },
+);
+
+it.each([1280, 390])(
+  "puts lifecycle details in the depreciation card instead of the header at %ipx",
+  async (width) => {
+    await page.viewport(width, 844);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json([])),
+    );
+    const asset: RegisteredAsset = {
+      ...registeredAsset,
+      depreciation: {
+        status: "depreciation-pending",
+        dueCount: 3,
+        firstDueMonth: "2026-06",
+        lastPostedMonth: "2026-05",
+        nextMonth: "2026-09",
+        mode: "auto",
+        reviewReason: null,
+      },
+    };
+    render(AssetDetail, {
+      data: {
+        asset,
+        accounts,
+        canChange: true,
+        depreciation: { ...depreciationData(), asset },
+      },
+    });
+    const progress = page.getByRole("region", {
+      name: "Posting progress",
+      exact: true,
+    });
+    await expect.element(progress).toBeVisible();
+    const hero = document.querySelector<HTMLElement>(".detail-hero")!;
+    expect(hero.textContent).toContain("Pending posting");
+    expect(hero.textContent).not.toContain("2026-05");
+    expect(hero.textContent).not.toContain("Auto-post monthly");
+    expect(hero.textContent).not.toContain("3 months");
+    const section = progress.element() as HTMLElement;
+    expect(
+      section.closest("section.detail-card")?.getAttribute("aria-labelledby"),
+    ).toBe("depreciation-title");
+    expect(section.textContent).toContain("Last posted");
+    expect(section.textContent).toContain("2026-05");
+    expect(section.textContent).toContain("3 months · from 2026-06");
+    expect(section.textContent).toContain("2026-09");
+    expect(section.textContent).toContain("Auto-post monthly");
+    expect(section.scrollWidth).toBeLessThanOrEqual(section.clientWidth + 1);
+    expect(section.getBoundingClientRect().right).toBeLessThanOrEqual(width);
+  },
+);

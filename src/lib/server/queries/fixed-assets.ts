@@ -1,4 +1,5 @@
 import { isAccumulatedDepreciationAccount } from "$lib/depreciation.js";
+import { assetDepreciationOverviews } from "./depreciation-overview.js";
 import { depreciationTotal } from "./depreciation.js";
 import { asc, eq, lte, sql, or, inArray } from "drizzle-orm";
 import {
@@ -412,9 +413,19 @@ export function fixedAssetRegister(db: LedgerDb, asAt: string) {
         differenceMinor: safeSum([ledgerMinor, -registerMinor]),
       };
     });
+  const overviews = assetDepreciationOverviews(
+    db,
+    included,
+    chart,
+    asAt,
+    depreciationReconciliation,
+  );
   return {
     asAt,
-    assets: included,
+    assets: included.map((asset) => ({
+      ...asset,
+      depreciation: overviews.get(asset.id)!,
+    })),
     unregistered,
     costReconciliation,
     depreciationReconciliation,

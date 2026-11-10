@@ -4,8 +4,8 @@
   import { ChevronRight } from "@lucide/svelte";
   import DetailPage from "$lib/components/ui/DetailPage.svelte";
   import AuditTrail from "$lib/components/ui/AuditTrail.svelte";
-  import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
-  import { assetNumber, assetReviewStatus } from "$lib/fixed-assets.js";
+  import AssetStatus from "./AssetStatus.svelte";
+  import { assetNumber } from "$lib/fixed-assets.js";
   import { formatDate, formatMinor } from "$lib/format.js";
   import { createResourceStream } from "$lib/sse.js";
   import AssetForm from "./AssetForm.svelte";
@@ -54,14 +54,14 @@
     <h1 class="detail-hero-title">{asset.name}</h1>
     <div class="detail-hero-figure">
       <span class="detail-hero-amount">{formatMinor(asset.costMinor)}</span
-      ><StatusBadge status={assetReviewStatus(asset)} />
+      ><AssetStatus overview={asset.depreciation} />
     </div>
     <p class="detail-hero-note">
-      Recorded cost · Acquired {formatDate(
+      Original cost · Purchased {formatDate(
         asset.acquisitionDate,
       )}{asset.inServiceDate
         ? ` · In service ${formatDate(asset.inServiceDate)}`
-        : " · In-service date not recorded"}
+        : ""}
     </p>
   {/snippet}
   {#snippet main()}
@@ -156,7 +156,9 @@
             >
           </div>
           <div class="detail-row">
-            <span class="detail-key">Depreciation</span><span class="detail-val"
+            <span class="detail-key"
+              >Accumulated depreciation brought forward</span
+            ><span class="detail-val"
               >{formatMinor(asset.broughtForwardDepMinor)}</span
             >
           </div>

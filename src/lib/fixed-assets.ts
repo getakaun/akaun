@@ -72,13 +72,15 @@ export type AssetSourceSnapshot = {
   amountMinor: number;
 };
 
-export const ASSET_TYPE_SUGGESTIONS = [
+export const ASSET_TYPE_OPTIONS = [
   "Computer equipment",
   "Office equipment",
   "Furniture",
+  "Fixtures and fittings",
   "Motor vehicle",
   "Machinery",
   "Buildings",
+  "Land",
   "Other",
 ];
 

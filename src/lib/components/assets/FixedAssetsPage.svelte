@@ -6,12 +6,12 @@
   import { Package, Plus, Search, X } from "@lucide/svelte";
   import { createResourceStream } from "$lib/sse.js";
   import { formatDate, formatMinor } from "$lib/format.js";
-  import { assetNumber, assetReviewStatus } from "$lib/fixed-assets.js";
+  import { assetNumber } from "$lib/fixed-assets.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import DatePicker from "$lib/components/ui/date-picker/DatePicker.svelte";
   import EmptyState from "$lib/components/ui/EmptyState.svelte";
-  import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
+  import AssetStatus from "./AssetStatus.svelte";
   import AssetSheet from "./AssetSheet.svelte";
   import DepreciationMonth from "./DepreciationMonth.svelte";
   import AssetReconciliation from "./AssetReconciliation.svelte";
@@ -200,10 +200,12 @@
           <table class="exp-table">
             <thead
               ><tr
-                ><th>Asset</th><th>Type</th><th>Cost account</th><th
-                  class="ta-right">Cost</th
-                ><th class="ta-right">Net book value</th><th>Acquired</th><th
-                  >Review</th
+                ><th scope="col">Asset</th><th scope="col">Type</th><th
+                  scope="col">Asset cost account</th
+                ><th scope="col" class="ta-right">Original cost</th><th
+                  scope="col"
+                  class="ta-right">Net book value</th
+                ><th scope="col">Purchase date</th><th scope="col">Status</th
                 ></tr
               ></thead
             ><tbody>
@@ -224,13 +226,13 @@
                         class="cell-itemnum"
                         >{assetNumber(asset.id)} · {asset.inServiceDate
                           ? `In service ${formatDate(asset.inServiceDate)}`
-                          : "In-service date not recorded"}</span
+                          : `Purchased ${formatDate(asset.acquisitionDate)}`}</span
                       ></a
                     ></td
                   >
                   <td data-label="Type">{asset.assetType}</td><td
-                    data-label="Cost account">{asset.accountName}</td
-                  ><td class="td-amount" data-label="Cost"
+                    data-label="Asset cost account">{asset.accountName}</td
+                  ><td class="td-amount" data-label="Original cost"
                     ><span class="amount-num"
                       >{formatMinor(asset.costMinor)}</span
                     ></td
@@ -238,10 +240,15 @@
                     >{formatMinor(asset.netBookValueMinor)}</td
                   ><td class="row-break"></td><td
                     class="td-date"
-                    data-label="Acquired"
+                    data-label="Purchase date"
                     >{formatDate(asset.acquisitionDate)}</td
-                  ><td data-label="Review"
-                    ><StatusBadge status={assetReviewStatus(asset)} /></td
+                  ><td data-label="Status"
+                    ><a
+                      class="asset-status-link"
+                      href={resolve("/(app)/assets/[id]", {
+                        id: String(asset.id),
+                      })}><AssetStatus overview={asset.depreciation} /></a
+                    ></td
                   >
                 </tr>{/each}
               {#if assets.length === 0}<tr class="empty-row"
@@ -279,6 +286,11 @@
             )}</span
           >
         </div>
+        <p class="field-hint">
+          Status uses the current depreciation setup, with posting progress
+          through the selected As at date. Open an asset to set up depreciation
+          or review issues.
+        </p>
       {:else if tab === "unregistered"}
         <div class="result-meta">
           <span
@@ -290,9 +302,11 @@
           <table class="exp-table">
             <thead
               ><tr
-                ><th>Purchase</th><th>Account</th><th>Date</th><th
-                  class="ta-right">Cost</th
-                ><th></th></tr
+                ><th scope="col">Purchase</th><th scope="col">Account</th><th
+                  scope="col">Date</th
+                ><th scope="col" class="ta-right">Original cost</th><th
+                  scope="col"
+                ></th></tr
               ></thead
             ><tbody>
               {#each purchases as line (line.movementId)}<tr class="exp-row"
@@ -309,7 +323,7 @@
                   ><td data-label="Account">{line.accountName}</td><td
                     class="td-date"
                     data-label="Date">{formatDate(line.recordDate)}</td
-                  ><td class="td-amount" data-label="Cost"
+                  ><td class="td-amount" data-label="Original cost"
                     ><span class="amount-num"
                       >{formatMinor(line.amountMinor)}</span
                     ></td
@@ -349,6 +363,15 @@
   />{/if}
 
 <style>
+  .asset-status-link {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+    min-width: 160px;
+  }
+  .asset-status-link:hover {
+    text-decoration: underline;
+  }
   .asset-search {
     position: relative;
     display: flex;

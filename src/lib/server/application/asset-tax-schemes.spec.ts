@@ -208,6 +208,50 @@ beforeEach(() => {
 });
 afterEach(() => raw.close());
 describe("versioned custom asset tax schemes", () => {
+  it("saves inline asset calculations and claims atomically without a mandatory reference", async () => {
+    const { editorRows, editorUses, editorPreview, editorSchemes } =
+      await import("$lib/components/tax-worksheets/capital-editor.js");
+    const s = value(saveAssetTaxScheme(ctx(), schemePayload()));
+    let d = prepare(create());
+    const forms = editorRows(d.capital.schedule!, d.worksheet);
+    Object.assign(forms[0].form, {
+      schemeId: String(s.id),
+      treatment: "claim",
+      firstYear: true,
+    });
+    const uses = editorUses(d.capital.schedule!);
+    uses.push({
+      source: "Main business",
+      origin: "2025",
+      balance: "0.00",
+      used: "3000.00",
+    });
+    const staged = editorPreview(
+      d.capital.schedule!,
+      forms,
+      editorSchemes(value(readAssetTaxSchemes(ctx()))),
+      uses,
+      "",
+      d.worksheet,
+    );
+    expect(staged.errors).toEqual([]);
+    const before = financial();
+    const payload = command(d, "save", { input: staged.input });
+    d = value(changeCapitalSchedule(ctx(), d.worksheet.id, payload));
+    expect(d.capital.totals).toMatchObject({
+      allowanceMinor: 300000,
+      usedMinor: 300000,
+    });
+    expect(d.capital.totals?.problems).toEqual([]);
+    expect(
+      value(changeCapitalSchedule(ctx(), d.worksheet.id, payload)).revision
+        .version,
+    ).toBe(d.revision.version);
+    expect(financial()).toBe(before);
+    const final = finalise(d);
+    expect(final.revision.status).toBe("finalised");
+  });
+
   it("creates and applies a scheme without supporting fields, retaining old definitions on remark edits", () => {
     const simple = { ...definition };
     delete simple.reference;

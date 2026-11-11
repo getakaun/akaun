@@ -1,294 +1,235 @@
 <script lang="ts">
-  import { taxJurisdictionLabel } from "$lib/asset-tax-scheme.js";
+  import { untrack } from "svelte";
   import { resolve } from "$app/paths";
   import { Button } from "$lib/components/ui/button/index.js";
+  import { Checkbox } from "$lib/components/ui/checkbox/index.js";
+  import Disclosure from "$lib/components/ui/Disclosure.svelte";
   import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
-  import { formatTaxMinor } from "$lib/tax-worksheet.js";
-  import { useIsMobile } from "$lib/hooks/useIsMobile.svelte.js";
+  import TaxJurisdictionField from "./TaxJurisdictionField.svelte";
+  import CapitalInlineEditor from "./CapitalInlineEditor.svelte";
   import CapitalAllowanceSheet, {
     type CapitalSheetMode,
   } from "./CapitalAllowanceSheet.svelte";
+  import { taxJurisdictionLabel } from "$lib/asset-tax-scheme.js";
   import type { TaxWorksheetDetail as Detail } from "$lib/server/queries/tax-worksheets.js";
-  import "$lib/components/reports/reports.css";
   let {
     detail,
     editable,
     canReadAssets,
+    dirty = $bindable(false),
+    busy = $bindable(false),
     onsaved,
   }: {
     detail: Detail;
     editable: boolean;
     canReadAssets: boolean;
-    onsaved: (detail: Detail) => Promise<void>;
+    dirty?: boolean;
+    busy?: boolean;
+    onsaved: (d: Detail) => Promise<void>;
   } = $props();
   const c = $derived(detail.capital);
-  const screen = useIsMobile();
-  const money = (n: number | null | undefined) =>
-    n == null
-      ? "Needs review"
-      : formatTaxMinor(
-          n,
-          c.schedule?.currency ?? detail.revision.snapshot.currency,
-        );
-  const jurisdiction = $derived(
-    c.schedule?.jurisdiction ??
-      (c.schedule?.calculationVersion === 1 ? "MY" : null),
-  );
   let mode = $state<CapitalSheetMode | null>(null);
-  let assetId = $state<number | null>(null);
+  let editorBusy = $state(false),
+    setupBusy = $state(false),
+    error = $state("");
+  let jurisdiction = $state<string | null>(
+    untrack(() => c.schedule?.jurisdiction ?? c.rollover?.jurisdiction ?? null),
+  );
+  let usePrevious = $state(untrack(() => !c.schedule && !!c.rollover));
+  let replaceManual = $state(false);
+  const overlaps = $derived(
+    detail.adjustments.filter(
+      (a) =>
+        a.withdrawnAt === null &&
+        ["capital_allowance", "allowance_brought_forward"].includes(a.kind),
+    ),
+  );
   const stale = $derived(
     c.assetsStale || c.predecessorStale || c.currencyMismatch,
   );
-  function openRow(id: number) {
-    assetId = id;
-    mode = editable && c.active && !stale ? "row" : "view";
+  $effect(() => {
+    busy = editorBusy || setupBusy;
+  });
+  let retryPayload = "",
+    retryKey = "";
+  async function setup(event: SubmitEvent) {
+    event.preventDefault();
+    if (setupBusy || !editable) return;
+    const payload = {
+      action: usePrevious && c.rollover ? "rollover" : "prepare",
+      expectedVersion: detail.revision.version,
+      liveAssetHash: c.liveAssetHash,
+      reason: "Set up inline asset deductions",
+      replaceManual,
+      ...(usePrevious && c.rollover
+        ? { rolloverHash: c.rolloverHash }
+        : { jurisdiction }),
+    };
+    const encoded = JSON.stringify(payload);
+    if (encoded !== retryPayload) {
+      retryPayload = encoded;
+      retryKey = crypto.randomUUID();
+    }
+    setupBusy = true;
+    error = "";
+    try {
+      const response = await fetch(
+        `/api/tax/${detail.worksheet.id}/capital-allowances`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, requestKey: retryKey }),
+        },
+      );
+      const result = await response.json();
+      if (!response.ok) {
+        error = result.error ?? "Could not set up asset deductions.";
+        return;
+      }
+      await onsaved(result);
+    } catch {
+      error =
+        "The result could not be confirmed. Retry to check the same request.";
+    } finally {
+      setupBusy = false;
+    }
   }
 </script>
 
 <section class="detail-card" aria-labelledby="capital-allowances-title">
-  <div class="detail-card-head tax-card-head">
+  <div class="detail-card-head">
     <h2 id="capital-allowances-title" class="detail-card-title">
       Asset tax deductions
     </h2>
-    {#if c.active && editable}<button
-        type="button"
-        class="detail-card-action"
-        disabled={stale}
-        onclick={() => (mode = "settings")}>Deductions used and evidence</button
-      >{/if}
   </div>
   <div class="tax-stack">
-    {#if !c.active}<p class="hint">
-        Manual allowance totals are active. Prepare an asset-linked schedule to
-        retain reviewed tax workings alongside this worksheet.
-      </p>{:else}<p class="hint">
-        Book depreciation stays separate. Review each asset, confirm allowance
-        use, then review the annual worksheet once.
+    {#if !c.active && editable}<form onsubmit={setup} class="tax-stack">
+        <p class="field-hint">
+          Set up asset deductions to review assets and claim amounts together.
+        </p>
+        {#if c.rollover}<div class="tax-filter">
+            <Checkbox
+              id="capital-bring-forward"
+              bind:checked={usePrevious}
+              disabled={setupBusy}
+            /><label for="capital-bring-forward"
+              >Bring forward finalised YA {c.rollover.predecessor?.ya} balances</label
+            >
+          </div>{/if}
+        {#if usePrevious && c.rollover}<p class="field-hint">
+            {c.rollover.rows.length} assets · {taxJurisdictionLabel(
+              c.rollover.jurisdiction,
+            )} · {c.rollover.currency}. Opening tax balances and unused
+            allowances will be brought forward for review.
+          </p>{:else}<TaxJurisdictionField
+            bind:value={jurisdiction}
+            disabled={setupBusy}
+          />{/if}
+        {#if overlaps.length}<div class="tax-filter">
+            <Checkbox
+              id="capital-replace-manual"
+              bind:checked={replaceManual}
+              disabled={setupBusy}
+            /><label for="capital-replace-manual"
+              >Replace {overlaps.length} existing manual allowance entries (history
+              retained)</label
+            >
+          </div>{/if}
+        <div>
+          <Button
+            type="submit"
+            disabled={setupBusy ||
+              (overlaps.length > 0 && !replaceManual) ||
+              (!(usePrevious && c.rollover) && !jurisdiction)}
+            >{setupBusy ? "Setting up…" : "Set up asset deductions"}</Button
+          >
+        </div>
+      </form>{/if}
+    {#if c.active}<p class="field-hint">
+        {taxJurisdictionLabel(
+          c.schedule?.jurisdiction ??
+            (c.schedule?.calculationVersion === 1 ? "MY" : null),
+        )} · {c.schedule?.currency} · Schemes are custom calculation rules.
       </p>{/if}
-    <div class="tax-actions">
-      <a class="detail-card-action" href={resolve("/(app)/settings/tax")}
-        >Scheme settings</a
-      >
-    </div>
-    {#if c.schedule}<p class="field-hint">
-        Tax jurisdiction: {taxJurisdictionLabel(jurisdiction)} · Book currency: {detail
-          .revision.snapshot.currency}. Custom schemes are not
-        jurisdiction-verified.
+    {#if c.active && editable && !c.schemes.length}<p class="field-hint">
+        No schemes configured. <a
+          class="detail-card-action"
+          href={resolve("/(app)/settings/tax")}>Create a scheme</a
+        > to calculate allowances.
       </p>{/if}
-    {#if editable}<div class="tax-actions">
-        {#if !c.active}<Button
-            size="sm"
-            variant="outline"
-            onclick={() => (mode = "prepare")}
-            >{c.schedule
-              ? "Use retained schedule"
-              : "Prepare tax schedule"}</Button
-          >{/if}{#if c.rollover}<button
-            type="button"
-            class="detail-card-action"
-            onclick={() => (mode = "rollover")}
-            >Bring forward YA {c.rollover.predecessor?.ya}</button
-          >{/if}{#if c.schedule && c.assetsStale}<Button
-            size="sm"
-            variant="outline"
-            onclick={() => (mode = "refresh-assets")}
-            >Review updated asset evidence</Button
-          >{/if}{#if c.active}<button
-            type="button"
-            class="detail-card-action"
-            onclick={() => (mode = "manual")}>Use manual totals</button
-          >{/if}
-      </div>{/if}
+    {#if c.active && editable && c.schedule?.calculationVersion === 2 && !c.schedule.jurisdiction}<Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={dirty || busy}
+        onclick={() => (mode = "jurisdiction")}>Select tax jurisdiction</Button
+      >{/if}
     {#if c.active && stale}<ReportNotes
         notes={[
           c.currencyMismatch
-            ? `The retained schedule uses ${c.schedule?.currency}, which differs from this worksheet. It is excluded from the annual result. Use manual totals or a confirmed matching-currency rollover; amounts are not converted here.`
+            ? "The schedule currency differs from the worksheet. Review a matching-currency rollover or switch to manual totals; amounts are not converted."
             : c.assetsStale
-              ? "Asset register or purchase evidence changed. Refresh the asset evidence and review affected workings."
-              : "The preceding tax year was amended. Bring forward its latest finalised schedule and review again. Finalised figures here remain fixed.",
+              ? "Asset records changed. Use Review updated assets below, then check the affected calculations."
+              : "The preceding tax year changed. Bring forward its updated balances and review the calculations.",
         ]}
         firstIsWarning
       />{/if}
-    {#if c.schedule && c.totals}
-      {#if !c.active}<p class="field-hint">
-          The schedule below is retained for reference and is excluded from the
-          current tax result.
-        </p>{/if}
-      <dl class="detail-list tax-summary">
-        <div class="detail-row">
-          <dt class="detail-key">Current-year allowances available</dt>
-          <dd class="detail-val tax-amount">
-            {money(c.totals.allowanceMinor)}
-          </dd>
-        </div>
-        <div class="detail-row">
-          <dt class="detail-key">Allowances used this year (all origins)</dt>
-          <dd class="detail-val tax-amount">{money(c.totals.usedMinor)}</dd>
-        </div>
-        <div class="detail-row">
-          <dt class="detail-key">Unabsorbed allowances carried forward</dt>
-          <dd class="detail-val tax-amount">
-            {money(c.totals.carryForwardMinor)}
-          </dd>
-        </div>
-        {#if c.totals.balancingChargeMinor}<div class="detail-row">
-            <dt class="detail-key">Balancing charges</dt>
-            <dd class="detail-val tax-amount">
-              {money(c.totals.balancingChargeMinor)}
-            </dd>
-          </div>{/if}
-      </dl>
-      {#if c.active && c.totals.allowanceMinor > 0 && c.totals.usedMinor === 0}<ReportNotes
-          notes={[
-            "Deductions are available, but none are selected for use. Open Deductions used and evidence, confirm the amount used, and save to change the annual tax result.",
-          ]}
-        />{/if}
-      {#if c.totals.rows.length}
-        {#if screen.current}{#each c.totals.rows as row (row.assetId)}<article
-              class="tax-item tax-stack"
-            >
-              <div class="tax-item-head">
-                <strong>{row.asset.name}</strong><button
-                  type="button"
-                  class="detail-card-action"
-                  onclick={() => openRow(row.assetId)}
-                  >{editable && c.active && !stale
-                    ? "Open workings"
-                    : "View workings"}</button
-                >
-              </div>
-              <dl class="detail-list tax-summary">
-                <div class="detail-row">
-                  <dt class="detail-key">Opening tax residual</dt>
-                  <dd class="detail-val tax-amount">
-                    {row.treatment === "claim"
-                      ? money(row.openingResidualMinor)
-                      : "—"}
-                  </dd>
-                </div>
-                <div class="detail-row">
-                  <dt class="detail-key">First-year / regular</dt>
-                  <dd class="detail-val tax-amount">
-                    {row.treatment === "claim"
-                      ? money(row.allowanceMinor)
-                      : "—"}
-                  </dd>
-                </div>
-                <div class="detail-row">
-                  <dt class="detail-key">Closing tax residual</dt>
-                  <dd class="detail-val tax-amount">
-                    {row.treatment === "claim"
-                      ? money(row.closingResidualMinor)
-                      : "—"}
-                  </dd>
-                </div>
-              </dl>
-              <p class="field-hint">
-                {row.issues.length
-                  ? "Needs review"
-                  : row.treatment === "exclude"
-                    ? "Excluded"
-                    : row.disposal
-                      ? "Tax disposed · book accounting separate"
-                      : "Complete"}
-              </p>
-            </article>{/each}
-        {:else}<div class="tax-table-wrap">
-            <table class="rep-table">
-              <thead
-                ><tr
-                  ><th>Asset</th><th class="rep-amount">Opening tax residual</th
-                  ><th class="rep-amount">First-year / regular</th><th
-                    class="rep-amount">Closing tax residual</th
-                  ><th>Status</th></tr
-                ></thead
-              ><tbody
-                >{#each c.totals.rows as row (row.assetId)}<tr
-                    ><td
-                      ><button
-                        type="button"
-                        class="detail-card-action"
-                        onclick={() => openRow(row.assetId)}
-                        >{row.asset.name}</button
-                      >{#if canReadAssets}<p class="field-hint">
-                          <a
-                            class="tax-record-link"
-                            href={resolve("/(app)/assets/[id]", {
-                              id: String(row.assetId),
-                            })}>Open asset</a
-                          >
-                        </p>{/if}</td
-                    ><td class="rep-amount"
-                      >{row.treatment === "claim"
-                        ? money(row.openingResidualMinor)
-                        : "—"}</td
-                    ><td class="rep-amount"
-                      >{row.treatment === "claim"
-                        ? money(row.allowanceMinor)
-                        : "—"}</td
-                    ><td class="rep-amount"
-                      >{row.treatment === "claim"
-                        ? money(row.closingResidualMinor)
-                        : "—"}</td
-                    ><td
-                      >{row.issues.length
-                        ? "Needs review"
-                        : row.treatment === "exclude"
-                          ? "Excluded"
-                          : row.disposal
-                            ? "Tax disposed"
-                            : "Complete"}</td
-                    ></tr
-                  >{/each}</tbody
-              >
-            </table>
-          </div>{/if}
-      {:else}<p class="card-empty">
-          No registered assets for this period. You can retain reviewed
-          brought-forward allowances under Allowance use and evidence.
-        </p>{/if}
-      {#if c.active && c.totals.problems.length}<details class="tax-disclosure">
-          <summary>Needs review ({c.totals.problems.length})</summary>
-          <ul class="tax-support-list tax-disclosure-body">
-            {#each c.totals.problems as problem, index (index)}<li>
-                {problem}
-              </li>{/each}
-          </ul>
-        </details>{/if}
-      {#if c.schedule.evidence}<p class="field-hint">
-          Working paper: {c.schedule.evidence}
-        </p>{/if}
-      {#if c.totals.groups.length}<details class="tax-disclosure">
-          <summary>Utilisation by business source</summary>
-          <div class="tax-disclosure-body">
-            {#each c.totals.groups as group (group.businessSource)}<div
-                class="tax-item"
-              >
-                <strong>{group.businessSource || "Unconfirmed source"}</strong>
-                <p class="field-hint">
-                  Brought forward {money(group.broughtForwardMinor)} · Current year
-                  {money(group.availableMinor)} · Used {money(group.usedMinor)} ·
-                  Unabsorbed {money(group.carryForwardMinor)}
-                </p>
-              </div>{/each}
-          </div>
-        </details>{/if}
-      {#if c.totals.rows.some((r) => r.disposal)}<ReportNotes
-          notes={[
-            "Tax disposals do not remove assets from the balance sheet or stop book depreciation. Complete the separate accounting work with your accountant.",
-          ]}
-          firstIsWarning
-        />{/if}
-    {/if}
+    {#if error}<ReportNotes notes={[error]} firstIsWarning />{/if}
+    {#if c.schedule}<CapitalInlineEditor
+        {detail}
+        editable={editable && c.active && !stale}
+        bind:dirty
+        bind:busy={editorBusy}
+        {onsaved}
+      />{/if}
+    <Disclosure label="More options">
+      <div class="tax-actions">
+        <a class="detail-card-action" href={resolve("/(app)/settings/tax")}
+          >Manage schemes</a
+        >
+        {#if canReadAssets}<a
+            class="detail-card-action"
+            href={resolve("/(app)/assets")}>Asset register</a
+          >{/if}
+        {#if editable}
+          {#if c.schedule && c.assetsStale}<Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={dirty || busy}
+              onclick={() => (mode = "refresh-assets")}
+              >Review updated assets</Button
+            >{/if}
+          {#if c.active && c.rollover}<Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={dirty || busy}
+              onclick={() => (mode = "rollover")}
+              >Review prior-year balances</Button
+            >{/if}
+          {#if c.active}<Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={dirty || busy}
+              onclick={() => (mode = "jurisdiction")}
+              >Change jurisdiction</Button
+            ><Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={dirty || busy}
+              onclick={() => (mode = "manual")}>Use manual totals</Button
+            >{/if}
+        {/if}
+      </div>
+    </Disclosure>
   </div>
 </section>
 {#if mode}<CapitalAllowanceSheet
     {mode}
     {detail}
-    {assetId}
-    onclose={() => {
-      mode = null;
-      assetId = null;
-    }}
+    onclose={() => (mode = null)}
     {onsaved}
   />{/if}

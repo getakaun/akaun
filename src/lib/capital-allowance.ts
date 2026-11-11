@@ -145,7 +145,10 @@ export function capitalTotals(
         issues.push("Resolve the asset register review first.");
       if (!row.taxClass || !row.businessSource)
         issues.push("Confirm the tax class and business source.");
-      if (!(row.ruleReference || schedule.evidence))
+      if (
+        schedule.calculationVersion === 1 &&
+        !(row.ruleReference || schedule.evidence)
+      )
         issues.push("Add a source or working-paper reference.");
       if (row.schemeId) {
         if (!row.appliedScheme || row.appliedScheme.id !== row.schemeId)
@@ -319,7 +322,7 @@ export function capitalTotals(
       ),
     };
   });
-  if (!schedule.evidence)
+  if (schedule.calculationVersion === 1 && !schedule.evidence)
     problems.push("Add the shared accountant working-paper reference.");
   const allowanceMinor = capitalSum(groups.map((g) => g.availableMinor));
   const usedMinor = capitalSum(groups.map((g) => g.usedMinor));

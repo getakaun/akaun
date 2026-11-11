@@ -41,6 +41,8 @@
   let line = $state<Detail["totals"]["lines"][number] | null>(null);
   let adjustmentId = $state<number | null>(null);
   let saving = $state(false);
+  let capitalDirty = $state(false);
+  let capitalBusy = $state(false);
   let error = $state("");
   let revisionsExpanded = $state(false);
   let confirm = $state<"review" | "finalise" | "resume" | null>(null);
@@ -57,6 +59,7 @@
     confirmOpen = true;
   }
   async function command(action: string) {
+    if (capitalDirty || capitalBusy) return;
     saving = true;
     error = "";
     try {
@@ -205,7 +208,7 @@
               <Button
                 variant="outline"
                 size="sm"
-                disabled={saving}
+                disabled={saving || capitalDirty || capitalBusy}
                 onclick={() => (mode = "refresh")}>Review and refresh</Button
               >
             </div>{/if}
@@ -287,13 +290,15 @@
       currency={r.snapshot.currency}
       canChange={editable}
       canReadRecords={data.canReadRecords}
-      disabled={saving || d.stale}
+      disabled={saving || capitalDirty || capitalBusy || d.stale}
       onchange={correct}
     />
     <CapitalAllowances
       detail={d}
       {editable}
       canReadAssets={data.canReadAssets}
+      bind:dirty={capitalDirty}
+      bind:busy={capitalBusy}
       onsaved={saved}
     />
     <TaxAdjustments
@@ -301,7 +306,7 @@
       lines={t.lines}
       currency={r.snapshot.currency}
       canChange={editable}
-      disabled={saving}
+      disabled={saving || capitalDirty || capitalBusy}
       onadd={() => (mode = "manual")}
       onwithdraw={(id) => {
         adjustmentId = id;
@@ -325,11 +330,16 @@
               ? "Review is recorded. Finalise to lock this revision."
               : "This revision is locked. Create an amendment for further changes."}
         </p>
+        {#if capitalDirty || capitalBusy}<p class="field-hint">
+            Save asset deductions before reviewing or finalising the worksheet.
+          </p>{/if}
         {#if d.isLatest}
           <div class="tax-actions">
             {#if r.status === "draft" && data.canReview}<Button
                 size="sm"
                 disabled={saving ||
+                  capitalDirty ||
+                  capitalBusy ||
                   d.stale ||
                   t.unresolvedCount > 0 ||
                   (d.capital.active &&
@@ -343,6 +353,8 @@
             {#if r.status === "reviewed" && data.canFinalise}<Button
                 size="sm"
                 disabled={saving ||
+                  capitalDirty ||
+                  capitalBusy ||
                   d.stale ||
                   t.unresolvedCount > 0 ||
                   (d.capital.active &&
@@ -356,13 +368,13 @@
             {#if r.status === "reviewed" && data.canUpdate}<button
                 type="button"
                 class="detail-card-action"
-                disabled={saving}
+                disabled={saving || capitalDirty || capitalBusy}
                 onclick={() => ask("resume")}>Return to draft</button
               >{/if}
             {#if r.status === "finalised" && data.canAmend}<Button
                 size="sm"
                 variant="outline"
-                disabled={saving}
+                disabled={saving || capitalDirty || capitalBusy}
                 onclick={() => (mode = "amend")}>Create amendment</Button
               >{/if}
           </div>

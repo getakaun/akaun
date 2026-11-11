@@ -23,6 +23,7 @@
   export type CapitalSheetMode =
     | "row"
     | "view"
+    | "jurisdiction"
     | "settings"
     | "prepare"
     | "rollover"
@@ -128,6 +129,7 @@
   const titles = {
     row: "Asset tax workings",
     view: "Retained asset tax workings",
+    jurisdiction: "Change tax jurisdiction",
     settings: "Deductions used and evidence",
     prepare: initial.capital.schedule
       ? "Use retained asset schedule"
@@ -154,7 +156,12 @@
       payload = {
         action: mode,
         expectedVersion: initial.revision.version,
-        reason: mode === "row" ? "Update asset tax workings" : reason,
+        reason:
+          mode === "row"
+            ? "Update asset tax workings"
+            : mode === "jurisdiction"
+              ? "Change asset tax jurisdiction"
+              : reason,
       };
       if (mode !== "manual")
         payload.liveAssetHash = initial.capital.liveAssetHash;
@@ -163,7 +170,7 @@
       if (mode === "prepare") payload.jurisdiction = jurisdiction;
       if (mode === "rollover")
         payload.rolloverHash = initial.capital.rolloverHash;
-      if (mode === "row" || mode === "settings") {
+      if (mode === "row" || mode === "settings" || mode === "jurisdiction") {
         payload.action = "save";
         const input = structuredClone(initial.capital.schedule!);
         if (mode === "row") {
@@ -171,7 +178,7 @@
           input.rows = input.rows.map((r) =>
             r.assetId === row.assetId ? row : r,
           );
-        } else {
+        } else if (mode === "settings") {
           input.evidence = evidence;
           input.utilisation = uses.map((u) => ({
             businessSource: u.source,
@@ -262,6 +269,12 @@
       {readonly}
       {saving}
     />
+  {:else if mode === "jurisdiction"}
+    <TaxJurisdictionField bind:value={jurisdiction} disabled={saving} />
+    <p class="field-hint">
+      Changing jurisdiction clears scheme selections and returns assets to
+      review. Amounts are not converted.
+    </p>
   {:else if mode === "settings"}
     <CapitalUtilisationFields
       bind:jurisdiction
@@ -365,7 +378,9 @@
         /><label for="ca-replace">Replace these manual allowance entries</label>
       </div>{/if}
   {/if}
-  {#if !readonly && mode !== "row"}<div class="field">
+  {#if !readonly && mode !== "row" && mode !== "jurisdiction"}<div
+      class="field"
+    >
       <label class="field-label" for="ca-reason">Reason for this change</label
       ><Textarea
         id="ca-reason"

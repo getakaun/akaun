@@ -12,5 +12,7 @@ export const load: PageServerLoad = ({ locals }) => {
     schemes: result.value,
     canManage: can(locals, "tax.update"),
     canSeeSettings: can(locals, "settings.read"),
+    canSeeBooks: can(locals, "reports.read"),
+    canManageSettings: can(locals, "settings.manage"),
   };
 };

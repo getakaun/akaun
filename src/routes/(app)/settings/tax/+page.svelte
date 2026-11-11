@@ -9,4 +9,6 @@
   schemes={data.schemes}
   canManage={data.canManage}
   canSeeSettings={data.canSeeSettings}
+  canSeeBooks={data.canSeeBooks}
+  canManageSettings={data.canManageSettings}
 />

@@ -6,6 +6,7 @@
   import { toast } from "svelte-sonner";
   import { Button } from "$lib/components/ui/button/index.js";
   import BackLink from "$lib/components/ui/BackLink.svelte";
+  import SettingsNav from "./SettingsNav.svelte";
   import AssetTaxSchemesSheet from "./AssetTaxSchemesSheet.svelte";
   import {
     assetTaxSchemeRemark,
@@ -17,10 +18,14 @@
     schemes,
     canManage,
     canSeeSettings,
+    canSeeBooks = false,
+    canManageSettings = false,
   }: {
     schemes: AssetTaxSchemeVersion[];
     canManage: boolean;
     canSeeSettings: boolean;
+    canSeeBooks?: boolean;
+    canManageSettings?: boolean;
   } = $props();
   const latest = $derived([
     ...new SvelteMap(schemes.map((s) => [s.familyKey, s])).values(),
@@ -43,78 +48,88 @@
 <div class="screen">
   <header class="topbar">
     <div class="topbar-left">
-      <BackLink
-        href={canSeeSettings
-          ? resolve("/(app)/settings")
-          : resolve("/(app)/tax")}
-        label={canSeeSettings ? "Settings" : "Annual tax"}
-      />
-      <h1 class="page-title">Tax settings</h1>
+      {#if !canSeeSettings}<BackLink
+          href={resolve("/(app)/tax")}
+          label="Annual tax"
+        />{/if}
+      <h1 class="page-title">Settings</h1>
+      <p class="page-sub">Configure your workspace</p>
     </div>
   </header>
-  <div class="set-content">
-    <section class="set-section">
-      <div class="set-section-head scheme-section-head">
-        <div>
-          <h2 class="set-section-title">Asset tax schemes</h2>
-          <p class="set-section-sub">
-            Reusable rates for your annual asset tax workings.
-          </p>
-        </div>
-        {#if canManage}
-          <Button size="sm" onclick={() => open()}
-            ><Plus size={14} />New scheme</Button
-          >
-        {/if}
-      </div>
-      {#if !canManage}<p class="field-hint scheme-notice">
-          Read-only. Tax update permission is required to make changes.
-        </p>{/if}
-      <div class="set-rows">
-        {#if latest.length === 0}
-          <div class="set-row">
-            <p class="set-row-value">
-              No schemes yet. Create a scheme to reuse its rates in annual tax
-              worksheets.
+  <div class="set-layout">
+    <SettingsNav
+      active="tax"
+      {canSeeSettings}
+      {canSeeBooks}
+      {canManageSettings}
+      canReadTax={true}
+    />
+    <div class="set-content">
+      <section class="set-section">
+        <div class="set-section-head scheme-section-head">
+          <div>
+            <h2 class="set-section-title">Asset tax schemes</h2>
+            <p class="set-section-sub">
+              Reusable rates for your annual asset tax workings.
             </p>
           </div>
-        {:else}
-          {#each latest as scheme (scheme.id)}
-            {@const remark = assetTaxSchemeRemark(scheme.definition)}
+          {#if canManage}
+            <Button size="sm" onclick={() => open()}
+              ><Plus size={14} />New scheme</Button
+            >
+          {/if}
+        </div>
+        {#if !canManage}<p class="field-hint scheme-notice">
+            Read-only. Tax update permission is required to make changes.
+          </p>{/if}
+        <div class="set-rows">
+          {#if latest.length === 0}
             <div class="set-row">
-              <div class="scheme-details">
-                <div class="set-row-label">{scheme.definition.name}</div>
-                <p class="set-desc">
-                  {taxJurisdictionLabel(scheme.definition.jurisdiction)} · {scheme
-                    .definition.yearTo === scheme.definition.yearFrom
-                    ? scheme.definition.yearFrom
-                    : `${scheme.definition.yearFrom}–${scheme.definition.yearTo ?? "onwards"}`}
-                </p>
-                <p class="set-desc">
-                  First year {scheme.definition.firstYearRateBps / 100}% ·
-                  Regular {scheme.definition.regularRateBps / 100}%
-                </p>
-                <p class="set-desc">
-                  {scheme.definition.method === "original_cost"
-                    ? "Business-use qualifying cost"
-                    : "Remaining tax residual"}
-                </p>
-                {#if remark}<p class="set-desc scheme-remark">{remark}</p>{/if}
-              </div>
-              {#if canManage}<Button
-                  variant="outline"
-                  size="sm"
-                  onclick={() => open(scheme.familyKey)}
-                  aria-label={`Edit ${scheme.definition.name}`}>Edit</Button
-                >{/if}
+              <p class="set-row-value">
+                No schemes yet. Create a scheme to reuse its rates in annual tax
+                worksheets.
+              </p>
             </div>
-          {/each}
-        {/if}
-      </div>
-      <p class="field-hint scheme-notice">
-        Custom schemes. Confirm the applicable tax rules before use.
-      </p>
-    </section>
+          {:else}
+            {#each latest as scheme (scheme.id)}
+              {@const remark = assetTaxSchemeRemark(scheme.definition)}
+              <div class="set-row">
+                <div class="scheme-details">
+                  <div class="set-row-label">{scheme.definition.name}</div>
+                  <p class="set-desc">
+                    {taxJurisdictionLabel(scheme.definition.jurisdiction)} · {scheme
+                      .definition.yearTo === scheme.definition.yearFrom
+                      ? scheme.definition.yearFrom
+                      : `${scheme.definition.yearFrom}–${scheme.definition.yearTo ?? "onwards"}`}
+                  </p>
+                  <p class="set-desc">
+                    First year {scheme.definition.firstYearRateBps / 100}% ·
+                    Regular {scheme.definition.regularRateBps / 100}%
+                  </p>
+                  <p class="set-desc">
+                    {scheme.definition.method === "original_cost"
+                      ? "Business-use qualifying cost"
+                      : "Remaining tax residual"}
+                  </p>
+                  {#if remark}<p class="set-desc scheme-remark">
+                      {remark}
+                    </p>{/if}
+                </div>
+                {#if canManage}<Button
+                    variant="outline"
+                    size="sm"
+                    onclick={() => open(scheme.familyKey)}
+                    aria-label={`Edit ${scheme.definition.name}`}>Edit</Button
+                  >{/if}
+              </div>
+            {/each}
+          {/if}
+        </div>
+        <p class="field-hint scheme-notice">
+          Custom schemes. Confirm the applicable tax rules before use.
+        </p>
+      </section>
+    </div>
   </div>
 </div>
 {#if editing}<AssetTaxSchemesSheet

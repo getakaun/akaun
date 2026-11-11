@@ -32,6 +32,7 @@ import { schemeSnapshot } from "../queries/asset-tax-schemes.js";
 import {
   createAssetTaxForm,
   assetTaxRowFromForm,
+  assetTaxFirstYearStatus,
 } from "$lib/components/tax-worksheets/asset-tax-form.js";
 import { setSetting, SETTING_KEYS } from "../settings.js";
 import type { AssetTaxSchemeDefinition } from "$lib/asset-tax-scheme.js";
@@ -212,6 +213,130 @@ beforeEach(() => {
 });
 afterEach(() => raw.close());
 describe("versioned custom asset tax schemes", () => {
+  it("previews unlinked assets immediately and confirms all first-year treatments with one save", async () => {
+    const { editorRows, editorPreview, editorSchemes } =
+      await import("$lib/components/tax-worksheets/capital-editor.js");
+    const s = value(saveAssetTaxScheme(ctx(), schemePayload()));
+    const originalAsset = db
+      .select()
+      .from(schema.fixedAssets)
+      .where(eq(schema.fixedAssets.id, assetId))
+      .get()!;
+    const second = value(
+      registerFixedAsset(ctx(), {
+        name: "Printer two",
+        assetType: "Machinery",
+        sourceMovementId: null,
+        acquisitionDate: "2025-06-10",
+        inServiceDate: "2025-06-10",
+        assetAccountId: originalAsset.assetAccountId,
+        costMinor: 229900,
+        openingAsAt: "2025-06-10",
+        openingRecordId: null,
+        documentReference: "Receipt",
+        broughtForwardDepMinor: 0,
+      }),
+    );
+    let d = prepare(create());
+    const forms = editorRows(d.capital.schedule!, d.worksheet);
+    for (const entry of forms)
+      Object.assign(entry.form, { schemeId: String(s.id), treatment: "claim" });
+    const staged = editorPreview(
+      d.capital.schedule!,
+      forms,
+      editorSchemes(d.capital.schemes),
+      [],
+      "",
+      d.worksheet,
+      d.capital.firstYearContexts,
+    );
+    expect(staged.errors).toEqual([]);
+    expect(
+      staged.input.rows.every(
+        (r) =>
+          r.firstYearTreatment?.confirmation === "pending_save" &&
+          r.note === "",
+      ),
+    ).toBe(true);
+    expect(
+      staged.input.rows.find((r) => r.assetId === second.id),
+    ).toMatchObject({ initialMinor: 45980, annualMinor: 22990 });
+    const financialBefore = financial();
+    const noConfirmation = changeCapitalSchedule(
+      ctx(),
+      d.worksheet.id,
+      command(d, "save", { input: staged.input }),
+    );
+    expect(noConfirmation.ok).toBe(false);
+    const payload = command(d, "save", {
+      input: staged.input,
+      confirmFirstYearTreatments: true,
+    });
+    d = value(changeCapitalSchedule(ctx(), d.worksheet.id, payload));
+    expect(
+      d.capital.schedule!.rows.every(
+        (r) =>
+          r.firstYearTreatment?.confirmation === "worksheet_save" &&
+          r.note === "",
+      ),
+    ).toBe(true);
+    expect(d.capital.totals?.problems).toEqual([]);
+    const confirmedRow = d.capital.schedule!.rows.find(
+      (r) => r.assetId === second.id,
+    )!;
+    const savedAsset = d.capital.schedule!.assets.find(
+      (a) => a.assetId === second.id,
+    )!;
+    expect(
+      assetTaxFirstYearStatus(
+        confirmedRow,
+        createAssetTaxForm(
+          confirmedRow,
+          savedAsset,
+          d.worksheet.dateFrom,
+          d.worksheet.dateTo,
+        ),
+        d.worksheet.ya,
+        editorSchemes(d.capital.schemes),
+        {
+          context: d.capital.firstYearContexts[second.id],
+          asset: savedAsset,
+          dateFrom: d.worksheet.dateFrom,
+          dateTo: d.worksheet.dateTo,
+        },
+      ).confirmation,
+    ).toBe("worksheet_save");
+    expect(
+      value(changeCapitalSchedule(ctx(), d.worksheet.id, payload)).revision
+        .version,
+    ).toBe(d.revision.version);
+    // A previously confirmed, unchanged row remains compatible with older callers.
+    d = value(
+      changeCapitalSchedule(
+        ctx(),
+        d.worksheet.id,
+        command(d, "save", {
+          input: {
+            jurisdiction: d.capital.schedule!.jurisdiction,
+            rows: d.capital.schedule!.rows,
+            evidence: "",
+            utilisation: d.capital.schedule!.utilisation,
+          },
+        }),
+      ),
+    );
+    expect(
+      d.capital.schedule!.rows.every(
+        (r) => r.firstYearTreatment?.confirmation === "worksheet_save",
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(db.select().from(schema.auditLog).all())).toContain(
+      "firstYearWorksheetConfirmation",
+    );
+    expect(finalise(d).revision.status).toBe("finalised");
+    expect(financial()).toBe(financialBefore);
+  });
+
   it("automates a linked purchase, retains unused initial allowance history, and refuses a duplicate or stale decision", async () => {
     const { createRecord } = await import("./records.js");
     const { editorRows, editorPreview, editorSchemes } =
@@ -345,7 +470,7 @@ describe("versioned custom asset tax schemes", () => {
     );
     expect(unknownRefused.ok).toBe(false);
     if (!unknownRefused.ok)
-      expect(unknownRefused.reason).toContain("not linked");
+      expect(unknownRefused.reason).toContain("confirm the worksheet");
     const overrideRefused = changeCapitalSchedule(
       ctx(),
       d.worksheet.id,

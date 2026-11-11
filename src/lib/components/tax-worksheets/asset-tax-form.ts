@@ -202,6 +202,7 @@ export function assetTaxRowFromForm(
       firstYear.dateFrom,
       firstYear.dateTo,
       form.note,
+      "preview",
     );
     row.schemeFirstYear = row.firstYearTreatment.included;
   }
@@ -227,16 +228,37 @@ export function assetTaxFirstYearStatus(
   },
 ) {
   try {
-    const row = assetTaxRowFromForm(original, form, year, schemes, firstYear);
+    const unchanged =
+      original.firstYearTreatment &&
+      original.firstYearTreatment.historyHash ===
+        firstYear?.context?.historyHash &&
+      JSON.stringify(form) ===
+        JSON.stringify(
+          createAssetTaxForm(
+            original,
+            firstYear?.asset,
+            firstYear?.dateFrom,
+            firstYear?.dateTo,
+          ),
+        );
+    const row = unchanged
+      ? original
+      : assetTaxRowFromForm(original, form, year, schemes, firstYear);
     return {
       included: row.schemeFirstYear ?? false,
+      confirmation: row.firstYearTreatment?.confirmation,
       reason:
-        row.firstYearTreatment?.reason ??
-        "Using the previously saved first-year treatment.",
+        row.firstYearTreatment?.confirmation === "pending_save"
+          ? "Calculated from this year's qualifying additions. Saving asset deductions confirms the treatment."
+          : row.firstYearTreatment?.confirmation === "worksheet_save"
+            ? "Treatment confirmed when saving asset deductions."
+            : (row.firstYearTreatment?.reason ??
+              "Using the previously saved first-year treatment."),
     };
   } catch (error) {
     return {
       included: null,
+      confirmation: undefined,
       reason:
         error instanceof Error
           ? error.message

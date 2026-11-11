@@ -150,6 +150,7 @@
     error = "";
     const payload = {
       action: "save",
+      confirmFirstYearTreatments: true,
       expectedVersion: initial.revision.version,
       liveAssetHash: initial.capital.liveAssetHash,
       reason: "Review and save inline asset deductions",
@@ -321,12 +322,14 @@
                 />{#if draft.form.treatment === "claim"}<p class="field-hint">
                     {row?.treatment === "claim" && row.firstYearTreatment
                       ? row.firstYearTreatment.included
-                        ? "Initial allowance applied"
+                        ? row.firstYearTreatment.confirmation === "pending_save"
+                          ? "Calculated · confirmed on save"
+                          : "Initial allowance applied"
                         : "Initial allowance not applied"
                       : original.treatment === "claim" &&
                           draft.form.firstYearMode === "retained"
                         ? "Saved first-year treatment"
-                        : "First-year treatment needs confirmation"}
+                        : "Choose a scheme to calculate"}
                   </p>{/if}</td
               >
               <td data-label="Allowance" class="rep-amount"
@@ -409,6 +412,10 @@
       label={`Needs review (${totals.problems.length})`}
       ><ReportNotes notes={totals.problems} firstIsWarning /></Disclosure
     >{/if}
+  {#if editable}<p class="field-hint">
+      Saving confirms the selected schemes, business use and first-year
+      treatment for all included assets.
+    </p>{/if}
   {#if editable}<div class="inline-save">
       <span class="field-hint"
         >{changed

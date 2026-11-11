@@ -82,6 +82,7 @@ export const capitalCommandSchema = z.discriminatedUnion("action", [
   z
     .object({
       action: z.literal("save"),
+      confirmFirstYearTreatments: z.boolean().optional(),
       ...capitalCommandBase,
       liveAssetHash: z.string().length(64),
       input: capitalInputSchema,
@@ -336,16 +337,55 @@ export function changeCapitalSchedule(
               "First-year tax history changed. Refresh the worksheet and review the treatment.",
               "CONFLICT",
             );
-          firstYearTreatment = resolveFirstYear(
-            firstYearTreatment.mode,
-            definition.definition,
-            row,
-            asset,
-            history[row.assetId],
-            worksheet.dateFrom,
-            worksheet.dateTo,
-            row.note,
-          );
+          if (firstYearTreatment.version === 2) {
+            const proposed = resolveFirstYear(
+              firstYearTreatment.mode,
+              definition.definition,
+              row,
+              asset,
+              history[row.assetId],
+              worksheet.dateFrom,
+              worksheet.dateTo,
+              row.note,
+              "preview",
+            );
+            const oldRow = before?.evidence.rows.find(
+              (r) => r.assetId === row.assetId,
+            );
+            const previouslyConfirmed =
+              oldRow?.firstYearTreatment?.confirmation === "worksheet_save" &&
+              capitalHash(oldRow) === capitalHash(row);
+            if (
+              proposed.confirmation === "pending_save" &&
+              !v.confirmFirstYearTreatments &&
+              !previouslyConfirmed
+            )
+              refuse(
+                "Save asset deductions to confirm the worksheet's first-year treatments together.",
+              );
+            firstYearTreatment = resolveFirstYear(
+              firstYearTreatment.mode,
+              definition.definition,
+              row,
+              asset,
+              history[row.assetId],
+              worksheet.dateFrom,
+              worksheet.dateTo,
+              row.note,
+              "worksheet_save",
+            );
+          } else {
+            firstYearTreatment = resolveFirstYear(
+              firstYearTreatment.mode,
+              definition.definition,
+              row,
+              asset,
+              history[row.assetId],
+              worksheet.dateFrom,
+              worksheet.dateTo,
+              row.note,
+            );
+          }
           if (firstYearTreatment.included !== !!row.schemeFirstYear)
             refuse(
               "The first-year treatment does not match the current history. Recalculate the asset.",
@@ -421,6 +461,20 @@ export function changeCapitalSchedule(
           after: { active, evidence: schedule },
         },
         { field: "capitalAllowanceReason", before: null, after: v.reason },
+        ...(v.action === "save" && v.confirmFirstYearTreatments
+          ? [
+              {
+                field: "firstYearWorksheetConfirmation",
+                before: null,
+                after: {
+                  confirmed: true,
+                  assetIds: schedule.rows
+                    .filter((r) => r.treatment === "claim")
+                    .map((r) => r.assetId),
+                },
+              },
+            ]
+          : []),
       ],
       emits,
     );

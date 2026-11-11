@@ -4,7 +4,8 @@ import type { AssetTaxSchemeDefinition } from "./asset-tax-scheme.js";
 export class FirstYearAllowanceError extends Error {}
 export const firstYearTreatmentSchema = z
   .object({
-    version: z.literal(1),
+    version: z.union([z.literal(1), z.literal(2)]),
+    confirmation: z.enum(["pending_save", "worksheet_save"]).optional(),
     mode: z.enum(["auto", "include", "exclude"]),
     included: z.boolean(),
     reason: z.string().max(2000),
@@ -82,21 +83,14 @@ export function firstYearDecision(
       null,
       "Tax history is unavailable. Confirm the first-year treatment.",
     );
-  if (
-    context.records.some(
-      (r) =>
-        (r.jurisdiction !== undefined &&
-          r.jurisdiction !== definition.jurisdiction) ||
-        (context.currentCurrency !== undefined &&
-          r.currency !== context.currentCurrency),
-    )
-  )
-    return decision(
-      null,
-      "Earlier workings use a different tax jurisdiction or currency. Confirm the current qualifying expenditure and treatment.",
-    );
   const prior = context.records.filter(
-    (r) => r.active && r.status === "finalised",
+    (r) =>
+      r.active &&
+      r.status === "finalised" &&
+      (r.jurisdiction === undefined ||
+        r.jurisdiction === definition.jurisdiction) &&
+      (context.currentCurrency === undefined ||
+        r.currency === context.currentCurrency),
   );
   // A recorded initial allowance counts even if its utilisation was zero.
   const covered = prior.find(
@@ -114,6 +108,19 @@ export function firstYearDecision(
       false,
       `Initial allowance for this cost was already recorded in YA ${covered.ya}.`,
       true,
+    );
+  if (
+    context.records.some(
+      (r) =>
+        (r.jurisdiction !== undefined &&
+          r.jurisdiction !== definition.jurisdiction) ||
+        (context.currentCurrency !== undefined &&
+          r.currency !== context.currentCurrency),
+    )
+  )
+    return decision(
+      null,
+      "Earlier workings use a different tax jurisdiction or currency. Confirm the current qualifying expenditure and treatment.",
     );
   if (context.records.some((r) => r.status !== "finalised"))
     return decision(
@@ -163,6 +170,7 @@ export function resolveFirstYear(
   dateFrom: string,
   dateTo: string,
   note: string,
+  confirmation?: "preview" | "worksheet_save",
 ): FirstYearTreatment {
   const automatic = firstYearDecision(
     definition,
@@ -191,7 +199,7 @@ export function resolveFirstYear(
       throw new FirstYearAllowanceError(
         "This scheme and expenditure have no first-year allowance to include.",
       );
-    if (automatic.included !== true && note.trim().length < 10)
+    if (!confirmation && automatic.included !== true && note.trim().length < 10)
       throw new FirstYearAllowanceError(
         "Add a remark explaining why this is eligible, previously unclaimed expenditure (at least 10 characters).",
       );
@@ -199,11 +207,28 @@ export function resolveFirstYear(
     reason =
       automatic.included === true
         ? automatic.reason
-        : `First-year treatment confirmed: ${note.trim()}`;
+        : confirmation
+          ? `First-year inclusion selected for worksheet confirmation. ${automatic.reason}`
+          : `First-year treatment confirmed: ${note.trim()}`;
+  }
+  const needsConfirmation =
+    !!confirmation && (automatic.included === null || mode !== "auto");
+  if (included === null && confirmation) {
+    included =
+      definition.firstYearRateBps > 0 && (basis.additionsMinor ?? 0) > 0;
+    reason = `Calculated from declared this-year qualifying additions. ${automatic.reason}`;
   }
   if (included === null) throw new FirstYearAllowanceError(automatic.reason);
   return {
-    version: 1,
+    version: confirmation ? 2 : 1,
+    ...(needsConfirmation
+      ? {
+          confirmation:
+            confirmation === "worksheet_save"
+              ? ("worksheet_save" as const)
+              : ("pending_save" as const),
+        }
+      : {}),
     mode,
     included,
     reason: reason.slice(0, 2000),

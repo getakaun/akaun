@@ -178,6 +178,7 @@
         payload.rolloverHash = initial.capital.rolloverHash;
       if (mode === "row" || mode === "settings" || mode === "jurisdiction") {
         payload.action = "save";
+        payload.confirmFirstYearTreatments = true;
         const input = structuredClone(initial.capital.schedule!);
         if (mode === "row") {
           const row = rowInput();

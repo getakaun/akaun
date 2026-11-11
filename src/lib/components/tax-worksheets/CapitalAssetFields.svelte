@@ -117,9 +117,12 @@
     readonly
       ? {
           included: selected.schemeFirstYear ?? false,
+          confirmation: selected.firstYearTreatment?.confirmation,
           reason:
-            selected.firstYearTreatment?.reason ??
-            "Using the saved first-year treatment.",
+            selected.firstYearTreatment?.confirmation === "worksheet_save"
+              ? "Treatment confirmed when saving asset deductions."
+              : (selected.firstYearTreatment?.reason ??
+                "Using the saved first-year treatment."),
         }
       : assetTaxFirstYearStatus(selected, draft, year, choices, {
           context: firstYearContext,
@@ -317,22 +320,23 @@
     <div role="status">
       <strong
         >Initial allowance: {firstYearStatus.included === null
-          ? "Needs confirmation"
+          ? "Check inputs"
           : draft.firstYearMode === "retained"
             ? "Saved treatment"
             : firstYearStatus.included
-              ? draft.firstYearMode === "auto"
-                ? "Automatically applied"
-                : "Confirmed"
+              ? firstYearStatus.confirmation === "pending_save"
+                ? "Calculated · confirmed on save"
+                : firstYearStatus.confirmation === "worksheet_save"
+                  ? "Confirmed on save"
+                  : draft.firstYearMode === "auto"
+                    ? "Automatically applied"
+                    : "Included"
               : "Not applied"}</strong
       >
       <p class="field-hint">{firstYearStatus.reason}</p>
     </div>
     {#if !readonly && activeScheme.definition.firstYearRateBps > 0}
-      <Disclosure
-        label="Change first-year treatment"
-        forceOpen={firstYearStatus.included === null}
-      >
+      <Disclosure label="Change first-year treatment">
         <div class="field">
           <label class="field-label" for="first-year-treatment"
             >First-year treatment</label
@@ -348,7 +352,7 @@
               >{draft.firstYearMode === "auto"
                 ? "Automatic"
                 : draft.firstYearMode === "include"
-                  ? "Confirm eligible new expenditure"
+                  ? "Include first-year allowance"
                   : draft.firstYearMode === "exclude"
                     ? "Do not apply"
                     : "Previously saved treatment"}</Select.Trigger
@@ -357,7 +361,7 @@
               <Select.Item value="auto" label="Automatic" />
               <Select.Item
                 value="include"
-                label="Confirm eligible new expenditure"
+                label="Include first-year allowance"
               />
               <Select.Item value="exclude" label="Do not apply" />
               {#if draft.firstYearMode === "retained"}<Select.Item
@@ -368,9 +372,8 @@
             </Select.Content>
           </Select.Root>
           <p class="field-hint">
-            For an exception or incomplete history, explain eligibility and any
-            claims outside Akaun in the Remark below. The same cost cannot
-            receive initial allowance twice.
+            Change this only for an exception. Saving asset deductions confirms
+            the treatment for all assets together.
           </p>
         </div>
       </Disclosure>
@@ -530,21 +533,15 @@
             draft.disposed &&
             !draft.disposalEvidence
           ? "Remark (disposal reference)"
-          : draft.treatment === "claim" && draft.firstYearMode === "include"
-            ? "Remark (explain first-year eligibility)"
-            : "Remark (optional)"}</label
+          : "Remark (optional)"}</label
   >
   <Textarea
     id="ca-note"
     bind:value={draft.note}
     maxlength={2000}
-    minlength={draft.treatment === "claim" && draft.firstYearMode === "include"
-      ? 10
-      : undefined}
     required={draft.treatment === "exclude" ||
       (draft.treatment === "claim" &&
-        (draft.firstYearMode === "include" ||
-          (draft.disposed && !draft.disposalEvidence) ||
+        ((draft.disposed && !draft.disposalEvidence) ||
           Number(draft.residualAdjustment) !== 0))}
     disabled={saving || readonly}
   />

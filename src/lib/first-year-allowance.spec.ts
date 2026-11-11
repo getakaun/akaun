@@ -63,6 +63,79 @@ const resolve = (
   note = "",
 ) => resolveFirstYear(mode, scheme, b, a, c, "2025-01-01", "2025-12-31", note);
 describe("history-aware first-year treatment", () => {
+  it("calculates an unlinked asset before one worksheet-save confirmation without a per-asset remark", () => {
+    const imported = { ...asset, sourceRecordId: null };
+    const preview = resolveFirstYear(
+      "auto",
+      scheme,
+      basis,
+      imported,
+      empty,
+      "2025-01-01",
+      "2025-12-31",
+      "",
+      "preview",
+    );
+    expect(preview).toMatchObject({
+      version: 2,
+      included: true,
+      confirmation: "pending_save",
+    });
+    expect(
+      resolveFirstYear(
+        "auto",
+        scheme,
+        basis,
+        imported,
+        empty,
+        "2025-01-01",
+        "2025-12-31",
+        "",
+        "worksheet_save",
+      ),
+    ).toMatchObject({
+      version: 2,
+      included: true,
+      confirmation: "worksheet_save",
+    });
+  });
+  it("keeps known duplicate protection even if another historical entry has a different jurisdiction", () => {
+    const mixed = {
+      ...empty,
+      records: [earlier, { ...earlier, revisionId: 2, jurisdiction: "GB" }],
+    };
+    expect(decide(asset, mixed)).toMatchObject({
+      included: false,
+      blocked: true,
+    });
+    expect(
+      resolveFirstYear(
+        "auto",
+        scheme,
+        basis,
+        asset,
+        mixed,
+        "2025-01-01",
+        "2025-12-31",
+        "",
+        "preview",
+      ).included,
+    ).toBe(false);
+    expect(() =>
+      resolveFirstYear(
+        "include",
+        scheme,
+        basis,
+        asset,
+        mixed,
+        "2025-01-01",
+        "2025-12-31",
+        "",
+        "worksheet_save",
+      ),
+    ).toThrow("already recorded");
+  });
+
   it("automatically includes a linked new purchase put into use this year", () => {
     expect(decide().included).toBe(true);
     expect(resolve("auto")).toMatchObject({

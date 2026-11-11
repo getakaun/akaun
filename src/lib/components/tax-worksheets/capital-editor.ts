@@ -1,3 +1,4 @@
+import type { FirstYearContext } from "$lib/first-year-allowance.js";
 import {
   capitalTotals,
   capitalInputSchema,
@@ -100,6 +101,7 @@ export function editorPreview(
   uses: EditorUse[],
   remark: string,
   period: EditorPeriod,
+  firstYearContexts?: Record<number, FirstYearContext>,
 ) {
   const errors: string[] = [];
   uses = uses.map((u) => ({ ...u, source: u.source.trim() }));
@@ -120,6 +122,12 @@ export function editorPreview(
     if (
       draft.baseline === JSON.stringify(draft.form) &&
       !(
+        original.firstYearTreatment &&
+        firstYearContexts &&
+        original.firstYearTreatment.historyHash !==
+          firstYearContexts[original.assetId]?.historyHash
+      ) &&
+      !(
         original.schemeId &&
         original.annualMinor === null &&
         !original.schemeOverride
@@ -132,6 +140,16 @@ export function editorPreview(
         { ...draft.form, businessSource: draft.form.businessSource.trim() },
         period.ya,
         schemes,
+        firstYearContexts
+          ? {
+              context: firstYearContexts[original.assetId],
+              asset: schedule.assets.find(
+                (a) => a.assetId === original.assetId,
+              ),
+              dateFrom: period.dateFrom,
+              dateTo: period.dateTo,
+            }
+          : undefined,
       );
     } catch (error) {
       errors.push(

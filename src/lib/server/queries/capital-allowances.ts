@@ -1,5 +1,7 @@
+import { firstYearDecision } from "$lib/first-year-allowance.js";
 import { evidenceHash } from "../tax-evidence.js";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { LedgerRecordKind } from "$lib/enums.js";
 import {
   blankCapitalRow,
   capitalTotals,
@@ -7,10 +9,15 @@ import {
   type CapitalSchedule,
 } from "$lib/capital-allowance.js";
 import {
+  ledgerRecords,
   taxCapitalSchedules,
   taxWorksheetRevisions,
   taxWorksheets,
 } from "../db/schema.js";
+import type {
+  FirstYearContext,
+  FirstYearRecord,
+} from "$lib/first-year-allowance.js";
 import type { LedgerDb } from "../ledger/types.js";
 import { assetTaxSchemeVersions } from "./asset-tax-schemes.js";
 import { fixedAssetRegister } from "./fixed-assets.js";
@@ -161,6 +168,117 @@ export function capitalRollover(
     },
   };
 }
+/** Effective earlier claims and pending amendments, scoped to this book/asset; utilisation is irrelevant. */
+export function firstYearContexts(
+  db: LedgerDb,
+  worksheet: { id: number; ya: number },
+  assets: CapitalAssetEvidence[],
+  currency?: string,
+): Record<number, FirstYearContext> {
+  const sourceIds = [
+    ...new Set(
+      assets.flatMap((a) =>
+        a.sourceRecordId === null ? [] : [a.sourceRecordId],
+      ),
+    ),
+  ];
+  const purchaseIds = new Set(
+    sourceIds.length
+      ? db
+          .select({ id: ledgerRecords.id })
+          .from(ledgerRecords)
+          .where(
+            and(
+              inArray(ledgerRecords.id, sourceIds),
+              eq(ledgerRecords.kind, LedgerRecordKind.Expense),
+            ),
+          )
+          .all()
+          .map((r) => r.id)
+      : [],
+  );
+  const earlier = db
+    .select()
+    .from(taxWorksheets)
+    .all()
+    .filter((w) => w.id !== worksheet.id && w.ya < worksheet.ya);
+  const revisions = db.select().from(taxWorksheetRevisions).all();
+  const schedules = db.select().from(taxCapitalSchedules).all();
+  const latestByWorksheet = new Map<number, (typeof revisions)[number]>();
+  const finalisedByWorksheet = new Map<number, (typeof revisions)[number]>();
+  for (const revision of revisions) {
+    if (
+      (latestByWorksheet.get(revision.worksheetId)?.revision ?? 0) <
+      revision.revision
+    )
+      latestByWorksheet.set(revision.worksheetId, revision);
+    if (
+      revision.status === "finalised" &&
+      (finalisedByWorksheet.get(revision.worksheetId)?.revision ?? 0) <
+        revision.revision
+    )
+      finalisedByWorksheet.set(revision.worksheetId, revision);
+  }
+  const savedByRevision = new Map(schedules.map((s) => [s.revisionId, s]));
+  const recordsByAsset = new Map<number, FirstYearRecord[]>(
+    assets.map((a) => [a.assetId, []]),
+  );
+  for (const item of earlier) {
+    const latest = latestByWorksheet.get(item.id);
+    if (!latest) continue;
+    const finalised = finalisedByWorksheet.get(item.id);
+    // An unfinished amendment does not erase the previously finalised claim.
+    const relevant = [
+      latest,
+      ...(latest.status !== "finalised" && finalised ? [finalised] : []),
+    ];
+    for (const revision of relevant) {
+      const saved = savedByRevision.get(revision.id);
+      if (!saved) continue;
+      for (const row of saved.evidence.rows) {
+        if (row.treatment !== "claim") continue;
+        recordsByAsset.get(row.assetId)?.push({
+          ya: item.ya,
+          jurisdiction:
+            saved.evidence.jurisdiction ??
+            (saved.evidence.calculationVersion === 1 ? "MY" : null),
+          currency: saved.evidence.currency,
+          revisionId: revision.id,
+          status: revision.status,
+          active: saved.active,
+          qualifyingMinor: row.qualifyingMinor,
+          businessUseBps: row.businessUseBps,
+          additionsMinor: row.additionsMinor,
+          initialMinor: row.initialMinor,
+          annualMinor: row.annualMinor,
+        });
+      }
+    }
+  }
+  return Object.fromEntries(
+    assets.map((asset) => {
+      const records = recordsByAsset.get(asset.assetId)!;
+      const purchaseLinked =
+        asset.sourceRecordId !== null && purchaseIds.has(asset.sourceRecordId);
+      records.sort((a, b) => a.ya - b.ya || a.revisionId - b.revisionId);
+      return [
+        asset.assetId,
+        {
+          records,
+          purchaseLinked,
+          currentCurrency: currency,
+          historyHash: capitalHash({
+            assetId: asset.assetId,
+            records,
+            purchaseLinked,
+            currency: currency ?? null,
+          }),
+        },
+      ];
+    }),
+  );
+}
+
 export function capitalDetail(
   db: LedgerDb,
   worksheet: typeof taxWorksheets.$inferSelect,
@@ -184,18 +302,59 @@ export function capitalDetail(
         revision?.snapshot.currency ?? "MYR",
       )
     : null;
+  const contexts = compareLive
+    ? firstYearContexts(db, worksheet, candidates, revision?.snapshot.currency)
+    : {};
+  const totals = saved
+    ? capitalTotals(
+        saved.evidence,
+        worksheet.ya,
+        worksheet.dateFrom,
+        worksheet.dateTo,
+      )
+    : null;
+  if (
+    compareLive &&
+    saved &&
+    totals &&
+    saved.evidence.rows.some(
+      (r) =>
+        r.firstYearTreatment &&
+        r.firstYearTreatment.historyHash !== contexts[r.assetId]?.historyHash,
+    )
+  )
+    totals.problems.push(
+      "First-year allowance history changed. Recheck and save the affected asset treatment.",
+    );
+  if (compareLive && saved && totals && revision?.status !== "finalised") {
+    for (const row of saved.evidence.rows) {
+      if (
+        row.treatment !== "claim" ||
+        !row.appliedScheme ||
+        !(row.initialMinor && row.initialMinor > 0)
+      )
+        continue;
+      if (
+        firstYearDecision(
+          row.appliedScheme.definition,
+          row,
+          saved.evidence.assets.find((a) => a.assetId === row.assetId),
+          contexts[row.assetId],
+          worksheet.dateFrom,
+          worksheet.dateTo,
+        ).blocked
+      )
+        totals.problems.push(
+          "Initial allowance for this asset cost was already recorded in an earlier year. Review its first-year treatment.",
+        );
+    }
+  }
   return {
+    firstYearContexts: contexts,
     schemes: compareLive ? assetTaxSchemeVersions(db) : [],
     active: saved?.active ?? false,
     schedule: saved?.evidence ?? null,
-    totals: saved
-      ? capitalTotals(
-          saved.evidence,
-          worksheet.ya,
-          worksheet.dateFrom,
-          worksheet.dateTo,
-        )
-      : null,
+    totals,
     candidates,
     liveAssetHash: capitalHash(candidates),
     currencyMismatch:

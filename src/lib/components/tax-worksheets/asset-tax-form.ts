@@ -1,3 +1,8 @@
+import {
+  resolveFirstYear,
+  type FirstYearContext,
+  type FirstYearTreatment,
+} from "$lib/first-year-allowance.js";
 import { percentageToBps } from "$lib/expense-tax.js";
 import { taxDecimal, taxMoneyMinor } from "$lib/tax-worksheet.js";
 import {
@@ -29,6 +34,7 @@ export type AssetTaxForm = {
   disposalEvidence: string;
   schemeId: string;
   firstYear: boolean;
+  firstYearMode: FirstYearTreatment["mode"] | "retained";
 };
 export const amountInput = (n: number | null | undefined) =>
   n == null ? "" : taxDecimal(n);
@@ -91,6 +97,12 @@ export function createAssetTaxForm(
     disposalEvidence: row?.disposal?.evidence ?? "",
     schemeId: row?.schemeId ? String(row.schemeId) : "",
     firstYear: row?.schemeFirstYear ?? false,
+    firstYearMode:
+      row?.firstYearTreatment?.mode ??
+      (row?.treatment === "claim" &&
+      !(row.annualMinor === null && row.additionsMinor === 0)
+        ? "retained"
+        : "auto"),
   };
 }
 export function assetTaxRowFromForm(
@@ -98,6 +110,12 @@ export function assetTaxRowFromForm(
   form: AssetTaxForm,
   year: number,
   schemes: AppliedAssetTaxScheme[],
+  firstYear?: {
+    context: FirstYearContext | undefined;
+    asset: CapitalAssetEvidence | undefined;
+    dateFrom: string;
+    dateTo: string;
+  },
 ): CapitalRowInput {
   if (form.treatment !== "claim")
     return {
@@ -109,6 +127,7 @@ export function assetTaxRowFromForm(
       schemeId: null,
       appliedScheme: undefined,
       schemeFirstYear: false,
+      firstYearTreatment: undefined,
       schemeOverride: false,
     };
   const scheme =
@@ -173,14 +192,57 @@ export function assetTaxRowFromForm(
     throw Error(
       "Enter business use between 0 and 100%, with at most two decimal places.",
     );
+  if (firstYear && form.firstYearMode !== "retained") {
+    row.firstYearTreatment = resolveFirstYear(
+      form.firstYearMode,
+      scheme.definition,
+      row,
+      firstYear.asset,
+      firstYear.context,
+      firstYear.dateFrom,
+      firstYear.dateTo,
+      form.note,
+    );
+    row.schemeFirstYear = row.firstYearTreatment.included;
+  }
   row.appliedScheme = scheme;
   const preview = calculateAssetTaxScheme(scheme.definition, {
     ...row,
-    firstYear: form.firstYear,
+    firstYear: row.schemeFirstYear ?? false,
   });
   row.initialMinor = preview?.firstYearMinor ?? null;
   row.annualMinor = preview?.regularMinor ?? null;
   return row;
+}
+export function assetTaxFirstYearStatus(
+  original: CapitalRowInput,
+  form: AssetTaxForm,
+  year: number,
+  schemes: AppliedAssetTaxScheme[],
+  firstYear?: {
+    context: FirstYearContext | undefined;
+    asset: CapitalAssetEvidence | undefined;
+    dateFrom: string;
+    dateTo: string;
+  },
+) {
+  try {
+    const row = assetTaxRowFromForm(original, form, year, schemes, firstYear);
+    return {
+      included: row.schemeFirstYear ?? false,
+      reason:
+        row.firstYearTreatment?.reason ??
+        "Using the previously saved first-year treatment.",
+    };
+  } catch (error) {
+    return {
+      included: null,
+      reason:
+        error instanceof Error
+          ? error.message
+          : "Confirm the first-year treatment.",
+    };
+  }
 }
 export type CapitalUseForm = {
   source: string;

@@ -58,6 +58,8 @@
   const schemes = $derived(editorSchemes(initial.capital.schemes));
   const stale = $derived(
     detail.revision.version !== initial.revision.version ||
+      JSON.stringify(detail.capital.firstYearContexts) !==
+        JSON.stringify(initial.capital.firstYearContexts) ||
       detail.capital.assetsStale ||
       detail.capital.predecessorStale ||
       detail.capital.currencyMismatch ||
@@ -109,6 +111,7 @@
           uses,
           remark,
           initial.worksheet,
+          initial.capital.firstYearContexts,
         ),
         error: "",
       };
@@ -128,26 +131,11 @@
   );
   function selectScheme(index: number, id: string) {
     const draft = rows[index];
-    const wasPending =
-      draft.form.treatment === "pending" ||
-      (!draft.form.schemeId &&
-        initial.capital.schedule!.rows.find((r) => r.assetId === draft.assetId)
-          ?.treatment === "pending");
     draft.form.schemeId = id;
     draft.form.treatment = "claim";
-    if (wasPending) {
-      const asset = initial.capital.schedule!.assets.find(
-        (a) => a.assetId === draft.assetId,
-      );
-      const scheme = schemes.find((s) => String(s.id) === id);
-      draft.form.firstYear =
-        draft.form.basisMode === "new" &&
-        !!asset?.inServiceDate &&
-        asset.inServiceDate >= initial.worksheet.dateFrom &&
-        asset.inServiceDate <= initial.worksheet.dateTo &&
-        !!scheme?.definition.firstYearRateBps;
-    }
+    draft.form.firstYearMode = "auto";
   }
+
   let retryKey = "",
     retryPayload = "";
   async function save(event: SubmitEvent) {
@@ -228,6 +216,12 @@
   {#if stale && changed}<ReportNotes
       notes={[
         "This worksheet changed while you were editing. Your inputs are kept. Discard them to load the latest worksheet before saving.",
+      ]}
+      firstIsWarning
+    />{/if}
+  {#if initial.capital.totals?.problems.some( (p) => p.includes("First-year allowance history changed"), )}<ReportNotes
+      notes={[
+        "Earlier tax history changed. Review the first-year treatment below and save asset deductions again before reviewing the worksheet.",
       ]}
       firstIsWarning
     />{/if}
@@ -324,10 +318,15 @@
                   inputmode="decimal"
                   disabled={!canEdit || draft.form.treatment === "exclude"}
                   class="business-use-input"
-                />{#if draft.form.firstYear && draft.form.treatment === "claim"}<p
-                    class="field-hint"
-                  >
-                    Includes first-year allowance · change in details
+                />{#if draft.form.treatment === "claim"}<p class="field-hint">
+                    {row?.treatment === "claim" && row.firstYearTreatment
+                      ? row.firstYearTreatment.included
+                        ? "Initial allowance applied"
+                        : "Initial allowance not applied"
+                      : original.treatment === "claim" &&
+                          draft.form.firstYearMode === "retained"
+                        ? "Saved first-year treatment"
+                        : "First-year treatment needs confirmation"}
                   </p>{/if}</td
               >
               <td data-label="Allowance" class="rep-amount"
@@ -365,6 +364,9 @@
                       currency={initial.capital.schedule!.currency}
                       readonly={!editable || stale}
                       {saving}
+                      firstYearContext={initial.capital.firstYearContexts[
+                        draft.assetId
+                      ]}
                     />
                   </div></td
                 ></tr

@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { eq } from "drizzle-orm";
+import { FirstYearAllowanceError } from "$lib/first-year-allowance.js";
 import { AssetTaxSchemeError } from "$lib/asset-tax-scheme.js";
 import { CapitalAllowanceError } from "$lib/capital-allowance.js";
 import { TaxCalculationError } from "$lib/tax-worksheet.js";
@@ -82,7 +83,8 @@ export function runTaxTransaction<T>(
     if (
       error instanceof TaxCalculationError ||
       error instanceof CapitalAllowanceError ||
-      error instanceof AssetTaxSchemeError
+      error instanceof AssetTaxSchemeError ||
+      error instanceof FirstYearAllowanceError
     )
       return fail("REFUSED", error.message);
     throw error;

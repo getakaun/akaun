@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { firstYearTreatmentSchema } from "./first-year-allowance.js";
 import {
   appliedAssetTaxSchemeSchema,
   taxJurisdictionSchema,
@@ -19,6 +20,7 @@ export const capitalRowSchema = z
     assetId: z.number().int().positive(),
     schemeId: z.number().int().positive().nullable().optional(),
     schemeFirstYear: z.boolean().optional(),
+    firstYearTreatment: firstYearTreatmentSchema.optional(),
     schemeOverride: z.boolean().optional(),
     appliedScheme: appliedAssetTaxSchemeSchema.optional(),
     treatment: z.enum(["pending", "claim", "exclude"]),
@@ -150,6 +152,13 @@ export function capitalTotals(
         !(row.ruleReference || schedule.evidence)
       )
         issues.push("Add a source or working-paper reference.");
+      if (
+        row.firstYearTreatment &&
+        row.firstYearTreatment.included !== !!row.schemeFirstYear
+      )
+        issues.push(
+          "The saved first-year treatment does not match the calculation.",
+        );
       if (row.schemeId) {
         if (!row.appliedScheme || row.appliedScheme.id !== row.schemeId)
           issues.push("Apply a retained custom scheme version.");

@@ -1,3 +1,7 @@
+import {
+  resolveFirstYear,
+  firstYearDecision,
+} from "$lib/first-year-allowance.js";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import {
@@ -17,6 +21,7 @@ import {
 } from "$lib/capital-allowance.js";
 import { taxReason, taxVersion } from "$lib/tax-worksheet.js";
 import {
+  firstYearContexts,
   capitalAssets,
   capitalHash,
   capitalScheduleFor,
@@ -236,6 +241,7 @@ export function changeCapitalSchedule(
               : {
                   ...(old ?? blankCapitalRow(asset.assetId, worksheet.ya)),
                   treatment: "pending" as const,
+                  firstYearTreatment: undefined,
                 };
           }),
         };
@@ -273,12 +279,19 @@ export function changeCapitalSchedule(
             schemeId: null,
             appliedScheme: undefined,
             schemeFirstYear: false,
+            firstYearTreatment: undefined,
             schemeOverride: false,
           }));
       }
     }
     if (v.action === "save") {
       const versions = assetTaxSchemeVersions(ctx.db);
+      const history = firstYearContexts(
+        ctx.db,
+        worksheet,
+        schedule.assets,
+        schedule.currency,
+      );
       schedule.rows = schedule.rows.map((row) => {
         if (row.treatment !== "claim")
           return {
@@ -287,6 +300,7 @@ export function changeCapitalSchedule(
             schemeId: null,
             appliedScheme: undefined,
             schemeFirstYear: false,
+            firstYearTreatment: undefined,
             schemeOverride: false,
           };
         if (!row.schemeId) {
@@ -308,6 +322,49 @@ export function changeCapitalSchedule(
             "INVALID_INPUT",
           );
         const appliedScheme = schemeSnapshot(definition);
+        const asset = schedule.assets.find((a) => a.assetId === row.assetId);
+        let firstYearTreatment = row.firstYearTreatment;
+        if (firstYearTreatment) {
+          if (row.schemeOverride)
+            refuse(
+              "Automatic first-year treatment cannot be combined with manually overridden allowance amounts.",
+            );
+          if (
+            firstYearTreatment.historyHash !== history[row.assetId]?.historyHash
+          )
+            refuse(
+              "First-year tax history changed. Refresh the worksheet and review the treatment.",
+              "CONFLICT",
+            );
+          firstYearTreatment = resolveFirstYear(
+            firstYearTreatment.mode,
+            definition.definition,
+            row,
+            asset,
+            history[row.assetId],
+            worksheet.dateFrom,
+            worksheet.dateTo,
+            row.note,
+          );
+          if (firstYearTreatment.included !== !!row.schemeFirstYear)
+            refuse(
+              "The first-year treatment does not match the current history. Recalculate the asset.",
+              "CONFLICT",
+            );
+        } else if (
+          (row.schemeFirstYear || (row.initialMinor ?? 0) > 0) &&
+          firstYearDecision(
+            definition.definition,
+            row,
+            asset,
+            history[row.assetId],
+            worksheet.dateFrom,
+            worksheet.dateTo,
+          ).blocked
+        )
+          refuse(
+            "Initial allowance for this cost was already recorded in an earlier tax year.",
+          );
         if (row.schemeOverride) {
           if (row.note.trim().length < 10)
             refuse(
@@ -329,7 +386,11 @@ export function changeCapitalSchedule(
               "CONFLICT",
             );
         }
-        return { ...row, appliedScheme };
+        return {
+          ...row,
+          appliedScheme,
+          ...(firstYearTreatment ? { firstYearTreatment } : {}),
+        };
       });
     }
     capitalTotals(schedule, worksheet.ya, worksheet.dateFrom, worksheet.dateTo);

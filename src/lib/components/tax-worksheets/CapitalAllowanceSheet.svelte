@@ -145,6 +145,12 @@
       assetForm,
       initial.worksheet.ya,
       schemeChoices,
+      {
+        context: initial.capital.firstYearContexts[selected!.assetId],
+        asset,
+        dateFrom: initial.worksheet.dateFrom,
+        dateTo: initial.worksheet.dateTo,
+      },
     );
   }
   async function submit(event: SubmitEvent) {
@@ -268,6 +274,7 @@
       currency={initial.capital.schedule!.currency}
       {readonly}
       {saving}
+      firstYearContext={initial.capital.firstYearContexts[selected!.assetId]}
     />
   {:else if mode === "jurisdiction"}
     <TaxJurisdictionField bind:value={jurisdiction} disabled={saving} />

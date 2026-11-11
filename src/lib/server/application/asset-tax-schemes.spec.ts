@@ -7,7 +7,11 @@ import * as schema from "../db/schema.js";
 import type { LedgerDb } from "../ledger/types.js";
 import { localsFor } from "../permissions/test-locals.js";
 import { createAccount } from "../services/accounts.js";
-import { AccountType, AccountSubType } from "$lib/enums.js";
+import {
+  AccountType,
+  AccountSubType,
+  DefaultAccountPurpose,
+} from "$lib/enums.js";
 import { registerFixedAsset } from "./fixed-assets.js";
 import {
   createTaxWorksheet,
@@ -208,6 +212,274 @@ beforeEach(() => {
 });
 afterEach(() => raw.close());
 describe("versioned custom asset tax schemes", () => {
+  it("automates a linked purchase, retains unused initial allowance history, and refuses a duplicate or stale decision", async () => {
+    const { createRecord } = await import("./records.js");
+    const { editorRows, editorPreview, editorSchemes } =
+      await import("$lib/components/tax-worksheets/capital-editor.js");
+    const equipment = db
+      .select()
+      .from(schema.fixedAssets)
+      .where(eq(schema.fixedAssets.id, assetId))
+      .get()!.assetAccountId;
+    const bank = value(
+      createAccount(db, 1, {
+        name: "Bank",
+        type: AccountType.Asset,
+        subType: AccountSubType.Bank,
+      }),
+    );
+    const receivable = value(
+      createAccount(db, 1, {
+        name: "Receivable",
+        type: AccountType.Asset,
+        subType: AccountSubType.Receivable,
+      }),
+    );
+    const payable = value(
+      createAccount(db, 1, {
+        name: "Payable",
+        type: AccountType.Liability,
+        subType: AccountSubType.AccountsPayable,
+      }),
+    );
+    const equity = value(
+      createAccount(db, 1, {
+        name: "Opening equity",
+        type: AccountType.Equity,
+      }),
+    );
+    for (const item of [
+      { purpose: DefaultAccountPurpose.Receivable, accountId: receivable.id },
+      { purpose: DefaultAccountPurpose.Payable, accountId: payable.id },
+      { purpose: DefaultAccountPurpose.OpeningBalances, accountId: equity.id },
+    ])
+      db.insert(schema.accountDefaults)
+        .values(item)
+        .onConflictDoUpdate({
+          target: schema.accountDefaults.purpose,
+          set: { accountId: item.accountId },
+        })
+        .run();
+    const purchase = value(
+      createRecord(ctx(), {
+        kind: "expense",
+        description: "3D printer",
+        date: "2025-06-10",
+        amount: 2299,
+        currency: "MYR",
+        exchangeRate: 1,
+        categoryAccountId: equipment,
+        paidFromAccountId: bank.id,
+      }),
+    ).record;
+    const linked = value(
+      registerFixedAsset(ctx(), {
+        name: "3D printer",
+        assetType: "Machinery",
+        sourceMovementId: purchase.movements.find(
+          (m) => m.accountId === equipment,
+        )!.id,
+        inServiceDate: "2025-06-10",
+      }),
+    );
+    const scheme = value(
+      saveAssetTaxScheme(
+        ctx(),
+        schemePayload({ definition: { ...definition, regularRateBps: 1400 } }),
+      ),
+    );
+    let d = prepare(create());
+    const forms = editorRows(d.capital.schedule!, d.worksheet);
+    const imported = forms.find((r) => r.assetId === assetId)!;
+    Object.assign(imported.form, {
+      treatment: "exclude",
+      note: "Outside this test claim",
+    });
+    const printer = forms.find((r) => r.assetId === linked.id)!;
+    Object.assign(printer.form, {
+      treatment: "claim",
+      schemeId: String(scheme.id),
+    });
+    const staged = editorPreview(
+      d.capital.schedule!,
+      forms,
+      editorSchemes(d.capital.schemes),
+      [],
+      "",
+      d.worksheet,
+      d.capital.firstYearContexts,
+    );
+    expect(staged.errors).toEqual([]);
+    expect(
+      staged.input.rows.find((r) => r.assetId === linked.id),
+    ).toMatchObject({
+      initialMinor: 45980,
+      annualMinor: 32186,
+      schemeFirstYear: true,
+      firstYearTreatment: { mode: "auto", included: true },
+    });
+    const linkedRow = staged.input.rows.find((r) => r.assetId === linked.id)!;
+    const importedRow = row(
+      d,
+      scheme,
+      d.capital.schedule!.rows.findIndex((r) => r.assetId === assetId),
+    );
+    const forgedImport = {
+      ...importedRow,
+      firstYearTreatment: {
+        ...linkedRow.firstYearTreatment!,
+        historyHash: d.capital.firstYearContexts[assetId].historyHash,
+      },
+    };
+    const unknownRefused = changeCapitalSchedule(
+      ctx(),
+      d.worksheet.id,
+      command(d, "save", {
+        input: {
+          ...staged.input,
+          rows: staged.input.rows.map((r) =>
+            r.assetId === assetId ? forgedImport : r,
+          ),
+        },
+      }),
+    );
+    expect(unknownRefused.ok).toBe(false);
+    if (!unknownRefused.ok)
+      expect(unknownRefused.reason).toContain("not linked");
+    const overrideRefused = changeCapitalSchedule(
+      ctx(),
+      d.worksheet.id,
+      command(d, "save", {
+        input: {
+          ...staged.input,
+          rows: staged.input.rows.map((r) =>
+            r.assetId === linked.id
+              ? {
+                  ...r,
+                  schemeOverride: true,
+                  note: "Try overriding an automatic allowance",
+                }
+              : r,
+          ),
+        },
+      }),
+    );
+    expect(overrideRefused.ok).toBe(false);
+    const financialBefore = financial();
+    d = value(
+      changeCapitalSchedule(
+        ctx(),
+        d.worksheet.id,
+        command(d, "save", { input: staged.input }),
+      ),
+    );
+    expect(d.capital.totals?.usedMinor).toBe(0);
+    d = finalise(d);
+    const retained = JSON.stringify(taxWorksheetCsv(d));
+    let next = create(2026);
+    next = value(
+      changeCapitalSchedule(
+        ctx(),
+        next.worksheet.id,
+        command(next, "rollover", {
+          rolloverHash: next.capital.rolloverHash,
+          replaceManual: false,
+        }),
+      ),
+    );
+    const nextForms = editorRows(next.capital.schedule!, next.worksheet);
+    const nextPreview = editorPreview(
+      next.capital.schedule!,
+      nextForms,
+      editorSchemes(next.capital.schemes),
+      [],
+      "",
+      next.worksheet,
+      next.capital.firstYearContexts,
+    );
+    expect(
+      nextPreview.input.rows.find((r) => r.assetId === linked.id),
+    ).toMatchObject({
+      initialMinor: 0,
+      annualMinor: 32186,
+      firstYearTreatment: { included: false },
+    });
+    next = value(
+      changeCapitalSchedule(
+        ctx(),
+        next.worksheet.id,
+        command(next, "save", { input: nextPreview.input }),
+      ),
+    );
+    expect(next.capital.firstYearContexts[linked.id].records[0]).toMatchObject({
+      jurisdiction: "MY",
+      currency: "MYR",
+    });
+    const savedRow = next.capital.schedule!.rows.find(
+      (r) => r.assetId === linked.id,
+    )!;
+    const duplicate = {
+      ...savedRow,
+      openingResidualMinor: 0,
+      additionsMinor: 229900,
+      initialMinor: 45980,
+      schemeFirstYear: true,
+      note: "Attempt repeated initial allowance",
+      firstYearTreatment: {
+        ...savedRow.firstYearTreatment!,
+        mode: "include",
+        included: true,
+      },
+    };
+    const rejected = changeCapitalSchedule(
+      ctx(),
+      next.worksheet.id,
+      command(next, "save", {
+        input: {
+          ...nextPreview.input,
+          rows: next.capital.schedule!.rows.map((r) =>
+            r.assetId === linked.id ? duplicate : r,
+          ),
+        },
+      }),
+    );
+    expect(rejected.ok).toBe(false);
+    value(
+      changeTaxWorksheet(ctx(), d.worksheet.id, {
+        action: "amend",
+        expectedVersion: d.revision.version,
+        requestKey: key(),
+        reason: "Review earlier asset eligibility",
+      }),
+    );
+    const fresh = value(readTaxWorksheet(ctx(), next.worksheet.id));
+    expect(
+      fresh.capital.firstYearContexts[linked.id].records.some(
+        (r) => r.status === "finalised" && r.initialMinor === 45980,
+      ),
+    ).toBe(true);
+    expect(
+      fresh.capital.totals?.problems.some((p) =>
+        p.includes("First-year allowance history changed"),
+      ),
+    ).toBe(true);
+    expect(
+      changeCapitalSchedule(
+        ctx(),
+        next.worksheet.id,
+        command(fresh, "save", { input: nextPreview.input }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      JSON.stringify(
+        taxWorksheetCsv(
+          value(readTaxWorksheet(ctx(), d.worksheet.id, d.revision.revision)),
+        ),
+      ),
+    ).toBe(retained);
+    expect(financial()).toBe(financialBefore);
+  });
+
   it("saves inline asset calculations and claims atomically without a mandatory reference", async () => {
     const { editorRows, editorUses, editorPreview, editorSchemes } =
       await import("$lib/components/tax-worksheets/capital-editor.js");

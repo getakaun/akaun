@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Disclosure from "$lib/components/ui/Disclosure.svelte";
+  import type { FirstYearContext } from "$lib/first-year-allowance.js";
   import { SvelteMap } from "svelte/reactivity";
   import * as Select from "$lib/components/ui/select/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
@@ -21,6 +23,7 @@
   } from "$lib/capital-allowance.js";
   import {
     assetTaxRowFromForm,
+    assetTaxFirstYearStatus,
     amountInput,
     type AssetTaxForm,
   } from "./asset-tax-form.js";
@@ -37,6 +40,7 @@
     currency,
     readonly = false,
     saving = false,
+    firstYearContext,
   }: {
     draft: AssetTaxForm;
     selected: CapitalRowInput;
@@ -50,6 +54,7 @@
     currency: string;
     readonly?: boolean;
     saving?: boolean;
+    firstYearContext?: FirstYearContext;
   } = $props();
   const money = (n: number) => formatTaxMinor(n, currency);
   const choices = $derived.by(() => {
@@ -77,7 +82,15 @@
       const row =
         readonly || (!draft.schemeId && selected.treatment === "claim")
           ? selected
-          : assetTaxRowFromForm(selected, draft, year, choices);
+          : assetTaxRowFromForm(
+              selected,
+              draft,
+              year,
+              choices,
+              firstYearContext
+                ? { context: firstYearContext, asset, dateFrom, dateTo }
+                : undefined,
+            );
       const rowPreview =
         capitalTotals(
           {
@@ -100,6 +113,21 @@
     }
   });
   const rowPreview = $derived(previewState.row);
+  const firstYearStatus = $derived(
+    readonly
+      ? {
+          included: selected.schemeFirstYear ?? false,
+          reason:
+            selected.firstYearTreatment?.reason ??
+            "Using the saved first-year treatment.",
+        }
+      : assetTaxFirstYearStatus(selected, draft, year, choices, {
+          context: firstYearContext,
+          asset,
+          dateFrom,
+          dateTo,
+        }),
+  );
   const retainedManual = $derived(
     selected.treatment === "claim" &&
       (!selected.schemeId || selected.schemeOverride),
@@ -111,6 +139,7 @@
       draft.amounts.openingResidualMinor = "";
       draft.amounts.additionsMinor = "0.00";
       draft.firstYear = false;
+      draft.firstYearMode = "auto";
     }
   }
 </script>
@@ -284,18 +313,69 @@
         Use the previous tax residual, already adjusted for business use.
       </p>
     </div>{/if}
-  {#if activeScheme && activeScheme.definition.firstYearRateBps > 0 && (draft.basisMode === "new" || Number(draft.amounts.additionsMinor) > 0)}<div
-      class="tax-filter"
-    >
-      <Checkbox
-        id="scheme-first-year"
-        bind:checked={draft.firstYear}
-        disabled={saving || readonly}
-      />
-      <label for="scheme-first-year"
-        >Claim first-year allowance on this year's additions</label
+  {#if activeScheme}
+    <div role="status">
+      <strong
+        >Initial allowance: {firstYearStatus.included === null
+          ? "Needs confirmation"
+          : draft.firstYearMode === "retained"
+            ? "Saved treatment"
+            : firstYearStatus.included
+              ? draft.firstYearMode === "auto"
+                ? "Automatically applied"
+                : "Confirmed"
+              : "Not applied"}</strong
       >
-    </div>{/if}
+      <p class="field-hint">{firstYearStatus.reason}</p>
+    </div>
+    {#if !readonly && activeScheme.definition.firstYearRateBps > 0}
+      <Disclosure
+        label="Change first-year treatment"
+        forceOpen={firstYearStatus.included === null}
+      >
+        <div class="field">
+          <label class="field-label" for="first-year-treatment"
+            >First-year treatment</label
+          >
+          <Select.Root
+            type="single"
+            bind:value={draft.firstYearMode}
+            disabled={saving}
+          >
+            <Select.Trigger
+              id="first-year-treatment"
+              class="w-full justify-between"
+              >{draft.firstYearMode === "auto"
+                ? "Automatic"
+                : draft.firstYearMode === "include"
+                  ? "Confirm eligible new expenditure"
+                  : draft.firstYearMode === "exclude"
+                    ? "Do not apply"
+                    : "Previously saved treatment"}</Select.Trigger
+            >
+            <Select.Content>
+              <Select.Item value="auto" label="Automatic" />
+              <Select.Item
+                value="include"
+                label="Confirm eligible new expenditure"
+              />
+              <Select.Item value="exclude" label="Do not apply" />
+              {#if draft.firstYearMode === "retained"}<Select.Item
+                  value="retained"
+                  label="Previously saved treatment"
+                  disabled
+                />{/if}
+            </Select.Content>
+          </Select.Root>
+          <p class="field-hint">
+            For an exception or incomplete history, explain eligibility and any
+            claims outside Akaun in the Remark below. The same cost cannot
+            receive initial allowance twice.
+          </p>
+        </div>
+      </Disclosure>
+    {/if}
+  {/if}
   {#if previewState.error && draft.schemeId}<ReportNotes
       notes={[previewState.error]}
       firstIsWarning
@@ -450,15 +530,21 @@
             draft.disposed &&
             !draft.disposalEvidence
           ? "Remark (disposal reference)"
-          : "Remark (optional)"}</label
+          : draft.treatment === "claim" && draft.firstYearMode === "include"
+            ? "Remark (explain first-year eligibility)"
+            : "Remark (optional)"}</label
   >
   <Textarea
     id="ca-note"
     bind:value={draft.note}
     maxlength={2000}
+    minlength={draft.treatment === "claim" && draft.firstYearMode === "include"
+      ? 10
+      : undefined}
     required={draft.treatment === "exclude" ||
       (draft.treatment === "claim" &&
-        ((draft.disposed && !draft.disposalEvidence) ||
+        (draft.firstYearMode === "include" ||
+          (draft.disposed && !draft.disposalEvidence) ||
           Number(draft.residualAdjustment) !== 0))}
     disabled={saving || readonly}
   />

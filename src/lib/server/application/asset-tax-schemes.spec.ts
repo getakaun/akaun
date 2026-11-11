@@ -208,6 +208,52 @@ beforeEach(() => {
 });
 afterEach(() => raw.close());
 describe("versioned custom asset tax schemes", () => {
+  it("creates and applies a scheme without supporting fields, retaining old definitions on remark edits", () => {
+    const simple = { ...definition };
+    delete simple.reference;
+    delete simple.conditions;
+    const payload = {
+      familyKey: key(),
+      expectedVersion: 0,
+      requestKey: key(),
+      definition: simple,
+    };
+    const first = value(saveAssetTaxScheme(ctx(), payload));
+    expect(value(saveAssetTaxScheme(ctx(), payload)).id).toBe(first.id);
+    expect(first.definition).toEqual(simple);
+    let d = prepare(create());
+    d = save(d, [row(d, first)], 300000);
+    const retained = JSON.stringify(d.capital.schedule);
+    const next = value(
+      saveAssetTaxScheme(ctx(), {
+        familyKey: first.familyKey,
+        expectedVersion: 1,
+        requestKey: key(),
+        definition: {
+          ...simple,
+          remark: "Machinery rates reviewed for this assessment year",
+        },
+      }),
+    );
+    expect(next.version).toBe(2);
+    expect(
+      JSON.stringify(
+        value(readTaxWorksheet(ctx(), d.worksheet.id)).capital.schedule,
+      ),
+    ).toBe(retained);
+    expect(value(readAssetTaxSchemes(ctx()))[0].definition).toEqual(simple);
+    expect(
+      db
+        .select()
+        .from(schema.auditLog)
+        .all()
+        .some(
+          (a) =>
+            a.recordType === "tax_scheme" && a.recordId === String(next.id),
+        ),
+    ).toBe(true);
+  });
+
   it("starts with an empty library and checks tax authority", () => {
     expect(value(readAssetTaxSchemes(ctx()))).toEqual([]);
     expect(saveAssetTaxScheme(ctx(["tax.read"]), schemePayload()).ok).toBe(

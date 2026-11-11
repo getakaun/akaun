@@ -10,6 +10,7 @@
   import { percentageToBps } from "$lib/expense-tax.js";
   import {
     schemeApplies,
+    assetTaxSchemeRemark,
     type AppliedAssetTaxScheme,
   } from "$lib/asset-tax-scheme.js";
   import {
@@ -180,7 +181,7 @@
         const choice = choices.find((s) => String(s.id) === id);
         if (choice) {
           draft.taxClass = choice.definition.name;
-          draft.ruleReference = choice.definition.reference;
+          draft.ruleReference = choice.definition.reference ?? "";
         }
       }}
       ><Select.Trigger id="asset-tax-scheme" class="w-full justify-between"
@@ -201,7 +202,7 @@
   {#if activeScheme}<ReportNotes
       notes={[
         "Custom scheme — not jurisdiction-verified. Confirm its applicability, tax year and conditions before using these amounts.",
-        activeScheme.definition.conditions,
+        assetTaxSchemeRemark(activeScheme.definition),
       ].filter(Boolean)}
     />
     <div class="tax-filter">

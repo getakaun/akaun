@@ -5,14 +5,14 @@
   import { Plus } from "@lucide/svelte";
   import { toast } from "svelte-sonner";
   import { Button } from "$lib/components/ui/button/index.js";
-  import DetailPage from "$lib/components/ui/DetailPage.svelte";
-  import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
+  import BackLink from "$lib/components/ui/BackLink.svelte";
   import AssetTaxSchemesSheet from "./AssetTaxSchemesSheet.svelte";
-  import { taxJurisdictionLabel } from "$lib/asset-tax-scheme.js";
+  import {
+    assetTaxSchemeRemark,
+    taxJurisdictionLabel,
+  } from "$lib/asset-tax-scheme.js";
   import { createResourceStream } from "$lib/sse.js";
   import type { AssetTaxSchemeVersion } from "$lib/server/queries/asset-tax-schemes.js";
-  import "$lib/components/tax-worksheets/tax-worksheets.css";
-  import "$lib/components/reports/reports.css";
   let {
     schemes,
     canManage,
@@ -36,104 +36,111 @@
   }
   async function saved() {
     await invalidateAll();
-    toast.success(
-      "Custom scheme version saved. Existing applications remain unchanged.",
-    );
+    toast.success("Asset tax scheme saved");
   }
 </script>
 
-<DetailPage
-  backHref={canSeeSettings ? resolve("/(app)/settings") : resolve("/(app)/tax")}
-  backLabel={canSeeSettings ? "Settings" : "Annual tax"}
->
-  {#snippet hero()}<div class="detail-hero-eyebrow">Settings · Tax</div>
-    <h1 class="detail-hero-title">Asset tax schemes</h1>
-    <p class="detail-hero-note">
-      Configure reusable schemes once, then select them in annual tax
-      worksheets. Create a new version when rates or conditions change.
-    </p>{/snippet}
-  {#snippet actions()}{#if canManage}<Button size="sm" onclick={() => open()}
-        ><Plus size={14} />New custom scheme</Button
-      >{/if}{/snippet}
-  {#snippet main()}
-    <section class="detail-card">
-      <div class="detail-card-head">
-        <h2 class="detail-card-title">Reusable schemes</h2>
-      </div>
-      <div class="tax-stack">
-        {#if !canManage}<p class="field-hint">
-            Read-only. Changing schemes requires Tax → Update permission.
-          </p>{/if}
-        {#if latest.length === 0}<p class="card-empty">
-            No schemes configured yet. Add a custom scheme here; you do not need
-            to create an annual worksheet first.
-          </p>{:else}
-          {#each latest as scheme (scheme.id)}<article
-              class="tax-item tax-stack"
-            >
-              <div class="tax-item-head">
-                <div>
-                  <strong>{scheme.definition.name}</strong>
-                  <p class="field-hint">
-                    {taxJurisdictionLabel(scheme.definition.jurisdiction)} · Version
-                    {scheme.version} · Custom / unverified
-                  </p>
-                </div>
-                {#if canManage}<button
-                    type="button"
-                    class="detail-card-action"
-                    onclick={() => open(scheme.familyKey)}
-                    >Edit as new version</button
-                  >{/if}
-              </div>
-              <dl class="detail-list tax-summary">
-                <div class="detail-row">
-                  <dt class="detail-key">Effective tax years</dt>
-                  <dd class="detail-val">
-                    {scheme.definition.yearFrom}–{scheme.definition.yearTo ??
-                      "onwards"}
-                  </dd>
-                </div>
-                <div class="detail-row">
-                  <dt class="detail-key">First-year rate</dt>
-                  <dd class="detail-val">
-                    {scheme.definition.firstYearRateBps / 100}%
-                  </dd>
-                </div>
-                <div class="detail-row">
-                  <dt class="detail-key">Regular rate</dt>
-                  <dd class="detail-val">
-                    {scheme.definition.regularRateBps / 100}%
-                  </dd>
-                </div>
-                <div class="detail-row">
-                  <dt class="detail-key">Regular basis</dt>
-                  <dd class="detail-val">
-                    {scheme.definition.method === "original_cost"
-                      ? "Business-use qualifying cost"
-                      : "Remaining tax residual"}
-                  </dd>
-                </div>
-              </dl>
-              <p class="field-hint">Reference: {scheme.definition.reference}</p>
-              {#if scheme.definition.conditions}<p class="field-hint">
-                  {scheme.definition.conditions}
-                </p>{/if}
-            </article>{/each}
+<div class="screen">
+  <header class="topbar">
+    <div class="topbar-left">
+      <BackLink
+        href={canSeeSettings
+          ? resolve("/(app)/settings")
+          : resolve("/(app)/tax")}
+        label={canSeeSettings ? "Settings" : "Annual tax"}
+      />
+      <h1 class="page-title">Tax settings</h1>
+    </div>
+  </header>
+  <div class="set-content">
+    <section class="set-section">
+      <div class="set-section-head scheme-section-head">
+        <div>
+          <h2 class="set-section-title">Asset tax schemes</h2>
+          <p class="set-section-sub">
+            Reusable rates for your annual asset tax workings.
+          </p>
+        </div>
+        {#if canManage}
+          <Button size="sm" onclick={() => open()}
+            ><Plus size={14} />New scheme</Button
+          >
         {/if}
       </div>
+      {#if !canManage}<p class="field-hint scheme-notice">
+          Read-only. Tax update permission is required to make changes.
+        </p>{/if}
+      <div class="set-rows">
+        {#if latest.length === 0}
+          <div class="set-row">
+            <p class="set-row-value">
+              No schemes yet. Create a scheme to reuse its rates in annual tax
+              worksheets.
+            </p>
+          </div>
+        {:else}
+          {#each latest as scheme (scheme.id)}
+            {@const remark = assetTaxSchemeRemark(scheme.definition)}
+            <div class="set-row">
+              <div class="scheme-details">
+                <div class="set-row-label">{scheme.definition.name}</div>
+                <p class="set-desc">
+                  {taxJurisdictionLabel(scheme.definition.jurisdiction)} · {scheme
+                    .definition.yearTo === scheme.definition.yearFrom
+                    ? scheme.definition.yearFrom
+                    : `${scheme.definition.yearFrom}–${scheme.definition.yearTo ?? "onwards"}`}
+                </p>
+                <p class="set-desc">
+                  First year {scheme.definition.firstYearRateBps / 100}% ·
+                  Regular {scheme.definition.regularRateBps / 100}%
+                </p>
+                <p class="set-desc">
+                  {scheme.definition.method === "original_cost"
+                    ? "Business-use qualifying cost"
+                    : "Remaining tax residual"}
+                </p>
+                {#if remark}<p class="set-desc scheme-remark">{remark}</p>{/if}
+              </div>
+              {#if canManage}<Button
+                  variant="outline"
+                  size="sm"
+                  onclick={() => open(scheme.familyKey)}
+                  aria-label={`Edit ${scheme.definition.name}`}>Edit</Button
+                >{/if}
+            </div>
+          {/each}
+        {/if}
+      </div>
+      <p class="field-hint scheme-notice">
+        Custom schemes. Confirm the applicable tax rules before use.
+      </p>
     </section>
-    <ReportNotes
-      notes={[
-        "Schemes are custom calculation definitions, not verified country rules. Scheme edits create new versions; existing asset applications and finalised worksheets keep their saved versions.",
-        "Annual scheme selection, asset-specific tax basis and deduction utilisation stay in Tax → annual worksheet. No financial journals are posted by this configuration.",
-      ]}
-    />
-  {/snippet}
-</DetailPage>
+  </div>
+</div>
 {#if editing}<AssetTaxSchemesSheet
     {schemes}
     initialFamilyKey={familyKey}
     onclose={() => (editing = false)}
     onsaved={saved}
   />{/if}
+
+<style>
+  .scheme-section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .scheme-details {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .scheme-remark {
+    white-space: pre-wrap;
+  }
+  .scheme-notice {
+    margin-top: 12px;
+    margin-bottom: 12px;
+  }
+</style>

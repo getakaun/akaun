@@ -1,15 +1,13 @@
 <script lang="ts">
-  import { formatAuditTime } from "$lib/components/audit/audit-format.js";
   import { untrack } from "svelte";
   import * as Select from "$lib/components/ui/select/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
-  import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
   import TaxWorkingsDrawer from "../tax-worksheets/TaxWorkingsDrawer.svelte";
   import TaxJurisdictionField from "../tax-worksheets/TaxJurisdictionField.svelte";
   import { percentageToBps } from "$lib/expense-tax.js";
   import {
-    taxJurisdictionLabel,
+    assetTaxSchemeRemark,
     type AssetTaxSchemeDefinition,
   } from "$lib/asset-tax-scheme.js";
   import type { AssetTaxSchemeVersion } from "$lib/server/queries/asset-tax-schemes.js";
@@ -30,7 +28,7 @@
   const selected = latest.find(
     (s) => s.familyKey === initialFamily,
   )?.definition;
-  let family = $state(initialFamily ?? "new");
+  const family = initialFamily ?? "new";
   let name = $state(selected?.name ?? "");
   let jurisdiction = $state<string | null>(selected?.jurisdiction ?? null);
   let yearFrom = $state(selected ? String(selected.yearFrom) : "");
@@ -44,9 +42,7 @@
   let regularRate = $state(
     selected ? String(selected.regularRateBps / 100) : "",
   );
-  let reference = $state(selected?.reference ?? "");
-  let conditions = $state(selected?.conditions ?? "");
-  let reason = $state("");
+  let remark = $state(selected ? assetTaxSchemeRemark(selected) : "");
   let saving = $state(false);
   let savedSuccessfully = $state(false);
   let error = $state("");
@@ -62,28 +58,11 @@
       method,
       firstRate,
       regularRate,
-      reference,
-      conditions,
-      reason,
+      remark,
     ]);
   let baseline = $state(untrack(snapshot));
   const dirty = $derived(snapshot() !== baseline);
   const current = $derived(latest.find((s) => s.familyKey === family));
-  function choose(key: string) {
-    family = key;
-    const s = latest.find((s) => s.familyKey === key)?.definition;
-    name = s?.name ?? "";
-    jurisdiction = s?.jurisdiction ?? null;
-    yearFrom = s ? String(s.yearFrom) : "";
-    yearTo = s?.yearTo ? String(s.yearTo) : "";
-    method = s?.method ?? "original_cost";
-    firstRate = s ? String(s.firstYearRateBps / 100) : "";
-    regularRate = s ? String(s.regularRateBps / 100) : "";
-    reference = s?.reference ?? "";
-    conditions = s?.conditions ?? "";
-    reason = "";
-    baseline = snapshot();
-  }
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (saving) return;
@@ -98,7 +77,6 @@
     const payload = {
       familyKey: family === "new" ? newFamily : family,
       expectedVersion: current?.version ?? 0,
-      reason,
       definition: {
         name,
         jurisdiction,
@@ -107,8 +85,7 @@
         method,
         firstYearRateBps,
         regularRateBps,
-        reference,
-        conditions,
+        remark,
       },
     };
     const fingerprint = JSON.stringify(payload);
@@ -144,42 +121,16 @@
 </script>
 
 <TaxWorkingsDrawer
-  title="Reusable tax schemes"
+  title={current ? "Edit asset tax scheme" : "New asset tax scheme"}
+  eyebrow="Tax settings"
+  description="Configure a reusable asset tax calculation scheme."
   {saving}
   dirty={dirty && !savedSuccessfully}
   {error}
-  submitLabel={current ? "Save new version" : "Create custom scheme"}
+  submitLabel={current ? "Save changes" : "Create scheme"}
   {onclose}
   onsubmit={submit}
 >
-  <ReportNotes
-    notes={[
-      "These are your custom calculation schemes, not verified country rules. No Malaysian rates or approved presets are supplied. You can verify your Malaysian scheme after testing the workflow.",
-    ]}
-  />
-  <div class="field">
-    <label class="field-label" for="scheme-family">Scheme</label><Select.Root
-      type="single"
-      value={family}
-      disabled={saving || dirty}
-      onValueChange={choose}
-      ><Select.Trigger id="scheme-family" class="w-full justify-between"
-        >{current
-          ? `${current.definition.name} · v${current.version}`
-          : "Create a new scheme"}</Select.Trigger
-      ><Select.Content
-        ><Select.Item
-          value="new"
-          label="Create a new scheme"
-        />{#each latest as scheme (scheme.id)}<Select.Item
-            value={scheme.familyKey}
-            label={`${scheme.definition.name} · ${taxJurisdictionLabel(scheme.definition.jurisdiction)} · v${scheme.version}`}
-          />{/each}</Select.Content
-      ></Select.Root
-    >{#if dirty}<p class="field-hint">
-        Save or discard the current edits before choosing another scheme.
-      </p>{/if}
-  </div>
   <div class="field">
     <label class="field-label" for="scheme-name">Scheme name</label><Input
       id="scheme-name"
@@ -187,7 +138,7 @@
       maxlength={120}
       required
       disabled={saving}
-      placeholder="e.g. Equipment — custom draft"
+      placeholder="e.g. General plant and machinery"
     />
   </div>
   <TaxJurisdictionField
@@ -207,6 +158,7 @@
       required
       disabled={saving}
     />
+    <p class="field-hint">First assessment year this scheme can be selected.</p>
   </div>
   <div class="field">
     <label class="field-label" for="scheme-to"
@@ -240,10 +192,8 @@
       ></Select.Root
     >
     <p class="field-hint">
-      First-year deduction uses eligible this-year additions when explicitly
-      selected. Regular deduction uses the chosen basis. Both are capped by
-      remaining tax residual; no proration, pooling, MACRS or legal eligibility
-      is inferred.
+      First-year allowance uses new qualifying additions. The regular allowance
+      uses this basis; both are limited to the remaining tax residual.
     </p>
   </div>
   <div class="field">
@@ -267,52 +217,17 @@
     />
   </div>
   <div class="field">
-    <label class="field-label" for="scheme-reference"
-      >Source / working-paper reference</label
-    ><Textarea
-      id="scheme-reference"
-      bind:value={reference}
-      maxlength={2000}
-      required
+    <label class="field-label" for="scheme-remark">Remark (optional)</label>
+    <Textarea
+      id="scheme-remark"
+      bind:value={remark}
+      maxlength={5000}
       disabled={saving}
+      rows={3}
     />
   </div>
-  <div class="field">
-    <label class="field-label" for="scheme-conditions"
-      >Conditions and exclusions</label
-    ><Textarea
-      id="scheme-conditions"
-      bind:value={conditions}
-      maxlength={2000}
-      disabled={saving}
-    />
-  </div>
-  <div class="field">
-    <label class="field-label" for="scheme-reason"
-      >Reason for this version</label
-    ><Textarea
-      id="scheme-reason"
-      bind:value={reason}
-      minlength={10}
-      maxlength={2000}
-      required
-      disabled={saving}
-    />
-  </div>
-  {#if current}<p class="field-hint">
-      This creates version {current.version + 1}. Existing asset applications
-      and finalised schedules keep their saved definition and amounts.
-    </p>
-    <details class="tax-disclosure">
-      <summary>Retained versions</summary>
-      <ul class="tax-support-list tax-disclosure-body">
-        {#each versions.filter((s) => s.familyKey === family) as version (version.id)}<li
-          >
-            Version {version.version} · {version.actorName} · {formatAuditTime(
-              version.createdAt,
-            )}
-            · {version.definition.reference}
-          </li>{/each}
-      </ul>
-    </details>{/if}
+  <p class="field-hint">
+    Confirm the scheme's rates and eligibility before use. Changes apply to
+    future selections; saved asset workings keep their existing version.
+  </p>
 </TaxWorkingsDrawer>

@@ -12,7 +12,7 @@ export const saveAssetTaxSchemeSchema = z
     familyKey: z.string().uuid(),
     expectedVersion: z.number().int().min(0),
     requestKey: z.string().uuid(),
-    reason: z.string().trim().min(10).max(2000),
+    reason: z.string().trim().max(2000).optional(),
     definition: assetTaxSchemeDefinitionSchema,
   })
   .strict();
@@ -76,7 +76,11 @@ export function saveAssetTaxScheme(ctx: AppContext, input: unknown) {
           before: previous?.definition ?? null,
           after: row.definition,
         },
-        { field: "reason", before: null, after: v.reason },
+        {
+          field: "reason",
+          before: null,
+          after: v.reason || "Scheme settings updated",
+        },
         {
           field: "verification",
           before: null,

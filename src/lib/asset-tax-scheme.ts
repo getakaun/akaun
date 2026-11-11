@@ -26,8 +26,10 @@ export const assetTaxSchemeDefinitionSchema = z
     method: z.enum(["original_cost", "reducing_balance"]),
     firstYearRateBps: z.number().int().min(0).max(10000),
     regularRateBps: z.number().int().min(0).max(10000),
-    reference: z.string().trim().min(1).max(2000),
-    conditions: z.string().trim().max(2000),
+    remark: z.string().trim().max(5000).optional(),
+    // Retained definitions may still contain these fields. Do not rewrite evidence.
+    reference: z.string().trim().max(2000).optional(),
+    conditions: z.string().trim().max(2000).optional(),
   })
   .strict()
   .refine(
@@ -47,6 +49,13 @@ export type AssetTaxSchemeDefinition = z.infer<
   typeof assetTaxSchemeDefinitionSchema
 >;
 export type AppliedAssetTaxScheme = z.infer<typeof appliedAssetTaxSchemeSchema>;
+/** Present legacy supporting text together without changing saved definitions. */
+export function assetTaxSchemeRemark(definition: AssetTaxSchemeDefinition) {
+  return (
+    definition.remark ??
+    [definition.reference, definition.conditions].filter(Boolean).join("\n\n")
+  );
+}
 export type SchemeBasis = {
   qualifyingMinor: number | null;
   businessUseBps: number | null;

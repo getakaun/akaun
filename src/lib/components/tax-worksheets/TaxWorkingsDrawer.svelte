@@ -4,11 +4,11 @@
   import { X } from "@lucide/svelte";
   import * as Sheet from "$lib/components/ui/sheet/index.js";
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
-  import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
   import { useIsMobile } from "$lib/hooks/useIsMobile.svelte.js";
   let {
     title,
     eyebrow = "Asset tax deductions",
+    description = "Prepare asset tax deductions independently of accounting depreciation.",
     saving = false,
     dirty = false,
     error = "",
@@ -21,6 +21,7 @@
   }: {
     title: string;
     eyebrow?: string;
+    description?: string;
     saving?: boolean;
     dirty?: boolean;
     error?: string;
@@ -73,17 +74,20 @@
   ><Sheet.Content
     side={screen.current ? "bottom" : "right"}
     style={screen.current
-      ? "height:100dvh;border-radius:0;display:flex;flex-direction:column;overflow:hidden;gap:0;"
-      : "width:520px;max-width:95vw;display:flex;flex-direction:column;overflow:hidden;gap:0;"}
+      ? "height:100dvh;border-radius:0;border-top:none;display:flex;flex-direction:column;overflow:hidden;gap:0;"
+      : "width:500px;max-width:95vw;display:flex;flex-direction:column;overflow:hidden;gap:0;"}
+    onEscapeKeydown={(event) => {
+      if (saving) event.preventDefault();
+    }}
+    onInteractOutside={(event) => {
+      if (saving) event.preventDefault();
+    }}
   >
     <div class="tax-drawer-head">
       <div>
         <div class="sheet-eyebrow">{eyebrow}</div>
         <Sheet.Title class="sheet-title-text">{title}</Sheet.Title
-        ><Sheet.Description class="sr-only"
-          >Prepare asset tax deductions independently of accounting
-          depreciation.</Sheet.Description
-        >
+        ><Sheet.Description class="sr-only">{description}</Sheet.Description>
       </div>
       <button
         type="button"
@@ -93,29 +97,33 @@
         disabled={saving}><X size={16} /></button
       >
     </div>
-    <div class="tax-drawer-body">
-      <form bind:this={form} {onsubmit} class="tax-stack">
-        {@render children()}{#if error}<div role="alert">
-            <ReportNotes notes={[error]} firstIsWarning />
-          </div>{/if}
-      </form>
-    </div>
-    <footer class="sheet-footer">
-      <div class="sheet-foot-actions tax-actions">
-        <button
-          type="button"
-          class="sheet-btn"
-          onclick={close}
-          disabled={saving}>{readonly ? "Close" : "Cancel"}</button
-        >{#if !readonly}<button
-            type="button"
-            class="sheet-btn sheet-btn-primary"
-            disabled={saving || disabled}
-            onclick={() => form.requestSubmit()}
-            >{saving ? "Saving…" : submitLabel}</button
-          >{/if}
+    <form
+      bind:this={form}
+      {onsubmit}
+      class="tax-drawer-form"
+      aria-busy={saving}
+    >
+      <div class="tax-drawer-body">
+        {#if error}<p class="tax-form-error" role="alert">{error}</p>{/if}
+        <div class="tax-drawer-fields">{@render children()}</div>
       </div>
-    </footer>
+      <footer class="sheet-foot">
+        <div class="sheet-foot-actions">
+          <button
+            type="button"
+            class="sheet-btn"
+            onclick={close}
+            disabled={saving}>{readonly ? "Close" : "Cancel"}</button
+          >{#if !readonly}<button
+              type="button"
+              class="sheet-btn sheet-btn-primary"
+              disabled={saving || disabled}
+              onclick={() => form.requestSubmit()}
+              >{saving ? "Saving…" : submitLabel}</button
+            >{/if}
+        </div>
+      </footer>
+    </form>
   </Sheet.Content></Sheet.Root
 >
 <ConfirmDialog
@@ -135,6 +143,26 @@
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
     gap: 12px;
+  }
+  .tax-drawer-form {
+    min-height: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .tax-drawer-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .tax-form-error {
+    background: var(--red-soft);
+    color: var(--red);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin: 0 0 14px;
   }
   .tax-drawer-body {
     flex: 1;

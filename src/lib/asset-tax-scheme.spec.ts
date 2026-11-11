@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assetTaxSchemeDefinitionSchema,
+  assetTaxSchemeRemark,
   calculateAssetTaxScheme,
   schemeApplies,
   type AssetTaxSchemeDefinition,
@@ -25,6 +26,29 @@ const basis = {
   firstYear: true,
 };
 describe("custom asset tax scheme arithmetic", () => {
+  it("supports one optional remark and reads legacy notes without rewriting retained definitions", () => {
+    const { reference, conditions, ...simple } = definition;
+    expect(assetTaxSchemeDefinitionSchema.parse(simple)).toEqual(simple);
+    expect(assetTaxSchemeRemark(simple)).toBe("");
+    expect(
+      assetTaxSchemeRemark({ ...simple, remark: "Reviewed machinery rates" }),
+    ).toBe("Reviewed machinery rates");
+    const retained = JSON.stringify(definition);
+    expect(assetTaxSchemeRemark(definition)).toBe(
+      `${reference}\n\n${conditions}`,
+    );
+    expect(
+      JSON.stringify(assetTaxSchemeDefinitionSchema.parse(definition)),
+    ).toBe(retained);
+    expect(assetTaxSchemeRemark({ ...definition, remark: "" })).toBe("");
+    expect(
+      assetTaxSchemeDefinitionSchema.safeParse({
+        ...simple,
+        remark: "x".repeat(5001),
+      }).success,
+    ).toBe(false);
+  });
+
   it("calculates original-cost rates without asserting statutory eligibility", () => {
     expect(calculateAssetTaxScheme(definition, basis)).toMatchObject({
       firstYearMinor: 200000,

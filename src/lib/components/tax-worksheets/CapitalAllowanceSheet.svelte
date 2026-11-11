@@ -14,7 +14,10 @@
     parseTaxAmount,
   } from "./asset-tax-form.js";
   import { formatTaxMinor, safeTaxSum } from "$lib/tax-worksheet.js";
-  import { taxJurisdictionLabel } from "$lib/asset-tax-scheme.js";
+  import {
+    schemeApplies,
+    taxJurisdictionLabel,
+  } from "$lib/asset-tax-scheme.js";
   import { type CapitalRowInput } from "$lib/capital-allowance.js";
   import type { TaxWorksheetDetail as Detail } from "$lib/server/queries/tax-worksheets.js";
   export type CapitalSheetMode =
@@ -51,7 +54,14 @@
       n,
       initial.capital.schedule?.currency ?? initial.revision.snapshot.currency,
     );
-  let assetForm = $state(createAssetTaxForm(selected));
+  let assetForm = $state(
+    createAssetTaxForm(
+      selected,
+      asset,
+      initial.worksheet.dateFrom,
+      initial.worksheet.dateTo,
+    ),
+  );
   const asInput = amountInput;
   let jurisdiction = $state(
     initial.capital.schedule?.jurisdiction ??
@@ -144,7 +154,7 @@
       payload = {
         action: mode,
         expectedVersion: initial.revision.version,
-        reason,
+        reason: mode === "row" ? "Update asset tax workings" : reason,
       };
       if (mode !== "manual")
         payload.liveAssetHash = initial.capital.liveAssetHash;
@@ -224,9 +234,16 @@
   submitLabel={mode === "row" || mode === "settings"
     ? "Save workings"
     : titles[mode]}
-  disabled={(mode === "prepare" || mode === "rollover") &&
+  disabled={((mode === "prepare" || mode === "rollover") &&
     overlaps.length > 0 &&
-    !replaceManual}
+    !replaceManual) ||
+    (mode === "row" &&
+      assetForm.treatment === "claim" &&
+      !schemeChoices.some(
+        (s) =>
+          String(s.id) === assetForm.schemeId &&
+          schemeApplies(s.definition, jurisdiction, initial.worksheet.ya),
+      ))}
   {onclose}
   onsubmit={submit}
 >
@@ -348,7 +365,7 @@
         /><label for="ca-replace">Replace these manual allowance entries</label>
       </div>{/if}
   {/if}
-  {#if !readonly}<div class="field">
+  {#if !readonly && mode !== "row"}<div class="field">
       <label class="field-label" for="ca-reason">Reason for this change</label
       ><Textarea
         id="ca-reason"

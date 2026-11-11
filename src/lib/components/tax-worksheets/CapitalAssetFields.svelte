@@ -7,7 +7,7 @@
   import DatePicker from "$lib/components/ui/date-picker/DatePicker.svelte";
   import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
   import { formatTaxMinor } from "$lib/tax-worksheet.js";
-  import { percentageToBps } from "$lib/expense-tax.js";
+  import { resolve } from "$app/paths";
   import {
     schemeApplies,
     assetTaxSchemeRemark,
@@ -72,25 +72,12 @@
   const activeScheme = $derived(
     choices.find((s) => String(s.id) === draft.schemeId),
   );
-  const fieldDefinitions = $derived([
-    [
-      "qualifyingMinor",
-      "Qualifying expenditure before business-use adjustment",
-    ],
-    ["openingResidualMinor", "Opening tax residual expenditure"],
-    ["additionsMinor", "This-year qualifying additions"],
-    [
-      "initialMinor",
-      jurisdiction === "MY" ? "Initial allowance (IA)" : "First-year deduction",
-    ],
-    [
-      "annualMinor",
-      jurisdiction === "MY" ? "Annual allowance (AA)" : "Regular deduction",
-    ],
-  ] as const);
   const previewState = $derived.by(() => {
     try {
-      const row = assetTaxRowFromForm(selected, draft, year, choices);
+      const row =
+        readonly || (!draft.schemeId && selected.treatment === "claim")
+          ? selected
+          : assetTaxRowFromForm(selected, draft, year, choices);
       const rowPreview =
         capitalTotals(
           {
@@ -113,19 +100,18 @@
     }
   });
   const rowPreview = $derived(previewState.row);
-  let basisError = $state("");
-  function reusePurchase() {
-    const bps = percentageToBps(draft.percentage);
-    if (bps === null) {
-      basisError = "Enter business use before reusing the purchase cost.";
-      return;
+  const retainedManual = $derived(
+    selected.treatment === "claim" &&
+      (!selected.schemeId || selected.schemeOverride),
+  );
+  function changeBasis(mode: string) {
+    if (mode !== "new" && mode !== "existing" && mode !== "detailed") return;
+    draft.basisMode = mode;
+    if (mode === "existing") {
+      draft.amounts.openingResidualMinor = "";
+      draft.amounts.additionsMinor = "0.00";
+      draft.firstYear = false;
     }
-    basisError = "";
-    draft.amounts.qualifyingMinor = amountInput(asset!.costMinor);
-    draft.amounts.openingResidualMinor = "0.00";
-    draft.amounts.additionsMinor = amountInput(
-      Number((BigInt(asset!.costMinor) * BigInt(bps) + 5000n) / 10000n),
-    );
   }
 </script>
 
@@ -142,181 +128,210 @@
     firstIsWarning
   />{/if}
 <div class="field">
-  <label class="field-label" for="ca-treatment">Tax treatment</label
-  ><Select.Root
+  <label class="field-label" for="ca-treatment">Tax treatment</label>
+  <Select.Root
     type="single"
     bind:value={draft.treatment}
     disabled={saving || readonly}
-    ><Select.Trigger id="ca-treatment" class="w-full justify-between"
-      >{draft.treatment === "claim"
-        ? "Prepare allowance workings"
-        : draft.treatment === "exclude"
-          ? "Exclude with reason"
-          : "Needs review"}</Select.Trigger
-    ><Select.Content
-      ><Select.Item value="pending" label="Needs review" /><Select.Item
-        value="claim"
-        label="Prepare allowance workings"
-      /><Select.Item
-        value="exclude"
-        label="Exclude with reason"
-      /></Select.Content
-    ></Select.Root
   >
+    <Select.Trigger id="ca-treatment" class="w-full justify-between"
+      >{draft.treatment === "claim"
+        ? "Claim allowance"
+        : draft.treatment === "exclude"
+          ? "Exclude asset"
+          : "Needs review"}</Select.Trigger
+    >
+    <Select.Content>
+      <Select.Item value="pending" label="Needs review" />
+      <Select.Item value="claim" label="Claim allowance" />
+      <Select.Item value="exclude" label="Exclude asset" />
+    </Select.Content>
+  </Select.Root>
 </div>
 {#if draft.treatment === "claim"}
-  {#if !jurisdiction}<p class="field-hint">
-      Select the tax jurisdiction under Deductions used and evidence before
-      choosing a reusable scheme.
-    </p>{/if}
   <div class="field">
-    <label class="field-label" for="asset-tax-scheme">Calculation scheme</label
-    ><Select.Root
+    <label class="field-label" for="asset-tax-scheme">Calculation scheme</label>
+    <Select.Root
       type="single"
-      value={draft.schemeId || "manual"}
-      disabled={saving || readonly}
+      value={draft.schemeId}
+      disabled={saving || readonly || !jurisdiction}
       onValueChange={(id) => {
-        draft.schemeId = id === "manual" ? "" : id;
-        draft.override = false;
-        const choice = choices.find((s) => String(s.id) === id);
-        if (choice) {
-          draft.taxClass = choice.definition.name;
-          draft.ruleReference = choice.definition.reference ?? "";
-        }
+        draft.schemeId = id;
       }}
-      ><Select.Trigger id="asset-tax-scheme" class="w-full justify-between"
+    >
+      <Select.Trigger id="asset-tax-scheme" class="w-full justify-between"
         >{activeScheme
-          ? `${activeScheme.definition.name} · v${activeScheme.version}`
-          : "Enter amounts manually"}</Select.Trigger
-      ><Select.Content
-        ><Select.Item
-          value="manual"
-          label="Enter amounts manually"
-        />{#each choices as scheme (scheme.id)}<Select.Item
+          ? activeScheme.definition.name
+          : readonly
+            ? "Retained manual calculation"
+            : "Select a scheme"}</Select.Trigger
+      >
+      <Select.Content
+        >{#each choices as scheme (scheme.id)}
+          <Select.Item
             value={String(scheme.id)}
             label={`${scheme.definition.name} · v${scheme.version}`}
-          />{/each}</Select.Content
-      ></Select.Root
-    >
+            disabled={!schemeApplies(scheme.definition, jurisdiction, year)}
+          />
+        {/each}</Select.Content
+      >
+    </Select.Root>
+    {#if !readonly}<p class="field-hint">
+        {#if !jurisdiction}Set the tax jurisdiction under Deductions used and
+          evidence first.
+        {:else}{#if !choices.some( (s) => schemeApplies(s.definition, jurisdiction, year), )}No
+            matching scheme for this jurisdiction and tax year. Create one in{:else}Choose
+            rates configured in{/if}
+          <a class="detail-card-action" href={resolve("/(app)/settings/tax")}
+            >Tax settings</a
+          >.{/if}
+      </p>{/if}
+    {#if activeScheme && assetTaxSchemeRemark(activeScheme.definition)}<p
+        class="field-hint"
+      >
+        {assetTaxSchemeRemark(activeScheme.definition)}
+      </p>{/if}
   </div>
-  {#if activeScheme}<ReportNotes
-      notes={[
-        "Custom scheme — not jurisdiction-verified. Confirm its applicability, tax year and conditions before using these amounts.",
-        assetTaxSchemeRemark(activeScheme.definition),
-      ].filter(Boolean)}
-    />
-    <div class="tax-filter">
-      <Checkbox
-        id="scheme-first-year"
-        bind:checked={draft.firstYear}
-        disabled={saving || readonly}
-      /><label for="scheme-first-year"
-        >Apply the scheme’s first-year deduction to this-year additions</label
-      >
-    </div>
-    <div class="tax-filter">
-      <Checkbox
-        id="scheme-override"
-        checked={draft.override}
-        disabled={saving || readonly}
-        onCheckedChange={(checked) => {
-          if (checked && rowPreview) {
-            draft.amounts.initialMinor = amountInput(rowPreview.initialMinor);
-            draft.amounts.annualMinor = amountInput(rowPreview.annualMinor);
-          }
-          draft.override = checked === true;
-        }}
-      /><label for="scheme-override"
-        >Override calculated amounts with a reason</label
-      >
-    </div>
-    <p class="field-hint">
-      {activeScheme.definition.method === "original_cost"
-        ? "Regular deduction uses business-use qualifying expenditure."
-        : "Regular deduction uses the remaining tax residual after the first-year deduction."}
-      Full-period calculation; no proration or statutory elections are inferred.
+  {#if retainedManual && !readonly && !draft.schemeId}<p class="field-hint">
+      Previously entered amounts are retained below. Choose a scheme to
+      recalculate before saving a claim.
     </p>{/if}
-
-  <p class="field-hint">
-    Enter accountant-reviewed amounts. Qualifying expenditure is before business
-    use; all residual, addition and allowance amounts below are already
-    business-use adjusted. A selected scheme calculates suggestions; eligibility
-    remains your decision.
-  </p>
+  {#if selected.schemeOverride && !readonly && draft.schemeId}<p
+      class="field-hint"
+    >
+      Saving replaces the previous manual override with the scheme calculation.
+    </p>{/if}
   <div class="field">
-    <label class="field-label" for="ca-class">Tax class</label><Input
-      id="ca-class"
-      bind:value={draft.taxClass}
-      placeholder="As confirmed by your accountant"
-      maxlength={100}
-      disabled={saving || readonly}
-    />
-  </div>
-  <div class="field">
-    <label class="field-label" for="ca-source">Business source</label><Input
+    <label class="field-label" for="ca-source">Business source</label>
+    <Input
       id="ca-source"
       bind:value={draft.businessSource}
       placeholder="e.g. Main trading business"
       maxlength={100}
+      required
+      disabled={saving || readonly}
+    />
+    <p class="field-hint">
+      Keep the same name for assets belonging to the same business.
+    </p>
+  </div>
+  <div class="field">
+    <label class="field-label" for="ca-qualifyingMinor">Qualifying cost</label>
+    <Input
+      id="ca-qualifyingMinor"
+      bind:value={draft.amounts.qualifyingMinor}
+      inputmode="decimal"
+      required
+      disabled={saving || readonly}
+    />
+    {#if !readonly && asset}<button
+        type="button"
+        class="detail-card-action"
+        disabled={saving}
+        onclick={() =>
+          (draft.amounts.qualifyingMinor = amountInput(asset.costMinor))}
+        >Use book cost</button
+      >{/if}
+    <p class="field-hint">Eligible cost before business-use adjustment.</p>
+  </div>
+  <div class="field">
+    <label class="field-label" for="ca-use">Business use (%)</label>
+    <Input
+      id="ca-use"
+      bind:value={draft.percentage}
+      inputmode="decimal"
+      required
       disabled={saving || readonly}
     />
   </div>
-  {#if !readonly && asset && asset.acquisitionDate >= dateFrom}<button
-      type="button"
-      class="detail-card-action"
-      disabled={saving}
-      onclick={reusePurchase}>Use purchase cost for this new asset</button
-    >{#if basisError}<p class="field-hint" role="alert">
-        {basisError}
-      </p>{/if}{/if}
-  {#each fieldDefinitions as [key, label] (key)}
-    <div class="field">
-      <label class="field-label" for={`ca-${key}`}>{label}</label><Input
-        id={`ca-${key}`}
-        value={activeScheme &&
-        !draft.override &&
-        (key === "initialMinor" || key === "annualMinor")
-          ? amountInput(
-              key === "initialMinor"
-                ? rowPreview?.initialMinor
-                : rowPreview?.annualMinor,
-            )
-          : draft.amounts[key]}
-        oninput={(event) =>
-          (draft.amounts[key] = String(event.currentTarget.value))}
-        readonly={!!activeScheme &&
-          !draft.override &&
-          (key === "initialMinor" || key === "annualMinor")}
+  <div class="field">
+    <label class="field-label" for="ca-basis">Tax basis</label>
+    <Select.Root
+      type="single"
+      value={draft.basisMode}
+      onValueChange={changeBasis}
+      disabled={saving || readonly}
+    >
+      <Select.Trigger id="ca-basis" class="w-full justify-between"
+        >{draft.basisMode === "new"
+          ? "New qualifying expenditure this year"
+          : draft.basisMode === "existing"
+            ? "Brought-forward balance"
+            : "Retained opening and additions"}</Select.Trigger
+      >
+      <Select.Content>
+        <Select.Item value="new" label="New qualifying expenditure this year" />
+        <Select.Item value="existing" label="Brought-forward balance" />
+        {#if draft.basisMode === "detailed"}<Select.Item
+            value="detailed"
+            label="Retained opening and additions"
+          />{/if}
+      </Select.Content>
+    </Select.Root>
+  </div>
+  {#if draft.basisMode !== "new"}<div class="field">
+      <label class="field-label" for="ca-openingResidualMinor"
+        >Opening tax balance</label
+      >
+      <Input
+        id="ca-openingResidualMinor"
+        bind:value={draft.amounts.openingResidualMinor}
         inputmode="decimal"
+        required
         disabled={saving || readonly}
       />
-    </div>
-    {#if key === "qualifyingMinor"}<div class="field">
-        <label class="field-label" for="ca-use">Business use (%)</label><Input
-          id="ca-use"
-          bind:value={draft.percentage}
-          inputmode="decimal"
-          disabled={saving || readonly}
-        />
-      </div>{/if}
-  {/each}
-  {#if previewState.error}<ReportNotes
+      <p class="field-hint">
+        Use the previous tax residual, already adjusted for business use.
+      </p>
+    </div>{/if}
+  {#if activeScheme && activeScheme.definition.firstYearRateBps > 0 && (draft.basisMode === "new" || Number(draft.amounts.additionsMinor) > 0)}<div
+      class="tax-filter"
+    >
+      <Checkbox
+        id="scheme-first-year"
+        bind:checked={draft.firstYear}
+        disabled={saving || readonly}
+      />
+      <label for="scheme-first-year"
+        >Claim first-year allowance on this year's additions</label
+      >
+    </div>{/if}
+  {#if previewState.error && draft.schemeId}<ReportNotes
       notes={[previewState.error]}
       firstIsWarning
     />{/if}
-  {#if rowPreview}<dl class="detail-list tax-summary">
+  {#if rowPreview}<dl
+      class="detail-list tax-summary"
+      aria-label="Allowance calculation"
+    >
       <div class="detail-row">
         <dt class="detail-key">
-          {jurisdiction === "MY"
-            ? "Entered IA + AA"
-            : "First-year + regular deductions"}
+          {jurisdiction === "MY" ? "Initial allowance" : "First-year deduction"}
         </dt>
+        <dd class="detail-val tax-amount">
+          {rowPreview.initialMinor === null
+            ? "Needs review"
+            : money(rowPreview.initialMinor)}
+        </dd>
+      </div>
+      <div class="detail-row">
+        <dt class="detail-key">
+          {jurisdiction === "MY" ? "Annual allowance" : "Regular deduction"}
+        </dt>
+        <dd class="detail-val tax-amount">
+          {rowPreview.annualMinor === null
+            ? "Needs review"
+            : money(rowPreview.annualMinor)}
+        </dd>
+      </div>
+      <div class="detail-row">
+        <dt class="detail-key">Total allowance</dt>
         <dd class="detail-val tax-amount">
           {money(rowPreview.allowanceMinor)}
         </dd>
       </div>
       <div class="detail-row">
-        <dt class="detail-key">Closing tax residual</dt>
+        <dt class="detail-key">Closing tax balance</dt>
         <dd class="detail-val tax-amount">
           {rowPreview.closingResidualMinor === null
             ? "Needs review"
@@ -324,42 +339,47 @@
         </dd>
       </div>
     </dl>
-    {#if rowPreview.issues.length}<ReportNotes
+    {#if rowPreview.issues.length && (draft.schemeId || readonly)}<ReportNotes
         notes={rowPreview.issues}
         firstIsWarning
       />{/if}{/if}
   <details
     class="tax-disclosure"
-    open={!!selected?.residualAdjustmentMinor ||
-      !!selected?.ruleReference ||
-      draft.disposed}
+    open={!!selected.residualAdjustmentMinor ||
+      !!selected.disposal ||
+      draft.basisMode === "detailed"}
   >
-    <summary>Adjustments, source notes and disposal</summary>
+    <summary>Adjustments and disposal</summary>
     <div class="tax-disclosure-body">
+      {#if draft.basisMode !== "new"}<div class="field">
+          <label class="field-label" for="ca-additionsMinor"
+            >Additional qualifying expenditure this year</label
+          >
+          <Input
+            id="ca-additionsMinor"
+            bind:value={draft.amounts.additionsMinor}
+            inputmode="decimal"
+            disabled={saving || readonly}
+          />
+          <p class="field-hint">
+            Already adjusted for business use. Leave zero when there are no
+            additions.
+          </p>
+        </div>{/if}
       <div class="field">
         <label class="field-label" for="ca-residual-adjust"
-          >Tax residual adjustment (+ / −)</label
-        ><Input
+          >Tax balance adjustment (+ / −)</label
+        >
+        <Input
           id="ca-residual-adjust"
           bind:value={draft.residualAdjustment}
           inputmode="decimal"
           disabled={saving || readonly}
         />
       </div>
-      <div class="field">
-        <label class="field-label" for="ca-rule"
-          >Rule or individual working-paper reference</label
-        ><Textarea
-          id="ca-rule"
-          bind:value={draft.ruleReference}
-          maxlength={2000}
-          disabled={saving || readonly}
-        />
-        <p class="field-hint">
-          Effective YA {year}. A shared working-paper reference can be entered
-          under Deductions used and evidence.
-        </p>
-      </div>
+      {#if selected.ruleReference}<p class="field-hint">
+          Saved reference: {selected.ruleReference}
+        </p>{/if}
       <div class="tax-filter">
         <Checkbox
           id="ca-disposal"
@@ -410,16 +430,12 @@
             disabled={saving || readonly}
           />
         </div>
-        <div class="field">
-          <label class="field-label" for="ca-disposal-evidence"
-            >Disposal evidence reference</label
-          ><Input
-            id="ca-disposal-evidence"
-            bind:value={draft.disposalEvidence}
-            maxlength={2000}
-            disabled={saving || readonly}
-          />
-        </div>
+        <p class="field-hint">
+          Use the Remark below to explain the disposal and its reviewed amounts.
+        </p>
+        {#if draft.disposalEvidence}<p class="field-hint">
+            Saved disposal reference: {draft.disposalEvidence}
+          </p>{/if}
       {/if}
     </div>
   </details>
@@ -427,12 +443,23 @@
 <div class="field">
   <label class="field-label" for="ca-note"
     >{draft.treatment === "exclude"
-      ? "Exclusion reason"
-      : "Notes / adjustment explanation"}</label
-  ><Textarea
+      ? "Remark (reason for exclusion)"
+      : draft.treatment === "claim" && Number(draft.residualAdjustment) !== 0
+        ? "Remark (explain the adjustment)"
+        : draft.treatment === "claim" &&
+            draft.disposed &&
+            !draft.disposalEvidence
+          ? "Remark (disposal reference)"
+          : "Remark (optional)"}</label
+  >
+  <Textarea
     id="ca-note"
     bind:value={draft.note}
     maxlength={2000}
+    required={draft.treatment === "exclude" ||
+      (draft.treatment === "claim" &&
+        ((draft.disposed && !draft.disposalEvidence) ||
+          Number(draft.residualAdjustment) !== 0))}
     disabled={saving || readonly}
   />
 </div>

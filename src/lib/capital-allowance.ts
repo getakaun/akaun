@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  appliedAssetTaxSchemeSchema,
+  taxJurisdictionSchema,
+  calculateAssetTaxScheme,
+  schemeApplies,
+} from "./asset-tax-scheme.js";
 
 export class CapitalAllowanceError extends Error {}
 const cents = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -11,6 +17,10 @@ const text = z.string().trim().max(2000);
 export const capitalRowSchema = z
   .object({
     assetId: z.number().int().positive(),
+    schemeId: z.number().int().positive().nullable().optional(),
+    schemeFirstYear: z.boolean().optional(),
+    schemeOverride: z.boolean().optional(),
+    appliedScheme: appliedAssetTaxSchemeSchema.optional(),
     treatment: z.enum(["pending", "claim", "exclude"]),
     taxClass: z.string().trim().max(100),
     businessSource: z.string().trim().max(100),
@@ -50,6 +60,7 @@ export const capitalUseSchema = z
   );
 export const capitalInputSchema = z
   .object({
+    jurisdiction: taxJurisdictionSchema.nullable().optional(),
     evidence: text,
     rows: z.array(capitalRowSchema).max(10000),
     utilisation: z.array(capitalUseSchema).max(10000),
@@ -77,8 +88,8 @@ export type CapitalPredecessor = {
   hash: string;
 };
 export type CapitalSchedule = CapitalInput & {
-  calculationVersion: 1;
-  currency: "MYR";
+  calculationVersion: 1 | 2;
+  currency: string;
   assets: CapitalAssetEvidence[];
   predecessor: CapitalPredecessor | null;
 };
@@ -107,6 +118,10 @@ export function capitalTotals(
   dateTo: string,
 ) {
   const problems: string[] = [];
+  if (schedule.calculationVersion === 2 && !schedule.jurisdiction)
+    problems.push(
+      "Select the tax jurisdiction independently of the book currency.",
+    );
   const ids = new Set<number>();
   const assets = new Map(schedule.assets.map((a) => [a.assetId, a]));
   const rows = schedule.rows.map((row) => {
@@ -132,6 +147,47 @@ export function capitalTotals(
         issues.push("Confirm the tax class and business source.");
       if (!(row.ruleReference || schedule.evidence))
         issues.push("Add a source or working-paper reference.");
+      if (row.schemeId) {
+        if (!row.appliedScheme || row.appliedScheme.id !== row.schemeId)
+          issues.push("Apply a retained custom scheme version.");
+        else {
+          if (
+            !schemeApplies(
+              row.appliedScheme.definition,
+              schedule.jurisdiction,
+              ya,
+            )
+          )
+            issues.push(
+              "The scheme jurisdiction or effective tax year does not match this worksheet.",
+            );
+          if (row.schemeOverride) {
+            if (row.note.trim().length < 10)
+              issues.push("Explain the manual override of scheme amounts.");
+          } else {
+            try {
+              const calculated = calculateAssetTaxScheme(
+                row.appliedScheme.definition,
+                { ...row, firstYear: row.schemeFirstYear ?? false },
+              );
+              if (
+                calculated &&
+                (row.initialMinor !== calculated.firstYearMinor ||
+                  row.annualMinor !== calculated.regularMinor)
+              )
+                issues.push(
+                  "The entered amounts differ from the scheme preview. Reapply the scheme or explain a manual override.",
+                );
+            } catch (error) {
+              issues.push(
+                error instanceof Error
+                  ? error.message
+                  : "The scheme basis needs review.",
+              );
+            }
+          }
+        }
+      }
       const amounts = [
         row.qualifyingMinor,
         row.businessUseBps,

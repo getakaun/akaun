@@ -124,7 +124,7 @@
     <div class="detail-hero-eyebrow">
       Annual tax · Revision {r.revision} · {r.snapshot.currency}
     </div>
-    <h1 class="detail-hero-title">YA {d.worksheet.ya}</h1>
+    <h1 class="detail-hero-title">Tax year {d.worksheet.ya}</h1>
     <div class="detail-hero-figure">
       <span class="detail-hero-amount">{money(t.resultMinor)}</span><StatusBadge
         status={`tax-${r.status}`}
@@ -293,6 +293,7 @@
     <CapitalAllowances
       detail={d}
       {editable}
+      canManageSchemes={data.canUpdate}
       canReadAssets={data.canReadAssets}
       onsaved={saved}
     />
@@ -335,6 +336,7 @@
                   (d.capital.active &&
                     (d.capital.assetsStale ||
                       d.capital.predecessorStale ||
+                      d.capital.currencyMismatch ||
                       !!d.capital.totals?.problems.length))}
                 onclick={() => ask("review")}
                 >{saving ? "Saving…" : "Mark reviewed"}</Button
@@ -347,6 +349,7 @@
                   (d.capital.active &&
                     (d.capital.assetsStale ||
                       d.capital.predecessorStale ||
+                      d.capital.currencyMismatch ||
                       !!d.capital.totals?.problems.length))}
                 onclick={() => ask("finalise")}
                 >{saving ? "Saving…" : "Finalise worksheet"}</Button
@@ -379,7 +382,7 @@
               >Open latest revision<ChevronRight size={13} /></a
             >
           </div>{/if}
-        {#if d.capital.active && (d.capital.assetsStale || d.capital.predecessorStale || d.capital.totals?.problems.length)}<p
+        {#if d.capital.active && (d.capital.assetsStale || d.capital.predecessorStale || d.capital.currencyMismatch || d.capital.totals?.problems.length)}<p
             class="field-hint"
           >
             Complete the capital allowance review before continuing.

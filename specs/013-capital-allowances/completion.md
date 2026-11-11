@@ -1,5 +1,7 @@
 # Phase 6 — capital allowance schedule
 
+**Follow-up:** [Reusable schemes and international foundation](schemes-completion.md) supersedes the original MYR-only/manual-input limitations below. Earlier finalised evidence stays unchanged.
+
 **Phase:** 6, manual Malaysian capital allowance preparation.
 
 **Branch:** `codex/capital-allowance-schedule`, based on main `decc118`.

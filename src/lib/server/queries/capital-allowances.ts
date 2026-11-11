@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { evidenceHash } from "../tax-evidence.js";
 import { eq } from "drizzle-orm";
 import {
   blankCapitalRow,
@@ -12,11 +12,10 @@ import {
   taxWorksheets,
 } from "../db/schema.js";
 import type { LedgerDb } from "../ledger/types.js";
-import { taxDecimal } from "$lib/tax-worksheet.js";
+import { assetTaxSchemeVersions } from "./asset-tax-schemes.js";
 import { fixedAssetRegister } from "./fixed-assets.js";
 
-export const capitalHash = (value: unknown) =>
-  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+export const capitalHash = evidenceHash;
 export function capitalAssets(
   db: LedgerDb,
   dateTo: string,
@@ -82,6 +81,7 @@ export function capitalRollover(
   db: LedgerDb,
   worksheet: typeof taxWorksheets.$inferSelect,
   assets: CapitalAssetEvidence[],
+  currency: string,
 ): CapitalSchedule | null {
   const previousWorksheet = db
     .select()
@@ -93,7 +93,11 @@ export function capitalRollover(
   const previousRevision = latest(db, previousWorksheet.id);
   if (!previousRevision || previousRevision.status !== "finalised") return null;
   const previous = capitalScheduleFor(db, previousRevision.id);
-  if (!previous?.active || !capitalPredecessorCurrent(db, previous.evidence))
+  if (
+    !previous?.active ||
+    previous.evidence.currency !== currency ||
+    !capitalPredecessorCurrent(db, previous.evidence)
+  )
     return null;
   const totals = capitalTotals(
     previous.evidence,
@@ -117,6 +121,10 @@ export function capitalRollover(
     return {
       ...blank,
       treatment: "claim" as const,
+      schemeId: old.schemeId,
+      schemeFirstYear: false,
+      schemeOverride: false,
+      appliedScheme: old.appliedScheme,
       taxClass: old.taxClass,
       businessSource: old.businessSource,
       qualifyingMinor: old.qualifyingMinor,
@@ -130,8 +138,11 @@ export function capitalRollover(
     };
   });
   return {
-    calculationVersion: 1,
-    currency: "MYR",
+    calculationVersion: 2,
+    currency,
+    jurisdiction:
+      previous.evidence.jurisdiction ??
+      (previous.evidence.calculationVersion === 1 ? "MY" : null),
     assets,
     rows,
     evidence: "",
@@ -157,13 +168,24 @@ export function capitalDetail(
   compareLive: boolean,
 ) {
   const saved = capitalScheduleFor(db, revisionId);
+  const revision = db
+    .select()
+    .from(taxWorksheetRevisions)
+    .where(eq(taxWorksheetRevisions.id, revisionId))
+    .get();
   const candidates = compareLive
     ? capitalAssets(db, worksheet.dateTo)
     : (saved?.evidence.assets ?? []);
   const rollover = compareLive
-    ? capitalRollover(db, worksheet, candidates)
+    ? capitalRollover(
+        db,
+        worksheet,
+        candidates,
+        revision?.snapshot.currency ?? "MYR",
+      )
     : null;
   return {
+    schemes: compareLive ? assetTaxSchemeVersions(db) : [],
     active: saved?.active ?? false,
     schedule: saved?.evidence ?? null,
     totals: saved
@@ -176,6 +198,8 @@ export function capitalDetail(
       : null,
     candidates,
     liveAssetHash: capitalHash(candidates),
+    currencyMismatch:
+      !!saved && saved.evidence.currency !== revision?.snapshot.currency,
     assetsStale:
       compareLive &&
       !!saved &&
@@ -217,101 +241,4 @@ export function assetCapitalHistory(db: LedgerDb, assetId: number) {
     }));
 }
 
-/** Fully labelled retained workings shared by CSV and print; never reads live assets. */
-export function capitalExportLines(
-  schedule: CapitalSchedule,
-  active: boolean,
-  ya: number,
-  dateFrom: string,
-  dateTo: string,
-): [string, string][] {
-  const totals = capitalTotals(schedule, ya, dateFrom, dateTo);
-  const amount = (n: number | null) =>
-    n === null ? "Unreviewed" : taxDecimal(n);
-  const lines: [string, string][] = [
-    [
-      "Mode",
-      active ? "Asset schedule" : "Retained schedule; manual totals active",
-    ],
-    [
-      "Calculation",
-      "Version 1; manually reviewed MYR amounts; no statutory rate engine",
-    ],
-    ["Shared working-paper reference", schedule.evidence],
-    ["Allowances available", amount(totals.allowanceMinor)],
-    ["Allowances utilised", amount(totals.usedMinor)],
-    ["Balancing charges", amount(totals.balancingChargeMinor)],
-    ["Unabsorbed allowances carried forward", amount(totals.carryForwardMinor)],
-    ["Predecessor evidence", JSON.stringify(schedule.predecessor)],
-  ];
-  for (const r of totals.rows) {
-    const prefix = `${r.asset.name} (FA-${r.assetId})`;
-    const fields: [string, string][] = [
-      ["Treatment", r.treatment],
-      ["Tax class", r.taxClass],
-      ["Business source", r.businessSource],
-      [
-        "Qualifying expenditure before business-use adjustment",
-        amount(r.qualifyingMinor),
-      ],
-      [
-        "Business use",
-        r.businessUseBps === null ? "Unreviewed" : `${r.businessUseBps / 100}%`,
-      ],
-      ["Opening tax residual", amount(r.openingResidualMinor)],
-      [
-        "Qualifying additions (business-use adjusted)",
-        amount(r.additionsMinor),
-      ],
-      ["Initial allowance", amount(r.initialMinor)],
-      ["Annual allowance", amount(r.annualMinor)],
-      ["Residual expenditure adjustment", amount(r.residualAdjustmentMinor)],
-      ["Closing tax residual", amount(r.closingResidualMinor)],
-      ["Tax residual removed on full disposal", amount(r.residualRemovedMinor)],
-      ["Reason / notes", r.note],
-      ["Rule / evidence reference", r.ruleReference],
-      ["Effective YA", String(r.effectiveYa)],
-      ["Asset and purchase evidence", JSON.stringify(r.asset)],
-    ];
-    if (r.disposal)
-      fields.push(
-        ["Disposal date", r.disposal.date],
-        ["Disposal proceeds", amount(r.disposal.proceedsMinor)],
-        ["Balancing allowance", amount(r.disposal.balancingAllowanceMinor)],
-        ["Balancing charge", amount(r.disposal.balancingChargeMinor)],
-        ["Disposal evidence", r.disposal.evidence],
-        [
-          "Book disposal",
-          "Tax evidence only; book disposal and stopping depreciation require separate accounting attention.",
-        ],
-      );
-    lines.push(
-      ...fields.map(([label, value]): [string, string] => [
-        `${prefix} · ${label}`,
-        value,
-      ]),
-    );
-  }
-  for (const u of schedule.utilisation)
-    lines.push(
-      [
-        `${u.businessSource} · origin YA ${u.originYa} · available balance`,
-        amount(u.balanceMinor),
-      ],
-      [
-        `${u.businessSource} · origin YA ${u.originYa} · utilisation`,
-        amount(u.usedMinor),
-      ],
-      [
-        `${u.businessSource} · origin YA ${u.originYa} · unabsorbed balance`,
-        amount(u.balanceMinor - u.usedMinor),
-      ],
-    );
-  lines.push(
-    ...totals.problems.map((problem): [string, string] => [
-      "Needs review",
-      problem,
-    ]),
-  );
-  return lines;
-}
+export { capitalExportLines } from "$lib/asset-tax-export.js";

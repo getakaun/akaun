@@ -31,6 +31,7 @@ export type AuditChange = { field: string; before: unknown; after: unknown };
 
 export const RECORD_TYPE_LABELS: Record<string, string> = {
   tax_worksheet: "Annual tax worksheet",
+  tax_scheme: "Custom asset tax scheme",
   fixed_asset: "Fixed asset",
   record: "Record",
   account: "Account",

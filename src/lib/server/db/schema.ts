@@ -1758,7 +1758,7 @@ export const taxCapitalSchedules = sqliteTable(
     check("tax_capital_active", sql`"active" IN (0, 1)`),
     check(
       "tax_capital_json",
-      sql`CASE WHEN json_valid("evidence") THEN coalesce(json_extract("evidence", '$.calculationVersion') = 1 AND json_extract("evidence", '$.currency') = 'MYR' AND json_type("evidence", '$.rows') = 'array' AND json_type("evidence", '$.assets') = 'array' AND json_type("evidence", '$.utilisation') = 'array', 0) ELSE 0 END`,
+      sql`CASE WHEN json_valid("evidence") THEN coalesce((json_extract("evidence", '$.calculationVersion') = 1 AND json_extract("evidence", '$.currency') = 'MYR' OR json_extract("evidence", '$.calculationVersion') = 2 AND json_type("evidence", '$.currency') = 'text' AND length(json_extract("evidence", '$.currency')) = 3) AND json_type("evidence", '$.rows') = 'array' AND json_type("evidence", '$.assets') = 'array' AND json_type("evidence", '$.utilisation') = 'array', 0) ELSE 0 END`,
     ),
   ],
 );
@@ -1770,3 +1770,28 @@ export const taxCapitalCommands = sqliteTable("tax_capital_commands", {
     .references(() => taxWorksheetRevisions.id, { onDelete: "restrict" }),
   payloadHash: text("payload_hash").notNull(),
 });
+
+/** Every edit is a new immutable scheme version; applications retain the exact definition. */
+export const assetTaxSchemes = sqliteTable(
+  "asset_tax_schemes",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    familyKey: text("family_key").notNull(),
+    version: integer("version").notNull(),
+    definition: text("definition", { mode: "json" })
+      .$type<import("$lib/asset-tax-scheme.js").AssetTaxSchemeDefinition>()
+      .notNull(),
+    requestKey: text("request_key").notNull().unique(),
+    payloadHash: text("payload_hash").notNull(),
+    actorName: text("actor_name").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("asset_tax_scheme_version").on(t.familyKey, t.version),
+    check(
+      "asset_tax_scheme_version_check",
+      sql`typeof("version") = 'integer' AND "version" > 0`,
+    ),
+    check("asset_tax_scheme_definition", sql`json_valid("definition")`),
+  ],
+);

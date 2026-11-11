@@ -290,12 +290,12 @@
       <form bind:this={form} onsubmit={submit} class="tax-form">
         {#if mode === "create"}
           <p class="field-hint">
-            Confirm the YA and accounting dates with your accountant. The dates
-            are not inferred from the YA.
+            Confirm the tax year and accounting dates with your accountant. The
+            dates are not inferred from the YA.
           </p>
           <div class="field">
             <label class="field-label" for="tax-ya"
-              >Year of assessment (YA)</label
+              >Tax year / year of assessment</label
             ><Input
               id="tax-ya"
               type="number"

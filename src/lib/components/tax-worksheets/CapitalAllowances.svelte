@@ -1,4 +1,8 @@
 <script lang="ts">
+  import { invalidateAll } from "$app/navigation";
+  import { toast } from "svelte-sonner";
+  import AssetTaxSchemesSheet from "./AssetTaxSchemesSheet.svelte";
+  import { taxJurisdictionLabel } from "$lib/asset-tax-scheme.js";
   import { resolve } from "$app/paths";
   import { Button } from "$lib/components/ui/button/index.js";
   import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
@@ -14,21 +18,33 @@
     editable,
     canReadAssets,
     onsaved,
+    canManageSchemes = editable,
   }: {
     detail: Detail;
     editable: boolean;
     canReadAssets: boolean;
     onsaved: (detail: Detail) => Promise<void>;
+    canManageSchemes?: boolean;
   } = $props();
   const c = $derived(detail.capital);
   const screen = useIsMobile();
   const money = (n: number | null | undefined) =>
     n == null
       ? "Needs review"
-      : formatTaxMinor(n, detail.revision.snapshot.currency);
+      : formatTaxMinor(
+          n,
+          c.schedule?.currency ?? detail.revision.snapshot.currency,
+        );
+  let schemesOpen = $state(false);
+  const jurisdiction = $derived(
+    c.schedule?.jurisdiction ??
+      (c.schedule?.calculationVersion === 1 ? "MY" : null),
+  );
   let mode = $state<CapitalSheetMode | null>(null);
   let assetId = $state<number | null>(null);
-  const stale = $derived(c.assetsStale || c.predecessorStale);
+  const stale = $derived(
+    c.assetsStale || c.predecessorStale || c.currencyMismatch,
+  );
   function openRow(id: number) {
     assetId = id;
     mode = editable && c.active && !stale ? "row" : "view";
@@ -38,13 +54,13 @@
 <section class="detail-card" aria-labelledby="capital-allowances-title">
   <div class="detail-card-head tax-card-head">
     <h2 id="capital-allowances-title" class="detail-card-title">
-      Capital allowances
+      Asset tax deductions
     </h2>
     {#if c.active && editable}<button
         type="button"
         class="detail-card-action"
         disabled={stale}
-        onclick={() => (mode = "settings")}>Allowance use and evidence</button
+        onclick={() => (mode = "settings")}>Deductions used and evidence</button
       >{/if}
   </div>
   <div class="tax-stack">
@@ -52,20 +68,27 @@
         Manual allowance totals are active. Prepare an asset-linked schedule to
         retain reviewed tax workings alongside this worksheet.
       </p>{:else}<p class="hint">
-        Manual MYR tax workings · Book depreciation stays separate. Review each
-        asset, confirm allowance use, then review the annual worksheet once.
+        Book depreciation stays separate. Review each asset, confirm allowance
+        use, then review the annual worksheet once.
       </p>{/if}
-    {#if detail.revision.snapshot.currency !== "MYR"}<ReportNotes
-        notes={[
-          "Asset-linked capital allowance schedules currently support MYR books. Continue using accountant-reviewed manual totals for this worksheet.",
-        ]}
-      />
-    {:else if editable}<div class="tax-actions">
+    {#if canManageSchemes}<div class="tax-actions">
+        <Button size="sm" variant="outline" onclick={() => (schemesOpen = true)}
+          >Reusable schemes</Button
+        >
+      </div>{/if}
+    {#if c.schedule}<p class="field-hint">
+        Tax jurisdiction: {taxJurisdictionLabel(jurisdiction)} · Book currency: {detail
+          .revision.snapshot.currency}. Custom schemes are not
+        jurisdiction-verified.
+      </p>{/if}
+    {#if editable}<div class="tax-actions">
         {#if !c.active}<Button
             size="sm"
             variant="outline"
             onclick={() => (mode = "prepare")}
-            >{c.schedule ? "Use retained schedule" : "Prepare schedule"}</Button
+            >{c.schedule
+              ? "Use retained schedule"
+              : "Prepare tax schedule"}</Button
           >{/if}{#if c.rollover}<button
             type="button"
             class="detail-card-action"
@@ -84,9 +107,11 @@
       </div>{/if}
     {#if c.active && stale}<ReportNotes
         notes={[
-          c.assetsStale
-            ? "Asset register or purchase evidence changed. Refresh the asset evidence and review affected workings."
-            : "The preceding tax year was amended. Bring forward its latest finalised schedule and review again. Finalised figures here remain fixed.",
+          c.currencyMismatch
+            ? `The retained schedule uses ${c.schedule?.currency}, which differs from this worksheet. It is excluded from the annual result. Use manual totals or a confirmed matching-currency rollover; amounts are not converted here.`
+            : c.assetsStale
+              ? "Asset register or purchase evidence changed. Refresh the asset evidence and review affected workings."
+              : "The preceding tax year was amended. Bring forward its latest finalised schedule and review again. Finalised figures here remain fixed.",
         ]}
         firstIsWarning
       />{/if}
@@ -119,6 +144,11 @@
             </dd>
           </div>{/if}
       </dl>
+      {#if c.active && c.totals.allowanceMinor > 0 && c.totals.usedMinor === 0}<ReportNotes
+          notes={[
+            "Deductions are available, but none are selected for use. Open Deductions used and evidence, confirm the amount used, and save to change the annual tax result.",
+          ]}
+        />{/if}
       {#if c.totals.rows.length}
         {#if screen.current}{#each c.totals.rows as row (row.assetId)}<article
               class="tax-item tax-stack"
@@ -143,7 +173,7 @@
                   </dd>
                 </div>
                 <div class="detail-row">
-                  <dt class="detail-key">This-year IA / AA</dt>
+                  <dt class="detail-key">First-year / regular</dt>
                   <dd class="detail-val tax-amount">
                     {row.treatment === "claim"
                       ? money(row.allowanceMinor)
@@ -174,7 +204,7 @@
               <thead
                 ><tr
                   ><th>Asset</th><th class="rep-amount">Opening tax residual</th
-                  ><th class="rep-amount">This-year IA / AA</th><th
+                  ><th class="rep-amount">First-year / regular</th><th
                     class="rep-amount">Closing tax residual</th
                   ><th>Status</th></tr
                 ></thead
@@ -267,4 +297,15 @@
       assetId = null;
     }}
     {onsaved}
+  />{/if}
+
+{#if schemesOpen}<AssetTaxSchemesSheet
+    {detail}
+    onclose={() => (schemesOpen = false)}
+    onsaved={async () => {
+      await invalidateAll();
+      toast.success(
+        "Custom scheme version saved. Applied schedules remain unchanged.",
+      );
+    }}
   />{/if}

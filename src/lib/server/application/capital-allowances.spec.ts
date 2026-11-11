@@ -71,6 +71,7 @@ function command(
     requestKey: key(),
     reason: "Accountant reviewed the annual tax workings",
     ...(action !== "manual" ? { liveAssetHash: d.capital.liveAssetHash } : {}),
+    ...(action === "prepare" ? { jurisdiction: "MY" } : {}),
     ...extra,
   };
 }
@@ -558,7 +559,7 @@ describe("manual Malaysian capital allowance schedules", () => {
     d = save(d, input);
     expect(d.capital.totals?.problems.join(" ")).toContain("Explain why");
   });
-  it("requires tax permissions, refuses non-MYR schedules and isolates book contexts", () => {
+  it("requires tax permissions, supports independent book currencies and isolates book contexts", () => {
     const d = create();
     const p = command(d, "prepare", { replaceManual: false });
     expect(
@@ -586,7 +587,10 @@ describe("manual Malaysian capital allowance schedules", () => {
       .set({ snapshot })
       .where(eq(schema.taxWorksheetRevisions.id, d.revision.id))
       .run();
-    expect(changeCapitalSchedule(ctx(), d.worksheet.id, p).ok).toBe(false);
+    expect(
+      value(changeCapitalSchedule(ctx(), d.worksheet.id, p)).capital.schedule
+        ?.currency,
+    ).toBe("USD");
   });
   it("rolls back schedule, replacement, receipt, version, audit and signals when the audit fails", () => {
     let d = create();

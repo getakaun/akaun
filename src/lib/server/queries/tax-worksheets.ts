@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { evidenceHash } from "../tax-evidence.js";
 import { and, asc, desc, eq } from "drizzle-orm";
 import {
   TAX_PREPARATION_NOTE,
@@ -18,10 +18,10 @@ import type { LedgerDb, CsvTable } from "../ledger/types.js";
 import { getSetting, SETTING_KEYS } from "../settings.js";
 import { expenseTaxReport } from "./expense-tax-report.js";
 import { profitLossReport } from "./reports.js";
-import { capitalDetail, capitalExportLines } from "./capital-allowances.js";
+import { capitalDetail } from "./capital-allowances.js";
+import { capitalExportLines } from "$lib/asset-tax-export.js";
 
-export const taxHash = (value: unknown) =>
-  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+export const taxHash = evidenceHash;
 
 /** No current defaults, dates of capture or live-source FKs in retained evidence. */
 export function captureTaxSources(
@@ -140,7 +140,7 @@ export function taxWorksheetDetail(
     totals: taxWorksheetTotals(
       revision.snapshot,
       adjustments,
-      capital.active ? capital.totals : null,
+      capital.active && !capital.currencyMismatch ? capital.totals : null,
     ),
     capital,
     stale: taxHash(live) !== revision.sourceHash,
@@ -285,6 +285,11 @@ export function taxWorksheetCsv(detail: TaxWorksheetDetail): CsvTable {
     notes: [
       TAX_PREPARATION_NOTE,
       `${r.snapshot.companyName}; YA ${w.ya}; ${w.dateFrom} to ${w.dateTo}; ${r.snapshot.currency}; revision ${r.revision}; ${r.status}; captured ${r.capturedAt}; reviewed ${r.reviewedAt ?? "—"}; finalised ${r.finalisedAt ?? "—"}.`,
+      ...(detail.capital.currencyMismatch
+        ? [
+            "The retained asset schedule currency differs from this worksheet; its amounts are excluded from the annual result and have not been converted.",
+          ]
+        : []),
       ...r.snapshot.notes,
     ],
   };
@@ -319,7 +324,7 @@ export function taxWorksheetHtml(detail: TaxWorksheetDetail): string {
   const row = (cells: unknown[]) =>
     `<tr>${cells.map((c) => `<td>${escape(c)}</td>`).join("")}</tr>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YA ${w.ya} — revision ${r.revision}</title><style>body{font:14px system-ui;max-width:1100px;margin:32px auto;padding:0 20px;color:#222}h1{font-size:24px}h2{margin-top:28px;font-size:18px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{border-bottom:1px solid #ddd;padding:8px;text-align:left;overflow-wrap:anywhere}th{background:#f5f5f5}p{line-height:1.6}.muted{color:#555}@media print{body{margin:0;padding:0}.print-help{display:none}thead{display:table-header-group}tr{break-inside:avoid}}</style></head><body>
-  <p class="print-help">Use your browser's Print command to print or save as PDF.</p><h1>${escape(r.snapshot.companyName)} — YA ${w.ya}</h1><p>${escape(w.dateFrom)} to ${escape(w.dateTo)} · ${escape(r.snapshot.currency)} · Revision ${r.revision} · ${escape(r.status)}</p><p class="muted">${escape(TAX_PREPARATION_NOTE)}</p>
+  <p class="print-help">Use your browser's Print command to print or save as PDF.</p><h1>${escape(r.snapshot.companyName)} — YA ${w.ya}</h1><p>${escape(w.dateFrom)} to ${escape(w.dateTo)} · ${escape(r.snapshot.currency)} · Revision ${r.revision} · ${escape(r.status)}</p><p class="muted">${escape(TAX_PREPARATION_NOTE)}</p>${detail.capital.currencyMismatch ? "<p>The retained asset schedule currency differs from this worksheet. Its amounts are excluded from the annual result; no conversion has been performed.</p>" : ""}
   <p>Captured ${escape(r.capturedAt)} · Reviewed ${escape(r.reviewedAt ?? "—")} · Finalised ${escape(r.finalisedAt ?? "—")}</p>
   ${r.amendmentReason ? `<p>Amendment: ${escape(r.amendmentReason)}</p>` : ""}
   <h2>Reconciliation bridge</h2><table><tbody>${[

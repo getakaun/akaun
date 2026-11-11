@@ -4,7 +4,7 @@
 
 ## Result and workflow
 
-Tax -> worksheet -> **Asset tax deductions** now has **Reusable schemes**. Create a named custom scheme with an explicit jurisdiction, effective tax years, source/working-paper reference, conditions, first-year rate and regular rate. The library starts empty; no Malaysian or other statutory rates are seeded. All schemes are visibly **custom and not jurisdiction-verified**.
+**Settings -> Tax -> Asset tax schemes** manages reusable definitions, independently of annual worksheets. Tax -> worksheet -> **Asset tax deductions** has a **Scheme settings** shortcut. Create a named custom scheme with an explicit jurisdiction, effective tax years, source/working-paper reference, conditions, first-year rate and regular rate. The library starts empty; no Malaysian or other statutory rates are seeded. All schemes are visibly **custom and not jurisdiction-verified**.
 
 Jurisdiction and book currency are independent. New schedules use the retained worksheet currency and an explicitly selected jurisdiction; currency no longer implies country. Unknown jurisdiction remains Needs review. This supports custom/manual workings across book currencies, not conversion into a country's filing currency. Version-1 MYR schedules retain their historical meaning until an editable revision is deliberately changed.
 
@@ -60,7 +60,7 @@ No existing schedule, finalised snapshot, ledger entry, classification, asset, d
 
 Use an isolated test book; do not treat test inputs as verified national tax rates.
 
-1. Open Tax -> worksheet -> Asset tax deductions -> Reusable schemes. Create a custom scheme, choose Malaysia explicitly, set effective tax years, enter your own test rates and reference, and save. It remains labelled custom/unverified. You can verify the Malaysian rates/conditions later by saving a new version.
+1. Open Settings -> Tax -> Asset tax schemes. Create a custom scheme, choose Malaysia explicitly, set effective tax years, enter your own test rates and reference, and save. It remains labelled custom/unverified. You can verify the Malaysian rates/conditions later by saving a new version.
 2. Prepare an asset tax schedule and select its jurisdiction. Open an asset, choose the scheme, enter business use and explicitly reuse its purchase cost when appropriate. Confirm opening residual and additions. Select first-year application only when intended. Deduction numbers and closing residual should update without manually typing those amounts.
 3. For a purely illustrative workflow test: qualifying cost 10,000, business use 100%, opening 0, additions 10,000, first-year rate 20%, regular original-cost rate 10%, first-year selected -> deductions 2,000 + 1,000 and closing tax residual 7,000. These are arithmetic test inputs, not an approved Malaysian scheme.
 4. Save the asset workings, then open Deductions used and evidence. Available deduction is 3,000; use is initially zero. Choose Use available amount, inspect the annual-result preview, enter the shared working-paper reference/reason and save. The preparatory result now decreases by 3,000; P&L, balance sheet and book depreciation stay unchanged.
@@ -76,3 +76,9 @@ Custom schemes are percentage tools, not an international statutory rules engine
 Revert application code while retaining migrations 0047/0048, definitions, receipts, audit and finalised evidence. Do not delete scheme versions or rewrite version-2 JSON into old MYR-only evidence. The old application understands only version-1 schedules, so disabling the newer UI is safer than forcing old code to read new evidence; restore access with the updated code. No new GL journals exist to reverse. No deployment/live migration performed.
 
 **Owner decision:** pending software acceptance and subsequent Malaysian scheme verification.
+
+## Settings placement follow-up
+
+Reusable scheme configuration now lives at `/settings/tax`, linked from the main Settings navigation. The editor no longer depends on a worksheet: new setups start with explicit jurisdiction/effective-year inputs, and existing definitions can be opened directly for a new version. The annual worksheet keeps scheme selection, tax-basis previews and annual utilisation, with a shortcut to Scheme settings.
+
+The focused Settings page exposes only tax definitions and uses existing tax.read/tax.update permissions; general/admin settings are not exposed to tax-only users. Users with general Settings access return there; tax-only users return to Annual tax. The real route transition also preserves the existing unsaved-change navigation guards instead of silently switching away from an embedded editor. No migration, calculations or financial writes changed. Validation: 14 scheme permission/versioning/currency tests pass; type checking reports zero errors/warnings; relocated/new modules pass ESLint. Isolated Settings rendering covers empty first-time setup without a worksheet and read-only definitions, alongside the worksheet calculation surfaces. The main Settings page retains its three pre-existing lint findings; its action formatting and unrelated controls were preserved. These checks validate the relocation; visual checks remain with the owner.

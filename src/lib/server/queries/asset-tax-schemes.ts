@@ -20,3 +20,7 @@ export function schemeSnapshot(
     verification: "custom_unverified",
   };
 }
+
+export type AssetTaxSchemeVersion = ReturnType<
+  typeof assetTaxSchemeVersions
+>[number];

@@ -293,7 +293,6 @@
     <CapitalAllowances
       detail={d}
       {editable}
-      canManageSchemes={data.canUpdate}
       canReadAssets={data.canReadAssets}
       onsaved={saved}
     />

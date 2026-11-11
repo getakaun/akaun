@@ -32,7 +32,7 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	type Tab = 'general' | 'company' | 'books' | 'intelligence' | 'templates' | 'advanced';
+	type Tab = 'general' | 'company' | 'books' | 'intelligence' | 'templates' | 'advanced' | 'tax';
 	const TAB_IDS: readonly Tab[] = ['general', 'company', 'books', 'intelligence', 'templates', 'advanced'];
 
 	// The open tab is kept in the address (`?tab=intelligence`), so a page
@@ -1263,6 +1263,7 @@
 	const TABS: { id: Tab; label: string }[] = $derived([
 		{ id: 'general', label: 'General' },
 		{ id: 'company', label: 'Company' },
+		...(data.canReadTax ? [{ id: 'tax' as Tab, label: 'Tax' }] : []),
 		...((data.canSeeBooks || data.canManageSettings) ? [{ id: 'books' as Tab, label: 'Ledger' }] : []),
 		{ id: 'intelligence', label: 'Intelligence' },
 		{ id: 'templates', label: 'Templates' },
@@ -1286,13 +1287,16 @@
 		<!-- Left nav -->
 		<nav class="set-nav">
 			{#each TABS as tab (tab.id)}
-				<button
+				{#if tab.id === 'tax'}
+					<a class="set-nav-item" style="display:block;text-decoration:none;" href={resolve('/(app)/settings/tax')}>Tax</a>
+				{:else}<button
 					class="set-nav-item"
 					class:active={activeTab === tab.id}
 					onclick={() => requestTabChange(tab.id)}
 				>
 					{tab.label}
 				</button>
+				{/if}
 			{/each}
 		</nav>
 

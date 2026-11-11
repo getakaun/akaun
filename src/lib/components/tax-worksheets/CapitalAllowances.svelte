@@ -1,7 +1,4 @@
 <script lang="ts">
-  import { invalidateAll } from "$app/navigation";
-  import { toast } from "svelte-sonner";
-  import AssetTaxSchemesSheet from "./AssetTaxSchemesSheet.svelte";
   import { taxJurisdictionLabel } from "$lib/asset-tax-scheme.js";
   import { resolve } from "$app/paths";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -18,13 +15,11 @@
     editable,
     canReadAssets,
     onsaved,
-    canManageSchemes = editable,
   }: {
     detail: Detail;
     editable: boolean;
     canReadAssets: boolean;
     onsaved: (detail: Detail) => Promise<void>;
-    canManageSchemes?: boolean;
   } = $props();
   const c = $derived(detail.capital);
   const screen = useIsMobile();
@@ -35,7 +30,6 @@
           n,
           c.schedule?.currency ?? detail.revision.snapshot.currency,
         );
-  let schemesOpen = $state(false);
   const jurisdiction = $derived(
     c.schedule?.jurisdiction ??
       (c.schedule?.calculationVersion === 1 ? "MY" : null),
@@ -71,11 +65,11 @@
         Book depreciation stays separate. Review each asset, confirm allowance
         use, then review the annual worksheet once.
       </p>{/if}
-    {#if canManageSchemes}<div class="tax-actions">
-        <Button size="sm" variant="outline" onclick={() => (schemesOpen = true)}
-          >Reusable schemes</Button
-        >
-      </div>{/if}
+    <div class="tax-actions">
+      <a class="detail-card-action" href={resolve("/(app)/settings/tax")}
+        >Scheme settings</a
+      >
+    </div>
     {#if c.schedule}<p class="field-hint">
         Tax jurisdiction: {taxJurisdictionLabel(jurisdiction)} · Book currency: {detail
           .revision.snapshot.currency}. Custom schemes are not
@@ -297,15 +291,4 @@
       assetId = null;
     }}
     {onsaved}
-  />{/if}
-
-{#if schemesOpen}<AssetTaxSchemesSheet
-    {detail}
-    onclose={() => (schemesOpen = false)}
-    onsaved={async () => {
-      await invalidateAll();
-      toast.success(
-        "Custom scheme version saved. Applied schedules remain unchanged.",
-      );
-    }}
   />{/if}

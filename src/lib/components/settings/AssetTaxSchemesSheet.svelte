@@ -5,36 +5,47 @@
   import { Input } from "$lib/components/ui/input/index.js";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
   import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
-  import TaxWorkingsDrawer from "./TaxWorkingsDrawer.svelte";
-  import TaxJurisdictionField from "./TaxJurisdictionField.svelte";
+  import TaxWorkingsDrawer from "../tax-worksheets/TaxWorkingsDrawer.svelte";
+  import TaxJurisdictionField from "../tax-worksheets/TaxJurisdictionField.svelte";
   import { percentageToBps } from "$lib/expense-tax.js";
   import {
     taxJurisdictionLabel,
     type AssetTaxSchemeDefinition,
   } from "$lib/asset-tax-scheme.js";
-  import type { TaxWorksheetDetail as Detail } from "$lib/server/queries/tax-worksheets.js";
+  import type { AssetTaxSchemeVersion } from "$lib/server/queries/asset-tax-schemes.js";
   let {
-    detail,
+    schemes,
+    initialFamilyKey = null,
     onclose,
     onsaved,
-  }: { detail: Detail; onclose: () => void; onsaved: () => Promise<void> } =
-    $props();
-  const initial = untrack(() => structuredClone($state.snapshot(detail)));
-  const versions = initial.capital.schemes;
+  }: {
+    schemes: AssetTaxSchemeVersion[];
+    initialFamilyKey?: string | null;
+    onclose: () => void;
+    onsaved: () => Promise<void>;
+  } = $props();
+  const versions = untrack(() => structuredClone($state.snapshot(schemes)));
   const latest = [...new Map(versions.map((s) => [s.familyKey, s])).values()];
-  let family = $state("new");
-  let name = $state("");
-  let jurisdiction = $state<string | null>(
-    initial.capital.schedule?.jurisdiction ??
-      (initial.capital.schedule?.calculationVersion === 1 ? "MY" : null),
+  const initialFamily = untrack(() => initialFamilyKey);
+  const selected = latest.find(
+    (s) => s.familyKey === initialFamily,
+  )?.definition;
+  let family = $state(initialFamily ?? "new");
+  let name = $state(selected?.name ?? "");
+  let jurisdiction = $state<string | null>(selected?.jurisdiction ?? null);
+  let yearFrom = $state(selected ? String(selected.yearFrom) : "");
+  let yearTo = $state(selected?.yearTo ? String(selected.yearTo) : "");
+  let method = $state<AssetTaxSchemeDefinition["method"]>(
+    selected?.method ?? "original_cost",
   );
-  let yearFrom = $state(String(initial.worksheet.ya));
-  let yearTo = $state("");
-  let method = $state<AssetTaxSchemeDefinition["method"]>("original_cost");
-  let firstRate = $state("");
-  let regularRate = $state("");
-  let reference = $state("");
-  let conditions = $state("");
+  let firstRate = $state(
+    selected ? String(selected.firstYearRateBps / 100) : "",
+  );
+  let regularRate = $state(
+    selected ? String(selected.regularRateBps / 100) : "",
+  );
+  let reference = $state(selected?.reference ?? "");
+  let conditions = $state(selected?.conditions ?? "");
   let reason = $state("");
   let saving = $state(false);
   let savedSuccessfully = $state(false);
@@ -63,7 +74,7 @@
     const s = latest.find((s) => s.familyKey === key)?.definition;
     name = s?.name ?? "";
     jurisdiction = s?.jurisdiction ?? null;
-    yearFrom = String(s?.yearFrom ?? initial.worksheet.ya);
+    yearFrom = s ? String(s.yearFrom) : "";
     yearTo = s?.yearTo ? String(s.yearTo) : "";
     method = s?.method ?? "original_cost";
     firstRate = s ? String(s.firstYearRateBps / 100) : "";

@@ -22,3 +22,7 @@ Authorised: implement reusable custom schemes and an international foundation be
 ## Acceptance
 
 A user can create a custom jurisdiction-specific scheme once, apply it to several assets, see calculated first-year/regular deductions immediately, explicitly select utilisation and observe the annual result. Finalised old versions and exports remain fixed. Code responsibilities are separated and documented. Owner validates the Malaysian scheme later; no legal rate assumptions are introduced in this change.
+
+## Settings placement follow-up
+
+Reusable scheme definitions belong under Settings -> Tax, independently of any annual worksheet. Move the management surface to `/settings/tax`, linked from Settings navigation and from the worksheet. Keep selection, tax-basis previews and annual utilisation in the worksheet. Preserve `tax.read` / `tax.update` authority: the focused Settings subpage exposes no general/admin settings and does not require an accountant to gain unrelated settings privileges. Decouple the editor from worksheet data and preserve its immutable versions, retry/audit and unsaved-change guards. No migration or financial calculation changes.

@@ -139,7 +139,10 @@ async function applyCompanyImage(change: CompanyImageChange, key: string) {
  * accounts underneath. There is no second list and no mapping between the two,
  * so what Settings offers and what an expense screen offers can never drift.
  */
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
+  const canReadTax = can(locals, "tax.read");
+  if (url.searchParams.get("tab") === "tax" && canReadTax)
+    redirect(302, "/settings/tax");
   // Settings had no permission at all. Seeing them needs settings.read;
   // changing them needs settings.manage, checked again by every action below.
   // To the profile, which every signed-in user can open: the dashboard and
@@ -290,6 +293,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     terms.quotationValidDays === null ? "" : String(terms.quotationValidDays);
 
   return {
+    canReadTax,
     canManageSettings,
     canManageAccounts,
     moneyAccounts,

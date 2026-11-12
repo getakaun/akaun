@@ -517,7 +517,6 @@
         bind:dirty={capitalDirty}
         saving={saving || !!uncertainSave}
         worksheetDirty={dirty}
-        resultBase={t.resultMinor - t.capitalMinor}
         bind:draft={capitalDraft}
       />
     {/key}

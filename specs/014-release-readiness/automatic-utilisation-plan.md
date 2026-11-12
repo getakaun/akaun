@@ -1,32 +1,33 @@
-# Automatic allowance utilisation — approved follow-up
+# Automatic allowance utilisation — simplified follow-up
 
-Default to maximum usable allowances, bounded by eligible income from the same
-business. Use saved expense classifications and annual source corrections; do
-not reduce the capacity by brought-forward losses. Derive the ordinary Malaysian
-single-business case only when revenue is explicitly Operating/Contra Operating
-and there are no ambiguous other tax adjustments. Multi-business, mixed income,
-unsupported jurisdictions and complex adjustments require a reviewed per-business
-income limit, reason and evidence confirmation in advanced options.
+The user requested a simpler automatic flow after the reviewed income-limit and
+override options introduced too much work. The normal UI now shows only available
+allowances, automatic usage and unabsorbed carry-forward. Remove the eligible
+income row, single-business checkbox, income-limit/reason/confirmation forms,
+utilisation override forms and duplicate tax-result preview. Earlier balances
+continue to roll forward automatically, with opening balances available for
+bringing external earlier workings into Akaun.
 
-Introduce optional versioned policy/evidence inside existing capital-schedule
-JSON, preserving existing migration SQL and finalised evidence. New schedules
-default to automatic. Existing retained manual schedules remain readable and
-require an explicit switch to change that saved schedule. A new YA rollover starts
-in automatic mode while preserving its manual predecessor. Override amounts require reasons,
-cannot exceed capacity/balances, and reductions below the usable amount are
-separated as restricted/not claimed rather than silently carried forward.
+The ordinary Malaysian single-business calculation uses accounting profit, tax
+add-backs/source corrections and signed Other tax adjustments. Brought-forward
+losses apply after allowances. Revenue without a subtype is operating income,
+consistent with P&L reporting; it no longer forces manual review. Same-business
+income caps remain in the calculation. Explicit non-operating income, multiple
+business sources and other jurisdictions get one unsupported-case explanation,
+with completion blocked rather than an invented allocation or extra forms.
+Unresolved expense classifications/corrections still need resolution at source.
 
-Allocate ordinary pooled balances oldest-origin first as a deterministic Akaun
-bookkeeping convention, retaining each origin; this is not asserted to be a
-universal statutory ordering rule. Rollover brings forward only unabsorbed
-balances and clears year-specific overrides/reviewed limits. Saving independently
-recalculates utilisation against canonical source evidence in the existing atomic
-worksheet transaction. Export/print use retained evidence only.
+Existing version-1 manual income limits/overrides remain supported for retained
+workings and API compatibility, with no new controls for entering them in the UI.
+A draft offers one explicit switch to replace saved manual settings with automatic
+calculation. No read or save silently discards manual instructions. Finalised
+figures/exports stay fixed. A new YA starts automatic with annual settings cleared.
 
-Impacted files: shared capital policy/calculation, capital query/application and
-worksheet save schemas, inline editor/claim summary, retained exports, pure and
-application regression suites, public guidance and this PR's completion report.
-No GL postings, schema migration, deployment or real-book access.
+Ordinary balances use oldest-origin first as an Akaun bookkeeping convention,
+not a universal statutory ordering rule. Only unabsorbed balances roll forward;
+previously restricted/not-claimed amounts remain separate. Saves recalculate
+against canonical sources in the atomic worksheet transaction. There are no new
+GL postings, schema migrations, certified tax rates or real-book access.
 
 ## Comparison and authority
 

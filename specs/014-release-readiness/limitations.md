@@ -12,8 +12,10 @@
 - Initial allowance already recorded counts as history even if unused. Opening
   tax residual and unabsorbed allowance are separate. New schedules automatically
   use allowances up to eligible same-business income. The derived income basis is
-  limited to an ordinary MY single-business book with explicit operating revenue
-  and no ambiguous adjustments. Other cases need reviewed per-business limits.
+  limited to an ordinary MY single-business book with operating revenue (including
+  unclassified revenue, as on the P&L), tax add-backs and signed annual adjustments.
+  Multiple businesses, explicit non-operating income and other jurisdictions are
+  outside the simple automatic flow; completion blocks with an explanation.
   Reductions below usable allowances are not automatically carried forward.
   Earlier manual schedules and finalised evidence retain their saved figures;
   reviewed carry-forward eligibility remains the accountant's responsibility.

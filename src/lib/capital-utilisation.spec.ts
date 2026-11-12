@@ -210,6 +210,41 @@ describe("automatic same-business capital allowance utilisation", () => {
       carriedMinor: 25000,
     });
   });
+  it.each([
+    ["increase", 15000],
+    ["decrease", 5000],
+  ])(
+    "includes signed annual %s adjustments without asking for an income limit",
+    (direction, capacity) => {
+      const c = context(10000);
+      c.adjustments = [
+        adjustment({ direction: direction as "increase" | "decrease" }),
+      ];
+      expect(group(schedule(), c)).toMatchObject({
+        capacityMinor: capacity,
+        usedMinor: capacity,
+        basis: "bookkeeping",
+      });
+      expect(
+        calculateUtilisation(schedule(), 2025, c).utilisationEvidence!.problems,
+      ).toEqual([]);
+    },
+  );
+  it("clamps adjusted losses to zero and ignores withdrawn annual adjustments", () => {
+    const c = context(1000);
+    c.adjustments = [adjustment({})];
+    expect(group(schedule(), c)).toMatchObject({
+      capacityMinor: 0,
+      usedMinor: 0,
+      carriedMinor: 30000,
+    });
+    c.adjustments[0].withdrawnAt = "withdrawn";
+    expect(group(schedule(), c)).toMatchObject({
+      capacityMinor: 1000,
+      usedMinor: 1000,
+      carriedMinor: 29000,
+    });
+  });
   it("allocates oldest origins first and rebuilds forged current uses", () => {
     const s = schedule();
     s.utilisation = [
@@ -243,7 +278,6 @@ describe("automatic same-business capital allowance utilisation", () => {
   it.each([
     "other_income",
     "multiple_sources",
-    "other_adjustment",
     "unknown_jurisdiction",
     "single_business_unchecked",
   ])("requires a reviewed income limit for %s", (condition) => {
@@ -257,7 +291,6 @@ describe("automatic same-business capital allowance utilisation", () => {
         balanceMinor: 1000,
         usedMinor: 0,
       });
-    if (condition === "other_adjustment") c.adjustments = [adjustment({})];
     if (condition === "unknown_jurisdiction") s.jurisdiction = null;
     if (condition === "single_business_unchecked")
       s.utilisationPolicy!.singleBusiness = false;

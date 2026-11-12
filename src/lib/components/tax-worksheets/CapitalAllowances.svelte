@@ -13,7 +13,6 @@
     editable,
     saving = false,
     worksheetDirty = false,
-    resultBase,
     adjustments,
     dirty = $bindable(false),
     draft = $bindable(null),
@@ -22,7 +21,6 @@
     editable: boolean;
     saving?: boolean;
     worksheetDirty?: boolean;
-    resultBase?: number;
     adjustments: TaxAdjustment[];
     dirty?: boolean;
     draft?: CapitalDraft | null;
@@ -65,7 +63,6 @@
         {detail}
         editable={editable && !c.currencyMismatch}
         {saving}
-        {resultBase}
         {adjustments}
         bind:dirty
         bind:draft

@@ -873,6 +873,68 @@ describe("automatic capital utilisation at the application boundary", () => {
     expect(toCsv(taxWorksheetCsv(read(d.worksheet.id, false)))).toBe(csv);
     expect(read(d.worksheet.id).capital.totals!.usedMinor).toBe(150000);
   });
+  it("automatically uses revenue with no subtype, consistently with the P&L", () => {
+    const sales = income(1000);
+    db.update(schema.accounts)
+      .set({ subType: null })
+      .where(eq(schema.accounts.id, sales))
+      .run();
+    const d = autoSave(prepare(create()));
+    expect(d.capital.totals).toMatchObject({
+      usedMinor: 100000,
+      carryForwardMinor: 260000,
+      problems: [],
+    });
+    expect(d.capital.schedule!.utilisationEvidence!.groups[0].basis).toBe(
+      "bookkeeping",
+    );
+    expect(finalise(d).revision.status).toBe("finalised");
+  });
+  it("automatically applies staged annual adjustments before allowances and brought-forward losses", () => {
+    income(1000);
+    let d = autoSave(prepare(create()));
+    d = value(
+      saveTaxWorksheet(ctx(), d.worksheet.id, {
+        action: "save-worksheet",
+        target: "finalised",
+        expectedVersion: d.revision.version,
+        requestKey: key(),
+        liveHash: d.liveHash,
+        sourceHashes: d.sourceHashes,
+        withdrawals: [],
+        adjustments: [
+          {
+            kind: "other",
+            direction: "decrease",
+            amountMinor: 20000,
+            balanceMinor: 0,
+            originYa: null,
+            reason: "Annual single-business adjustment",
+            evidence: "Annual workings",
+            requestKey: key(),
+            expectedVersion: d.revision.version,
+          },
+          {
+            kind: "loss_brought_forward",
+            direction: "decrease",
+            amountMinor: 10000,
+            balanceMinor: 10000,
+            originYa: 2024,
+            reason: "Brought-forward business loss",
+            evidence: "Prior workings",
+            requestKey: key(),
+            expectedVersion: d.revision.version,
+          },
+        ],
+      }),
+    );
+    expect(d.capital.totals).toMatchObject({
+      usedMinor: 80000,
+      carryForwardMinor: 280000,
+      problems: [],
+    });
+    expect(d.revision.status).toBe("finalised");
+  });
   it("detects changed income classifications even when GL amounts did not change", () => {
     const sales = income(1000);
     const d = prepare(create()),

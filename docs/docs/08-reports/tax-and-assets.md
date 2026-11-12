@@ -58,19 +58,22 @@ business before brought-forward losses. Insufficient income or a loss year leave
 an unabsorbed balance to carry forward; there is no routine **Use available** step.
 An initial allowance recorded but unused still counts as prior history.
 
-The default Malaysian calculation assumes one business: Operating/Contra Operating
-income and the book's expenses belong to that business. It includes saved expense
-add-backs and annual source corrections. With multiple businesses, other income,
-complex tax adjustments or another jurisdiction, use **Advanced: income basis and
-utilisation** to review a per-business income limit and record its basis. Changed
-source evidence or annual adjustments invalidate that reviewed limit.
+The automatic Malaysian calculation assumes one business, using operating income
+(including revenue with no subtype, as on the P&L), expenses, tax add-backs and
+signed annual adjustments. Brought-forward losses apply after allowances. The
+summary shows allowance available, used this year and carried forward; there is
+no income-limit form or utilisation override to complete.
 
-Advanced settings also allow a reduced claim with a reason. Amounts deliberately
-not claimed are shown separately and are not automatically carried forward as
-unabsorbed allowances. Ordinary pooled balances are used oldest-origin first as an
-Akaun allocation convention; special legal ordering and eligibility still require
-review. Previously saved manual schedules keep their evidence until explicitly
-switched to automatic calculation. Finalised schedules are never recalculated.
+Separate businesses, explicitly non-operating income and other jurisdictions are
+outside this simple automatic flow. Akaun explains the limitation and blocks
+completion instead of inventing an allocation. Resolve incomplete expense tax
+treatments in the worksheet before completing it.
+
+Previously saved manual schedules and overrides remain retained. A draft can be
+switched to automatic calculation with one action; finalised evidence stays fixed.
+Previously restricted amounts remain separate from unabsorbed carry-forward.
+Ordinary balances are used oldest-origin first as an Akaun convention; special
+legal ordering and eligibility still require accountant review.
 
 Save draft retains incomplete work. Finalise worksheet requires the applicable
 update/review/finalise permissions and a signed-in session. Independent reviewers

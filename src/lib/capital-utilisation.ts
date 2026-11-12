@@ -16,7 +16,7 @@ export type UtilisationContext = {
   hash: string;
   snapshot: TaxSourceSnapshot;
   adjustments: TaxAdjustment[];
-  /** Explicit operating-revenue/contra-operating types only. Other income is ambiguous. */
+  /** Operating/contra-operating revenue, including unclassified revenue as on the P&L. */
   businessIncomeAccounts: number[];
 };
 
@@ -103,10 +103,21 @@ export function calculateUtilisation(
     sources.length === 1 &&
     schedule.jurisdiction === "MY" &&
     !ambiguousIncome &&
-    !active.some((a) => a.kind === "other") &&
     !tax.unresolvedCount;
+  // Annual adjustments belong to this single-business worksheet. Brought-forward
+  // losses apply after capital allowances and cannot reduce absorption capacity.
+  const annualAdjustments = active
+    .filter((a) => a.kind === "other")
+    .map((a) => (a.direction === "increase" ? a.amountMinor : -a.amountMinor));
   const baseMinor = derived
-    ? Math.max(0, safeTaxSum([context.snapshot.profitMinor, tax.addBackMinor]))
+    ? Math.max(
+        0,
+        safeTaxSum([
+          context.snapshot.profitMinor,
+          tax.addBackMinor,
+          ...annualAdjustments,
+        ]),
+      )
     : null;
   const uses: CapitalSchedule["utilisation"] = [];
   const evidence: UtilisationEvidence = {
@@ -129,10 +140,14 @@ export function calculateUtilisation(
       capacity = null;
     if (tax.unresolvedCount || context.snapshot.pendingCorrectionIds?.length)
       capacity = null;
-    if (capacity === null)
-      evidence.problems.push(
-        `${source}: ${stale ? "Income evidence changed. Review the income limit again." : "Review the income available for allowances; income cannot be assigned automatically."}`,
-      );
+    if (capacity === null) {
+      const problem = stale
+        ? "Saved manual income settings no longer match this worksheet. Switch to automatic calculation to use current figures."
+        : tax.unresolvedCount || context.snapshot.pendingCorrectionIds?.length
+          ? "Complete the expense tax treatments and resolve changed annual corrections to calculate allowance usage automatically."
+          : "Automatic allowance usage currently supports one Malaysian business with operating income. Separate businesses or non-operating income need separate accountant workings.";
+      if (!evidence.problems.includes(problem)) evidence.problems.push(problem);
+    }
     const current = raw.groups.find(
       (g) => g.businessSource === source,
     )!.availableMinor;

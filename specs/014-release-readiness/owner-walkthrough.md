@@ -35,9 +35,11 @@ real books. No UI acceptance or screenshot is claimed by automated tests.
    residual. With RM1,000 eligible trading income (after expense add-backs),
    RM1,000 is used automatically and RM2,600 is unabsorbed. With sufficient income,
    all RM3,600 is used; in a loss year none is used. No **Use available** click is
-   required. Test Advanced reviewed income limits for mixed/multiple businesses,
-   evidence changes, and a reduced claim with a reason; restricted amounts must
-   remain separate from unabsorbed carry-forward. These rates are
+   required. Revenue without a subtype must calculate as operating income, and
+   signed annual adjustments must update usage automatically. No income-limit,
+   reason or override form is required. Multiple businesses or non-operating
+   income show one limitation and block completion. Saved manual settings need
+   an explicit switch to automatic; finalised evidence stays fixed. These rates are
    arithmetic fixtures, not recommended Malaysian tax rates.
 9. **Completion and rollover:** save/finalise a completed YA with the required
    authority. Next YA carries residual and unused allowance independently;

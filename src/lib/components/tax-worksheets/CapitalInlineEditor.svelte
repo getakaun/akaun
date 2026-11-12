@@ -17,7 +17,7 @@
     mergeEditorRows,
   } from "./capital-editor.js";
   import { schemeApplies } from "$lib/asset-tax-scheme.js";
-  import { formatTaxMinor, safeTaxSum } from "$lib/tax-worksheet.js";
+  import { formatTaxMinor } from "$lib/tax-worksheet.js";
   import type { TaxWorksheetDetail as Detail } from "$lib/server/queries/tax-worksheets.js";
   import type { CapitalDraft } from "./worksheet-draft.js";
   import type { TaxAdjustment } from "$lib/tax-worksheet.js";
@@ -26,7 +26,6 @@
     detail,
     editable,
     saving = false,
-    resultBase,
     adjustments,
     dirty = $bindable(false),
     draft = $bindable(null),
@@ -34,7 +33,6 @@
     detail: Detail;
     editable: boolean;
     saving?: boolean;
-    resultBase?: number;
     adjustments: TaxAdjustment[];
     dirty?: boolean;
     draft?: CapitalDraft | null;
@@ -161,11 +159,6 @@
     }
   });
   const totals = $derived(preview.value?.totals ?? initial.capital.totals!);
-  const baseResult = $derived(
-    resultBase ??
-      safeTaxSum([detail.totals.resultMinor, -detail.totals.capitalMinor]),
-  );
-  const result = $derived(safeTaxSum([baseResult, -totals.usedMinor]));
   $effect(() => {
     if (dirty !== changed) dirty = changed;
     const nextDraft = {
@@ -371,12 +364,10 @@
   <CapitalClaimSummary
     {totals}
     bind:policy
-    context={utilisationContext}
     evidence={preview.value?.schedule.utilisationEvidence}
     bind:uses
     year={initial.worksheet.ya}
     currency={initial.capital.schedule!.currency}
-    {result}
     {canEdit}
     unavailable={!!preview.error}
   />

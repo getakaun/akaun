@@ -63,7 +63,8 @@ export function taxUtilisationContext(
       .filter(
         (a) =>
           a.type === AccountType.Revenue &&
-          (a.subType === RevenueSubType.OperatingRevenue ||
+          (a.subType === null ||
+            a.subType === RevenueSubType.OperatingRevenue ||
             a.subType === RevenueSubType.ContraOperatingRevenue),
       )
       .map((a) => a.id),

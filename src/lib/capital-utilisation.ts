@@ -92,18 +92,25 @@ export function calculateUtilisation(
     (a) =>
       !a.withdrawnAt && !context.snapshot.pendingCorrectionIds?.includes(a.id),
   );
-  const ambiguousIncome = context.snapshot.profitLines.some(
+  const nonOperatingIncome = context.snapshot.profitLines.filter(
     (l) =>
       l.type === "income" &&
       l.amountMinor !== 0 &&
       !context.businessIncomeAccounts.includes(l.accountId),
   );
+  const unsupportedReason = !schedule.jurisdiction
+    ? "Choose a tax jurisdiction for this worksheet before calculating allowance usage."
+    : schedule.jurisdiction !== "MY"
+      ? `Automatic allowance usage is available for Malaysia (MY); this worksheet uses ${schedule.jurisdiction}.`
+      : !policy.singleBusiness
+        ? "This worksheet retains a saved multiple-business setting. Use automatic calculation only if these workings belong to one business."
+        : sources.length > 1
+          ? `This schedule has different business-source labels: ${sources.map((s) => `“${s}”`).join(", ")}. Use the same label on assets and earlier balances only when they belong to the same business.`
+          : nonOperatingIncome.length
+            ? `These income accounts are outside the operating-income classification: ${nonOperatingIncome.map((l) => `“${l.accountName}”`).join(", ")}. The worksheet cannot automatically assign their income and related expenses to the business for allowance usage.`
+            : null;
   const derived =
-    policy.singleBusiness &&
-    sources.length === 1 &&
-    schedule.jurisdiction === "MY" &&
-    !ambiguousIncome &&
-    !tax.unresolvedCount;
+    !unsupportedReason && sources.length === 1 && !tax.unresolvedCount;
   // Annual adjustments belong to this single-business worksheet. Brought-forward
   // losses apply after capital allowances and cannot reduce absorption capacity.
   const annualAdjustments = active
@@ -141,11 +148,15 @@ export function calculateUtilisation(
     if (tax.unresolvedCount || context.snapshot.pendingCorrectionIds?.length)
       capacity = null;
     if (capacity === null) {
-      const problem = stale
-        ? "Saved manual income settings no longer match this worksheet. Switch to automatic calculation to use current figures."
-        : tax.unresolvedCount || context.snapshot.pendingCorrectionIds?.length
+      const problem =
+        tax.unresolvedCount || context.snapshot.pendingCorrectionIds?.length
           ? "Complete the expense tax treatments and resolve changed annual corrections to calculate allowance usage automatically."
-          : "Automatic allowance usage currently supports one Malaysian business with operating income. Separate businesses or non-operating income need separate accountant workings.";
+          : stale
+            ? "Saved manual income settings no longer match this worksheet. Switch to automatic calculation to use current figures."
+            : reviewed
+              ? "Saved manual income settings are incomplete. Switch to automatic calculation to use the worksheet's calculated figures."
+              : (unsupportedReason ??
+                "Allowance usage could not be calculated from this worksheet.");
       if (!evidence.problems.includes(problem)) evidence.problems.push(problem);
     }
     const current = raw.groups.find(

@@ -299,6 +299,22 @@ describe("automatic same-business capital allowance utilisation", () => {
       usedMinor: 0,
       basis: "needs_review",
     });
+    const problem = calculateUtilisation(
+      s,
+      2025,
+      c,
+    ).utilisationEvidence!.problems.join(" ");
+    if (condition === "other_income") expect(problem).toContain("Sales");
+    if (condition === "multiple_sources") {
+      expect(problem).toContain("Trading");
+      expect(problem).toContain("Rental");
+      expect(problem).toContain("Use the same label");
+    }
+    if (condition === "unknown_jurisdiction")
+      expect(problem).toContain("Choose a tax jurisdiction");
+    if (condition === "single_business_unchecked")
+      expect(problem).toContain("saved multiple-business setting");
+
     s.utilisationPolicy!.income = [
       ...new Set(["Trading", ...s.utilisation.map((u) => u.businessSource)]),
     ].map((businessSource) => ({
@@ -323,6 +339,15 @@ describe("automatic same-business capital allowance utilisation", () => {
         (g) => g.businessSource === "Rental",
       )?.usedMinor ?? 0,
     ).toBe(0);
+  });
+  it("identifies a non-Malaysian jurisdiction rather than implying another business exists", () => {
+    const s = schedule();
+    s.jurisdiction = "GB";
+    const result = calculateUtilisation(s, 2025, context());
+    expect(result.utilisationEvidence!.problems).toEqual([
+      "Automatic allowance usage is available for Malaysia (MY); this worksheet uses GB.",
+    ]);
+    expect(result.utilisationEvidence!.groups[0].usedMinor).toBe(0);
   });
   it("invalidates reviewed limits on source or adjustment changes, but ignores withdrawn adjustments", () => {
     const s = schedule(),

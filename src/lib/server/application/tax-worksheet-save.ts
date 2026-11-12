@@ -15,7 +15,10 @@ import { requirePermissions, type AppContext } from "./context.js";
 import { fail, invalid, Rollback, type AppResult } from "./result.js";
 import { write, current, audit, refuse } from "./tax-worksheet-boundary.js";
 import { addTaxAdjustment, changeTaxWorksheet } from "./tax-worksheets.js";
-import { changeCapitalSchedule } from "./capital-allowances.js";
+import {
+  changeCapitalSchedule,
+  refreshAutomaticUtilisation,
+} from "./capital-allowances.js";
 import type { TaxWorksheetDetail } from "../queries/tax-worksheets.js";
 
 /** Stage every worksheet section under one authorization and atomic transaction. */
@@ -212,9 +215,11 @@ export function saveTaxWorksheet(
             liveAssetHash: c.liveAssetHash,
             input: c.input,
             confirmFirstYearTreatments: c.confirmFirstYearTreatments,
+            utilisationHash: c.utilisationHash,
           }),
         );
       }
+      refreshAutomaticUtilisation(ctx, worksheet, revision.id, emits);
       if (v.target !== "draft") {
         const detail = taxWorksheetDetail(ctx.db, id)!;
         if (detail.sourceConflicts.length)

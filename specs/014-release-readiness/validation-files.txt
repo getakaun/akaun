@@ -1,4 +1,5 @@
 src/lib/asset-tax-scheme.spec.ts
+src/lib/capital-utilisation.spec.ts
 src/lib/closing-context.spec.ts
 src/lib/components/dashboard/chart-scale.spec.ts
 src/lib/components/import/review-card.spec.ts

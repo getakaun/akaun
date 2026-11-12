@@ -1,3 +1,7 @@
+import {
+  reviewedUtilisation,
+  utilisationContext,
+} from "./__fixtures__/utilisation.js";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
@@ -92,6 +96,17 @@ function command(
     reason: "Review custom scheme application and inputs",
     liveAssetHash: d.capital.liveAssetHash,
     ...extra,
+    ...(action === "save"
+      ? { utilisationHash: d.capital.utilisationBasis?.hash }
+      : {}),
+    ...(action === "save" && extra.input
+      ? {
+          input: reviewedUtilisation(
+            d,
+            extra.input as import("$lib/capital-allowance.js").CapitalInput,
+          ),
+        }
+      : {}),
   };
 }
 const prepare = (d: Detail, jurisdiction: string | null = "MY") =>
@@ -250,6 +265,7 @@ describe("versioned custom asset tax schemes", () => {
       "",
       d.worksheet,
       d.capital.firstYearContexts,
+      utilisationContext(d),
     );
     expect(staged.errors).toEqual([]);
     expect(
@@ -434,6 +450,7 @@ describe("versioned custom asset tax schemes", () => {
       "",
       d.worksheet,
       d.capital.firstYearContexts,
+      utilisationContext(d),
     );
     expect(staged.errors).toEqual([]);
     expect(
@@ -521,6 +538,7 @@ describe("versioned custom asset tax schemes", () => {
       "",
       next.worksheet,
       next.capital.firstYearContexts,
+      utilisationContext(next),
     );
     expect(
       nextPreview.input.rows.find((r) => r.assetId === linked.id),
@@ -624,7 +642,7 @@ describe("versioned custom asset tax schemes", () => {
       used: "3000.00",
     });
     const staged = editorPreview(
-      d.capital.schedule!,
+      { ...d.capital.schedule!, utilisationPolicy: undefined },
       forms,
       editorSchemes(value(readAssetTaxSchemes(ctx()))),
       uses,

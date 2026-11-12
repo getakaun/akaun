@@ -1,6 +1,8 @@
 # Performance screening — release gate HOLD
 
-Measured 12 November 2026 using Bun 1.3.11, Intel Xeon Platinum 8573C,
+Baseline measured 12 November 2026 at commit `46feca8`, before the automatic
+utilisation follow-up; these timings do not validate the new utilisation path.
+Measured using Bun 1.3.11, Intel Xeon Platinum 8573C,
 18 GiB host RAM with a 16 GiB executor limit. Synthetic in-memory SQLite,
 paired balanced movements, MYR, one populated accounting year, 36-month approved
 book schedules, and a synthetic custom 1% original-cost allowance scheme. Rates

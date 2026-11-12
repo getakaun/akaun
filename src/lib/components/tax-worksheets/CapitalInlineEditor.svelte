@@ -20,11 +20,14 @@
   import { formatTaxMinor, safeTaxSum } from "$lib/tax-worksheet.js";
   import type { TaxWorksheetDetail as Detail } from "$lib/server/queries/tax-worksheets.js";
   import type { CapitalDraft } from "./worksheet-draft.js";
+  import type { TaxAdjustment } from "$lib/tax-worksheet.js";
+  import type { UtilisationPolicy } from "$lib/capital-utilisation-policy.js";
   let {
     detail,
     editable,
     saving = false,
     resultBase,
+    adjustments,
     dirty = $bindable(false),
     draft = $bindable(null),
   }: {
@@ -32,6 +35,7 @@
     editable: boolean;
     saving?: boolean;
     resultBase?: number;
+    adjustments: TaxAdjustment[];
     dirty?: boolean;
     draft?: CapitalDraft | null;
   } = $props();
@@ -48,6 +52,20 @@
   let jurisdiction = $state(
     untrack(() => initial.capital.schedule!.jurisdiction ?? null),
   );
+  let policy = $state<UtilisationPolicy | null>(
+    untrack(() => initial.capital.schedule!.utilisationPolicy ?? null),
+  );
+  const utilisationContext = $derived(
+    detail.capital.utilisationBasis
+      ? {
+          hash: detail.capital.utilisationBasis.hash,
+          businessIncomeAccounts:
+            detail.capital.utilisationBasis.businessIncomeAccounts,
+          snapshot: detail.revision.snapshot,
+          adjustments,
+        }
+      : null,
+  );
   let expanded = $state<number | null>(null);
   let removedEditedAsset = $state(false);
   let baseline = $state(untrack(fingerprint));
@@ -57,6 +75,7 @@
       uses,
       remark,
       jurisdiction,
+      policy,
     ]);
   }
   const changed = $derived(fingerprint() !== baseline);
@@ -97,6 +116,7 @@
       uses = editorUses(next.capital.schedule!, next.worksheet.ya);
       remark = next.capital.schedule!.evidence;
       jurisdiction = next.capital.schedule!.jurisdiction ?? null;
+      policy = next.capital.schedule!.utilisationPolicy ?? null;
       initial = next;
       baseline = fingerprint();
     } else {
@@ -118,13 +138,18 @@
         };
       return {
         value: editorPreview(
-          { ...initial.capital.schedule!, jurisdiction },
+          {
+            ...initial.capital.schedule!,
+            jurisdiction,
+            utilisationPolicy: policy ?? undefined,
+          },
           rows,
           schemes,
           uses,
           remark,
           initial.worksheet,
           initial.capital.firstYearContexts,
+          utilisationContext,
         ),
         error: "",
       };
@@ -148,6 +173,7 @@
       totals: preview.value?.totals ?? null,
       liveAssetHash: initial.capital.liveAssetHash,
       rolloverHash: initial.capital.rolloverHash,
+      utilisationHash: utilisationContext?.hash,
       errors: [
         ...(removedEditedAsset
           ? [
@@ -344,6 +370,9 @@
     </p>{/if}
   <CapitalClaimSummary
     {totals}
+    bind:policy
+    context={utilisationContext}
+    evidence={preview.value?.schedule.utilisationEvidence}
     bind:uses
     year={initial.worksheet.ya}
     currency={initial.capital.schedule!.currency}

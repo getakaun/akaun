@@ -1,3 +1,8 @@
+import { calculateUtilisation } from "$lib/capital-utilisation.js";
+import { RevenueSubType, DefaultAccountPurpose } from "$lib/enums.js";
+import { createRecord } from "./records.js";
+import { saveTaxWorksheet } from "./tax-worksheet-save.js";
+import { reviewedUtilisation } from "./__fixtures__/utilisation.js";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
@@ -76,6 +81,17 @@ function command(
     liveAssetHash: d.capital.liveAssetHash,
     ...(action === "prepare" ? { jurisdiction: "MY" } : {}),
     ...extra,
+    ...(action === "save"
+      ? { utilisationHash: d.capital.utilisationBasis?.hash }
+      : {}),
+    ...(action === "save" && extra.input
+      ? {
+          input: reviewedUtilisation(
+            d,
+            extra.input as import("$lib/capital-allowance.js").CapitalInput,
+          ),
+        }
+      : {}),
   };
 }
 const apply = (d: Detail, payload: ReturnType<typeof command>) =>
@@ -443,7 +459,7 @@ describe("scheme-based capital allowance schedules", () => {
     );
     expect(d.revision.status).toBe("draft");
     expect(d.capital.active).toBe(true);
-    expect(d.capital.totals?.usedMinor).toBe(300000);
+    expect(d.capital.totals?.usedMinor).toBe(0); // Source changes invalidate the reviewed income basis on amendment.
     expect(
       taxWorksheetHtml(
         value(readTaxWorksheet(ctx(), d.worksheet.id, 1, false)),
@@ -473,6 +489,7 @@ describe("scheme-based capital allowance schedules", () => {
     const input = structuredClone(d.capital.schedule!);
     input.evidence = "Reviewed 2026 capital allowances";
     input.rows[0].annualMinor = 120000;
+    input.utilisation = input.utilisation.filter((u) => u.originYa !== 2026);
     input.utilisation.push({
       businessSource: "Trading",
       originYa: 2026,
@@ -703,6 +720,7 @@ describe("capital allowance dependency and multi-source review", () => {
     const input = structuredClone(second.capital.schedule!);
     input.rows[0].annualMinor = 120000;
     input.evidence = "Reviewed annual tax schedule 2024";
+    input.utilisation = input.utilisation.filter((u) => u.originYa !== 2024);
     input.utilisation.push({
       businessSource: "Trading",
       originYa: 2024,
@@ -728,5 +746,246 @@ describe("capital allowance dependency and multi-source review", () => {
     expect(read(second.worksheet.id).capital.predecessorStale).toBe(true);
     expect(read(third.worksheet.id).capital.predecessorStale).toBe(true);
     expect(read(third.worksheet.id).capital.rollover).toBeNull();
+  });
+});
+
+describe("automatic capital utilisation at the application boundary", () => {
+  beforeEach(() => {
+    for (const [purpose, name, type, subType] of [
+      [
+        DefaultAccountPurpose.Receivable,
+        "Receivable",
+        AccountType.Asset,
+        AccountSubType.Receivable,
+      ],
+      [
+        DefaultAccountPurpose.Payable,
+        "Payable",
+        AccountType.Liability,
+        AccountSubType.AccountsPayable,
+      ],
+      [
+        DefaultAccountPurpose.OpeningBalances,
+        "Opening equity",
+        AccountType.Equity,
+        undefined,
+      ],
+    ] as const) {
+      const accountId = value(createAccount(db, 1, { name, type, subType })).id;
+      db.insert(schema.accountDefaults).values({ purpose, accountId }).run();
+    }
+  });
+  function autoSave(d: Detail, input = ready(d)) {
+    return value(
+      changeCapitalSchedule(ctx(), d.worksheet.id, {
+        action: "save",
+        expectedVersion: d.revision.version,
+        requestKey: key(),
+        reason: "Review automatic allowance utilisation",
+        liveAssetHash: d.capital.liveAssetHash,
+        utilisationHash: d.capital.utilisationBasis!.hash,
+        confirmFirstYearTreatments: true,
+        input: {
+          jurisdiction: input.jurisdiction,
+          evidence: input.evidence,
+          rows: input.rows,
+          utilisation: input.utilisation,
+          utilisationPolicy: input.utilisationPolicy,
+        },
+      }),
+    );
+  }
+  function income(amount: number) {
+    const sales = value(
+      createAccount(db, 1, {
+        name: `Trading sales ${key()}`,
+        type: AccountType.Revenue,
+        subType: RevenueSubType.OperatingRevenue,
+      }),
+    ).id;
+    value(
+      createRecord(ctx(), {
+        kind: "income",
+        date: "2025-05-01",
+        amount,
+        currency: "MYR",
+        exchangeRate: 1,
+        description: "Trading receipts",
+        categoryAccountId: sales,
+        receivedIntoAccountId: value(
+          createAccount(db, 1, {
+            name: `Receipts bank ${key()}`,
+            type: AccountType.Asset,
+            subType: AccountSubType.Bank,
+          }),
+        ).id,
+      }),
+    );
+    return sales;
+  }
+  it("uses the maximum automatically, disregards client usage, caps income and changes no ledger balances", () => {
+    income(1000);
+    let d = prepare(create());
+    const before = financial();
+    const input = ready(d);
+    input.utilisation[0].usedMinor = 0;
+    d = autoSave(d, input);
+    expect(d.capital.schedule!.utilisationPolicy).toMatchObject({
+      version: 1,
+      overrides: [],
+    });
+    expect(d.capital.totals).toMatchObject({
+      usedMinor: 100000,
+      carryForwardMinor: 260000,
+    });
+    expect(d.capital.schedule!.utilisationEvidence!.groups[0]).toMatchObject({
+      capacityMinor: 100000,
+      basis: "bookkeeping",
+    });
+    expect(financial()).toBe(before);
+  });
+  it("recalculates on a worksheet save without a capital payload and freezes finalised evidence", () => {
+    income(1000);
+    let d = autoSave(prepare(create()));
+    income(500);
+    d = read(d.worksheet.id);
+    expect(d.capital.totals!.usedMinor).toBe(150000);
+    d = value(
+      saveTaxWorksheet(ctx(), d.worksheet.id, {
+        action: "save-worksheet",
+        target: "finalised",
+        expectedVersion: d.revision.version,
+        requestKey: key(),
+        liveHash: d.liveHash,
+        sourceHashes: d.sourceHashes,
+        adjustments: [],
+        withdrawals: [],
+      }),
+    );
+    const stored = db
+      .select()
+      .from(schema.taxCapitalSchedules)
+      .where(eq(schema.taxCapitalSchedules.revisionId, d.revision.id))
+      .get()!.evidence;
+    expect(stored.utilisationEvidence!.groups[0].usedMinor).toBe(150000);
+    const csv = toCsv(taxWorksheetCsv(read(d.worksheet.id, false)));
+    income(300);
+    expect(toCsv(taxWorksheetCsv(read(d.worksheet.id, false)))).toBe(csv);
+    expect(read(d.worksheet.id).capital.totals!.usedMinor).toBe(150000);
+  });
+  it("detects changed income classifications even when GL amounts did not change", () => {
+    const sales = income(1000);
+    const d = prepare(create()),
+      input = ready(d);
+    db.update(schema.accounts)
+      .set({ subType: RevenueSubType.OtherRevenue })
+      .where(eq(schema.accounts.id, sales))
+      .run();
+    const result = changeCapitalSchedule(ctx(), d.worksheet.id, {
+      action: "save",
+      expectedVersion: d.revision.version,
+      requestKey: key(),
+      reason: "Review allowance income capacity",
+      liveAssetHash: d.capital.liveAssetHash,
+      utilisationHash: d.capital.utilisationBasis!.hash,
+      confirmFirstYearTreatments: true,
+      input: {
+        jurisdiction: input.jurisdiction,
+        evidence: input.evidence,
+        rows: input.rows,
+        utilisation: input.utilisation,
+        utilisationPolicy: input.utilisationPolicy,
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("Income evidence changed");
+    const fresh = read(d.worksheet.id);
+    const preview = calculateUtilisation(
+      {
+        ...input,
+        assets: input.assets,
+        calculationVersion: 2,
+        predecessor: null,
+      },
+      2025,
+      {
+        ...fresh.capital.utilisationBasis!,
+        snapshot: fresh.revision.snapshot,
+        adjustments: fresh.adjustments,
+      },
+    );
+    expect(preview.utilisationEvidence!.groups[0].capacityMinor).toBeNull();
+  });
+  it("preserves saved legacy manual evidence and starts the following YA in automatic mode", () => {
+    income(1000);
+    let d = autoSave(prepare(create()));
+    const legacy = structuredClone(d.capital.schedule!);
+    delete legacy.utilisationPolicy;
+    delete legacy.utilisationEvidence;
+    legacy.utilisation[0].usedMinor = 50000;
+    db.update(schema.taxCapitalSchedules)
+      .set({ evidence: legacy })
+      .where(eq(schema.taxCapitalSchedules.revisionId, d.revision.id))
+      .run();
+    d = read(d.worksheet.id);
+    expect(d.capital.totals!.usedMinor).toBe(50000);
+    expect(d.capital.schedule!.utilisationPolicy).toBeUndefined();
+    d = finalise(d);
+    const before = JSON.stringify(
+      db
+        .select()
+        .from(schema.taxCapitalSchedules)
+        .where(eq(schema.taxCapitalSchedules.revisionId, d.revision.id))
+        .get(),
+    );
+    const next = create(2026);
+    expect(next.capital.schedule!.utilisationPolicy).toMatchObject({
+      version: 1,
+      overrides: [],
+      income: [],
+    });
+    expect(
+      next.capital.schedule!.utilisation.find((u) => u.originYa === 2025)!
+        .balanceMinor,
+    ).toBe(310000);
+    expect(
+      JSON.stringify(
+        db
+          .select()
+          .from(schema.taxCapitalSchedules)
+          .where(eq(schema.taxCapitalSchedules.revisionId, d.revision.id))
+          .get(),
+      ),
+    ).toBe(before);
+  });
+  it("carries only unabsorbed balances and clears yearly restrictions on rollover", () => {
+    income(1000);
+    let d = prepare(create());
+    const input = ready(d);
+    input.utilisationPolicy!.overrides = [
+      {
+        businessSource: "Trading",
+        usedMinor: 50000,
+        reason: "Accountant approved a restricted claim",
+      },
+    ];
+    d = finalise(autoSave(d, input));
+    expect(d.capital.totals).toMatchObject({
+      usedMinor: 50000,
+      carryForwardMinor: 260000,
+    });
+    expect(
+      d.capital.schedule!.utilisationEvidence!.groups[0].restrictedMinor,
+    ).toBe(50000);
+    const next = create(2026);
+    expect(
+      next.capital
+        .schedule!.utilisation.filter((u) => u.originYa === 2025)
+        .map((u) => u.balanceMinor),
+    ).toEqual([260000]);
+    expect(next.capital.schedule!.utilisationPolicy).toMatchObject({
+      overrides: [],
+      income: [],
+    });
   });
 });

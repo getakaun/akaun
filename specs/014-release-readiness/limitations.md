@@ -6,12 +6,17 @@
   conditions and business-use basis require accountant verification.
 - Jurisdiction is explicit and independent of currency. UK/US selection does
   not implement UK pools/AIA or US MACRS/Section 179/bonus. Proration, incentives,
-  statutory utilisation limits/order and tax-currency conversion are unsupported.
+  special statutory utilisation limits/order and tax-currency conversion are unsupported.
 - Tax disposal/balancing allowances or charges and a complete book disposal
   workflow are unsupported. Stop/reverse depreciation is not asset disposal.
 - Initial allowance already recorded counts as history even if unused. Opening
-  tax residual and unused allowance are separate. Utilisation requires explicit
-  input; reviewed carry-forward basis remains the accountant's responsibility.
+  tax residual and unabsorbed allowance are separate. New schedules automatically
+  use allowances up to eligible same-business income. The derived income basis is
+  limited to an ordinary MY single-business book with explicit operating revenue
+  and no ambiguous adjustments. Other cases need reviewed per-business limits.
+  Reductions below usable allowances are not automatically carried forward.
+  Earlier manual schedules and finalised evidence retain their saved figures;
+  reviewed carry-forward eligibility remains the accountant's responsibility.
 - Unclassified and Requires review expense lines block accounting month close.
   Unposted depreciation warns. Tax finalisation is separate from month close;
   accounting reopening does not rewrite finalised tax evidence.

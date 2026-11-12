@@ -22,6 +22,10 @@ import type { LedgerDb } from "../ledger/types.js";
 import { assetTaxSchemeVersions } from "./asset-tax-schemes.js";
 import { getSetting, SETTING_KEYS } from "../settings.js";
 import { fixedAssetRegister } from "./fixed-assets.js";
+import { automaticUtilisation } from "$lib/capital-utilisation-policy.js";
+import { calculateUtilisation } from "$lib/capital-utilisation.js";
+import type { TaxSourceSnapshot } from "$lib/tax-worksheet.js";
+import { taxUtilisationContext } from "./tax-utilisation.js";
 
 export const capitalHash = evidenceHash;
 export function capitalAssets(
@@ -151,12 +155,18 @@ export function capitalRollover(
     rows,
     evidence: "",
     utilisation: previous.evidence.utilisation
-      .filter((u) => u.balanceMinor > u.usedMinor)
+      .filter((u) => u.balanceMinor > u.usedMinor + (u.restrictedMinor ?? 0))
       .map((u) => ({
         ...u,
-        balanceMinor: u.balanceMinor - u.usedMinor,
+        balanceMinor: u.balanceMinor - u.usedMinor - (u.restrictedMinor ?? 0),
         usedMinor: 0,
+        ...(u.restrictedMinor === undefined ? {} : { restrictedMinor: 0 }),
       })),
+    utilisationPolicy: {
+      ...automaticUtilisation(),
+      singleBusiness:
+        previous.evidence.utilisationPolicy?.singleBusiness ?? true,
+    },
     predecessor: {
       worksheetId: previousWorksheet.id,
       revisionId: previousRevision.id,
@@ -322,6 +332,7 @@ export function capitalDetail(
   worksheet: typeof taxWorksheets.$inferSelect,
   revisionId: number,
   compareLive: boolean,
+  captured?: TaxSourceSnapshot,
 ) {
   const saved = capitalScheduleFor(db, revisionId);
   const revision = db
@@ -400,6 +411,7 @@ export function capitalDetail(
       assets: candidates,
       rows: candidates.map((a) => blankCapitalRow(a.assetId)),
       utilisation: [],
+      utilisationPolicy: automaticUtilisation(),
       predecessor: null,
     };
   if (
@@ -453,6 +465,12 @@ export function capitalDetail(
       utilisation: rollover.utilisation,
     };
   }
+  const utilisationContext =
+    working && schedule
+      ? taxUtilisationContext(db, worksheet, revisionId, captured)
+      : null;
+  if (working && schedule?.utilisationPolicy && utilisationContext)
+    schedule = calculateUtilisation(schedule, worksheet.ya, utilisationContext);
   const totals = schedule ? capitalTotals(schedule, worksheet.ya) : null;
   if (
     compareLive &&
@@ -492,6 +510,12 @@ export function capitalDetail(
   }
   return {
     firstYearContexts: contexts,
+    utilisationBasis: utilisationContext
+      ? {
+          hash: utilisationContext.hash,
+          businessIncomeAccounts: utilisationContext.businessIncomeAccounts,
+        }
+      : null,
     schemes: compareLive ? assetTaxSchemeVersions(db) : [],
     active: !!schedule,
     autoPrepared,

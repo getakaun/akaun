@@ -12,6 +12,7 @@ export type CapitalDraft = {
   totals: ReturnType<typeof capitalTotals> | null;
   liveAssetHash: string;
   rolloverHash: string | null;
+  utilisationHash?: string;
   errors: string[];
   problems: string[];
 };

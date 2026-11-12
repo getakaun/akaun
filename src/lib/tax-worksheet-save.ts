@@ -29,6 +29,7 @@ export const taxWorksheetSaveSchema = z
         liveAssetHash: z.string().length(64),
         rolloverHash: z.string().length(64).nullable().optional(),
         confirmFirstYearTreatments: z.boolean().default(false),
+        utilisationHash: z.string().length(64).optional(),
       })
       .strict()
       .optional(),

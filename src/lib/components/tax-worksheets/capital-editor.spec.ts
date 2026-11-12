@@ -1,3 +1,5 @@
+import { automaticUtilisation } from "$lib/capital-utilisation-policy.js";
+import type { UtilisationContext } from "$lib/capital-utilisation.js";
 import { describe, it, expect } from "vitest";
 import {
   blankCapitalRow,
@@ -240,5 +242,73 @@ describe("inline asset deduction staging", () => {
     expect(() => preview([{ ...use, earlier: true }])).toThrow(
       "before this tax year",
     );
+  });
+});
+
+describe("automatic inline utilisation preview", () => {
+  it("caps usage to income, follows edited assets and removes obsolete current-year source rows", () => {
+    const { s, rows } = draft();
+    s.utilisationPolicy = automaticUtilisation();
+    const context: UtilisationContext = {
+      hash: "a".repeat(64),
+      businessIncomeAccounts: [1],
+      adjustments: [],
+      snapshot: {
+        calculationVersion: 1,
+        currency: "MYR",
+        companyName: "Test",
+        profitMinor: 50000,
+        incomeMinor: 50000,
+        expenseMinor: 0,
+        profitLines: [
+          {
+            accountId: 1,
+            accountName: "Trading",
+            amountMinor: 50000,
+            type: "income",
+          },
+        ],
+        expenses: [],
+        notes: [],
+      },
+    };
+    const preview = () =>
+      editorPreview(
+        s,
+        rows,
+        [scheme],
+        editorUses(s, 2025),
+        "",
+        period,
+        undefined,
+        context,
+      );
+    const first = preview();
+    expect(first.errors).toEqual([]);
+    expect(first.totals).toMatchObject({
+      usedMinor: 50000,
+      carryForwardMinor: 120000,
+      problems: [],
+    });
+    s.utilisation = first.input.utilisation;
+    rows[0].form.businessSource = "Renamed business";
+    const renamed = preview();
+    expect(renamed.errors).toEqual([]);
+    expect(renamed.totals.problems).toEqual([]);
+    expect(renamed.input.utilisation).toEqual([
+      {
+        businessSource: "Renamed business",
+        originYa: 2025,
+        balanceMinor: 170000,
+        usedMinor: 50000,
+      },
+    ]);
+    rows[0].form.percentage = "10";
+    expect(preview().totals).toMatchObject({
+      usedMinor: 17000,
+      carryForwardMinor: 0,
+    });
+    rows[0].form.treatment = "exclude";
+    expect(preview().input.utilisation).toEqual([]);
   });
 });

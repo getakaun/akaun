@@ -1,3 +1,7 @@
+import { utilisationContext } from "./__fixtures__/utilisation.js";
+import { createAccount } from "../services/accounts.js";
+import { AccountType, RevenueSubType } from "$lib/enums.js";
+import { createRecord } from "./records.js";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { describe, expect, it } from "vitest";
@@ -76,6 +80,25 @@ describe("stopped-book backup and restore rehearsal", () => {
           expectedVersion: preview.version,
         }),
       );
+      const sales = resultValue(
+        createAccount(book.db, 1, {
+          name: "Trading sales",
+          type: AccountType.Revenue,
+          subType: RevenueSubType.OperatingRevenue,
+        }),
+      ).id;
+      resultValue(
+        createRecord(book.ctx, {
+          kind: "income",
+          date: "2025-03-01",
+          amount: 1000,
+          currency: "MYR",
+          exchangeRate: 1,
+          description: "Synthetic trading income",
+          categoryAccountId: sales,
+          receivedIntoAccountId: book.bank,
+        }),
+      );
       const scheme = resultValue(
         saveAssetTaxScheme(book.ctx, {
           familyKey: crypto.randomUUID(),
@@ -121,6 +144,7 @@ describe("stopped-book backup and restore rehearsal", () => {
         "",
         detail.worksheet,
         detail.capital.firstYearContexts,
+        utilisationContext(detail),
       );
       expect(staged.errors).toEqual([]);
       const financial = (db: LedgerDb) => ({
@@ -142,6 +166,7 @@ describe("stopped-book backup and restore rehearsal", () => {
           withdrawals: [],
           capital: {
             input: staged.input,
+            utilisationHash: detail.capital.utilisationBasis?.hash,
             liveAssetHash: detail.capital.liveAssetHash,
             rolloverHash: detail.capital.rolloverHash,
             confirmFirstYearTreatments: true,

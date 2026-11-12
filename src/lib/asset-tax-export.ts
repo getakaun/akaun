@@ -18,6 +18,30 @@ export function capitalExportLines(
     ["Unabsorbed allowances carried forward", amount(totals.carryForwardMinor)],
     ["Predecessor evidence", JSON.stringify(schedule.predecessor)],
   ];
+  if (schedule.utilisationPolicy) {
+    lines.push(
+      [
+        "Utilisation policy (retained)",
+        JSON.stringify(schedule.utilisationPolicy),
+      ],
+      [
+        "Income and utilisation evidence (retained)",
+        JSON.stringify(schedule.utilisationEvidence),
+      ],
+    );
+    for (const g of schedule.utilisationEvidence?.groups ?? [])
+      lines.push(
+        [
+          `${g.businessSource} · income available for allowances`,
+          amount(g.capacityMinor),
+        ],
+        [`${g.businessSource} · income basis`, g.basis],
+        [
+          `${g.businessSource} · not claimed / restricted`,
+          amount(g.restrictedMinor),
+        ],
+      );
+  }
   for (const r of totals.rows) {
     const prefix = `${r.asset.name} (FA-${r.assetId})`;
     const fields: [string, string][] = [
@@ -82,7 +106,7 @@ export function capitalExportLines(
       ],
       [
         `${u.businessSource} · origin YA ${u.originYa} · unabsorbed balance`,
-        amount(u.balanceMinor - u.usedMinor),
+        amount(u.balanceMinor - u.usedMinor - (u.restrictedMinor ?? 0)),
       ],
     );
   lines.push(

@@ -1,5 +1,9 @@
 import type { FirstYearContext } from "$lib/first-year-allowance.js";
 import {
+  calculateUtilisation,
+  type UtilisationContext,
+} from "$lib/capital-utilisation.js";
+import {
   capitalTotals,
   capitalInputSchema,
   type CapitalSchedule,
@@ -102,6 +106,7 @@ export function editorPreview(
   remark: string,
   period: EditorPeriod,
   firstYearContexts?: Record<number, FirstYearContext>,
+  utilisationContext?: UtilisationContext | null,
 ) {
   const errors: string[] = [];
   uses = uses.map((u) => ({ ...u, source: u.source.trim() }));
@@ -193,9 +198,18 @@ export function editorPreview(
     rows: converted,
     evidence: remark,
     utilisation,
+    ...(schedule.utilisationPolicy
+      ? { utilisationPolicy: schedule.utilisationPolicy }
+      : {}),
   };
+  let staged: CapitalSchedule = { ...base, ...candidate };
+  if (staged.utilisationPolicy) {
+    if (!utilisationContext)
+      errors.push("Refresh the worksheet to load its income basis.");
+    else staged = calculateUtilisation(staged, period.ya, utilisationContext);
+    candidate.utilisation = staged.utilisation;
+  }
   const checked = capitalInputSchema.safeParse(candidate);
-  const staged = { ...base, ...candidate };
   const totals = capitalTotals(staged, period.ya);
   if (!checked.success)
     errors.push(...checked.error.issues.map((i) => i.message));

@@ -32,7 +32,12 @@ real books. No UI acceptance or screenshot is claimed by automated tests.
 8. **Asset deductions:** create a clearly labelled custom test scheme and
    select it inline. A _synthetic_ 20% first-year + 10% original-cost scheme on
    RM12,000 at 100% business use calculates RM3,600 allowances and RM8,400 tax
-   residual. Use RM1,000 explicitly; RM2,600 remains unused. These rates are
+   residual. With RM1,000 eligible trading income (after expense add-backs),
+   RM1,000 is used automatically and RM2,600 is unabsorbed. With sufficient income,
+   all RM3,600 is used; in a loss year none is used. No **Use available** click is
+   required. Test Advanced reviewed income limits for mixed/multiple businesses,
+   evidence changes, and a reduced claim with a reason; restricted amounts must
+   remain separate from unabsorbed carry-forward. These rates are
    arithmetic fixtures, not recommended Malaysian tax rates.
 9. **Completion and rollover:** save/finalise a completed YA with the required
    authority. Next YA carries residual and unused allowance independently;

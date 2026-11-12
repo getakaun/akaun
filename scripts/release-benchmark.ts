@@ -253,6 +253,11 @@ try {
     "",
     current.worksheet,
     current.capital.firstYearContexts,
+    {
+      ...current.capital.utilisationBasis!,
+      snapshot: current.revision.snapshot,
+      adjustments: current.adjustments,
+    },
   );
   if (staged.errors.length) throw Error(staged.errors.join("; "));
   saved = measure(
@@ -270,6 +275,7 @@ try {
           withdrawals: [],
           capital: {
             input: staged.input,
+            utilisationHash: current.capital.utilisationBasis?.hash,
             liveAssetHash: current.capital.liveAssetHash,
             rolloverHash: current.capital.rolloverHash,
             confirmFirstYearTreatments: true,

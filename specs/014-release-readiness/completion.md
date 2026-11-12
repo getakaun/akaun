@@ -9,6 +9,17 @@ real-copy rehearsal and owner UI acceptance are not cleared.
 
 ## What changed
 
+- New allowance schedules use the maximum available amount automatically up to
+  eligible same-business income, before brought-forward losses. The ordinary MY
+  single-business basis includes saved expense add-backs and annual corrections.
+  Mixed income, multiple businesses and complex adjustments need reviewed limits.
+- The claim summary shows automatic usage and unabsorbed carry-forward without a
+  **Use available** action. Advanced settings retain reviewed income limits and
+  reasoned reductions. Deliberately unclaimed amounts are separate from carry;
+  year-specific restrictions/limits reset on rollover. Saved manual schedules
+  retain their evidence; their new YA starts automatically. Finalised exports stay
+  fixed, and utilisation creates no ledger postings.
+
 - Added a read-only preflight before writable startup/chart conversion. Pending
   0049 upgrades with any earlier capital schedule or manual allowance adjustment
   stop with affected/finalised revision counts. Withdrawn/inactive and older
@@ -50,7 +61,7 @@ copy, read-only, and refuses the repository data directory.
 
 ## Automated tests — commands and results
 
-Final verification on Bun 1.3.11:
+Original phase 7 verification at `46feca8` on Bun 1.3.11:
 
 - `bun run test:release`: **1,867 passed, 0 failed across 129 files**, 2 snapshots (230.72s).
 - `bun run check`: zero errors and warnings.
@@ -58,6 +69,24 @@ Final verification on Bun 1.3.11:
 - Prettier on changed/new supported files and `git diff --check`: pass.
 - `bun run lint`: fails on the existing 231-file formatting backlog. No global
   lint pass is claimed; unrelated formatting was not rewritten.
+
+Automatic utilisation follow-up verification on Bun 1.3.11:
+
+- `bun run test:release`: **1,888 passed, 0 failed across 130 files**, 2 snapshots (174.61s).
+- `bun run --shell=system check`: zero errors and warnings; direct `svelte-check`
+  also passes.
+- ESLint on all changed/new TypeScript and Svelte files: pass.
+- Prettier on changed/new supported files and `git diff --check`: pass.
+- `bun run lint` still stops at the existing 231-file formatting backlog.
+
+The 21 added regressions cover income caps and loss years, signed add-backs and
+annual corrections, loss ordering, separate business income, stale reviewed
+limits, oldest-origin allocation, manual restriction versus unabsorbed carry,
+asset/source edits, canonical server recalculation, save/finalisation, frozen
+exports, legacy preservation and rollover. The stopped-book restore rehearsal
+now exercises automatic usage against synthetic eligible trading income.
+Comparison, authority and scope are documented in
+[automatic-utilisation-plan.md](automatic-utilisation-plan.md).
 
 The manifest covers migrations, tax/depreciation/assets, period locks, API/MCP/
 import/bulk permissions, separate-book isolation and financial reporting.
@@ -100,11 +129,15 @@ amendments, roles, keyboard/mobile/print behavior and isolated restore.
   and foreign-key checks pass.
 - The synthetic RM12,000 asset posts RM333.33 January book depreciation. A
   separately labelled arithmetic scheme (20% first-year + 10% original cost)
-  yields RM3,600 allowance; RM1,000 explicit utilisation leaves RM2,600 unused and
+  yields RM3,600 allowance; RM1,000 eligible trading income automatically uses
+  RM1,000, leaving RM2,600 unabsorbed and
   RM8,400 residual for the next YA. Tax preparation changes no accounting
   statements. These percentages are fixtures, not recommended Malaysian rates.
 
 ## Performance and remaining release gates
+
+The recorded performance measurements precede the automatic utilisation follow-up
+and do not establish its performance. The release decision remains HOLD.
 
 See [performance.md](performance.md) and benchmark-results.json for reproducible
 inputs, query counts, timings and memory. The small fixture meets screening

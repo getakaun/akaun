@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { releaseBook, resultValue } from "./__fixtures__/release-book.js";
 import {
   createTaxWorksheet,
@@ -16,13 +17,20 @@ import { createRecord } from "./records.js";
 import { Database } from "bun:sqlite";
 import { applyMigrationRange } from "../db/auto-upgrade.js";
 
+const MIGRATION_COUNT = readdirSync("drizzle").filter((name) =>
+  /^\d{4}_.*\.sql$/.test(name),
+).length;
+
 async function racer(path: string, action: string) {
   const child = Bun.spawn(
     [
       process.execPath,
       "--preload",
       "./scripts/mcp-test-preload.ts",
-      join(import.meta.dir, "__fixtures__/release-racer.ts"),
+      // Not `import.meta.dir`: that is Bun-only and undefined under Vitest.
+      fileURLToPath(
+        new URL("./__fixtures__/release-racer.ts", import.meta.url),
+      ),
       path,
       action,
     ],
@@ -73,9 +81,10 @@ describe("combined release boundaries across independent processes", () => {
       raw.exec("COMMIT");
       locked = false;
       expect((await Promise.all(pending)).every((r) => r.ok)).toBe(true);
+      // Every migration in `drizzle/`, not a fixed count: 0050 broke a literal 50.
       expect(
         raw.query("SELECT count(*) AS n FROM __drizzle_migrations").get(),
-      ).toEqual({ n: 50 });
+      ).toEqual({ n: MIGRATION_COUNT });
       expect(raw.query("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
       if (locked) raw.exec("ROLLBACK");

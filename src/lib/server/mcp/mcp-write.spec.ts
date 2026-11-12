@@ -2701,7 +2701,10 @@ for (const era of ["legacy", "modern"] as const) {
             }),
           ),
         ).toContain("OUTPUT_TOO_LARGE");
-      });
+        // Writes, reads back and compares a full MAX_FILE_BYTES file, which can
+        // take longer than Vitest's 5 s default on a CI runner. `test:release`
+        // already allows 20 s.
+      }, 20_000);
 
       it("rejects expired, tampered, missing, revoked and oversized statement downloads", async () => {
         const statementId = await statementFile(

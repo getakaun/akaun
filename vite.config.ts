@@ -186,9 +186,13 @@ export default defineConfig({
 				extends: './vite.config.ts',
 				test: {
 					name: 'server',
-					// Bun's fork IPC can time out before the Vitest worker starts.
-					// Threads retain bun:sqlite support without that IPC handshake.
-					pool: 'threads',
+					// Forks, not threads: on Bun 1.3.x (pinned in `.bun-version` to
+					// match the Docker image) the threads pool cannot start a worker
+					// (`this._thread.stdout.pipe` is null) or stop one
+					// (`setMaxListeners(-1)`), so every file fails. Threads were
+					// chosen earlier because fork IPC once timed out on startup; that
+					// did not reproduce on 1.3.x.
+					pool: 'forks',
 					environment: 'node',
 					include: ['src/**/*.{test,spec}.{js,ts}', 'scripts/**/*.{test,spec}.{js,ts}'],
 					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}']

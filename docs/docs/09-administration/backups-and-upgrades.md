@@ -39,8 +39,11 @@ Stop Akaun before you copy the files. While Akaun runs, it can write to the data
 The newest changes are often only in the `-wal` file. A copy of `akaun.db` alone can lose these
 changes. A copy made during a write can also be damaged.
 
-If you cannot stop Akaun, copy the three database files together, at a time when nobody uses
-Akaun. A copy of a running database is not fully safe.
+If you cannot stop Akaun, arrange a coordinated backup with your administrator. Do not
+copy live database files as an upgrade backup: an idle screen does not stop background
+depreciation or other writes. SQLite's online backup API can make a consistent database
+copy, but the attachment store still needs a coordinated backup. The release procedure
+below uses a stopped application.
 
 ### With Docker
 
@@ -162,6 +165,18 @@ change from inside Akaun. Keep the backup until you check the book with the new 
    ```
 
 ## What happens at the first start
+
+Before an upgrade that includes migration 0049, Akaun checks whether earlier tax allowance
+workings would be deleted. Saved capital schedules (including inactive schedules) and
+manual allowance adjustments (including withdrawn history) stop the upgrade. The message
+reports affected revisions and how many were finalised. Keep the previous application and
+your coordinated backup; ask support to review an isolated copy and arrange evidence
+preservation. Do not delete workings or change migration receipts to bypass the check.
+
+Books that already applied 0049 can restart with current scheme calculations. This does
+not prove that older evidence survived that earlier upgrade. Recovering removed workings
+requires the pre-upgrade backup. A fresh installation or a book with no affected allowance
+evidence can upgrade normally.
 
 A new version updates the database by itself when it starts for the first time. You do not type a
 command. Usually Akaun changes the database in place and keeps no copy. This is why your own backup

@@ -7,12 +7,13 @@
   import { taxJurisdictionLabel } from "$lib/asset-tax-scheme.js";
   import type { TaxWorksheetDetail as Detail } from "$lib/server/queries/tax-worksheets.js";
   import type { CapitalDraft } from "./worksheet-draft.js";
+  import type { TaxAdjustment } from "$lib/tax-worksheet.js";
   let {
     detail,
     editable,
     saving = false,
     worksheetDirty = false,
-    resultBase,
+    adjustments,
     dirty = $bindable(false),
     draft = $bindable(null),
   }: {
@@ -20,7 +21,7 @@
     editable: boolean;
     saving?: boolean;
     worksheetDirty?: boolean;
-    resultBase?: number;
+    adjustments: TaxAdjustment[];
     dirty?: boolean;
     draft?: CapitalDraft | null;
   } = $props();
@@ -62,7 +63,7 @@
         {detail}
         editable={editable && !c.currencyMismatch}
         {saving}
-        {resultBase}
+        {adjustments}
         bind:dirty
         bind:draft
       />

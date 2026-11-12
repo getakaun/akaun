@@ -1,4 +1,5 @@
 export { saveTaxWorksheet } from "./tax-worksheet-save.js";
+import { refreshAutomaticUtilisation } from "./capital-allowances.js";
 import {
   capitalScheduleFor,
   capitalDetail,
@@ -554,6 +555,7 @@ export function changeTaxWorksheet(
             "Accounting records changed. Review and refresh the worksheet before reviewing or finalising.",
             "CONFLICT",
           );
+        refreshAutomaticUtilisation(ctx, worksheet, revision.id, emits);
         const capital = capitalDetail(ctx.db, worksheet, revision.id, true);
         if (capital.active && capital.currencyMismatch)
           refuse(

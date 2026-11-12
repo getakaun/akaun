@@ -4,6 +4,7 @@ import { FirstYearAllowanceError } from "$lib/first-year-allowance.js";
 import { AssetTaxSchemeError } from "$lib/asset-tax-scheme.js";
 import { CapitalAllowanceError } from "$lib/capital-allowance.js";
 import { TaxCalculationError } from "$lib/tax-worksheet.js";
+import { withTaxEvidenceReads } from "../tax-evidence.js";
 import type { LeafPermission } from "$lib/permissions/catalog.js";
 import { taxWorksheets, taxWorksheetRevisions } from "../db/schema.js";
 import { recordAudit, type FieldChange } from "../audit.js";
@@ -60,7 +61,7 @@ export function runTaxTransaction<T>(
   if (denied) return denied;
   if (
     (permission === "tax.finalise" || permission === "tax.amend") &&
-    ctx.locals.credential
+    (ctx.locals.credential || ctx.locals.oauth)
   )
     return fail(
       "FORBIDDEN",
@@ -76,7 +77,7 @@ export function runTaxTransaction<T>(
     const result = ctx.db.transaction(
       () => {
         activeTransactions.set(ctx, emits);
-        const target = body(emits);
+        const target = withTaxEvidenceReads(ctx.db, () => body(emits));
         if (target.changed !== false)
           emits.push(() => taxWorksheetEvents.emit("changed"));
         return target.value;

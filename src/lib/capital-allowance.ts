@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { firstYearTreatmentSchema } from "./first-year-allowance.js";
 import {
+  utilisationPolicySchema,
+  type UtilisationEvidence,
+} from "./capital-utilisation-policy.js";
+import {
   appliedAssetTaxSchemeSchema,
   taxJurisdictionSchema,
   calculateAssetTaxScheme,
@@ -41,10 +45,13 @@ export const capitalUseSchema = z
     originYa: z.number().int().min(2000).max(9999),
     balanceMinor: cents,
     usedMinor: cents,
+    restrictedMinor: cents.optional(),
   })
   .strict()
   .refine(
-    (v) => v.usedMinor <= v.balanceMinor,
+    (v) =>
+      BigInt(v.usedMinor) + BigInt(v.restrictedMinor ?? 0) <=
+      BigInt(v.balanceMinor),
     "Utilisation cannot exceed the reviewed balance.",
   );
 export const capitalInputSchema = z
@@ -53,6 +60,7 @@ export const capitalInputSchema = z
     evidence: text,
     rows: z.array(capitalRowSchema).max(10000),
     utilisation: z.array(capitalUseSchema).max(10000),
+    utilisationPolicy: utilisationPolicySchema.optional(),
   })
   .strict();
 export type CapitalRowInput = z.infer<typeof capitalRowSchema>;
@@ -81,6 +89,7 @@ export type CapitalSchedule = CapitalInput & {
   currency: string;
   assets: CapitalAssetEvidence[];
   predecessor: CapitalPredecessor | null;
+  utilisationEvidence?: UtilisationEvidence;
 };
 
 export function capitalSum(values: number[]) {
@@ -272,12 +281,21 @@ export function capitalTotals(schedule: CapitalSchedule, ya: number) {
         uses.filter((u) => u.originYa < ya).map((u) => u.balanceMinor),
       ),
       carryForwardMinor: capitalSum(
-        uses.map((u) => capitalSum([u.balanceMinor, -u.usedMinor])),
+        uses.map((u) =>
+          capitalSum([u.balanceMinor, -u.usedMinor, -(u.restrictedMinor ?? 0)]),
+        ),
       ),
+      restrictedMinor: capitalSum(uses.map((u) => u.restrictedMinor ?? 0)),
     };
   });
   const allowanceMinor = capitalSum(groups.map((g) => g.availableMinor));
   const usedMinor = capitalSum(groups.map((g) => g.usedMinor));
+  if (schedule.utilisationPolicy)
+    problems.push(
+      ...(schedule.utilisationEvidence?.problems ?? [
+        "Save the worksheet to calculate automatic utilisation.",
+      ]),
+    );
   return {
     rows,
     groups,

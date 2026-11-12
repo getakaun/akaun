@@ -223,6 +223,7 @@
                 ? { rolloverHash: capitalDraft.rolloverHash }
                 : {}),
               confirmFirstYearTreatments: true,
+              utilisationHash: capitalDraft.utilisationHash,
             },
           }
         : {}),
@@ -510,12 +511,12 @@
       onchange={correct}
     />
     {#key resetKey}<CapitalAllowances
+        {adjustments}
         detail={d}
         {editable}
         bind:dirty={capitalDirty}
         saving={saving || !!uncertainSave}
         worksheetDirty={dirty}
-        resultBase={t.resultMinor - t.capitalMinor}
         bind:draft={capitalDraft}
       />
     {/key}

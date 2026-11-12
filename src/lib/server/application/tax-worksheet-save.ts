@@ -2,7 +2,6 @@ import { eq } from "drizzle-orm";
 import { taxWorksheetSaveSchema } from "$lib/tax-worksheet-save.js";
 import { taxCapitalCommands, taxWorksheetRevisions } from "../db/schema.js";
 import {
-  latestTaxRevision,
   taxAdjustmentsFor,
   captureTaxSources,
   taxHash,
@@ -16,7 +15,10 @@ import { requirePermissions, type AppContext } from "./context.js";
 import { fail, invalid, Rollback, type AppResult } from "./result.js";
 import { write, current, audit, refuse } from "./tax-worksheet-boundary.js";
 import { addTaxAdjustment, changeTaxWorksheet } from "./tax-worksheets.js";
-import { changeCapitalSchedule } from "./capital-allowances.js";
+import {
+  changeCapitalSchedule,
+  refreshAutomaticUtilisation,
+} from "./capital-allowances.js";
 import type { TaxWorksheetDetail } from "../queries/tax-worksheets.js";
 
 /** Stage every worksheet section under one authorization and atomic transaction. */
@@ -71,12 +73,12 @@ export function saveTaxWorksheet(
       const { worksheet, revision } = current(ctx, id, v.expectedVersion);
       if (revision.status === "finalised")
         refuse("Create an amendment to change a finalised worksheet.");
-      const before = taxWorksheetDetail(ctx.db, id)!;
       const live = captureTaxSources(
         ctx.db,
         worksheet.dateFrom,
         worksheet.dateTo,
       );
+      const before = taxWorksheetDetail(ctx.db, id)!;
       if (taxHash(live) !== v.liveHash)
         refuse(
           "Accounting records changed while saving. The latest figures are loading; check your changes and save again.",
@@ -114,7 +116,12 @@ export function saveTaxWorksheet(
         if (!result.ok) throw new Rollback(result);
         return result.value;
       };
-      const version = () => latestTaxRevision(ctx.db, id)!.version;
+      const version = () =>
+        ctx.db
+          .select({ version: taxWorksheetRevisions.version })
+          .from(taxWorksheetRevisions)
+          .where(eq(taxWorksheetRevisions.id, revision.id))
+          .get()!.version;
       for (const withdrawal of v.withdrawals)
         accept(
           changeTaxWorksheet(ctx, id, {
@@ -208,9 +215,11 @@ export function saveTaxWorksheet(
             liveAssetHash: c.liveAssetHash,
             input: c.input,
             confirmFirstYearTreatments: c.confirmFirstYearTreatments,
+            utilisationHash: c.utilisationHash,
           }),
         );
       }
+      refreshAutomaticUtilisation(ctx, worksheet, revision.id, emits);
       if (v.target !== "draft") {
         const detail = taxWorksheetDetail(ctx.db, id)!;
         if (detail.sourceConflicts.length)

@@ -1,4 +1,7 @@
 import { resolveFirstYear } from "$lib/first-year-allowance.js";
+import { automaticUtilisation } from "$lib/capital-utilisation-policy.js";
+import { calculateUtilisation } from "$lib/capital-utilisation.js";
+import { taxUtilisationContext } from "../queries/tax-utilisation.js";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import {
@@ -74,6 +77,7 @@ export const capitalCommandSchema = z.discriminatedUnion("action", [
     .object({
       action: z.literal("save"),
       confirmFirstYearTreatments: z.boolean().optional(),
+      utilisationHash: z.string().length(64).optional(),
       ...capitalCommandBase,
       liveAssetHash: z.string().length(64),
       input: capitalInputSchema,
@@ -162,6 +166,7 @@ export function changeCapitalSchedule(
           assets: live,
           rows: live.map((a) => blankCapitalRow(a.assetId)),
           utilisation: [],
+          utilisationPolicy: automaticUtilisation(),
           predecessor: null,
         };
       }
@@ -328,6 +333,19 @@ export function changeCapitalSchedule(
         };
       });
     }
+    if (schedule.utilisationPolicy) {
+      const context = taxUtilisationContext(ctx.db, worksheet, revision.id);
+      if (
+        v.action === "save" &&
+        schedule.rows.some((r) => r.treatment === "claim") &&
+        v.utilisationHash !== context.hash
+      )
+        refuse(
+          "Income evidence changed. Refresh the allowance calculation before saving.",
+          "CONFLICT",
+        );
+      schedule = calculateUtilisation(schedule, worksheet.ya, context, true);
+    }
     capitalTotals(schedule, worksheet.ya);
     draft(ctx, revision);
     ctx.db
@@ -375,4 +393,39 @@ export function changeCapitalSchedule(
     );
     return { worksheetId: id };
   });
+}
+
+/** Persist derived uses before review/finalisation, in the caller's tax transaction. */
+export function refreshAutomaticUtilisation(
+  ctx: AppContext,
+  worksheet: Parameters<typeof taxUtilisationContext>[1],
+  revisionId: number,
+  emits: (() => void)[],
+) {
+  const saved = capitalScheduleFor(ctx.db, revisionId);
+  if (!saved?.evidence.utilisationPolicy) return;
+  const calculated = calculateUtilisation(
+    saved.evidence,
+    worksheet.ya,
+    taxUtilisationContext(ctx.db, worksheet, revisionId),
+    true,
+  );
+  if (capitalHash(calculated) === capitalHash(saved.evidence)) return;
+  ctx.db
+    .update(taxCapitalSchedules)
+    .set({ evidence: calculated })
+    .where(eq(taxCapitalSchedules.revisionId, revisionId))
+    .run();
+  audit(
+    ctx,
+    worksheet.id,
+    [
+      {
+        field: "allowanceUtilisation",
+        before: saved.evidence,
+        after: calculated,
+      },
+    ],
+    emits,
+  );
 }

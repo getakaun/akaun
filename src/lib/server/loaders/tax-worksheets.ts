@@ -28,8 +28,9 @@ export function loadTaxWorksheet(locals: App.Locals, id: number, url: URL) {
     detail: result.value,
     canUpdate: can(locals, "tax.update"),
     canReview: can(locals, "tax.review"),
-    canFinalise: can(locals, "tax.finalise") && !locals.credential,
-    canAmend: can(locals, "tax.amend") && !locals.credential,
+    canFinalise:
+      can(locals, "tax.finalise") && !locals.credential && !locals.oauth,
+    canAmend: can(locals, "tax.amend") && !locals.credential && !locals.oauth,
     canReadRecords: can(locals, "records.read"),
     canReadAssets: can(locals, "accounts.read") && can(locals, "records.read"),
   };

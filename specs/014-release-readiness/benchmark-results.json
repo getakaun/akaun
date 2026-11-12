@@ -1,0 +1,211 @@
+{
+  "date": "2026-11-12",
+  "database": "synthetic in-memory; no configured data opened",
+  "results": {
+    "small": {
+      "size": "small",
+      "movements": 10000,
+      "assets": 100,
+      "years": 3,
+      "runtime": "1.3.11",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "memoryGiB": 18,
+      "database": "synthetic in-memory",
+      "snapshotBytes": 1928659,
+      "metrics": [
+        {
+          "operation": "tax-source-capture",
+          "coldMs": 236,
+          "p95Ms": 236,
+          "samples": 3,
+          "queriesPerSample": 6,
+          "peakRssMiB": 143
+        },
+        {
+          "operation": "asset-register",
+          "coldMs": 146,
+          "p95Ms": 146,
+          "samples": 3,
+          "queriesPerSample": 208,
+          "peakRssMiB": 171
+        },
+        {
+          "operation": "depreciation-preview",
+          "coldMs": 264,
+          "p95Ms": 264,
+          "samples": 3,
+          "queriesPerSample": 509,
+          "peakRssMiB": 198
+        },
+        {
+          "operation": "closing-preview",
+          "coldMs": 194,
+          "p95Ms": 194,
+          "samples": 3,
+          "queriesPerSample": 227,
+          "peakRssMiB": 198
+        },
+        {
+          "operation": "worksheet-detail",
+          "coldMs": 209,
+          "p95Ms": 309,
+          "samples": 3,
+          "queriesPerSample": 238,
+          "peakRssMiB": 246
+        },
+        {
+          "operation": "worksheet-save",
+          "coldMs": 1250,
+          "p95Ms": 1250,
+          "samples": 3,
+          "queriesPerSample": 512,
+          "peakRssMiB": 324
+        },
+        {
+          "operation": "worksheet-finalise-with-claims",
+          "coldMs": 815,
+          "p95Ms": 815,
+          "samples": 1,
+          "queriesPerSample": 494,
+          "peakRssMiB": 338
+        },
+        {
+          "operation": "csv-export",
+          "coldMs": 22,
+          "p95Ms": 87,
+          "samples": 3,
+          "queriesPerSample": 0,
+          "peakRssMiB": 338
+        },
+        {
+          "operation": "html-export",
+          "coldMs": 19,
+          "p95Ms": 32,
+          "samples": 3,
+          "queriesPerSample": 0,
+          "peakRssMiB": 345
+        }
+      ]
+    },
+    "medium": {
+      "size": "medium",
+      "movements": 100000,
+      "assets": 1000,
+      "years": 5,
+      "runtime": "1.3.11",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "memoryGiB": 18,
+      "database": "synthetic in-memory",
+      "snapshotBytes": 19431262,
+      "metrics": [
+        {
+          "operation": "tax-source-capture",
+          "coldMs": 894,
+          "p95Ms": 894,
+          "samples": 3,
+          "queriesPerSample": 6,
+          "peakRssMiB": 370
+        },
+        {
+          "operation": "asset-register",
+          "coldMs": 1087,
+          "p95Ms": 1087,
+          "samples": 3,
+          "queriesPerSample": 2008,
+          "peakRssMiB": 459
+        },
+        {
+          "operation": "depreciation-preview",
+          "coldMs": 1546,
+          "p95Ms": 1546,
+          "samples": 3,
+          "queriesPerSample": 5009,
+          "peakRssMiB": 507
+        },
+        {
+          "operation": "closing-preview",
+          "coldMs": 1449,
+          "p95Ms": 1449,
+          "samples": 3,
+          "queriesPerSample": 2027,
+          "peakRssMiB": 569
+        },
+        {
+          "operation": "worksheet-detail",
+          "coldMs": 2836,
+          "p95Ms": 2836,
+          "samples": 3,
+          "queriesPerSample": 2042,
+          "peakRssMiB": 1120
+        },
+        {
+          "operation": "worksheet-save",
+          "coldMs": 5020,
+          "p95Ms": 6072,
+          "samples": 3,
+          "queriesPerSample": 4124,
+          "peakRssMiB": 1906
+        },
+        {
+          "operation": "worksheet-finalise-with-claims",
+          "coldMs": 6699,
+          "p95Ms": 6699,
+          "samples": 1,
+          "queriesPerSample": 2334,
+          "peakRssMiB": 2162
+        },
+        {
+          "operation": "csv-export",
+          "coldMs": 247,
+          "p95Ms": 247,
+          "samples": 3,
+          "queriesPerSample": 0,
+          "peakRssMiB": 2162
+        },
+        {
+          "operation": "html-export",
+          "coldMs": 346,
+          "p95Ms": 346,
+          "samples": 3,
+          "queriesPerSample": 0,
+          "peakRssMiB": 2296
+        }
+      ]
+    },
+    "stress": {
+      "movements": 1000000,
+      "assets": 10000,
+      "years": 10,
+      "completed": false,
+      "reason": "synthetic stress process exceeded 12 GiB RSS safety budget on a 16 GiB executor",
+      "observedRssKiB": 13334048,
+      "partialMetrics": [
+        {
+          "operation": "tax-source-capture",
+          "elapsedMs": 9538,
+          "samples": 1
+        },
+        {
+          "operation": "asset-register",
+          "elapsedMs": 14401,
+          "samples": 1
+        },
+        {
+          "operation": "depreciation-preview",
+          "elapsedMs": 24661,
+          "samples": 1
+        },
+        {
+          "operation": "closing-preview",
+          "elapsedMs": 12953,
+          "samples": 1
+        },
+        {
+          "operation": "worksheet-detail",
+          "elapsedMs": 37956,
+          "samples": 1
+        }
+      ]
+    }
+  }
+}

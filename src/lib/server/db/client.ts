@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { hash } from "argon2";
 import { eq } from "drizzle-orm";
 import { mkdirSync } from "fs";
@@ -20,12 +19,19 @@ import {
 import { users } from "./schema.js";
 import { seedGroups } from "../admin/seed-groups.js";
 import { applyContraRevenueReclassification } from "./contra-revenue-reclassification.js";
+import {
+  assertTaxUpgradeSafe,
+  checkTaxUpgradeAt,
+} from "./tax-upgrade-guard.js";
+import { migrateBook } from "./migrate-book.js";
 
 const log = createLogger("db");
 
 const DEFAULT_ADMIN_PASSWORD = "akaun-admin";
 
 function createDb() {
+  // Do not open for writing or convert a book whose tax evidence 0049 deletes.
+  assertTaxUpgradeSafe(checkTaxUpgradeAt(DATABASE_PATH));
   mkdirSync(dirname(DATABASE_PATH), { recursive: true });
 
   // The installation upgrades itself, with no command and no setting (002
@@ -103,7 +109,7 @@ function createDb() {
   // BEGIN … COMMIT, and SQLite ignores `PRAGMA foreign_keys` inside a
   // transaction. So it is set here, on the connection, around the call.
   raw.exec("PRAGMA foreign_keys = OFF;");
-  migrate(db, { migrationsFolder: "drizzle" });
+  migrateBook(raw);
   raw.exec("PRAGMA foreign_keys = ON;");
 
   // And then checked, because "off during the migration" is only safe if the

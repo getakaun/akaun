@@ -1,3 +1,4 @@
+import { reviewedUtilisation } from "./__fixtures__/utilisation.js";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
@@ -235,7 +236,7 @@ describe("worksheet-level draft and completion", () => {
       }),
     );
     function capital(d: Detail, used?: number) {
-      const schedule = d.capital.schedule!;
+      const schedule = { ...d.capital.schedule!, utilisationPolicy: undefined };
       const rows = editorRows(schedule, d.worksheet);
       if (rows[0].form.treatment === "pending")
         Object.assign(rows[0].form, {
@@ -265,7 +266,8 @@ describe("worksheet-level draft and completion", () => {
       );
       expect(preview.errors).toEqual([]);
       return {
-        input: preview.input,
+        input: reviewedUtilisation(d, preview.input),
+        utilisationHash: d.capital.utilisationBasis?.hash,
         liveAssetHash: d.capital.liveAssetHash,
         rolloverHash: d.capital.rolloverHash,
         confirmFirstYearTreatments: true,

@@ -217,3 +217,18 @@ export function editorPreview(
     errors.push(...checked.error.issues.map((i) => i.message));
   return { input: candidate, schedule: staged, totals, errors };
 }
+
+/** Merge new accounting evidence without replacing edits made in this browser. */
+export function mergeEditorRows(
+  previous: EditorRow[],
+  incoming: EditorRow[],
+): EditorRow[] {
+  return incoming.map(
+    (fresh) =>
+      previous.find(
+        (old) =>
+          old.assetId === fresh.assetId &&
+          JSON.stringify(old.form) !== old.baseline,
+      ) ?? fresh,
+  );
+}

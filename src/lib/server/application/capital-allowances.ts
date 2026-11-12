@@ -155,9 +155,12 @@ export function changeCapitalSchedule(
     let schedule: CapitalSchedule;
     let active = true;
     if (v.action === "manual") {
-      if (!before?.active)
+      const projection = !before
+        ? capitalDetail(ctx.db, worksheet, revision.id, true)
+        : null;
+      if (!before?.active && !projection?.autoPrepared)
         refuse("This worksheet already uses manual allowance totals.");
-      schedule = before.evidence;
+      schedule = before?.evidence ?? projection!.schedule!;
       active = false;
     } else if (v.action === "prepare" || v.action === "rollover") {
       const overlaps = taxAdjustmentsFor(ctx.db, revision.id).filter(

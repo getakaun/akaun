@@ -2,6 +2,7 @@ import type { RequestHandler } from "./$types.js";
 import { db } from "$lib/server/db/client.js";
 import {
   changeTaxWorksheet,
+  saveTaxWorksheet,
   readTaxWorksheet,
 } from "$lib/server/application/tax-worksheets.js";
 import { toResponse, failureResponse } from "$lib/server/application/http.js";
@@ -41,11 +42,11 @@ export const GET: RequestHandler = ({ locals, params, url }) => {
     });
   return toResponse(result);
 };
-export const POST: RequestHandler = async ({ locals, params, request }) =>
-  toResponse(
-    changeTaxWorksheet(
-      { db, locals },
-      Number(params.id),
-      await request.json().catch(() => null),
-    ),
+export const POST: RequestHandler = async ({ locals, params, request }) => {
+  const input = await request.json().catch(() => null);
+  return toResponse(
+    (input?.action === "save-worksheet"
+      ? saveTaxWorksheet
+      : changeTaxWorksheet)({ db, locals }, Number(params.id), input),
   );
+};

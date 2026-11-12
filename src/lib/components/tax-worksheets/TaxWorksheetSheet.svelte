@@ -35,6 +35,7 @@
     adjustmentId = null,
     onclose,
     onsaved,
+    onstage,
   }: {
     mode: "create" | "source" | "manual" | "refresh" | "amend" | "withdraw";
     detail?: TaxWorksheetDetail | null;
@@ -42,6 +43,7 @@
     adjustmentId?: number | null;
     onclose: () => void;
     onsaved: (detail: TaxWorksheetDetail) => Promise<void>;
+    onstage?: (payload: Record<string, unknown>) => void;
   } = $props();
   // Freeze confirmation evidence/version while another session may refresh the page.
   const initial = untrack(() => detail);
@@ -222,6 +224,27 @@
         retryKey = crypto.randomUUID();
       }
       payload.requestKey = retryKey;
+    }
+    if (onstage && ["source", "manual", "withdraw"].includes(mode)) {
+      if (
+        reason.trim().length < 10 ||
+        ((mode === "source" || mode === "manual") && !evidence.trim())
+      ) {
+        error =
+          "Add a reason (at least 10 characters) and supporting reference.";
+        return;
+      }
+      onstage(
+        mode === "source"
+          ? {
+              ...payload,
+              sourceHash: initial?.sourceHashes[String(source!.movementId)],
+            }
+          : payload,
+      );
+      leaving = true;
+      onclose();
+      return;
     }
     saving = true;
     try {
@@ -467,8 +490,8 @@
             finalised revision remains available with its original figures and export.
           </p>
           <p class="field-hint">
-            Active adjustments are copied for review. Any later accounting
-            changes require an explicit refresh.
+            Active adjustments are copied for review. Accounting figures will
+            update automatically in the new draft.
           </p>
         {:else if mode === "withdraw"}
           <p>
@@ -510,7 +533,9 @@
     </div>
     <footer class="sheet-foot">
       <p class="sheet-foot-note">
-        Tax preparation only. Accounting balances stay unchanged.
+        {onstage
+          ? "Apply here, then save the whole worksheet."
+          : "Tax preparation only. Accounting balances stay unchanged."}
       </p>
       <div class="sheet-foot-actions tax-actions">
         <button
@@ -527,11 +552,13 @@
             ? "Saving…"
             : mode === "create"
               ? "Create worksheet"
-              : mode === "source"
-                ? "Save annual treatment"
-                : mode === "manual"
-                  ? "Add adjustment"
-                  : titles[mode]}</button
+              : onstage && ["source", "manual", "withdraw"].includes(mode)
+                ? "Apply to draft"
+                : mode === "source"
+                  ? "Save annual treatment"
+                  : mode === "manual"
+                    ? "Add adjustment"
+                    : titles[mode]}</button
         >
       </div>
     </footer>

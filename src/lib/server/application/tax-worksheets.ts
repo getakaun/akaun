@@ -1,3 +1,4 @@
+export { saveTaxWorksheet } from "./tax-worksheet-save.js";
 import {
   capitalScheduleFor,
   capitalDetail,
@@ -531,7 +532,19 @@ export function changeTaxWorksheet(
         draft(ctx, revision);
         ctx.db
           .update(taxWorksheetRevisions)
-          .set({ snapshot: live, sourceHash: liveHash, capturedAt: now })
+          .set({
+            snapshot: {
+              ...live,
+              ...(revision.snapshot.pendingCorrectionIds
+                ? {
+                    pendingCorrectionIds:
+                      revision.snapshot.pendingCorrectionIds,
+                  }
+                : {}),
+            },
+            sourceHash: liveHash,
+            capturedAt: now,
+          })
           .where(eq(taxWorksheetRevisions.id, revision.id))
           .run();
         audit(
@@ -582,6 +595,14 @@ export function changeTaxWorksheet(
           adjustments,
           capital.active ? capital.totals : null,
         );
+        if (
+          revision.snapshot.pendingCorrectionIds?.some((id) =>
+            adjustments.some((a) => a.id === id && a.withdrawnAt === null),
+          )
+        )
+          refuse(
+            "Resolve changed expense corrections before reviewing or finalising.",
+          );
         if (totals.unresolvedCount)
           refuse(
             `Resolve ${totals.unresolvedCount} expense classification(s) before reviewing or finalising.`,

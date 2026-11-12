@@ -9,6 +9,8 @@ import {
 } from "./db/schema.js";
 
 export const SETTING_KEYS = {
+  // Explicit tax country for new worksheets; independent of book currency.
+  taxJurisdiction: "tax.jurisdiction",
   // Inclusive book-wide accounting lock; empty or absent means no closed months.
   accountingClosedThrough: "accounting.closedThrough",
   // Which account new records pre-select as the one that paid or received

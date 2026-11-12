@@ -120,7 +120,7 @@
           confirmation: selected.firstYearTreatment?.confirmation,
           reason:
             selected.firstYearTreatment?.confirmation === "worksheet_save"
-              ? "Treatment confirmed when saving asset deductions."
+              ? "Treatment confirmed when saving the worksheet."
               : (selected.firstYearTreatment?.reason ??
                 "Using the saved first-year treatment."),
         }
@@ -372,8 +372,8 @@
             </Select.Content>
           </Select.Root>
           <p class="field-hint">
-            Change this only for an exception. Saving asset deductions confirms
-            the treatment for all assets together.
+            Change this only for an exception. Saving the worksheet confirms the
+            treatment for all assets together.
           </p>
         </div>
       </Disclosure>

@@ -10,6 +10,7 @@ import {
   editorUses,
   editorPreview,
   editorSchemes,
+  mergeEditorRows,
 } from "./capital-editor.js";
 const period = { ya: 2025, dateFrom: "2025-01-01", dateTo: "2025-12-31" };
 const scheme: AppliedAssetTaxScheme = {
@@ -68,6 +69,28 @@ function draft(s = fixture()) {
   };
 }
 describe("inline asset deduction staging", () => {
+  it("merges changed book facts and new assets while preserving edited asset inputs", () => {
+    const s = fixture();
+    const oldRows = editorRows(s, period);
+    oldRows[0].form.percentage = "75";
+    const incoming = {
+      ...s,
+      rows: [...s.rows, blankCapitalRow(2, 2025)],
+      assets: [
+        { ...s.assets[0], costMinor: 600000 },
+        { ...s.assets[0], assetId: 2, name: "New printer", costMinor: 100000 },
+      ],
+    };
+    const merged = mergeEditorRows(oldRows, editorRows(incoming, period));
+    expect(merged[0].form.percentage).toBe("75");
+    expect(merged[1].form.amounts.qualifyingMinor).toBe("1000.00");
+    const untouched = mergeEditorRows(
+      editorRows(s, period),
+      editorRows(incoming, period),
+    );
+    expect(untouched[0].form.amounts.qualifyingMinor).toBe("6000.00");
+    expect(s.assets[0].costMinor).toBe(500000);
+  });
   it("uses canonical scheme snapshots when loading library rows with persistence metadata", () => {
     const library = {
       ...scheme,

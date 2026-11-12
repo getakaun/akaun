@@ -6,6 +6,7 @@
 
 <svelte:head><title>Tax settings - Akaun</title></svelte:head>
 <AssetTaxSchemeSettings
+  jurisdiction={data.jurisdiction}
   schemes={data.schemes}
   canManage={data.canManage}
   canSeeSettings={data.canSeeSettings}

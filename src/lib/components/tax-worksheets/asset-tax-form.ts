@@ -249,9 +249,9 @@ export function assetTaxFirstYearStatus(
       confirmation: row.firstYearTreatment?.confirmation,
       reason:
         row.firstYearTreatment?.confirmation === "pending_save"
-          ? "Calculated from this year's qualifying additions. Saving asset deductions confirms the treatment."
+          ? "Calculated from this year's qualifying additions. Saving the worksheet confirms the treatment."
           : row.firstYearTreatment?.confirmation === "worksheet_save"
-            ? "Treatment confirmed when saving asset deductions."
+            ? "Treatment confirmed when saving the worksheet."
             : (row.firstYearTreatment?.reason ??
               "Using the previously saved first-year treatment."),
     };

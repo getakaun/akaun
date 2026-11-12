@@ -1,37 +1,39 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { beforeNavigate, goto } from "$app/navigation";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import Disclosure from "$lib/components/ui/Disclosure.svelte";
-  import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
   import CapitalClaimSummary from "./CapitalClaimSummary.svelte";
   import CapitalAssetFields from "./CapitalAssetFields.svelte";
+  import TaxJurisdictionField from "./TaxJurisdictionField.svelte";
   import {
     editorRows,
     editorSchemes,
     editorUses,
     editorPreview,
     editorSchemeChoices,
+    mergeEditorRows,
   } from "./capital-editor.js";
   import { schemeApplies } from "$lib/asset-tax-scheme.js";
   import { formatTaxMinor, safeTaxSum } from "$lib/tax-worksheet.js";
   import type { TaxWorksheetDetail as Detail } from "$lib/server/queries/tax-worksheets.js";
+  import type { CapitalDraft } from "./worksheet-draft.js";
   let {
     detail,
     editable,
+    saving = false,
+    resultBase,
     dirty = $bindable(false),
-    busy = $bindable(false),
-    onsaved,
+    draft = $bindable(null),
   }: {
     detail: Detail;
     editable: boolean;
+    saving?: boolean;
+    resultBase?: number;
     dirty?: boolean;
-    busy?: boolean;
-    onsaved: (d: Detail) => Promise<void>;
+    draft?: CapitalDraft | null;
   } = $props();
   let initial = $state(untrack(() => structuredClone($state.snapshot(detail))));
   let rows = $state(
@@ -43,53 +45,70 @@
     untrack(() => editorUses(initial.capital.schedule!, initial.worksheet.ya)),
   );
   let remark = $state(untrack(() => initial.capital.schedule!.evidence));
+  let jurisdiction = $state(
+    untrack(
+      () =>
+        initial.capital.schedule!.jurisdiction ??
+        (initial.capital.schedule!.calculationVersion === 1 ? "MY" : null),
+    ),
+  );
   let expanded = $state<number | null>(null);
-  let error = $state("");
-  let saving = $state(false);
+  let removedEditedAsset = $state(false);
   let baseline = $state(untrack(fingerprint));
   function fingerprint() {
-    return JSON.stringify([rows.map((r) => r.form), uses, remark]);
+    return JSON.stringify([
+      rows.map((r) => r.form),
+      uses,
+      remark,
+      jurisdiction,
+    ]);
   }
   const changed = $derived(fingerprint() !== baseline);
-  const jurisdiction = $derived(
-    initial.capital.schedule!.jurisdiction ??
-      (initial.capital.schedule!.calculationVersion === 1 ? "MY" : null),
-  );
-  const schemes = $derived(editorSchemes(initial.capital.schemes));
+  const schemes = $derived(editorSchemes(detail.capital.schemes));
   const stale = $derived(
-    detail.revision.version !== initial.revision.version ||
-      JSON.stringify(detail.capital.firstYearContexts) !==
-        JSON.stringify(initial.capital.firstYearContexts) ||
-      detail.capital.assetsStale ||
-      detail.capital.predecessorStale ||
-      detail.capital.currencyMismatch ||
-      !detail.capital.active,
+    detail.revision.version !== initial.revision.version && changed,
   );
-  const canEdit = $derived(editable && !stale && !saving);
+  const canEdit = $derived(
+    editable && !stale && !removedEditedAsset && !saving,
+  );
   const money = (n: number | null | undefined) =>
     n == null
       ? "Needs review"
       : formatTaxMinor(n, initial.capital.schedule!.currency);
-  function reset(d: Detail) {
-    initial = structuredClone($state.snapshot(d));
-    rows = editorRows(initial.capital.schedule!, initial.worksheet, editable);
-    uses = editorUses(initial.capital.schedule!, initial.worksheet.ya);
-    remark = initial.capital.schedule!.evidence;
-    baseline = fingerprint();
-    error = "";
-  }
+  // Accounting events may change evidence without changing the saved worksheet version.
+  // Merge untouched inputs while keeping edited forms, and never silently rebase another user's save.
   $effect(() => {
-    if (dirty !== changed) dirty = changed;
-    if (busy !== saving) busy = saving;
-  });
-  // SSE may refresh the page while a form is dirty. Keep its snapshot and require a review.
-  $effect(() => {
+    if (JSON.stringify(detail) === JSON.stringify(initial) || saving || stale)
+      return;
+    const next = structuredClone($state.snapshot(detail));
+    const nextRows = editorRows(
+      next.capital.schedule!,
+      next.worksheet,
+      editable,
+    );
     if (
-      !changed &&
-      !saving &&
-      JSON.stringify(detail) !== JSON.stringify(initial)
-    )
-      reset(detail);
+      rows.some(
+        (old) =>
+          JSON.stringify(old.form) !== old.baseline &&
+          !nextRows.some((fresh) => fresh.assetId === old.assetId),
+      )
+    ) {
+      removedEditedAsset = true;
+      return;
+    }
+    if (!changed) {
+      rows = nextRows;
+      uses = editorUses(next.capital.schedule!, next.worksheet.ya);
+      remark = next.capital.schedule!.evidence;
+      jurisdiction =
+        next.capital.schedule!.jurisdiction ??
+        (next.capital.schedule!.calculationVersion === 1 ? "MY" : null);
+      initial = next;
+      baseline = fingerprint();
+    } else {
+      rows = mergeEditorRows(rows, nextRows);
+      initial = next;
+    }
   });
   const preview = $derived.by(() => {
     try {
@@ -105,7 +124,7 @@
         };
       return {
         value: editorPreview(
-          initial.capital.schedule!,
+          { ...initial.capital.schedule!, jurisdiction },
           rows,
           schemes,
           uses,
@@ -124,105 +143,58 @@
   });
   const totals = $derived(preview.value?.totals ?? initial.capital.totals!);
   const baseResult = $derived(
-    safeTaxSum([initial.totals.resultMinor, -initial.totals.capitalMinor]),
+    resultBase ??
+      safeTaxSum([detail.totals.resultMinor, -detail.totals.capitalMinor]),
   );
   const result = $derived(
     safeTaxSum([baseResult, totals.balancingChargeMinor, -totals.usedMinor]),
   );
-  function selectScheme(index: number, id: string) {
-    const draft = rows[index];
-    draft.form.schemeId = id;
-    draft.form.treatment = "claim";
-    draft.form.firstYearMode = "auto";
-  }
-
-  let retryKey = "",
-    retryPayload = "";
-  async function save(event: SubmitEvent) {
-    event.preventDefault();
-    if (
-      !canEdit ||
-      !preview.value ||
-      preview.error ||
-      preview.value.errors.length
-    )
-      return;
-    error = "";
-    const payload = {
-      action: "save",
-      confirmFirstYearTreatments: true,
-      expectedVersion: initial.revision.version,
+  $effect(() => {
+    if (dirty !== changed) dirty = changed;
+    const nextDraft = {
+      input: preview.value?.input ?? null,
+      totals: preview.value?.totals ?? null,
       liveAssetHash: initial.capital.liveAssetHash,
-      reason: "Review and save inline asset deductions",
-      input: preview.value.input,
+      rolloverHash: initial.capital.rolloverHash,
+      errors: [
+        ...(removedEditedAsset
+          ? [
+              "An edited asset was removed from the register. Your inputs are kept; discard worksheet changes to load the latest assets.",
+            ]
+          : []),
+        preview.error,
+        ...(preview.value?.errors ?? []),
+        ...(stale
+          ? [
+              "This worksheet was saved elsewhere. Discard your changes to load the latest version.",
+            ]
+          : []),
+      ].filter(Boolean),
+      problems: totals.problems,
     };
-    const encoded = JSON.stringify(payload);
-    if (encoded !== retryPayload) {
-      retryPayload = encoded;
-      retryKey = crypto.randomUUID();
-    }
-    saving = true;
-    try {
-      const response = await fetch(
-        `/api/tax/${initial.worksheet.id}/capital-allowances`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...payload, requestKey: retryKey }),
-        },
-      );
-      const data = await response.json();
-      if (!response.ok) {
-        error =
-          data.issues?.[0]?.message ??
-          data.error ??
-          "Could not save deductions.";
-        return;
-      }
-      reset(data);
-      await onsaved(data);
-    } catch {
-      error =
-        "The result could not be confirmed. Retry to check the same request.";
-    } finally {
-      saving = false;
-    }
-  }
-  let confirmLeave = $state(false),
-    pendingHref: string | null = null,
-    leaving = false;
-  beforeNavigate((nav) => {
-    if (leaving || !changed || nav.willUnload || !nav.to) return;
-    nav.cancel();
-    pendingHref = nav.to.url.href;
-    confirmLeave = true;
+    if (JSON.stringify(draft) !== JSON.stringify(nextDraft)) draft = nextDraft;
   });
-  function discardAndLeave() {
-    reset(detail);
-    leaving = true;
-    // eslint-disable-next-line svelte/no-navigation-without-resolve -- SvelteKit supplied this destination.
-    if (pendingHref) void goto(pendingHref);
+  function selectScheme(index: number, id: string) {
+    rows[index].form.schemeId = id;
+    rows[index].form.treatment = "claim";
+    rows[index].form.firstYearMode = "auto";
   }
 </script>
 
-<svelte:window
-  onbeforeunload={(event) => {
-    if (changed) {
-      event.preventDefault();
-      event.returnValue = "";
-    }
-  }}
-/>
-<form onsubmit={save} class="tax-stack" aria-busy={saving}>
-  {#if stale && changed}<ReportNotes
+<div class="tax-stack" aria-busy={saving}>
+  {#if editable && !jurisdiction}<TaxJurisdictionField
+      bind:value={jurisdiction}
+      disabled={!canEdit}
+    />{/if}
+  {#if stale}<ReportNotes
       notes={[
-        "This worksheet changed while you were editing. Your inputs are kept. Discard them to load the latest worksheet before saving.",
+        "This worksheet was saved elsewhere. Your inputs are kept. Discard changes from the worksheet actions to load the latest version.",
       ]}
       firstIsWarning
     />{/if}
   {#if initial.capital.totals?.problems.some( (p) => p.includes("First-year allowance history changed"), )}<ReportNotes
       notes={[
-        "Earlier tax history changed. Review the first-year treatment below and save asset deductions again before reviewing the worksheet.",
+        "Earlier tax history changed. Review the first-year treatment below and save the worksheet again before finalising.",
       ]}
       firstIsWarning
     />{/if}
@@ -365,7 +337,7 @@
                       dateFrom={initial.worksheet.dateFrom}
                       dateTo={initial.worksheet.dateTo}
                       currency={initial.capital.schedule!.currency}
-                      readonly={!editable || stale}
+                      readonly={!canEdit}
                       {saving}
                       firstYearContext={initial.capital.firstYearContexts[
                         draft.assetId
@@ -400,10 +372,7 @@
       rows={2}
     />
   </div>
-  {#if error || preview.error}<ReportNotes
-      notes={[error || preview.error]}
-      firstIsWarning
-    />{/if}
+  {#if preview.error}<ReportNotes notes={[preview.error]} firstIsWarning />{/if}
   {#if preview.value?.errors.length}<ReportNotes
       notes={preview.value.errors}
       firstIsWarning
@@ -416,52 +385,16 @@
       Saving confirms the selected schemes, business use and first-year
       treatment for all included assets.
     </p>{/if}
-  {#if editable}<div class="inline-save">
-      <span class="field-hint"
-        >{changed
-          ? "Unsaved asset deductions"
-          : "Review assets and claim amounts, then save together."}</span
-      ><Button
-        type="button"
-        variant="outline"
-        disabled={saving || !changed}
-        onclick={() => reset(detail)}>Discard</Button
-      ><Button
-        type="submit"
-        disabled={!canEdit ||
-          !preview.value ||
-          !!preview.error ||
-          !!preview.value.errors.length}
-        >{saving ? "Saving…" : "Save asset deductions"}</Button
-      >
-    </div>{/if}
-</form>
-<ConfirmDialog
-  bind:open={confirmLeave}
-  title="Discard unsaved asset deductions?"
-  description="Your asset and claim changes have not been saved."
-  confirmLabel="Discard and leave"
-  danger
-  onConfirm={discardAndLeave}
-/>
+  {#if editable}<p class="field-hint">
+      Changes are saved with the worksheet’s Save draft or Finalise action.
+    </p>{/if}
+</div>
 
 <style>
   .inline-detail {
     padding: 16px;
     background: var(--muted);
     border-radius: var(--radius);
-  }
-  .inline-save {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    align-items: center;
-    gap: 8px;
-    border-top: 1px solid var(--border);
-    padding-top: 16px;
-  }
-  .inline-save > span {
-    margin-right: auto;
   }
   .inline-assets :global(.business-use-input) {
     width: 84px;

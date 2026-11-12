@@ -50,6 +50,7 @@ type Target = {
   changed?: boolean;
 };
 /** All tax writes share authority checks, one immediate transaction, and after-commit signals. */
+const activeTransactions = new WeakMap<AppContext, (() => void)[]>();
 export function runTaxTransaction<T>(
   ctx: AppContext,
   permission: LeafPermission,
@@ -65,10 +66,16 @@ export function runTaxTransaction<T>(
       "FORBIDDEN",
       "Finalising or amending requires a signed-in session.",
     );
+  const parentEmits = activeTransactions.get(ctx);
+  if (parentEmits) {
+    const target = body(parentEmits);
+    return ok(target.value);
+  }
   const emits: (() => void)[] = [];
   try {
     const result = ctx.db.transaction(
       () => {
+        activeTransactions.set(ctx, emits);
         const target = body(emits);
         if (target.changed !== false)
           emits.push(() => taxWorksheetEvents.emit("changed"));
@@ -76,9 +83,11 @@ export function runTaxTransaction<T>(
       },
       { behavior: "immediate" },
     );
+    activeTransactions.delete(ctx);
     for (const emit of emits) emit();
     return ok(result);
   } catch (error) {
+    activeTransactions.delete(ctx);
     if (error instanceof Rollback) return error.failure;
     if (
       error instanceof TaxCalculationError ||

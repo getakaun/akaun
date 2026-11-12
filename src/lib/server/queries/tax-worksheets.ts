@@ -1,3 +1,4 @@
+import { localToday } from "$lib/local-date.js";
 import { evidenceHash } from "../tax-evidence.js";
 import { and, asc, desc, eq } from "drizzle-orm";
 import {
@@ -121,10 +122,57 @@ export function taxWorksheetDetail(
   const live = compareLive
     ? captureTaxSources(db, worksheet.dateFrom, worksheet.dateTo)
     : revision.snapshot;
+  const isLatest = revision.id === revisions[0].id;
+  const working = compareLive && isLatest && revision.status !== "finalised";
+  const changedIds = new Set(
+    taxSourceChanges(revision.snapshot, live).map((c) => c.movementId),
+  );
+  const sourceConflicts = adjustments
+    .filter(
+      (a) =>
+        a.kind === "source" &&
+        a.withdrawnAt === null &&
+        (revision.snapshot.pendingCorrectionIds?.includes(a.id) ||
+          (working && changedIds.has(a.sourceMovementId!))),
+    )
+    .map((a) => ({
+      adjustmentId: a.id,
+      movementId: a.sourceMovementId!,
+      reason:
+        "The accounting record changed after this annual correction. Replace or withdraw the correction.",
+    }));
+  const snapshot = working
+    ? {
+        ...live,
+        pendingCorrectionIds: sourceConflicts.map((c) => c.adjustmentId),
+      }
+    : revision.snapshot;
   const capital = capitalDetail(db, worksheet, revision.id, compareLive);
   return {
     worksheet,
-    revision,
+    revision: working
+      ? {
+          ...revision,
+          snapshot,
+          status:
+            taxHash(live) !== revision.sourceHash ||
+            capital.assetsStale ||
+            capital.predecessorStale ||
+            !!capital.totals?.problems.length
+              ? ("draft" as const)
+              : revision.status,
+        }
+      : revision,
+    savedRevision: revision,
+    sourceConflicts,
+    sourceHashes: Object.fromEntries(
+      snapshot.expenses.map((source) => [
+        String(source.movementId),
+        taxHash(source),
+      ]),
+    ),
+    working,
+    periodEnded: worksheet.dateTo < localToday(),
     revisions: revisions.map(
       ({ id, revision, status, capturedAt, finalisedAt, amendmentReason }) => ({
         id,
@@ -135,10 +183,10 @@ export function taxWorksheetDetail(
         amendmentReason,
       }),
     ),
-    isLatest: revision.id === revisions[0].id,
+    isLatest,
     adjustments,
     totals: taxWorksheetTotals(
-      revision.snapshot,
+      snapshot,
       adjustments,
       capital.active && !capital.currencyMismatch ? capital.totals : null,
     ),

@@ -107,6 +107,8 @@ export type TaxSource = {
 };
 export type TaxSourceSnapshot = {
   calculationVersion: 1;
+  /** Unresolved annual corrections retained across draft source updates. */
+  pendingCorrectionIds?: number[];
   currency: string;
   companyName: string;
   profitMinor: number;
@@ -161,7 +163,10 @@ export function taxWorksheetTotals(
   adjustments: TaxAdjustment[],
   capital: { effectMinor: number } | null = null,
 ) {
-  const active = adjustments.filter((a) => a.withdrawnAt === null);
+  const active = adjustments.filter(
+    (a) =>
+      a.withdrawnAt === null && !snapshot.pendingCorrectionIds?.includes(a.id),
+  );
   const corrections = new Map(
     active
       .filter((a) => a.kind === "source")

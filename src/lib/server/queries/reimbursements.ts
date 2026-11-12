@@ -2,7 +2,7 @@ import {
   reimbursementEntryDescription,
   originalReimbursementDescription,
 } from "$lib/reimbursement-labels.js";
-import { and, desc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, or, sql } from "drizzle-orm";
 import {
   auditLog,
   ledgerMovements,
@@ -14,6 +14,7 @@ import {
 } from "../db/schema.js";
 import type { LedgerDb, RecordView } from "../ledger/types.js";
 import { getRecord } from "./ledger.js";
+import { groupAllocations, inspectGroup } from "./reimbursement-groups.js";
 import { settlementsForRecord, type SettlementLink } from "./settlements.js";
 
 export type DisplaySettlementLink = SettlementLink & {
@@ -122,6 +123,90 @@ function reversedAllocations(
   return [...byId.values()];
 }
 
+function entryOf(db: LedgerDb, recordId: number) {
+  return db
+    .select()
+    .from(reimbursementEntries)
+    .where(eq(reimbursementEntries.recordId, recordId))
+    .get();
+}
+
+/** When and why an expense was taken out of a group, from its own allocation. */
+function removalOf(
+  db: LedgerDb,
+  groupId: number,
+  items: {
+    sourceMovementId: number;
+    amountMinor: number;
+    removedAt: string | null;
+  }[],
+) {
+  const supplierMovements = db
+    .select({ id: ledgerMovements.id })
+    .from(ledgerMovements)
+    .innerJoin(
+      reimbursementEntries,
+      eq(reimbursementEntries.recordId, ledgerMovements.recordId),
+    )
+    .where(
+      and(
+        eq(reimbursementEntries.groupId, groupId),
+        eq(reimbursementEntries.role, "supplier"),
+      ),
+    )
+    .all()
+    .map((m) => m.id);
+  const allocation = supplierMovements.length
+    ? db
+        .select()
+        .from(settlements)
+        .where(
+          and(
+            isNotNull(settlements.reversedAt),
+            inArray(
+              settlements.owedMovementId,
+              items.map((i) => i.sourceMovementId),
+            ),
+            inArray(settlements.paymentMovementId, supplierMovements),
+          ),
+        )
+        .orderBy(desc(settlements.id))
+        .get()
+    : undefined;
+  return {
+    amountMinor: items.reduce((sum, i) => sum + i.amountMinor, 0),
+    removedAt: items[0].removedAt ?? allocation?.reversedAt ?? null,
+    reason: allocation?.reversalReason ?? null,
+  };
+}
+
+/**
+ * A funding allocation to a group's recipient entry that Correct allocation
+ * replaced with a smaller one. Its reversal is bookkeeping, not a change the
+ * user made to that payment, so history lists the removed expense instead.
+ */
+function supersededFunding(db: LedgerDb, allocation: HistoricalAllocation) {
+  const owed = db
+    .select({ recordId: ledgerMovements.recordId })
+    .from(ledgerMovements)
+    .where(eq(ledgerMovements.id, allocation.owedMovementId))
+    .get();
+  if (!owed || entryOf(db, owed.recordId)?.role !== "recipient") return false;
+  return (
+    db
+      .select({ id: settlements.id })
+      .from(settlements)
+      .where(
+        and(
+          eq(settlements.paymentMovementId, allocation.paymentMovementId),
+          eq(settlements.owedMovementId, allocation.owedMovementId),
+          gt(settlements.id, allocation.id),
+        ),
+      )
+      .all().length > 0
+  );
+}
+
 /** Historical links never contribute to current funding or correction targets. */
 export function reversedAllocationsForRecord(
   db: LedgerDb,
@@ -133,7 +218,27 @@ export function reversedAllocationsForRecord(
     .where(eq(ledgerMovements.recordId, recordId))
     .all()
     .map((m) => m.id);
-  return reversedAllocations(db, ids).flatMap((allocation) => {
+  const userName = (id: number | null | undefined) =>
+    id == null
+      ? null
+      : (db
+          .select({ name: users.username })
+          .from(users)
+          .where(eq(users.id, id))
+          .get()?.name ?? null);
+  const historical = (
+    other: RecordView,
+    allocation: HistoricalAllocation,
+    amountMinor = allocation.amountMinor,
+  ): DisplaySettlementLink => ({
+    ...linkTo(other, amountMinor, allocation.id, allocation.createdAt),
+    reversedAt: allocation.reversedAt ?? null,
+    reversedBy: allocation.reversedBy ?? null,
+    reversedByName: userName(allocation.reversedBy),
+    reversalReason: allocation.reversalReason ?? null,
+  });
+  const links = reversedAllocations(db, ids).flatMap((allocation) => {
+    if (supersededFunding(db, allocation)) return [];
     const otherId = ids.includes(allocation.paymentMovementId)
       ? allocation.owedMovementId
       : allocation.paymentMovementId;
@@ -142,34 +247,102 @@ export function reversedAllocationsForRecord(
       .from(ledgerMovements)
       .where(eq(ledgerMovements.id, otherId))
       .get();
-    const other = movement ? getRecord(db, movement.recordId) : null;
+    let other = movement ? getRecord(db, movement.recordId) : null;
     if (!other) return [];
-    const user =
-      allocation.reversedBy == null
-        ? null
-        : db
-            .select({ name: users.username })
-            .from(users)
-            .where(eq(users.id, allocation.reversedBy))
-            .get();
-    return [
-      {
-        ...linkTo(
-          other,
-          allocation.amountMinor,
-          allocation.id,
-          allocation.createdAt,
-        ),
-        reversedAt: allocation.reversedAt ?? null,
-        reversedBy: allocation.reversedBy ?? null,
-        reversedByName: user?.name ?? null,
-        reversalReason: allocation.reversalReason ?? null,
-      },
-    ];
+    // An expense was settled by a generated supplier entry; the reader knows
+    // the payment that reimbursed it, so name that instead.
+    const entry = entryOf(db, other.id);
+    if (entry?.role === "supplier" && !entryOf(db, recordId)) {
+      const group = db
+        .select()
+        .from(reimbursements)
+        .where(eq(reimbursements.id, entry.groupId))
+        .get();
+      other =
+        (group &&
+          getRecord(db, group.paymentRecordId ?? group.payableRecordId)) ||
+        other;
+    }
+    return [historical(other, allocation)];
   });
+  // On the funding payment, an expense taken out of its group is listed by
+  // name, with the reversal of that expense's own allocation.
+  if (!entryOf(db, recordId) && ids.length) {
+    const groupIds = db
+      .select({ groupId: reimbursementEntries.groupId })
+      .from(settlements)
+      .innerJoin(
+        ledgerMovements,
+        eq(ledgerMovements.id, settlements.owedMovementId),
+      )
+      .innerJoin(
+        reimbursementEntries,
+        eq(reimbursementEntries.recordId, ledgerMovements.recordId),
+      )
+      .where(
+        and(
+          inArray(settlements.paymentMovementId, ids),
+          eq(reimbursementEntries.role, "recipient"),
+        ),
+      )
+      .all()
+      .map((r) => r.groupId);
+    for (const groupId of new Set(groupIds)) {
+      const supplierMovements = db
+        .select({ id: ledgerMovements.id })
+        .from(ledgerMovements)
+        .innerJoin(
+          reimbursementEntries,
+          eq(reimbursementEntries.recordId, ledgerMovements.recordId),
+        )
+        .where(
+          and(
+            eq(reimbursementEntries.groupId, groupId),
+            eq(reimbursementEntries.role, "supplier"),
+          ),
+        )
+        .all()
+        .map((m) => m.id);
+      const removed = db
+        .select()
+        .from(reimbursementItems)
+        .where(
+          and(
+            eq(reimbursementItems.groupId, groupId),
+            isNotNull(reimbursementItems.removedAt),
+          ),
+        )
+        .all();
+      for (const item of removed) {
+        const allocation = supplierMovements.length
+          ? db
+              .select()
+              .from(settlements)
+              .where(
+                and(
+                  isNotNull(settlements.reversedAt),
+                  eq(settlements.owedMovementId, item.sourceMovementId),
+                  inArray(settlements.paymentMovementId, supplierMovements),
+                ),
+              )
+              .orderBy(desc(settlements.id))
+              .get()
+          : undefined;
+        const source = db
+          .select({ recordId: ledgerMovements.recordId })
+          .from(ledgerMovements)
+          .where(eq(ledgerMovements.id, item.sourceMovementId))
+          .get();
+        const expense = source ? getRecord(db, source.recordId) : null;
+        if (allocation && expense)
+          links.push(historical(expense, allocation, item.amountMinor));
+      }
+    }
+  }
+  return links;
 }
 
-function linkTo(
+export function linkTo(
   record: RecordView,
   amountMinor: number,
   settlementId: number,
@@ -232,6 +405,19 @@ function allocationHistoryForRecord(db: LedgerDb, recordId: number) {
       const reason = fields.find(
         (field) => field.field === "correctionReason",
       )?.after;
+      // Name what was taken off or put on, so a correction reads on its own.
+      const labelsOf = (list: HistoricalAllocation[]) =>
+        list.flatMap((a) => {
+          const owed = Number.isSafeInteger(a.owedMovementId)
+            ? db
+                .select({ recordId: ledgerMovements.recordId })
+                .from(ledgerMovements)
+                .where(eq(ledgerMovements.id, a.owedMovementId))
+                .get()
+            : undefined;
+          const record = owed ? getRecord(db, owed.recordId) : null;
+          return record ? [record.recordNumber ?? `#${record.id}`] : [];
+        });
       return [
         {
           id: row.id,
@@ -239,6 +425,8 @@ function allocationHistoryForRecord(db: LedgerDb, recordId: number) {
           reason: typeof reason === "string" ? reason : null,
           removedMinor: removed.reduce((sum, a) => sum + a.amountMinor, 0),
           addedMinor: added.reduce((sum, a) => sum + a.amountMinor, 0),
+          removedLabels: labelsOf(removed),
+          addedLabels: labelsOf(added),
         },
       ];
     });
@@ -390,7 +578,15 @@ export function reimbursementsForRecord(db: LedgerDb, recordId: number) {
       const reason = reversal?.find(
         (c) => c.field === "correctionReason",
       )?.after;
-      const totalMinor = items.reduce((sum, i) => sum + i.amountMinor, 0);
+      // An expense taken out by Correct allocation stays listed, marked, but
+      // no longer counts toward the reimbursement.
+      const activeItems = items.filter((i) => !i.removedAt);
+      const totalMinor = activeItems.reduce((sum, i) => sum + i.amountMinor, 0);
+      const ownItems = items.filter((i) => i.recordId === recordId);
+      const removedForRecord =
+        ownItems.length && ownItems.every((i) => i.removedAt)
+          ? removalOf(db, group.id, ownItems)
+          : null;
       return {
         ...group,
         description: originalDescription,
@@ -407,12 +603,15 @@ export function reimbursementsForRecord(db: LedgerDb, recordId: number) {
           : funding
               .filter((f) => f.otherRecordId === recordId)
               .reduce((sum, f) => sum + f.amountMinor, 0),
-        reversedAmountMinor: group.reversedAt ? payable.amountMinor : 0,
-        reversalDate:
-          reversalAfter?.date ??
-          entries.find((e) => e.role === "recipient-reversal")?.date ??
-          null,
+        reversedAmountMinor: group.reversedAt ? totalMinor : 0,
+        reversalDate: group.reversedAt
+          ? (reversalAfter?.date ??
+            entries.find((e) => e.role === "recipient-reversal")?.date ??
+            null)
+          : null,
         reversalReason: typeof reason === "string" ? reason : null,
+        activeItemCount: activeItems.length,
+        removedForRecord,
       };
     });
   return {
@@ -450,11 +649,57 @@ export function recordRelations(db: LedgerDb, recordId: number) {
   });
   for (const group of reimbursement.groups) {
     if (group.reversedAt) continue;
+    const activeItems = group.items.filter((i) => !i.removedAt);
+    // A group one payment funds in full: each expense is that payment's own
+    // allocation, keyed by its real settlement, so Correct allocation can take
+    // one out (`queries/reimbursement-groups.ts`).
+    const state = inspectGroup(db, group.id);
+    const rows = state ? groupAllocations(state) : [];
+    if (rows.length && state?.funding) {
+      const fundingRecordId = state.funding.paymentRecordId;
+      if (fundingRecordId === recordId) {
+        displayLinks = displayLinks.filter(
+          (link) => link.otherRecordId !== group.payableRecordId,
+        );
+        for (const row of rows)
+          displayLinks.push({
+            ...linkTo(
+              getRecord(db, row.expenseRecordId)!,
+              row.amountMinor,
+              row.id,
+              row.createdAt,
+            ),
+            canUndo: true,
+          });
+      } else {
+        const row = rows.find((r) => r.expenseRecordId === recordId);
+        if (row) {
+          const suppliers = new Set(
+            group.entries
+              .filter((e) => e.role === "supplier")
+              .map((e) => e.recordId),
+          );
+          displayLinks = displayLinks.filter(
+            (link) => !suppliers.has(link.otherRecordId),
+          );
+          displayLinks.push({
+            ...linkTo(
+              getRecord(db, fundingRecordId)!,
+              row.amountMinor,
+              row.id,
+              row.createdAt,
+            ),
+            canUndo: true,
+          });
+        }
+      }
+      continue;
+    }
     const sources = new Set(group.funding.map((f) => f.otherRecordId));
     const singleSource =
       sources.size === 1 && group.fundedMinor === group.totalMinor;
     if (!singleSource) {
-      if (group.items.some((item) => item.recordId === recordId)) {
+      if (activeItems.some((item) => item.recordId === recordId)) {
         const supplierIds = new Set(
           group.entries
             .filter((entry) => entry.role === "supplier")
@@ -485,7 +730,7 @@ export function recordRelations(db: LedgerDb, recordId: number) {
       displayLinks = displayLinks.filter(
         (link) => link.otherRecordId !== group.payableRecordId,
       );
-      for (const item of group.items) {
+      for (const item of activeItems) {
         const expense = getRecord(db, item.recordId)!;
         displayLinks.push(
           linkTo(
@@ -496,7 +741,7 @@ export function recordRelations(db: LedgerDb, recordId: number) {
           ),
         );
       }
-    } else if (group.items.some((i) => i.recordId === recordId)) {
+    } else if (activeItems.some((i) => i.recordId === recordId)) {
       const suppliers = new Set(
         group.entries
           .filter((e) => e.role === "supplier")
@@ -506,7 +751,7 @@ export function recordRelations(db: LedgerDb, recordId: number) {
         (link) => !suppliers.has(link.otherRecordId),
       );
       const payment = getRecord(db, fundingRecordId)!;
-      const amount = group.items
+      const amount = activeItems
         .filter((i) => i.recordId === recordId)
         .reduce((sum, i) => sum + i.amountMinor, 0);
       displayLinks.push(

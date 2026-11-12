@@ -169,6 +169,7 @@ const FIELD_LABELS: Record<string, string> = {
   contactCorrectionReason: "Contact correction reason",
   reimbursementAmountCorrectionReason: "Reimbursement amount correction reason",
   reimbursementBalances: "Expense balances and available credit",
+  reimbursementRemoval: "Reimbursement",
   amountMinor: "Amount",
   contactId: "Contact",
   supplierContactId: "Supplier",

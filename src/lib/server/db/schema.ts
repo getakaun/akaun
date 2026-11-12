@@ -1584,7 +1584,15 @@ export const reimbursementEntries = sqliteTable("reimbursement_entries", {
     .notNull()
     .references(() => reimbursements.id, { onDelete: "restrict" }),
   role: text("role", {
-    enum: ["supplier", "recipient", "supplier-reversal", "recipient-reversal"],
+    enum: [
+      "supplier",
+      "recipient",
+      "supplier-reversal",
+      "recipient-reversal",
+      // One expense taken out by Correct allocation (the group stays active).
+      "supplier-removal",
+      "recipient-removal",
+    ],
   }).notNull(),
 });
 export const reimbursementItems = sqliteTable("reimbursement_items", {
@@ -1596,6 +1604,8 @@ export const reimbursementItems = sqliteTable("reimbursement_items", {
     .notNull()
     .references(() => ledgerMovements.id, { onDelete: "restrict" }),
   amountMinor: integer("amount_minor").notNull(),
+  /** Taken out of its group by Correct allocation; kept as history. */
+  removedAt: text("removed_at"),
 });
 
 /** Redeemed MCP file capabilities. The primary key makes consumption atomic. */

@@ -2,6 +2,9 @@
 export function reimbursementEntryLabel(role: string): string {
   if (role === "recipient") return "Reimbursement summary";
   if (role === "supplier") return "Included expenses";
+  // One expense taken out by Correct allocation, not the whole reimbursement.
+  if (role === "supplier-removal") return "Removed from reimbursement";
+  if (role === "recipient-removal") return "Reimbursement reduced";
   return "Full reimbursement reversal";
 }
 

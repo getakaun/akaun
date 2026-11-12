@@ -1,0 +1,1 @@
+ALTER TABLE `reimbursement_items` ADD `removed_at` text;

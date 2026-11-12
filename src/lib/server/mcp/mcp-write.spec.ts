@@ -631,6 +631,8 @@ for (const era of ["legacy", "modern"] as const) {
           schema.reconciliationAllocations,
           schema.reimbursements,
           schema.reimbursementEntries,
+          // Correct allocation marks an expense taken out of a group here.
+          schema.reimbursementItems,
         ];
         // Credential usage and audit metadata are intentionally outside business-state idempotence.
         const snapshot = () =>

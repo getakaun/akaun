@@ -388,7 +388,7 @@ export function registerRecordWrites(server: McpServer, context: McpContext) {
     server,
     context,
     "undo_settlement",
-    "Reverse one active settlement allocation (from get_record with includeSettlements), retaining its history. Reopens the affected obligation and releases available payment credit; other settlements or bank matches may still keep records locked. On a payment that names no contact (a batch), every active settlement of that payment is reversed together; undoneIds lists them. Requires a reason and the version from get_payment_allocations. Present all affected allocations and resulting balances, and obtain reviewed confirmation before calling.",
+    "Reverse one active settlement allocation (from get_record with includeSettlements), retaining its history. Reopens the affected obligation and releases available payment credit; other settlements or bank matches may still keep records locked. For an expense inside a legacy group reimbursement, its settlement from the generated entry takes that one expense out: the funding payment keeps its bank movement and the amount becomes its credit; this posts dated adjustment entries, so a closed month refuses it. On a payment that names no contact (a batch), every active settlement of that payment is reversed together; undoneIds lists them. Requires a reason and the version from get_payment_allocations. Present all affected allocations and resulting balances, and obtain reviewed confirmation before calling.",
     { settlementId: id, reason: correctionShape.reason, expectedVersion },
     ({ settlementId, reason, expectedVersion }) => {
       const row = getSettlement(context.db, settlementId);
@@ -412,7 +412,7 @@ export function registerRecordWrites(server: McpServer, context: McpContext) {
     server,
     context,
     "get_payment_allocations",
-    "Read a control-account movement's allocations, affected records, current remainder and correction version. Use before correcting or undoing allocations; a contactless batch reverses all its allocations together.",
+    "Read a control-account movement's allocations, affected records, current remainder and correction version. Use before correcting or undoing allocations; a contactless batch reverses all its allocations together. A payment funding a legacy group reimbursement lists that reimbursement's expenses as its own allocations (groupAllocation: true), and a generated entry's movement resolves to that payment.",
     { paymentMovementId: id },
     ({ paymentMovementId }) => {
       const result = preparePaymentCorrection(context, paymentMovementId);
@@ -424,7 +424,7 @@ export function registerRecordWrites(server: McpServer, context: McpContext) {
     server,
     context,
     "correct_payment_allocations",
-    "Atomically reverse selected allocations and optionally add replacements, preserving cash movements, untouched allocations and reversal history. Requires the version from get_payment_allocations and a reason. A contactless batch removal reverses every active allocation. Present the affected allocations, reopened obligations and remaining payment credit, and obtain reviewed confirmation before calling.",
+    "Atomically reverse selected allocations and optionally add replacements, preserving cash movements, untouched allocations and reversal history. Requires the version from get_payment_allocations and a reason. A contactless batch removal reverses every active allocation. Removing a groupAllocation row takes that expense out of its legacy group reimbursement (also needs records.create; removing every one of them reverses the whole reimbursement and also needs records.delete). Present the affected allocations, reopened obligations and remaining payment credit, and obtain reviewed confirmation before calling.",
     correctionShape,
     (input) => correctPaymentAllocations(context, input),
     {

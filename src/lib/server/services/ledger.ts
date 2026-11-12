@@ -1121,7 +1121,11 @@ export function voidRefusal(db: LedgerDb, id: number): string | null {
                   .select({ id: reimbursementItems.groupId })
                   .from(reimbursementItems)
                   .where(
-                    inArray(reimbursementItems.sourceMovementId, movementIds),
+                    and(
+                      inArray(reimbursementItems.sourceMovementId, movementIds),
+                      // Taken out by Correct allocation: no longer part of it.
+                      isNull(reimbursementItems.removedAt),
+                    ),
                   ),
               )
             : undefined,
@@ -1130,7 +1134,7 @@ export function voidRefusal(db: LedgerDb, id: number): string | null {
     )
     .get();
   if (inGroup)
-    return "This record is part of a reimbursement. Reverse the reimbursement before you void it.";
+    return "This record is part of a reimbursement. Take it out with Correct allocation, or reverse the reimbursement, before you void it.";
   const lock = lockStateFor(db, id);
   if (lock.settled && lock.reconciled)
     return "This record is settled by a payment and reconciled to a bank statement line. Reverse the allocation and unmatch the bank statement line before you void it.";
@@ -1243,7 +1247,18 @@ export function emitSettlementChanged(db: LedgerDb, recordIds: number[]): void {
   ledgerEvents.emit("settlement-changed", { recordIds });
   for (const id of recordIds) {
     const record = getRecord(db, id);
-    if (record) ledgerEvents.emit("record-update", { record });
+    // Generated reimbursement entries are never on a Records list, so a
+    // record-update would only add them to the top of an open one. Their own
+    // page still refreshes from `settlement-changed`.
+    if (
+      record &&
+      !db
+        .select()
+        .from(reimbursementEntries)
+        .where(eq(reimbursementEntries.recordId, id))
+        .get()
+    )
+      ledgerEvents.emit("record-update", { record });
   }
   for (const invoiceId of invoiceIdsForLedgerRecords(db, recordIds)) {
     const item = getInvoice(db, invoiceId);

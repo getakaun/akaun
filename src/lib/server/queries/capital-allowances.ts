@@ -1,6 +1,6 @@
 import { firstYearDecision } from "$lib/first-year-allowance.js";
-import { evidenceHash } from "../tax-evidence.js";
-import { and, eq, inArray } from "drizzle-orm";
+import { evidenceHash, taxEvidenceRead } from "../tax-evidence.js";
+import { and, desc, eq, inArray, lt, ne, sql } from "drizzle-orm";
 import { LedgerRecordKind } from "$lib/enums.js";
 import {
   blankCapitalRow,
@@ -28,21 +28,23 @@ export function capitalAssets(
   db: LedgerDb,
   dateTo: string,
 ): CapitalAssetEvidence[] {
-  return fixedAssetRegister(db, dateTo)
-    .assets.filter((a) => a.acquisitionDate <= dateTo)
-    .map((a) => ({
-      assetId: a.id,
-      name: a.name,
-      assetType: a.assetType,
-      acquisitionDate: a.acquisitionDate,
-      inServiceDate: a.inServiceDate,
-      costMinor: a.costMinor,
-      sourceRecordId: a.sourceRecordId,
-      documentReference: a.documentReference,
-      version: a.version,
-      sourceVersion: a.sourceVersion,
-      reviewReason: a.reviewReason,
-    }));
+  return taxEvidenceRead(db, `assets:${dateTo}`, () =>
+    fixedAssetRegister(db, dateTo)
+      .assets.filter((a) => a.acquisitionDate <= dateTo)
+      .map((a) => ({
+        assetId: a.id,
+        name: a.name,
+        assetType: a.assetType,
+        acquisitionDate: a.acquisitionDate,
+        inServiceDate: a.inServiceDate,
+        costMinor: a.costMinor,
+        sourceRecordId: a.sourceRecordId,
+        documentReference: a.documentReference,
+        version: a.version,
+        sourceVersion: a.sourceVersion,
+        reviewReason: a.reviewReason,
+      })),
+  );
 }
 export function capitalScheduleFor(db: LedgerDb, revisionId: number) {
   return (
@@ -55,11 +57,15 @@ export function capitalScheduleFor(db: LedgerDb, revisionId: number) {
 }
 function latest(db: LedgerDb, worksheetId: number) {
   return db
-    .select()
+    .select({
+      id: taxWorksheetRevisions.id,
+      revision: taxWorksheetRevisions.revision,
+      status: taxWorksheetRevisions.status,
+    })
     .from(taxWorksheetRevisions)
     .where(eq(taxWorksheetRevisions.worksheetId, worksheetId))
-    .all()
-    .sort((a, b) => b.revision - a.revision)[0];
+    .orderBy(desc(taxWorksheetRevisions.revision))
+    .get();
 }
 export function capitalPredecessorCurrent(
   db: LedgerDb,
@@ -191,10 +197,54 @@ export function firstYearContexts(
   const earlier = db
     .select()
     .from(taxWorksheets)
-    .all()
-    .filter((w) => w.id !== worksheet.id && w.ya < worksheet.ya);
-  const revisions = db.select().from(taxWorksheetRevisions).all();
-  const schedules = db.select().from(taxCapitalSchedules).all();
+    .where(
+      and(
+        ne(taxWorksheets.id, worksheet.id),
+        lt(taxWorksheets.ya, worksheet.ya),
+      ),
+    )
+    .all();
+  // Never decode current or unrelated expense snapshots to read claim history.
+  const revisions = db
+    .select({
+      id: taxWorksheetRevisions.id,
+      worksheetId: taxWorksheetRevisions.worksheetId,
+      revision: taxWorksheetRevisions.revision,
+      status: taxWorksheetRevisions.status,
+    })
+    .from(taxWorksheetRevisions)
+    .innerJoin(
+      taxWorksheets,
+      eq(taxWorksheets.id, taxWorksheetRevisions.worksheetId),
+    )
+    .where(
+      and(
+        ne(taxWorksheets.id, worksheet.id),
+        lt(taxWorksheets.ya, worksheet.ya),
+      ),
+    )
+    .all();
+  const schedules = db
+    .select({
+      revisionId: taxCapitalSchedules.revisionId,
+      evidence: taxCapitalSchedules.evidence,
+    })
+    .from(taxCapitalSchedules)
+    .innerJoin(
+      taxWorksheetRevisions,
+      eq(taxWorksheetRevisions.id, taxCapitalSchedules.revisionId),
+    )
+    .innerJoin(
+      taxWorksheets,
+      eq(taxWorksheets.id, taxWorksheetRevisions.worksheetId),
+    )
+    .where(
+      and(
+        ne(taxWorksheets.id, worksheet.id),
+        lt(taxWorksheets.ya, worksheet.ya),
+      ),
+    )
+    .all();
   const latestByWorksheet = new Map<number, (typeof revisions)[number]>();
   const finalisedByWorksheet = new Map<number, (typeof revisions)[number]>();
   for (const revision of revisions) {
@@ -275,7 +325,10 @@ export function capitalDetail(
 ) {
   const saved = capitalScheduleFor(db, revisionId);
   const revision = db
-    .select()
+    .select({
+      status: taxWorksheetRevisions.status,
+      currency: sql<string>`json_extract(${taxWorksheetRevisions.snapshot}, '$.currency')`,
+    })
     .from(taxWorksheetRevisions)
     .where(eq(taxWorksheetRevisions.id, revisionId))
     .get();
@@ -283,12 +336,7 @@ export function capitalDetail(
     ? capitalAssets(db, worksheet.dateTo)
     : (saved?.evidence.assets ?? []);
   const priorRollover = compareLive
-    ? capitalRollover(
-        db,
-        worksheet,
-        candidates,
-        revision?.snapshot.currency ?? "MYR",
-      )
+    ? capitalRollover(db, worksheet, candidates, revision?.currency ?? "MYR")
     : null;
   const configuredJurisdiction =
     getSetting(db, SETTING_KEYS.taxJurisdiction) || null;
@@ -302,7 +350,7 @@ export function capitalDetail(
       ? priorRollover
       : null;
   const contexts = compareLive
-    ? firstYearContexts(db, worksheet, candidates, revision?.snapshot.currency)
+    ? firstYearContexts(db, worksheet, candidates, revision?.currency)
     : {};
   const working =
     compareLive &&
@@ -317,12 +365,15 @@ export function capitalDetail(
       .map((w) => [w.id, w.ya]),
   );
   const priorRevisions = db
-    .select()
+    .select({
+      id: taxWorksheetRevisions.id,
+      worksheetId: taxWorksheetRevisions.worksheetId,
+      revision: taxWorksheetRevisions.revision,
+    })
     .from(taxWorksheetRevisions)
+    .where(eq(taxWorksheetRevisions.status, "finalised"))
     .all()
-    .filter(
-      (r) => earlierWorksheets.has(r.worksheetId) && r.status === "finalised",
-    )
+    .filter((r) => earlierWorksheets.has(r.worksheetId))
     .sort(
       (a, b) =>
         earlierWorksheets.get(b.worksheetId)! -
@@ -343,7 +394,7 @@ export function capitalDetail(
   if (autoPrepared)
     schedule = rollover ?? {
       calculationVersion: 2,
-      currency: revision!.snapshot.currency,
+      currency: revision!.currency,
       jurisdiction: defaultJurisdiction,
       evidence: "",
       assets: candidates,
@@ -355,7 +406,7 @@ export function capitalDetail(
     working &&
     saved &&
     schedule &&
-    schedule.currency === revision?.snapshot.currency
+    schedule.currency === revision?.currency
   ) {
     schedule = {
       ...schedule,
@@ -450,8 +501,7 @@ export function capitalDetail(
     totals,
     candidates,
     liveAssetHash: capitalHash(candidates),
-    currencyMismatch:
-      !!saved && saved.evidence.currency !== revision?.snapshot.currency,
+    currencyMismatch: !!saved && saved.evidence.currency !== revision?.currency,
     assetsStale:
       compareLive &&
       !!saved &&

@@ -2,7 +2,6 @@ import { eq } from "drizzle-orm";
 import { taxWorksheetSaveSchema } from "$lib/tax-worksheet-save.js";
 import { taxCapitalCommands, taxWorksheetRevisions } from "../db/schema.js";
 import {
-  latestTaxRevision,
   taxAdjustmentsFor,
   captureTaxSources,
   taxHash,
@@ -71,12 +70,12 @@ export function saveTaxWorksheet(
       const { worksheet, revision } = current(ctx, id, v.expectedVersion);
       if (revision.status === "finalised")
         refuse("Create an amendment to change a finalised worksheet.");
-      const before = taxWorksheetDetail(ctx.db, id)!;
       const live = captureTaxSources(
         ctx.db,
         worksheet.dateFrom,
         worksheet.dateTo,
       );
+      const before = taxWorksheetDetail(ctx.db, id)!;
       if (taxHash(live) !== v.liveHash)
         refuse(
           "Accounting records changed while saving. The latest figures are loading; check your changes and save again.",
@@ -114,7 +113,12 @@ export function saveTaxWorksheet(
         if (!result.ok) throw new Rollback(result);
         return result.value;
       };
-      const version = () => latestTaxRevision(ctx.db, id)!.version;
+      const version = () =>
+        ctx.db
+          .select({ version: taxWorksheetRevisions.version })
+          .from(taxWorksheetRevisions)
+          .where(eq(taxWorksheetRevisions.id, revision.id))
+          .get()!.version;
       for (const withdrawal of v.withdrawals)
         accept(
           changeTaxWorksheet(ctx, id, {

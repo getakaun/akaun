@@ -1,5 +1,5 @@
 import { localToday } from "$lib/local-date.js";
-import { evidenceHash } from "../tax-evidence.js";
+import { evidenceHash, taxEvidenceRead } from "../tax-evidence.js";
 import { and, asc, desc, eq } from "drizzle-orm";
 import {
   TAX_PREPARATION_NOTE,
@@ -30,39 +30,41 @@ export function captureTaxSources(
   dateFrom: string,
   dateTo: string,
 ): TaxSourceSnapshot {
-  const pl = profitLossReport(db, dateFrom, dateTo);
-  const report = expenseTaxReport(db, dateFrom, dateTo);
-  const expenses = report.rows.map((r) => ({
-    movementId: r.movementId,
-    recordId: r.recordId,
-    recordNumber: r.recordNumber,
-    date: r.date,
-    description: r.description,
-    label: r.label,
-    accountId: r.accountId,
-    accountName: r.accountName,
-    expenseMinor: r.expenseMinor,
-    classification: r.classification,
-    voided: r.voided,
-  }));
-  const incomeMinor = safeTaxSum(pl.income.map((l) => l.amountMinor));
-  const expenseMinor = safeTaxSum(pl.expenses.map((l) => l.amountMinor));
-  if (safeTaxSum(expenses.map((l) => l.expenseMinor)) !== expenseMinor)
-    throw new Error("Expense tax sources do not reconcile to Profit & Loss.");
-  return {
-    calculationVersion: 1,
-    currency: getSetting(db, SETTING_KEYS.currencyCode) || "MYR",
-    companyName: getSetting(db, SETTING_KEYS.companyName) || "Akaun",
-    incomeMinor,
-    expenseMinor,
-    profitMinor: safeTaxSum([incomeMinor, -expenseMinor]),
-    notes: pl.notes,
-    profitLines: [
-      ...pl.income.map((l) => ({ ...l, type: "income" as const })),
-      ...pl.expenses.map((l) => ({ ...l, type: "expense" as const })),
-    ],
-    expenses,
-  };
+  return taxEvidenceRead(db, `sources:${dateFrom}:${dateTo}`, () => {
+    const pl = profitLossReport(db, dateFrom, dateTo);
+    const report = expenseTaxReport(db, dateFrom, dateTo);
+    const expenses = report.rows.map((r) => ({
+      movementId: r.movementId,
+      recordId: r.recordId,
+      recordNumber: r.recordNumber,
+      date: r.date,
+      description: r.description,
+      label: r.label,
+      accountId: r.accountId,
+      accountName: r.accountName,
+      expenseMinor: r.expenseMinor,
+      classification: r.classification,
+      voided: r.voided,
+    }));
+    const incomeMinor = safeTaxSum(pl.income.map((l) => l.amountMinor));
+    const expenseMinor = safeTaxSum(pl.expenses.map((l) => l.amountMinor));
+    if (safeTaxSum(expenses.map((l) => l.expenseMinor)) !== expenseMinor)
+      throw new Error("Expense tax sources do not reconcile to Profit & Loss.");
+    return {
+      calculationVersion: 1,
+      currency: getSetting(db, SETTING_KEYS.currencyCode) || "MYR",
+      companyName: getSetting(db, SETTING_KEYS.companyName) || "Akaun",
+      incomeMinor,
+      expenseMinor,
+      profitMinor: safeTaxSum([incomeMinor, -expenseMinor]),
+      notes: pl.notes,
+      profitLines: [
+        ...pl.income.map((l) => ({ ...l, type: "income" as const })),
+        ...pl.expenses.map((l) => ({ ...l, type: "expense" as const })),
+      ],
+      expenses,
+    };
+  });
 }
 
 export function taxSourceChanges(
@@ -102,16 +104,29 @@ export function taxWorksheetDetail(
     .get();
   if (!worksheet) return null;
   const revisions = db
-    .select()
+    .select({
+      id: taxWorksheetRevisions.id,
+      revision: taxWorksheetRevisions.revision,
+      status: taxWorksheetRevisions.status,
+      capturedAt: taxWorksheetRevisions.capturedAt,
+      finalisedAt: taxWorksheetRevisions.finalisedAt,
+      amendmentReason: taxWorksheetRevisions.amendmentReason,
+    })
     .from(taxWorksheetRevisions)
     .where(eq(taxWorksheetRevisions.worksheetId, id))
     .orderBy(desc(taxWorksheetRevisions.revision))
     .all();
-  const revision =
+  const selected =
     revisionNumber === undefined
       ? revisions[0]
       : revisions.find((r) => r.revision === revisionNumber);
-  if (!revision) return null;
+  if (!selected) return null;
+  // History navigation needs metadata, not every retained source snapshot.
+  const revision = db
+    .select()
+    .from(taxWorksheetRevisions)
+    .where(eq(taxWorksheetRevisions.id, selected.id))
+    .get()!;
   const adjustments = db
     .select()
     .from(taxWorksheetAdjustments)
@@ -124,9 +139,11 @@ export function taxWorksheetDetail(
     : revision.snapshot;
   const isLatest = revision.id === revisions[0].id;
   const working = compareLive && isLatest && revision.status !== "finalised";
-  const changedIds = new Set(
-    taxSourceChanges(revision.snapshot, live).map((c) => c.movementId),
-  );
+  const liveHash = taxHash(live);
+  const stale = liveHash !== revision.sourceHash;
+  const changes =
+    compareLive && stale ? taxSourceChanges(revision.snapshot, live) : [];
+  const changedIds = new Set(changes.map((c) => c.movementId));
   const sourceConflicts = adjustments
     .filter(
       (a) =>
@@ -155,7 +172,7 @@ export function taxWorksheetDetail(
           ...revision,
           snapshot,
           status:
-            taxHash(live) !== revision.sourceHash ||
+            stale ||
             capital.assetsStale ||
             capital.predecessorStale ||
             !!capital.totals?.problems.length
@@ -191,9 +208,9 @@ export function taxWorksheetDetail(
       capital.active && !capital.currencyMismatch ? capital.totals : null,
     ),
     capital,
-    stale: taxHash(live) !== revision.sourceHash,
-    liveHash: taxHash(live),
-    changes: taxSourceChanges(revision.snapshot, live),
+    stale,
+    liveHash,
+    changes,
     profitChanged:
       taxHash(revision.snapshot.profitLines) !== taxHash(live.profitLines),
     liveProfitMinor: live.profitMinor,

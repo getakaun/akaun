@@ -16,10 +16,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: bun run test:unit --run --project=server
+      - run: bun run test:release
 
   build-and-push:
     needs: ci

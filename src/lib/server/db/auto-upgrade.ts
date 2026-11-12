@@ -110,21 +110,27 @@ export function applyMigrationRange(
   db: Database,
   firstIndex: number,
   lastIndex: number,
+  beforeMigrate?: () => void,
+  afterMigrate?: () => void,
 ): void {
   const migrations = migrationFiles();
   db.exec(
     "CREATE TABLE IF NOT EXISTS __drizzle_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT NOT NULL, created_at NUMERIC)",
   );
-  const current = appliedIndex(db, migrations);
-  if (current > lastIndex) return;
-  if (current < firstIndex - 1) {
-    throw new Error(
-      `Refusing partial schema: expected migration ${firstIndex - 1}, found ${current}.`,
-    );
-  }
   db.exec("PRAGMA foreign_keys = OFF");
-  db.exec("BEGIN IMMEDIATE");
+  let began = false;
   try {
+    db.exec("BEGIN IMMEDIATE");
+    began = true;
+    // Another process may finish the upgrade while we wait for this lock.
+    // Reading the receipt earlier can replay destructive migrations on restart.
+    const current = appliedIndex(db, migrations);
+    if (current < firstIndex - 1) {
+      throw new Error(
+        `Refusing partial schema: expected migration ${firstIndex - 1}, found ${current}.`,
+      );
+    }
+    beforeMigrate?.();
     for (
       let index = Math.max(firstIndex, current + 1);
       index <= lastIndex;
@@ -138,9 +144,10 @@ export function applyMigrationRange(
         "INSERT INTO __drizzle_migrations(hash, created_at) VALUES (?, ?)",
       ).run(migration.hash, migration.folderMillis);
     }
+    afterMigrate?.();
     db.exec("COMMIT");
   } catch (error) {
-    db.exec("ROLLBACK");
+    if (began) db.exec("ROLLBACK");
     throw error;
   } finally {
     db.exec("PRAGMA foreign_keys = ON");

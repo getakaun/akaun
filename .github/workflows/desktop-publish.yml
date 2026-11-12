@@ -17,7 +17,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -26,6 +26,7 @@ jobs:
       - run: bun run check
 
       - run: bun run test:unit --run --project=server
+      - run: bun run test:release
 
       - name: Set version from tag
         if: startsWith(github.ref, 'refs/tags/')
@@ -58,7 +59,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -67,6 +68,7 @@ jobs:
       - run: bun run check
 
       - run: bun run test:unit --run --project=server
+      - run: bun run test:release
 
       - name: Set version from tag
         if: startsWith(github.ref, 'refs/tags/')

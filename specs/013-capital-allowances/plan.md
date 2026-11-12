@@ -1,17 +1,25 @@
-# Phase 6 — manual capital allowance schedules
+# Phase 6 — scheme-based asset tax deductions
 
-Owner authorised implementation after reviewing the market comparison and simplified proposal. Base: current main `decc118` (phase 5 / PR #71). No statutory rate engine, filing, deployment or live migration.
+The annual tax worksheet calculates asset deductions from registered assets, declared tax basis and reusable schemes. The owner authorised implementation and removal of all unreleased manual allowance paths. Country-specific scheme verification follows software acceptance.
 
-## Design and implementation map
+## Delivery scope
 
-- Add `capital-allowance.ts` for strict inputs, integer cents/basis points, reproducible manual calculations and review issues. All entered allowance/residual amounts are business-use-adjusted MYR amounts; qualifying expenditure and business-use percentage explain the basis without multiplying an already adjusted claim twice. No defaults assert eligibility.
-- Add revision-owned `tax_capital_schedules` retained JSON evidence and append-only command receipts via migration 0047, schema and Drizzle metadata. Snapshot rows include server-captured asset/purchase evidence. Existing phase 5 snapshots and exports retain their old format when no schedule exists. Copy evidence into amendments; protect finalised rows at the database boundary.
-- Reuse the tax application transaction, permissions, optimistic version, audit and committed SSE signal. Prepare, update, explicit accounting-evidence refresh, manual-total replacement and reviewed prior-year rollover all use the same boundary. Separate hashes cover asset/predecessor evidence; review/finalisation revalidate them atomically.
-- Integrate a schedule summary and row/settings drawers into the existing annual worksheet. No extra navigation, per-asset approval or purchase-registration fields. Asset details link to retained tax history only for tax readers.
-- Current-year allowances and brought-forward utilisation remain separate. Attribute balances/utilisation to a named business source and origin YA; current-year utilisation is explicitly reviewed. Tax residual expenditure is distinct from unabsorbed allowances. No automatic statutory ordering or claim optimisation.
-- Schedule activation explicitly withdraws overlapping manual `capital_allowance` / `allowance_brought_forward` entries with retained history and a reason. Block new overlapping entries while active. Losses and unrelated tax-only adjustments remain unchanged. Switching back is explicit and audited.
-- Disposal captures manual balancing allowance/charge, date, proceeds and evidence. Full tax disposal removes the remaining asset tax residual; book disposal/depreciation remain separate and visibly require attention. Special/accelerated allowances, hire purchase, partial disposals and complex incentives remain deferred.
+- Keep configuration in Settings → Tax: default tax jurisdiction and immutable scheme versions with name, effective tax years, calculation basis, rates and optional remark.
+- Populate worksheet asset candidates from its actual accounting period and matching finalised predecessor. Selecting a scheme previews the deduction immediately.
+- Calculate first-year and regular deductions in integer minor units. Require a configured scheme for every claimed asset; users cannot enter or override deduction totals.
+- Keep qualifying cost, business use, opening tax residual and additions separate from annual claim utilisation. Attribute unused balances to business source and origin tax year.
+- Show current bookkeeping in editable drafts through SSE. Stage expense corrections, adjustments and asset choices under one **Save draft** action. **Finalise worksheet** saves, reviews and locks when ready and permitted.
+- Retain finalised evidence and saved exports independently of later bookkeeping changes. Amendments create new revisions; source, asset and predecessor hashes prevent stale saves.
+- Remove worksheet configuration hyperlinks, mode switches, old working drawers and manual disposal/balancing calculations. An exceptional currency rollover uses a small dedicated drawer.
 
-## Verification and rollback
+## Boundaries
 
-Use the safe Bun preload and migrated in-memory/temporary fixtures only. Cover GL/report identity, exact sums and rounding, no duplicate claims, negative/unsafe values, source drift, stale writes, retries and rollback, finalised database guards, amendments, disposal and rollover, YA/source attribution, permissions and isolated books, old/new exports and migration preservation. Run the phase 5 regression manifest, type checking and lint, reporting pre-existing issues separately. Per CLAUDE.md, owner performs browser/mobile checks; do not start the configured application or open real books. Roll back application code while retaining additive evidence tables and audit; never delete finalised evidence.
+Tax writes never post accounting journals. General tax adjustments and brought-forward business losses remain separate features. The scheme library contains custom, unverified calculations; it does not supply statutory eligibility, filing, tax payable, national pools, statutory limits or tax-currency conversion.
+
+Migration 0049 clears all prior unreleased asset tax workings and their affected command receipts, removes manual allowance adjustment data and resets affected latest worksheets to draft. Scheme definitions, financial records, ordinary adjustments and business losses remain. Owners must reselect asset schemes after upgrading. This reset is intentional; there is no legacy manual-evidence compatibility layer.
+
+## Verification approach
+
+Use migrated in-memory or temporary fixtures with the safe preload. Verify scheme-only input rejection, exact arithmetic, first-year history and duplicate protection, independent country/currency, rollover, master-save rollback and retries, permissions, live-edit reconciliation and fixed exports. Check migration cleanup, reset audit evidence and financial preservation. Run type, lint and format checks. Repository policy assigns browser/mobile interaction checks to the owner and prohibits starting the configured application or touching real books.
+
+Final validation results are recorded in [completion.md](completion.md).

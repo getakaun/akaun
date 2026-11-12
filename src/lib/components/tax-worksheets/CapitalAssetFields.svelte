@@ -5,11 +5,8 @@
   import * as Select from "$lib/components/ui/select/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
-  import { Checkbox } from "$lib/components/ui/checkbox/index.js";
-  import DatePicker from "$lib/components/ui/date-picker/DatePicker.svelte";
   import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
   import { formatTaxMinor } from "$lib/tax-worksheet.js";
-  import { resolve } from "$app/paths";
   import {
     schemeApplies,
     assetTaxSchemeRemark,
@@ -79,18 +76,17 @@
   );
   const previewState = $derived.by(() => {
     try {
-      const row =
-        readonly || (!draft.schemeId && selected.treatment === "claim")
-          ? selected
-          : assetTaxRowFromForm(
-              selected,
-              draft,
-              year,
-              choices,
-              firstYearContext
-                ? { context: firstYearContext, asset, dateFrom, dateTo }
-                : undefined,
-            );
+      const row = readonly
+        ? selected
+        : assetTaxRowFromForm(
+            selected,
+            draft,
+            year,
+            choices,
+            firstYearContext
+              ? { context: firstYearContext, asset, dateFrom, dateTo }
+              : undefined,
+          );
       const rowPreview =
         capitalTotals(
           {
@@ -101,8 +97,6 @@
             ),
           },
           year,
-          dateFrom,
-          dateTo,
         ).rows.find((r) => r.assetId === row.assetId) ?? null;
       return { row: rowPreview, error: "" };
     } catch (error) {
@@ -130,10 +124,6 @@
           dateFrom,
           dateTo,
         }),
-  );
-  const retainedManual = $derived(
-    selected.treatment === "claim" &&
-      (!selected.schemeId || selected.schemeOverride),
   );
   function changeBasis(mode: string) {
     if (mode !== "new" && mode !== "existing" && mode !== "detailed") return;
@@ -194,9 +184,7 @@
       <Select.Trigger id="asset-tax-scheme" class="w-full justify-between"
         >{activeScheme
           ? activeScheme.definition.name
-          : readonly
-            ? "Retained manual calculation"
-            : "Select a scheme"}</Select.Trigger
+          : "Select a scheme"}</Select.Trigger
       >
       <Select.Content
         >{#each choices as scheme (scheme.id)}
@@ -214,9 +202,7 @@
         {:else}{#if !choices.some( (s) => schemeApplies(s.definition, jurisdiction, year), )}No
             matching scheme for this jurisdiction and tax year. Create one in{:else}Choose
             rates configured in{/if}
-          <a class="detail-card-action" href={resolve("/(app)/settings/tax")}
-            >Tax settings</a
-          >.{/if}
+          Settings → Tax.{/if}
       </p>{/if}
     {#if activeScheme && assetTaxSchemeRemark(activeScheme.definition)}<p
         class="field-hint"
@@ -224,15 +210,6 @@
         {assetTaxSchemeRemark(activeScheme.definition)}
       </p>{/if}
   </div>
-  {#if retainedManual && !readonly && !draft.schemeId}<p class="field-hint">
-      Previously entered amounts are retained below. Choose a scheme to
-      recalculate before saving a claim.
-    </p>{/if}
-  {#if selected.schemeOverride && !readonly && draft.schemeId}<p
-      class="field-hint"
-    >
-      Saving replaces the previous manual override with the scheme calculation.
-    </p>{/if}
   <div class="field">
     <label class="field-label" for="ca-source">Business source</label>
     <Input
@@ -428,11 +405,9 @@
       />{/if}{/if}
   <details
     class="tax-disclosure"
-    open={!!selected.residualAdjustmentMinor ||
-      !!selected.disposal ||
-      draft.basisMode === "detailed"}
+    open={!!selected.residualAdjustmentMinor || draft.basisMode === "detailed"}
   >
-    <summary>Adjustments and disposal</summary>
+    <summary>Tax basis adjustments</summary>
     <div class="tax-disclosure-body">
       {#if draft.basisMode !== "new"}<div class="field">
           <label class="field-label" for="ca-additionsMinor"
@@ -460,66 +435,6 @@
           disabled={saving || readonly}
         />
       </div>
-      {#if selected.ruleReference}<p class="field-hint">
-          Saved reference: {selected.ruleReference}
-        </p>{/if}
-      <div class="tax-filter">
-        <Checkbox
-          id="ca-disposal"
-          bind:checked={draft.disposed}
-          disabled={saving || readonly}
-        /><label for="ca-disposal">Full tax disposal in this period</label>
-      </div>
-      {#if draft.disposed}<ReportNotes
-          notes={[
-            "Tax disposal does not record the asset sale or stop book depreciation. Complete the separate accounting correction with your accountant. Partial disposals and hire purchase are not supported here.",
-          ]}
-          firstIsWarning
-        />
-        <div class="field">
-          <span class="field-label" id="ca-disposal-date">Disposal date</span
-          ><DatePicker
-            labelledBy="ca-disposal-date"
-            bind:value={draft.disposalDate}
-            disabled={saving || readonly}
-          />
-        </div>
-        <div class="field">
-          <label class="field-label" for="ca-proceeds">Disposal proceeds</label
-          ><Input
-            id="ca-proceeds"
-            bind:value={draft.proceeds}
-            inputmode="decimal"
-            disabled={saving || readonly}
-          />
-        </div>
-        <div class="field">
-          <label class="field-label" for="ca-ba"
-            >Reviewed balancing allowance</label
-          ><Input
-            id="ca-ba"
-            bind:value={draft.balancingAllowance}
-            inputmode="decimal"
-            disabled={saving || readonly}
-          />
-        </div>
-        <div class="field">
-          <label class="field-label" for="ca-bc"
-            >Reviewed balancing charge</label
-          ><Input
-            id="ca-bc"
-            bind:value={draft.balancingCharge}
-            inputmode="decimal"
-            disabled={saving || readonly}
-          />
-        </div>
-        <p class="field-hint">
-          Use the Remark below to explain the disposal and its reviewed amounts.
-        </p>
-        {#if draft.disposalEvidence}<p class="field-hint">
-            Saved disposal reference: {draft.disposalEvidence}
-          </p>{/if}
-      {/if}
     </div>
   </details>
 {/if}
@@ -529,20 +444,14 @@
       ? "Remark (reason for exclusion)"
       : draft.treatment === "claim" && Number(draft.residualAdjustment) !== 0
         ? "Remark (explain the adjustment)"
-        : draft.treatment === "claim" &&
-            draft.disposed &&
-            !draft.disposalEvidence
-          ? "Remark (disposal reference)"
-          : "Remark (optional)"}</label
+        : "Remark (optional)"}</label
   >
   <Textarea
     id="ca-note"
     bind:value={draft.note}
     maxlength={2000}
     required={draft.treatment === "exclude" ||
-      (draft.treatment === "claim" &&
-        ((draft.disposed && !draft.disposalEvidence) ||
-          Number(draft.residualAdjustment) !== 0))}
+      (draft.treatment === "claim" && Number(draft.residualAdjustment) !== 0)}
     disabled={saving || readonly}
   />
 </div>

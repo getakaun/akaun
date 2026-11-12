@@ -162,25 +162,7 @@ export function saveTaxWorksheet(
             "Prior-year balances changed. Review the latest worksheet figures before saving.",
             "CONFLICT",
           );
-        if (saved?.active && c.replaceManual) {
-          for (const entry of taxAdjustmentsFor(ctx.db, revision.id).filter(
-            (a) =>
-              a.withdrawnAt === null &&
-              ["capital_allowance", "allowance_brought_forward"].includes(
-                a.kind,
-              ),
-          )) {
-            accept(
-              changeTaxWorksheet(ctx, id, {
-                action: "withdraw",
-                expectedVersion: version(),
-                adjustmentId: entry.id,
-                reason: "Replaced by asset workings on worksheet save",
-              }),
-            );
-          }
-        }
-        if (saved?.active && projection.autoRollover) {
+        if (saved && projection.autoRollover) {
           accept(
             changeCapitalSchedule(ctx, id, {
               action: "rollover",
@@ -189,25 +171,21 @@ export function saveTaxWorksheet(
               reason: "Updated prior-year balances with worksheet save",
               liveAssetHash: c.liveAssetHash,
               rolloverHash: c.rolloverHash ?? projection.rolloverHash,
-              replaceManual: c.replaceManual,
             }),
           );
-        } else if (!saved?.active) {
+        } else if (!saved) {
           accept(
             changeCapitalSchedule(ctx, id, {
-              action: !saved && projection.rollover ? "rollover" : "prepare",
+              action: projection.rollover ? "rollover" : "prepare",
               expectedVersion: version(),
               requestKey: crypto.randomUUID(),
               reason: "Prepared together with worksheet save",
               liveAssetHash: c.liveAssetHash,
-              ...(!saved && projection.rollover
+              ...(projection.rollover
                 ? { rolloverHash: c.rolloverHash ?? projection.rolloverHash }
                 : {}),
               jurisdiction:
-                c.input.jurisdiction ??
-                c.jurisdiction ??
-                projection.defaultJurisdiction,
-              replaceManual: c.replaceManual,
+                c.input.jurisdiction ?? projection.defaultJurisdiction,
             }),
           );
         } else if (projection.assetsStale) {

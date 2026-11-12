@@ -1,7 +1,4 @@
-import {
-  resolveFirstYear,
-  firstYearDecision,
-} from "$lib/first-year-allowance.js";
+import { resolveFirstYear } from "$lib/first-year-allowance.js";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import {
@@ -29,14 +26,10 @@ import {
 } from "../queries/capital-allowances.js";
 import {
   taxWorksheetRevisions,
-  taxWorksheetAdjustments,
   taxCapitalSchedules,
   taxCapitalCommands,
 } from "../db/schema.js";
-import {
-  taxAdjustmentsFor,
-  type TaxWorksheetDetail,
-} from "../queries/tax-worksheets.js";
+import type { TaxWorksheetDetail } from "../queries/tax-worksheets.js";
 import { requirePermissions, type AppContext } from "./context.js";
 import { fail, invalid, type AppResult } from "./result.js";
 import {
@@ -59,7 +52,6 @@ export const capitalCommandSchema = z.discriminatedUnion("action", [
       ...capitalCommandBase,
       liveAssetHash: z.string().length(64),
       jurisdiction: taxJurisdictionSchema.nullable().optional(),
-      replaceManual: z.boolean(),
     })
     .strict(),
   z
@@ -69,7 +61,6 @@ export const capitalCommandSchema = z.discriminatedUnion("action", [
       liveAssetHash: z.string().length(64),
       rolloverHash: z.string().length(64),
       jurisdiction: taxJurisdictionSchema.nullable().optional(),
-      replaceManual: z.boolean(),
     })
     .strict(),
   z
@@ -88,7 +79,6 @@ export const capitalCommandSchema = z.discriminatedUnion("action", [
       input: capitalInputSchema,
     })
     .strict(),
-  z.object({ action: z.literal("manual"), ...capitalCommandBase }).strict(),
 ]);
 
 export function changeCapitalSchedule(
@@ -138,40 +128,21 @@ export function changeCapitalSchedule(
     if (
       before &&
       before.evidence.currency !== revision.snapshot.currency &&
-      v.action !== "manual" &&
       v.action !== "rollover"
     )
       refuse(
-        "The retained schedule currency differs from the worksheet. Use manual totals or a confirmed matching-currency rollover; amounts are never converted or relabelled automatically.",
+        "The retained schedule currency differs from the worksheet. Use a confirmed matching-currency rollover; amounts are never converted or relabelled automatically.",
         "CONFLICT",
       );
     const live = capitalAssets(ctx.db, worksheet.dateTo);
     const liveHash = capitalHash(live);
-    if (v.action !== "manual" && v.liveAssetHash !== liveHash)
+    if (v.liveAssetHash !== liveHash)
       refuse(
         "Asset evidence changed. Refresh and review the current asset list before saving.",
         "CONFLICT",
       );
     let schedule: CapitalSchedule;
-    let active = true;
-    if (v.action === "manual") {
-      const projection = !before
-        ? capitalDetail(ctx.db, worksheet, revision.id, true)
-        : null;
-      if (!before?.active && !projection?.autoPrepared)
-        refuse("This worksheet already uses manual allowance totals.");
-      schedule = before?.evidence ?? projection!.schedule!;
-      active = false;
-    } else if (v.action === "prepare" || v.action === "rollover") {
-      const overlaps = taxAdjustmentsFor(ctx.db, revision.id).filter(
-        (a) =>
-          a.withdrawnAt === null &&
-          ["capital_allowance", "allowance_brought_forward"].includes(a.kind),
-      );
-      if (overlaps.length && !v.replaceManual)
-        refuse(
-          "Confirm replacement of the existing manual allowance entries before using an asset schedule.",
-        );
+    if (v.action === "prepare" || v.action === "rollover") {
       if (v.action === "rollover") {
         const preview = capitalDetail(ctx.db, worksheet, revision.id, true);
         if (!preview.rollover || preview.rolloverHash !== v.rolloverHash)
@@ -181,18 +152,7 @@ export function changeCapitalSchedule(
           );
         schedule = preview.rollover;
       } else if (before) {
-        if (before.active) refuse("The asset schedule is already active.");
-        if (capitalHash(before.evidence.assets) !== liveHash)
-          refuse(
-            "Retained asset evidence changed. Refresh the asset evidence before reactivating the schedule.",
-            "CONFLICT",
-          );
-        schedule = {
-          ...before.evidence,
-          ...(v.jurisdiction !== undefined
-            ? { calculationVersion: 2 as const, jurisdiction: v.jurisdiction }
-            : {}),
-        };
+        refuse("The asset schedule is already prepared.");
       } else {
         schedule = {
           calculationVersion: 2,
@@ -200,33 +160,11 @@ export function changeCapitalSchedule(
           jurisdiction: v.jurisdiction ?? null,
           evidence: "",
           assets: live,
-          rows: live.map((a) => blankCapitalRow(a.assetId, worksheet.ya)),
+          rows: live.map((a) => blankCapitalRow(a.assetId)),
           utilisation: [],
           predecessor: null,
         };
       }
-      for (const entry of overlaps)
-        ctx.db
-          .update(taxWorksheetAdjustments)
-          .set({
-            withdrawnAt: new Date().toISOString(),
-            withdrawalReason: `Replaced by asset schedule: ${v.reason}`,
-          })
-          .where(eq(taxWorksheetAdjustments.id, entry.id))
-          .run();
-      if (overlaps.length)
-        audit(
-          ctx,
-          id,
-          [
-            {
-              field: "replacedManualAllowances",
-              before: overlaps,
-              after: v.reason,
-            },
-          ],
-          emits,
-        );
     } else {
       if (!before) refuse("Prepare an asset schedule first.");
       if (v.action === "refresh-assets") {
@@ -243,28 +181,23 @@ export function changeCapitalSchedule(
             return old && capitalHash(oldAsset) === capitalHash(asset)
               ? old
               : {
-                  ...(old ?? blankCapitalRow(asset.assetId, worksheet.ya)),
+                  ...(old ?? blankCapitalRow(asset.assetId)),
                   treatment: "pending" as const,
                   firstYearTreatment: undefined,
                 };
           }),
         };
-        active = before.active;
         // Reconcile current-year utilisation again after any changed asset workings.
         schedule.utilisation = schedule.utilisation.filter(
           (u) => u.originYa < worksheet.ya,
         );
       } else {
-        if (!before.active)
-          refuse("Activate the asset schedule before changing its workings.");
         if (capitalHash(before.evidence.assets) !== liveHash)
           refuse(
             "Refresh asset evidence before changing tax workings.",
             "CONFLICT",
           );
-        const priorJurisdiction =
-          before.evidence.jurisdiction ??
-          (before.evidence.calculationVersion === 1 ? "MY" : null);
+        const priorJurisdiction = before.evidence.jurisdiction;
         const nextJurisdiction =
           v.input.jurisdiction === undefined
             ? priorJurisdiction
@@ -284,7 +217,6 @@ export function changeCapitalSchedule(
             appliedScheme: undefined,
             schemeFirstYear: false,
             firstYearTreatment: undefined,
-            schemeOverride: false,
           }));
       }
     }
@@ -300,18 +232,16 @@ export function changeCapitalSchedule(
         if (row.treatment !== "claim")
           return {
             ...row,
-            disposal: null,
             schemeId: null,
             appliedScheme: undefined,
             schemeFirstYear: false,
             firstYearTreatment: undefined,
-            schemeOverride: false,
           };
-        if (!row.schemeId) {
-          const { appliedScheme: _snapshot, ...manual } = row;
-          void _snapshot;
-          return manual;
-        }
+        if (!row.schemeId)
+          refuse(
+            "Choose a configured scheme for every claimed asset.",
+            "INVALID_INPUT",
+          );
         const definition = versions.find((s) => s.id === row.schemeId);
         if (
           !definition ||
@@ -327,123 +257,85 @@ export function changeCapitalSchedule(
           );
         const appliedScheme = schemeSnapshot(definition);
         const asset = schedule.assets.find((a) => a.assetId === row.assetId);
-        let firstYearTreatment = row.firstYearTreatment;
-        if (firstYearTreatment) {
-          if (row.schemeOverride)
-            refuse(
-              "Automatic first-year treatment cannot be combined with manually overridden allowance amounts.",
-            );
-          if (
-            firstYearTreatment.historyHash !== history[row.assetId]?.historyHash
-          )
-            refuse(
-              "First-year tax history changed. Refresh the worksheet and review the treatment.",
-              "CONFLICT",
-            );
-          if (firstYearTreatment.version === 2) {
-            const proposed = resolveFirstYear(
-              firstYearTreatment.mode,
-              definition.definition,
-              row,
-              asset,
-              history[row.assetId],
-              worksheet.dateFrom,
-              worksheet.dateTo,
-              row.note,
-              "preview",
-            );
-            const oldRow = before?.evidence.rows.find(
-              (r) => r.assetId === row.assetId,
-            );
-            const previouslyConfirmed =
-              oldRow?.firstYearTreatment?.confirmation === "worksheet_save" &&
-              capitalHash(oldRow) === capitalHash(row);
-            if (
-              proposed.confirmation === "pending_save" &&
-              !v.confirmFirstYearTreatments &&
-              !previouslyConfirmed
-            )
-              refuse(
-                "Save asset deductions to confirm the worksheet's first-year treatments together.",
-              );
-            firstYearTreatment = resolveFirstYear(
-              firstYearTreatment.mode,
-              definition.definition,
-              row,
-              asset,
-              history[row.assetId],
-              worksheet.dateFrom,
-              worksheet.dateTo,
-              row.note,
-              "worksheet_save",
-            );
-          } else {
-            firstYearTreatment = resolveFirstYear(
-              firstYearTreatment.mode,
-              definition.definition,
-              row,
-              asset,
-              history[row.assetId],
-              worksheet.dateFrom,
-              worksheet.dateTo,
-              row.note,
-            );
-          }
-          if (firstYearTreatment.included !== !!row.schemeFirstYear)
-            refuse(
-              "The first-year treatment does not match the current history. Recalculate the asset.",
-              "CONFLICT",
-            );
-        } else if (
-          (row.schemeFirstYear || (row.initialMinor ?? 0) > 0) &&
-          firstYearDecision(
-            definition.definition,
-            row,
-            asset,
-            history[row.assetId],
-            worksheet.dateFrom,
-            worksheet.dateTo,
-          ).blocked
+        if (
+          row.firstYearTreatment &&
+          row.firstYearTreatment.historyHash !==
+            history[row.assetId]?.historyHash
         )
           refuse(
-            "Initial allowance for this cost was already recorded in an earlier tax year.",
+            "First-year tax history changed. Refresh the worksheet and review the treatment.",
+            "CONFLICT",
           );
-        if (row.schemeOverride) {
-          if (row.note.trim().length < 10)
-            refuse(
-              "Explain the manual override of custom scheme amounts.",
-              "INVALID_INPUT",
-            );
-        } else {
-          const preview = calculateAssetTaxScheme(definition.definition, {
-            ...row,
-            firstYear: row.schemeFirstYear ?? false,
-          });
-          if (
-            preview &&
-            (preview.firstYearMinor !== row.initialMinor ||
-              preview.regularMinor !== row.annualMinor)
-          )
-            refuse(
-              "The scheme preview does not match the submitted amounts. Recalculate or choose an explained manual override.",
-              "CONFLICT",
-            );
-        }
+        const mode = row.firstYearTreatment?.mode ?? "auto";
+        const proposed = resolveFirstYear(
+          mode,
+          definition.definition,
+          row,
+          asset,
+          history[row.assetId],
+          worksheet.dateFrom,
+          worksheet.dateTo,
+          row.note,
+          "preview",
+        );
+        const oldRow = before?.evidence.rows.find(
+          (r) => r.assetId === row.assetId,
+        );
+        const previouslyConfirmed =
+          oldRow?.firstYearTreatment?.confirmation === "worksheet_save" &&
+          capitalHash(oldRow) === capitalHash(row);
+        if (
+          proposed.confirmation === "pending_save" &&
+          !v.confirmFirstYearTreatments &&
+          !previouslyConfirmed
+        )
+          refuse(
+            "Save the worksheet to confirm its first-year treatments together.",
+          );
+        const firstYearTreatment = resolveFirstYear(
+          mode,
+          definition.definition,
+          row,
+          asset,
+          history[row.assetId],
+          worksheet.dateFrom,
+          worksheet.dateTo,
+          row.note,
+          "worksheet_save",
+        );
+        if (firstYearTreatment.included !== !!row.schemeFirstYear)
+          refuse(
+            "The first-year treatment does not match the current history. Recalculate the asset.",
+            "CONFLICT",
+          );
+        const preview = calculateAssetTaxScheme(definition.definition, {
+          ...row,
+          firstYear: row.schemeFirstYear ?? false,
+        });
+        if (
+          preview &&
+          (preview.firstYearMinor !== row.initialMinor ||
+            preview.regularMinor !== row.annualMinor)
+        )
+          refuse(
+            "The scheme calculation does not match the submitted amounts. Recalculate the asset.",
+            "CONFLICT",
+          );
         return {
           ...row,
           appliedScheme,
-          ...(firstYearTreatment ? { firstYearTreatment } : {}),
+          firstYearTreatment,
         };
       });
     }
-    capitalTotals(schedule, worksheet.ya, worksheet.dateFrom, worksheet.dateTo);
+    capitalTotals(schedule, worksheet.ya);
     draft(ctx, revision);
     ctx.db
       .insert(taxCapitalSchedules)
-      .values({ revisionId: revision.id, active, evidence: schedule })
+      .values({ revisionId: revision.id, evidence: schedule })
       .onConflictDoUpdate({
         target: taxCapitalSchedules.revisionId,
-        set: { active, evidence: schedule },
+        set: { evidence: schedule },
       })
       .run();
     ctx.db
@@ -461,7 +353,7 @@ export function changeCapitalSchedule(
         {
           field: "capitalAllowanceSchedule",
           before,
-          after: { active, evidence: schedule },
+          after: { evidence: schedule },
         },
         { field: "capitalAllowanceReason", before: null, after: v.reason },
         ...(v.action === "save" && v.confirmFirstYearTreatments

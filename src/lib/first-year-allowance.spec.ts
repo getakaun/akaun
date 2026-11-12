@@ -39,7 +39,6 @@ const earlier: FirstYearRecord = {
   ya: 2024,
   revisionId: 1,
   status: "finalised",
-  active: true,
   qualifyingMinor: 229900,
   businessUseBps: 10000,
   additionsMinor: 229900,
@@ -199,9 +198,8 @@ describe("history-aware first-year treatment", () => {
       decide(asset, context(), { ...basis, additionsMinor: 0 }).included,
     ).toBe(false);
   });
-  it("treats draft and inactive history as ambiguous rather than missing history", () => {
+  it("treats draft and foreign history as ambiguous rather than missing history", () => {
     expect(decide(asset, context({ status: "draft" })).included).toBe(null);
-    expect(decide(asset, context({ active: false })).included).toBe(null);
     expect(decide(asset, context({ jurisdiction: "GB" })).included).toBe(null);
     expect(
       decide(asset, { ...context({ currency: "USD" }), currentCurrency: "MYR" })
@@ -217,16 +215,18 @@ describe("history-aware first-year treatment", () => {
       }),
     ).toMatchObject({ included: false, blocked: true });
   });
-  it("requires a reasoned confirmation for new expenditure on a previously claimed asset", () => {
+  it("previews distinct new expenditure for confirmation on worksheet save", () => {
     const bigger = {
       ...basis,
       qualifyingMinor: 329900,
       additionsMinor: 100000,
     };
     expect(decide(asset, context(), bigger).included).toBe(null);
-    expect(() => resolve("include", asset, context(), bigger)).toThrow(
-      "remark",
-    );
+    expect(resolve("include", asset, context(), bigger)).toMatchObject({
+      version: 2,
+      confirmation: "pending_save",
+      included: true,
+    });
     expect(
       resolve(
         "include",
@@ -243,7 +243,11 @@ describe("history-aware first-year treatment", () => {
   });
   it("keeps imported-asset confirmation and opt-out explicit without amount overrides", () => {
     const imported = { ...asset, sourceRecordId: null };
-    expect(() => resolve("auto", imported)).toThrow("not linked");
+    expect(resolve("auto", imported)).toMatchObject({
+      version: 2,
+      confirmation: "pending_save",
+      included: true,
+    });
     expect(
       resolve(
         "include",

@@ -46,11 +46,7 @@
   );
   let remark = $state(untrack(() => initial.capital.schedule!.evidence));
   let jurisdiction = $state(
-    untrack(
-      () =>
-        initial.capital.schedule!.jurisdiction ??
-        (initial.capital.schedule!.calculationVersion === 1 ? "MY" : null),
-    ),
+    untrack(() => initial.capital.schedule!.jurisdiction ?? null),
   );
   let expanded = $state<number | null>(null);
   let removedEditedAsset = $state(false);
@@ -100,9 +96,7 @@
       rows = nextRows;
       uses = editorUses(next.capital.schedule!, next.worksheet.ya);
       remark = next.capital.schedule!.evidence;
-      jurisdiction =
-        next.capital.schedule!.jurisdiction ??
-        (next.capital.schedule!.calculationVersion === 1 ? "MY" : null);
+      jurisdiction = next.capital.schedule!.jurisdiction ?? null;
       initial = next;
       baseline = fingerprint();
     } else {
@@ -115,7 +109,7 @@
       if (!editable)
         return {
           value: {
-            input: initial.capital.schedule!,
+            input: null,
             schedule: initial.capital.schedule!,
             totals: initial.capital.totals!,
             errors: [] as string[],
@@ -146,9 +140,7 @@
     resultBase ??
       safeTaxSum([detail.totals.resultMinor, -detail.totals.capitalMinor]),
   );
-  const result = $derived(
-    safeTaxSum([baseResult, totals.balancingChargeMinor, -totals.usedMinor]),
-  );
+  const result = $derived(safeTaxSum([baseResult, -totals.usedMinor]));
   $effect(() => {
     if (dirty !== changed) dirty = changed;
     const nextDraft = {
@@ -262,10 +254,7 @@
                     class="w-full justify-between"
                     aria-label={`Scheme for ${asset.name}`}
                     >{choices.find((s) => String(s.id) === draft.form.schemeId)
-                      ?.definition.name ??
-                      (original.treatment === "claim" && !original.schemeId
-                        ? "Retained manual"
-                        : "Select scheme")}</Select.Trigger
+                      ?.definition.name ?? "Select scheme"}</Select.Trigger
                   ><Select.Content
                     >{#each choices as scheme (scheme.id)}<Select.Item
                         value={String(scheme.id)}

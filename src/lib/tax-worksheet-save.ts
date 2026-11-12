@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { capitalInputSchema } from "./capital-allowance.js";
-import { taxJurisdictionSchema } from "./asset-tax-scheme.js";
 import { taxAdjustmentSchema, taxReason, taxVersion } from "./tax-worksheet.js";
 
 /** One worksheet intent; child request keys remain stable across retries. */
@@ -28,9 +27,7 @@ export const taxWorksheetSaveSchema = z
       .object({
         input: capitalInputSchema,
         liveAssetHash: z.string().length(64),
-        jurisdiction: taxJurisdictionSchema.nullable().optional(),
         rolloverHash: z.string().length(64).nullable().optional(),
-        replaceManual: z.boolean().default(false),
         confirmFirstYearTreatments: z.boolean().default(false),
       })
       .strict()

@@ -24,7 +24,6 @@ import {
   changeTaxWorksheet,
   readTaxWorksheet,
   changeCapitalSchedule,
-  addTaxAdjustment,
   taxWorksheetEvents,
 } from "./tax-worksheets.js";
 import {
@@ -33,11 +32,15 @@ import {
   type CapitalSchedule,
 } from "$lib/capital-allowance.js";
 import { toCsv } from "../ledger/reports/csv.js";
+import { saveAssetTaxScheme } from "./asset-tax-schemes.js";
+import { schemeSnapshot } from "../queries/asset-tax-schemes.js";
+import type { AppliedAssetTaxScheme } from "$lib/asset-tax-scheme.js";
 
 let sqlite: Database;
 let db: LedgerDb;
 let assetId: number;
 let costAccount: number;
+let scheme: AppliedAssetTaxScheme;
 const key = () => crypto.randomUUID();
 const ctx = (
   permissions = ["tax", "tax.finalise", "tax.amend", "accounts", "records"],
@@ -70,22 +73,24 @@ function command(
     expectedVersion: d.revision.version,
     requestKey: key(),
     reason: "Accountant reviewed the annual tax workings",
-    ...(action !== "manual" ? { liveAssetHash: d.capital.liveAssetHash } : {}),
+    liveAssetHash: d.capital.liveAssetHash,
     ...(action === "prepare" ? { jurisdiction: "MY" } : {}),
     ...extra,
   };
 }
 const apply = (d: Detail, payload: ReturnType<typeof command>) =>
   value(changeCapitalSchedule(ctx(), d.worksheet.id, payload));
-const prepare = (d: Detail) =>
-  apply(d, command(d, "prepare", { replaceManual: false }));
+const prepare = (d: Detail) => apply(d, command(d, "prepare"));
 function ready(d: Detail, overrides: Record<string, unknown> = {}) {
   const input = structuredClone(d.capital.schedule!);
   input.evidence = "Accountant working paper CA-2025";
   input.rows = input.rows.map((r) => ({
     ...r,
     treatment: "claim",
-    taxClass: "Reviewed plant",
+    schemeId: scheme.id,
+    appliedScheme: scheme,
+    schemeFirstYear: true,
+    taxClass: scheme.definition.name,
     businessSource: "Trading",
     qualifyingMinor: 1200000,
     businessUseBps: 10000,
@@ -109,7 +114,9 @@ function save(d: Detail, input = ready(d)) {
   return apply(
     d,
     command(d, "save", {
+      confirmFirstYearTreatments: true,
       input: {
+        jurisdiction: input.jurisdiction,
         evidence: input.evidence,
         rows: input.rows,
         utilisation: input.utilisation,
@@ -130,19 +137,6 @@ function finalise(d: Detail) {
       expectedVersion: d.revision.version,
     }),
   );
-}
-function manual(d: Detail, kind = "capital_allowance") {
-  return {
-    kind,
-    direction: "decrease",
-    amountMinor: 10000,
-    balanceMinor: kind === "allowance_brought_forward" ? 50000 : 0,
-    originYa: kind === "allowance_brought_forward" ? 2024 : null,
-    reason: "Reviewed existing allowance from accountant",
-    evidence: "Old schedule",
-    requestKey: key(),
-    expectedVersion: d.revision.version,
-  };
 }
 const financial = () =>
   JSON.stringify({
@@ -169,6 +163,24 @@ beforeEach(() => {
       passwordHash: "x",
     })
     .run();
+  scheme = schemeSnapshot(
+    value(
+      saveAssetTaxScheme(ctx(), {
+        familyKey: key(),
+        expectedVersion: 0,
+        requestKey: key(),
+        definition: {
+          name: "Reviewed plant",
+          jurisdiction: "MY",
+          yearFrom: 2023,
+          yearTo: null,
+          method: "original_cost",
+          firstYearRateBps: 2000,
+          regularRateBps: 1000,
+        },
+      }),
+    ),
+  );
   costAccount = value(
     createAccount(db, 1, {
       name: "Equipment",
@@ -193,7 +205,7 @@ beforeEach(() => {
   ).id;
 });
 afterEach(() => sqlite.close());
-describe("manual Malaysian capital allowance schedules", () => {
+describe("scheme-based capital allowance schedules", () => {
   it("captures unresolved asset candidates without asserting eligibility or posting journals", () => {
     const before = financial();
     const d = prepare(create());
@@ -229,46 +241,9 @@ describe("manual Malaysian capital allowance schedules", () => {
     });
     expect(financial()).toBe(before);
   });
-  it("requires explicit manual-total replacement and prevents overlapping API and SQL claims", () => {
-    let d = create();
-    d = value(addTaxAdjustment(ctx(), d.worksheet.id, manual(d)));
-    d = value(
-      addTaxAdjustment(
-        ctx(),
-        d.worksheet.id,
-        manual(d, "allowance_brought_forward"),
-      ),
-    );
-    const p = command(d, "prepare", { replaceManual: false });
-    expect(changeCapitalSchedule(ctx(), d.worksheet.id, p).ok).toBe(false);
-    d = apply(d, { ...p, replaceManual: true });
-    expect(d.adjustments.filter((a) => a.withdrawnAt !== null)).toHaveLength(2);
-    expect(addTaxAdjustment(ctx(), d.worksheet.id, manual(d)).ok).toBe(false);
-    expect(() =>
-      db
-        .insert(schema.taxWorksheetAdjustments)
-        .values({
-          revisionId: d.revision.id,
-          kind: "capital_allowance",
-          amountMinor: 1,
-          direction: "decrease",
-          reason: "Attempt bypass",
-          evidence: "x",
-          requestKey: key(),
-          actorName: "x",
-          createdAt: "2026-01-01",
-        })
-        .run(),
-    ).toThrow();
-    d = save(d);
-    d = apply(d, command(d, "manual"));
-    expect(d.totals.capitalMinor).toBe(0);
-    expect(d.capital.schedule).not.toBeNull();
-    expect(addTaxAdjustment(ctx(), d.worksheet.id, manual(d)).ok).toBe(true);
-  });
   it("keeps stable retries idempotent and refuses changed payloads and stale writes", () => {
     let d = create();
-    const p = command(d, "prepare", { replaceManual: false });
+    const p = command(d, "prepare");
     d = apply(d, p);
     const audits = db.select().from(schema.auditLog).all().length;
     expect(apply(d, p).revision.version).toBe(d.revision.version);
@@ -283,6 +258,39 @@ describe("manual Malaysian capital allowance schedules", () => {
       changeCapitalSchedule(ctx(), d.worksheet.id, { ...p, requestKey: key() })
         .ok,
     ).toBe(false);
+  });
+  it("requires a selected scheme for every claimed asset without retaining arbitrary deduction amounts", () => {
+    const d = prepare(create());
+    const input = ready(d);
+    input.rows[0].schemeId = null;
+    input.rows[0].appliedScheme = undefined;
+    const before = JSON.stringify([
+      db.select().from(schema.taxCapitalSchedules).all(),
+      db.select().from(schema.taxCapitalCommands).all(),
+      db.select().from(schema.auditLog).all(),
+    ]);
+    expect(
+      changeCapitalSchedule(
+        ctx(),
+        d.worksheet.id,
+        command(d, "save", {
+          confirmFirstYearTreatments: true,
+          input: {
+            jurisdiction: "MY",
+            evidence: input.evidence,
+            rows: input.rows,
+            utilisation: input.utilisation,
+          },
+        }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      JSON.stringify([
+        db.select().from(schema.taxCapitalSchedules).all(),
+        db.select().from(schema.taxCapitalCommands).all(),
+        db.select().from(schema.auditLog).all(),
+      ]),
+    ).toBe(before);
   });
   it("rejects duplicate/missing/foreign asset IDs, unsafe amounts and out-of-range percentages", () => {
     const d = prepare(create());
@@ -307,17 +315,23 @@ describe("manual Malaysian capital allowance schedules", () => {
     }
     expect(db.select().from(schema.taxCapitalCommands).all()).toHaveLength(1);
   });
-  it("blocks review of non-reconciling workings and duplicate or over-used balances", () => {
-    let d = prepare(create());
+  it("rejects tampered scheme workings and duplicate or over-used balances", () => {
+    const d = prepare(create());
     const input = ready(d);
     input.rows[0].initialMinor = 1300000;
-    d = save(d, input);
-    expect(d.capital.totals?.problems.join(" ")).toContain("reconcile");
     expect(
-      changeTaxWorksheet(ctx(), d.worksheet.id, {
-        action: "review",
-        expectedVersion: d.revision.version,
-      }).ok,
+      changeCapitalSchedule(
+        ctx(),
+        d.worksheet.id,
+        command(d, "save", {
+          input: {
+            jurisdiction: "MY",
+            evidence: input.evidence,
+            rows: input.rows,
+            utilisation: input.utilisation,
+          },
+        }),
+      ).ok,
     ).toBe(false);
     const good = ready(d);
     good.utilisation[0].usedMinor = 360001;
@@ -394,13 +408,15 @@ describe("manual Malaysian capital allowance schedules", () => {
       html = taxWorksheetHtml(d);
     expect(csv).toContain("Opening tax residual");
     expect(html).toContain("Accountant working paper");
-    expect(
-      changeCapitalSchedule(ctx(), d.worksheet.id, command(d, "manual")).ok,
-    ).toBe(false);
     expect(() =>
       db
         .update(schema.taxCapitalSchedules)
-        .set({ active: false })
+        .set({
+          evidence: {
+            ...d.capital.schedule!,
+            evidence: "Tampered finalised evidence",
+          },
+        })
         .where(eq(schema.taxCapitalSchedules.revisionId, d.revision.id))
         .run(),
     ).toThrow();
@@ -450,7 +466,6 @@ describe("manual Malaysian capital allowance schedules", () => {
       d,
       command(d, "rollover", {
         rolloverHash: d.capital.rolloverHash,
-        replaceManual: false,
       }),
     );
     expect(d.capital.schedule?.rows[0].annualMinor).toBeNull();
@@ -485,7 +500,6 @@ describe("manual Malaysian capital allowance schedules", () => {
         d.worksheet.id,
         command(d, "rollover", {
           rolloverHash: d.capital.rolloverHash,
-          replaceManual: false,
         }),
       ).ok,
     ).toBe(false);
@@ -497,7 +511,6 @@ describe("manual Malaysian capital allowance schedules", () => {
       d,
       command(d, "rollover", {
         rolloverHash: d.capital.rolloverHash,
-        replaceManual: false,
       }),
     );
     value(
@@ -517,51 +530,9 @@ describe("manual Malaysian capital allowance schedules", () => {
       }).ok,
     ).toBe(false);
   });
-  it("records manual balancing charges and full tax disposal without altering book assets", () => {
-    const before = financial();
-    let d = prepare(create());
-    const input = ready(d);
-    input.rows[0].disposal = {
-      date: "2025-11-01",
-      proceedsMinor: 900000,
-      balancingAllowanceMinor: 0,
-      balancingChargeMinor: 60000,
-      evidence: "Reviewed disposal schedule",
-    };
-    d = save(d, input);
-    expect(d.capital.totals?.rows[0]).toMatchObject({
-      closingResidualMinor: 0,
-      residualRemovedMinor: 840000,
-    });
-    expect(d.totals.capitalMinor).toBe(-240000);
-    expect(financial()).toBe(before);
-    finalise(d);
-    const next = create(2026);
-    expect(next.capital.rollover?.rows[0].treatment).toBe("exclude");
-    expect(next.capital.rollover?.rows[0].note).toContain("Tax disposal");
-  });
-  it("rejects invalid disposal periods, dual balancing events and missing exclusion reasons at review", () => {
-    let d = prepare(create());
-    const input = ready(d);
-    input.rows[0].disposal = {
-      date: "2024-01-01",
-      proceedsMinor: 0,
-      balancingAllowanceMinor: 100,
-      balancingChargeMinor: 100,
-      evidence: "Disposal memo",
-    };
-    d = save(d, input);
-    expect(d.capital.totals?.problems.join(" ")).toContain("disposal date");
-    expect(d.capital.totals?.problems.join(" ")).toContain("not both");
-    input.rows[0].disposal = null;
-    input.rows[0].treatment = "exclude";
-    input.utilisation = [];
-    d = save(d, input);
-    expect(d.capital.totals?.problems.join(" ")).toContain("Explain why");
-  });
   it("requires tax permissions, supports independent book currencies and isolates book contexts", () => {
     const d = create();
-    const p = command(d, "prepare", { replaceManual: false });
+    const p = command(d, "prepare");
     expect(
       changeCapitalSchedule(
         ctx(["accounts", "records", "reports"]),
@@ -592,9 +563,8 @@ describe("manual Malaysian capital allowance schedules", () => {
         ?.currency,
     ).toBe("USD");
   });
-  it("rolls back schedule, replacement, receipt, version, audit and signals when the audit fails", () => {
-    let d = create();
-    d = value(addTaxAdjustment(ctx(), d.worksheet.id, manual(d)));
+  it("rolls back schedule, receipt, version, audit and signals when the audit fails", () => {
+    const d = create();
     sqlite.exec(
       "CREATE TRIGGER reject_capital_audit BEFORE INSERT ON audit_log WHEN NEW.record_type='tax_worksheet' BEGIN SELECT RAISE(ABORT,'simulated audit failure'); END",
     );
@@ -603,11 +573,7 @@ describe("manual Malaysian capital allowance schedules", () => {
     taxWorksheetEvents.on("changed", listener);
     try {
       expect(() =>
-        changeCapitalSchedule(
-          ctx(),
-          d.worksheet.id,
-          command(d, "prepare", { replaceManual: true }),
-        ),
+        changeCapitalSchedule(ctx(), d.worksheet.id, command(d, "prepare")),
       ).toThrow("simulated audit failure");
     } finally {
       taxWorksheetEvents.off("changed", listener);
@@ -616,13 +582,30 @@ describe("manual Malaysian capital allowance schedules", () => {
     expect(db.select().from(schema.taxCapitalSchedules).all()).toEqual([]);
     expect(db.select().from(schema.taxCapitalCommands).all()).toEqual([]);
     expect(read(d.worksheet.id).revision.version).toBe(d.revision.version);
-    expect(read(d.worksheet.id).adjustments[0].withdrawnAt).toBeNull();
+    expect(read(d.worksheet.id).adjustments).toEqual([]);
   });
   it("uses exact basis-point arithmetic and rejects unsafe aggregate totals", () => {
     let d = prepare(create());
     const input = ready(d);
+    const tiny = schemeSnapshot(
+      value(
+        saveAssetTaxScheme(ctx(), {
+          familyKey: key(),
+          expectedVersion: 0,
+          requestKey: key(),
+          definition: {
+            ...scheme.definition,
+            name: "Rounding fixture",
+            firstYearRateBps: 100,
+            regularRateBps: 100,
+          },
+        }),
+      ),
+    );
     input.rows[0] = {
       ...input.rows[0],
+      schemeId: tiny.id,
+      appliedScheme: tiny,
       qualifyingMinor: 101,
       businessUseBps: 5000,
       openingResidualMinor: 0,
@@ -645,9 +628,7 @@ describe("manual Malaysian capital allowance schedules", () => {
     const bad = structuredClone(input) as CapitalSchedule;
     bad.rows[0].initialMinor = Number.MAX_SAFE_INTEGER;
     bad.rows[0].annualMinor = Number.MAX_SAFE_INTEGER;
-    expect(() =>
-      capitalTotals(bad, 2025, "2025-01-01", "2025-12-31"),
-    ).toThrow();
+    expect(() => capitalTotals(bad, 2025)).toThrow();
   });
   it("escapes retained asset names and source notes in CSV/print", () => {
     db.update(schema.fixedAssets)
@@ -717,7 +698,6 @@ describe("capital allowance dependency and multi-source review", () => {
       second,
       command(second, "rollover", {
         rolloverHash: second.capital.rolloverHash,
-        replaceManual: false,
       }),
     );
     const input = structuredClone(second.capital.schedule!);
@@ -735,7 +715,6 @@ describe("capital allowance dependency and multi-source review", () => {
       third,
       command(third, "rollover", {
         rolloverHash: third.capital.rolloverHash,
-        replaceManual: false,
       }),
     );
     value(

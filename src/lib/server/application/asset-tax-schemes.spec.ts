@@ -90,7 +90,7 @@ function command(
     expectedVersion: d.revision.version,
     requestKey: key(),
     reason: "Review custom scheme application and inputs",
-    ...(action !== "manual" ? { liveAssetHash: d.capital.liveAssetHash } : {}),
+    liveAssetHash: d.capital.liveAssetHash,
     ...extra,
   };
 }
@@ -99,7 +99,7 @@ const prepare = (d: Detail, jurisdiction: string | null = "MY") =>
     changeCapitalSchedule(
       ctx(),
       d.worksheet.id,
-      command(d, "prepare", { jurisdiction, replaceManual: false }),
+      command(d, "prepare", { jurisdiction }),
     ),
   );
 function row(
@@ -132,6 +132,7 @@ function save(d: Detail, rows = d.capital.schedule!.rows, used = 0) {
       ctx(),
       d.worksheet.id,
       command(d, "save", {
+        confirmFirstYearTreatments: true,
         input: {
           jurisdiction: d.capital.schedule!.jurisdiction,
           evidence: "Working paper for custom deductions",
@@ -470,7 +471,7 @@ describe("versioned custom asset tax schemes", () => {
     );
     expect(unknownRefused.ok).toBe(false);
     if (!unknownRefused.ok)
-      expect(unknownRefused.reason).toContain("confirm the worksheet");
+      expect(unknownRefused.reason).toContain("confirm its first-year");
     const overrideRefused = changeCapitalSchedule(
       ctx(),
       d.worksheet.id,
@@ -508,7 +509,6 @@ describe("versioned custom asset tax schemes", () => {
         next.worksheet.id,
         command(next, "rollover", {
           rolloverHash: next.capital.rolloverHash,
-          replaceManual: false,
         }),
       ),
     );
@@ -633,7 +633,10 @@ describe("versioned custom asset tax schemes", () => {
     );
     expect(staged.errors).toEqual([]);
     const before = financial();
-    const payload = command(d, "save", { input: staged.input });
+    const payload = command(d, "save", {
+      input: staged.input,
+      confirmFirstYearTreatments: true,
+    });
     d = value(changeCapitalSchedule(ctx(), d.worksheet.id, payload));
     expect(d.capital.totals).toMatchObject({
       allowanceMinor: 300000,
@@ -837,39 +840,27 @@ describe("versioned custom asset tax schemes", () => {
         .regularRateBps,
     ).toBe(1000);
   });
-  it("allows explained overrides but refuses unexplained changes", () => {
+  it("refuses allowance amounts that differ from the scheme even with an explanation", () => {
     const s = value(saveAssetTaxScheme(ctx(), schemePayload()));
-    let d = prepare(create());
-    const original = row(d, s);
-    const modified = {
-      ...original,
-      schemeOverride: true,
-      annualMinor: 50000,
-      note: "",
-    };
-    expect(
-      changeCapitalSchedule(
-        ctx(),
-        d.worksheet.id,
-        command(d, "save", {
-          input: {
-            jurisdiction: "MY",
-            evidence: "Tax working paper",
-            rows: [modified],
-            utilisation: [],
-          },
-        }),
-      ).ok,
-    ).toBe(false);
-    d = save(d, [
-      {
-        ...modified,
-        note: "Accountant adjusted the claim for reviewed circumstances",
-      },
-    ]);
-    expect(d.capital.schedule!.rows[0].annualMinor).toBe(50000);
+    const d = prepare(create());
+    for (const note of ["", "Accountant entered a different annual amount"]) {
+      expect(
+        changeCapitalSchedule(
+          ctx(),
+          d.worksheet.id,
+          command(d, "save", {
+            input: {
+              jurisdiction: "MY",
+              evidence: "",
+              rows: [{ ...row(d, s), annualMinor: 50000, note }],
+              utilisation: [],
+            },
+          }),
+        ).ok,
+      ).toBe(false);
+    }
   });
-  it("does not infer jurisdiction from currency and supports manual schemes across book currencies", () => {
+  it("does not infer jurisdiction from currency and supports custom schemes across book currencies", () => {
     const gb = value(
       saveAssetTaxScheme(
         ctx(),
@@ -999,7 +990,6 @@ describe("versioned custom asset tax schemes", () => {
         d.worksheet.id,
         command(d, "rollover", {
           rolloverHash: d.capital.rolloverHash,
-          replaceManual: false,
         }),
       ),
     );
@@ -1057,10 +1047,11 @@ describe("retained schedule currency", () => {
         }),
       ).ok,
     ).toBe(false);
-    const manual = value(
-      changeCapitalSchedule(ctx(), d.worksheet.id, command(d, "manual")),
-    );
-    expect(manual.capital.active).toBe(false);
-    expect(manual.capital.schedule!.currency).toBe("MYR");
+    expect(
+      changeCapitalSchedule(ctx(), d.worksheet.id, command(d, "manual")).ok,
+    ).toBe(false);
+    const retained = value(readTaxWorksheet(ctx(), d.worksheet.id));
+    expect(retained.capital.active).toBe(true);
+    expect(retained.capital.schedule!.currency).toBe("MYR");
   });
 });

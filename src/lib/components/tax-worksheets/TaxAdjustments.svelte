@@ -5,7 +5,7 @@
   import { formatAuditTime } from "$lib/components/audit/audit-format.js";
   import {
     formatTaxMinor,
-    taxManualLabels,
+    taxAdjustmentLabels,
     type TaxAdjustment,
   } from "$lib/tax-worksheet.js";
   import { TaxTreatmentLabels } from "$lib/expense-tax.js";
@@ -48,7 +48,7 @@
             ? (source?.label ??
               source?.description ??
               "Annual expense treatment")
-            : taxManualLabels[a.kind]}
+            : taxAdjustmentLabels[a.kind]}
         </h3>
         <p class="field-hint">
           {a.kind === "source"

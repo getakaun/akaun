@@ -259,14 +259,6 @@ export function addTaxAdjustment(
     const { worksheet } = current(ctx, id, v.expectedVersion);
     if (revision.status === "finalised")
       refuse("Create an amendment to change a finalised worksheet.");
-    if (
-      (v.kind === "capital_allowance" ||
-        v.kind === "allowance_brought_forward") &&
-      capitalScheduleFor(ctx.db, revision.id)?.active
-    )
-      refuse(
-        "This revision uses its asset schedule. Change the schedule or explicitly switch to manual totals before adding allowance entries.",
-      );
     if (values.originYa !== null && values.originYa >= worksheet.ya)
       refuse(
         "Brought-forward balances must originate in an earlier YA.",
@@ -565,7 +557,7 @@ export function changeTaxWorksheet(
         const capital = capitalDetail(ctx.db, worksheet, revision.id, true);
         if (capital.active && capital.currencyMismatch)
           refuse(
-            "The retained schedule currency differs from this worksheet. Use manual totals or a confirmed matching-currency rollover; amounts cannot be relabelled.",
+            "The retained schedule currency differs from this worksheet. Use confirmed matching-currency asset workings; amounts cannot be relabelled.",
             "CONFLICT",
           );
         if (capital.active && (capital.assetsStale || capital.predecessorStale))
@@ -576,19 +568,6 @@ export function changeTaxWorksheet(
         if (capital.active && capital.totals?.problems.length)
           refuse(
             `Complete the capital allowance review: ${capital.totals.problems[0]}`,
-          );
-        if (
-          capital.active &&
-          adjustments.some(
-            (a) =>
-              a.withdrawnAt === null &&
-              ["capital_allowance", "allowance_brought_forward"].includes(
-                a.kind,
-              ),
-          )
-        )
-          refuse(
-            "Remove overlapping manual allowance claims before reviewing the asset schedule.",
           );
         const totals = taxWorksheetTotals(
           revision.snapshot,

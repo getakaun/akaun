@@ -21,7 +21,6 @@ export const capitalRowSchema = z
     schemeId: z.number().int().positive().nullable().optional(),
     schemeFirstYear: z.boolean().optional(),
     firstYearTreatment: firstYearTreatmentSchema.optional(),
-    schemeOverride: z.boolean().optional(),
     appliedScheme: appliedAssetTaxSchemeSchema.optional(),
     treatment: z.enum(["pending", "claim", "exclude"]),
     taxClass: z.string().trim().max(100),
@@ -34,18 +33,6 @@ export const capitalRowSchema = z
     annualMinor: cents.nullable(),
     residualAdjustmentMinor: signedCents,
     note: text,
-    ruleReference: text,
-    effectiveYa: z.number().int().min(2000).max(9999),
-    disposal: z
-      .object({
-        date: z.iso.date(),
-        proceedsMinor: cents,
-        balancingAllowanceMinor: cents,
-        balancingChargeMinor: cents,
-        evidence: text.min(1),
-      })
-      .strict()
-      .nullable(),
   })
   .strict();
 export const capitalUseSchema = z
@@ -90,7 +77,7 @@ export type CapitalPredecessor = {
   hash: string;
 };
 export type CapitalSchedule = CapitalInput & {
-  calculationVersion: 1 | 2;
+  calculationVersion: 2;
   currency: string;
   assets: CapitalAssetEvidence[];
   predecessor: CapitalPredecessor | null;
@@ -112,15 +99,10 @@ export function capitalSum(values: number[]) {
   return value;
 }
 
-/** Only arithmetic on accountant-entered amounts; no statutory rates or eligibility rules. */
-export function capitalTotals(
-  schedule: CapitalSchedule,
-  ya: number,
-  dateFrom: string,
-  dateTo: string,
-) {
+/** Validates scheme-derived deductions against declared asset tax basis. */
+export function capitalTotals(schedule: CapitalSchedule, ya: number) {
   const problems: string[] = [];
-  if (schedule.calculationVersion === 2 && !schedule.jurisdiction)
+  if (!schedule.jurisdiction)
     problems.push(
       "Select the tax jurisdiction independently of the book currency.",
     );
@@ -135,23 +117,15 @@ export function capitalTotals(
       );
     ids.add(row.assetId);
     if (row.treatment === "pending") issues.push("Choose a tax treatment.");
-    if (row.effectiveYa !== ya)
-      issues.push("Confirm the effective YA for this worksheet.");
     if (row.treatment === "exclude" && !row.note)
       issues.push("Explain why this asset is excluded.");
     let allowanceMinor = 0;
     let closingResidualMinor: number | null = null;
-    let residualRemovedMinor = 0;
     if (row.treatment === "claim") {
       if (asset.reviewReason)
         issues.push("Resolve the asset register review first.");
       if (!row.taxClass || !row.businessSource)
         issues.push("Confirm the tax class and business source.");
-      if (
-        schedule.calculationVersion === 1 &&
-        !(row.ruleReference || schedule.evidence)
-      )
-        issues.push("Add a source or working-paper reference.");
       if (
         row.firstYearTreatment &&
         row.firstYearTreatment.included !== !!row.schemeFirstYear
@@ -159,7 +133,9 @@ export function capitalTotals(
         issues.push(
           "The saved first-year treatment does not match the calculation.",
         );
-      if (row.schemeId) {
+      if (!row.schemeId)
+        issues.push("Choose a calculation scheme from Tax settings.");
+      else {
         if (!row.appliedScheme || row.appliedScheme.id !== row.schemeId)
           issues.push("Apply a retained custom scheme version.");
         else {
@@ -173,30 +149,25 @@ export function capitalTotals(
             issues.push(
               "The scheme jurisdiction or effective tax year does not match this worksheet.",
             );
-          if (row.schemeOverride) {
-            if (row.note.trim().length < 10)
-              issues.push("Explain the manual override of scheme amounts.");
-          } else {
-            try {
-              const calculated = calculateAssetTaxScheme(
-                row.appliedScheme.definition,
-                { ...row, firstYear: row.schemeFirstYear ?? false },
-              );
-              if (
-                calculated &&
-                (row.initialMinor !== calculated.firstYearMinor ||
-                  row.annualMinor !== calculated.regularMinor)
-              )
-                issues.push(
-                  "The entered amounts differ from the scheme preview. Reapply the scheme or explain a manual override.",
-                );
-            } catch (error) {
+          try {
+            const calculated = calculateAssetTaxScheme(
+              row.appliedScheme.definition,
+              { ...row, firstYear: row.schemeFirstYear ?? false },
+            );
+            if (
+              calculated &&
+              (row.initialMinor !== calculated.firstYearMinor ||
+                row.annualMinor !== calculated.regularMinor)
+            )
               issues.push(
-                error instanceof Error
-                  ? error.message
-                  : "The scheme basis needs review.",
+                "The deduction amounts must match the selected scheme calculation.",
               );
-            }
+          } catch (error) {
+            issues.push(
+              error instanceof Error
+                ? error.message
+                : "The scheme basis needs review.",
+            );
           }
         }
       }
@@ -242,26 +213,8 @@ export function capitalTotals(
         closingResidualMinor = remaining;
         if (row.residualAdjustmentMinor && !row.note)
           issues.push("Explain the residual expenditure adjustment.");
-        if (row.disposal) {
-          if (
-            row.disposal.date < dateFrom ||
-            row.disposal.date > dateTo ||
-            row.disposal.date < asset.acquisitionDate
-          )
-            issues.push(
-              "Choose a disposal date within the accounting period and after acquisition.",
-            );
-          if (
-            row.disposal.balancingAllowanceMinor &&
-            row.disposal.balancingChargeMinor
-          )
-            issues.push("Enter a balancing allowance or charge, not both.");
-          residualRemovedMinor = remaining;
-          closingResidualMinor = 0;
-        }
       }
-    } else if (row.disposal)
-      issues.push("Disposal workings require the claim treatment.");
+    }
     problems.push(...issues.map((issue) => `${asset.name}: ${issue}`));
     return {
       ...row,
@@ -269,7 +222,6 @@ export function capitalTotals(
       issues,
       allowanceMinor,
       closingResidualMinor,
-      residualRemovedMinor,
     };
   });
   if (ids.size !== assets.size)
@@ -297,14 +249,7 @@ export function capitalTotals(
     const sourceRows = rows.filter(
       (r) => r.treatment === "claim" && r.businessSource === businessSource,
     );
-    const availableMinor = capitalSum(
-      sourceRows.map((r) =>
-        capitalSum([
-          r.allowanceMinor,
-          r.disposal?.balancingAllowanceMinor ?? 0,
-        ]),
-      ),
-    );
+    const availableMinor = capitalSum(sourceRows.map((r) => r.allowanceMinor));
     const current = schedule.utilisation.find(
       (u) => u.businessSource === businessSource && u.originYa === ya,
     );
@@ -331,28 +276,20 @@ export function capitalTotals(
       ),
     };
   });
-  if (schedule.calculationVersion === 1 && !schedule.evidence)
-    problems.push("Add the shared accountant working-paper reference.");
   const allowanceMinor = capitalSum(groups.map((g) => g.availableMinor));
   const usedMinor = capitalSum(groups.map((g) => g.usedMinor));
-  const balancingChargeMinor = capitalSum(
-    rows
-      .filter((r) => r.treatment === "claim")
-      .map((r) => r.disposal?.balancingChargeMinor ?? 0),
-  );
   return {
     rows,
     groups,
     problems,
     allowanceMinor,
     usedMinor,
-    balancingChargeMinor,
     carryForwardMinor: capitalSum(groups.map((g) => g.carryForwardMinor)),
-    effectMinor: capitalSum([balancingChargeMinor, -usedMinor]),
+    effectMinor: usedMinor === 0 ? 0 : -usedMinor,
   };
 }
 
-export function blankCapitalRow(assetId: number, ya: number): CapitalRowInput {
+export function blankCapitalRow(assetId: number): CapitalRowInput {
   return {
     assetId,
     treatment: "pending",
@@ -366,8 +303,5 @@ export function blankCapitalRow(assetId: number, ya: number): CapitalRowInput {
     annualMinor: null,
     residualAdjustmentMinor: 0,
     note: "",
-    ruleReference: "",
-    effectiveYa: ya,
-    disposal: null,
   };
 }

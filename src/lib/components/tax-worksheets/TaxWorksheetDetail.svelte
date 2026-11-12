@@ -14,7 +14,7 @@
   import {
     TAX_PREPARATION_NOTE,
     formatTaxMinor,
-    taxManualLabels,
+    taxAdjustmentLabels,
     taxAdjustmentSchema,
   } from "$lib/tax-worksheet.js";
   import TaxWorksheetSheet from "./TaxWorksheetSheet.svelte";
@@ -45,14 +45,13 @@
   let additions = $state<StagedAdjustment[]>([]),
     withdrawals = $state<WorksheetWithdrawal[]>([]);
   let capitalDraft = $state<CapitalDraft | null>(null),
-    capitalDirty = $state(false),
-    replaceManual = $state(false);
+    capitalDirty = $state(false);
   let resetKey = $state(0),
     saving = $state(false),
     error = $state("");
   let baseVersion = $state(untrack(() => data.detail.revision.version));
   const dirty = $derived(
-    !!additions.length || !!withdrawals.length || capitalDirty || replaceManual,
+    !!additions.length || !!withdrawals.length || capitalDirty,
   );
   const conflict = $derived(dirty && r.version !== baseVersion);
   $effect(() => {
@@ -61,18 +60,20 @@
   const adjustments = $derived(
     r.status === "finalised"
       ? d.adjustments
-      : stagedAdjustments(d, additions, withdrawals, replaceManual),
+      : stagedAdjustments(d, additions, withdrawals),
   );
   const t = $derived(
     r.status === "finalised"
       ? d.totals
-      : draftTotals(d, additions, withdrawals, capitalDraft, replaceManual),
+      : draftTotals(d, additions, withdrawals, capitalDraft),
   );
   const money = (minor: number) => formatTaxMinor(minor, r.snapshot.currency);
   const editable = $derived(
     d.isLatest && r.status !== "finalised" && data.canUpdate,
   );
-  let mode = $state<"source" | "manual" | "amend" | "withdraw" | null>(null);
+  let mode = $state<"source" | "adjustment" | "amend" | "withdraw" | null>(
+    null,
+  );
   let line = $state<Detail["totals"]["lines"][number] | null>(null),
     adjustmentId = $state<number | null>(null);
   let revisionsExpanded = $state(false),
@@ -136,18 +137,6 @@
       problems.push(
         "Earlier tax balances changed. Complete the prior-year amendment before finalising this worksheet.",
       );
-    if (
-      replaceManual === false &&
-      adjustments.some(
-        (a) =>
-          a.withdrawnAt === null &&
-          ["capital_allowance", "allowance_brought_forward"].includes(a.kind),
-      ) &&
-      (d.capital.active || !!capitalDraft?.input)
-    )
-      problems.push(
-        "Choose whether to replace the manual allowance entries with the asset schedule.",
-      );
     return [...new Set(problems)];
   });
   const inputErrors = $derived([
@@ -195,7 +184,6 @@
     withdrawals = [];
     capitalDraft = null;
     capitalDirty = false;
-    replaceManual = false;
     baseVersion = r.version;
     resetKey++;
     error = "";
@@ -234,7 +222,6 @@
               ...(capitalDraft.rolloverHash
                 ? { rolloverHash: capitalDraft.rolloverHash }
                 : {}),
-              replaceManual,
               confirmFirstYearTreatments: true,
             },
           }
@@ -462,7 +449,9 @@
               class="detail-row"
             >
               <dt class="detail-key">
-                {a.kind === "source" ? "" : taxManualLabels[a.kind]}{a.originYa
+                {a.kind === "source"
+                  ? ""
+                  : taxAdjustmentLabels[a.kind]}{a.originYa
                   ? ` · YA ${a.originYa}`
                   : ""}
               </dt>
@@ -523,13 +512,11 @@
     {#key resetKey}<CapitalAllowances
         detail={d}
         {editable}
-        canReadAssets={data.canReadAssets}
         bind:dirty={capitalDirty}
         saving={saving || !!uncertainSave}
         worksheetDirty={dirty}
         resultBase={t.resultMinor - t.capitalMinor}
         bind:draft={capitalDraft}
-        bind:replaceManual
       />
     {/key}
     <TaxAdjustments
@@ -538,7 +525,7 @@
       currency={r.snapshot.currency}
       canChange={editable}
       disabled={saving || !!uncertainSave || conflict}
-      onadd={() => (mode = "manual")}
+      onadd={() => (mode = "adjustment")}
       onwithdraw={(id) => {
         adjustmentId = id;
         mode = "withdraw";

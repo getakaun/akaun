@@ -1,40 +1,40 @@
-# Asset tax schemes and maintainability follow-up
+# Scheme calculations and worksheet coordination
 
-Authorised: implement reusable custom schemes and an international foundation before Malaysian scheme verification, with a thorough structure review/refactor. Continue PR #72 on `codex/capital-allowance-schedule`; preserve the original feature and all finalised evidence.
+## Responsibilities
 
-## Review findings
+| Module                                                               | Responsibility                                                                      |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `asset-tax-scheme.ts`                                                | Validated custom definitions, effective-year selection and precise rate arithmetic  |
+| `capital-allowance.ts`                                               | Scheme-only row/schedule validation, residuals, utilisation and readiness issues    |
+| `first-year-allowance.ts`                                            | Shared automatic first-year policy and prior-claim protection                       |
+| `application/asset-tax-schemes.ts`                                   | Immutable scheme versions, permissions, audit and retry receipts                    |
+| `application/capital-allowances.ts`                                  | Prepare, rollover, refresh and save; canonical definitions and server recalculation |
+| `application/tax-worksheet-save.ts`                                  | One atomic save across worksheet sections and combined completion                   |
+| `application/tax-worksheet-boundary.ts`                              | Authority, version, transaction and deferred audit/SSE boundary                     |
+| `queries/capital-allowances.ts`                                      | Asset evidence, prior-year balances and live draft projections                      |
+| `asset-tax-export.ts`                                                | Saved CSV/print workings without live accounting dependencies                       |
+| `capital-editor.ts` / `worksheet-draft.ts`                           | Pure preview, staging and live-input reconciliation                                 |
+| `CapitalInlineEditor` / `CapitalAssetFields` / `CapitalClaimSummary` | Inline choices, basis details and utilisation                                       |
+| `CapitalRolloverSheet`                                               | Matching-currency recovery only                                                     |
 
-- `application/tax-worksheets.ts` combines annual worksheet commands, shared transaction/audit/state helpers and capital schedule commands (~1,000 lines).
-- `CapitalAllowanceSheet.svelte` combines asset inputs, utilisation, command confirmations and navigation guards (~850 lines).
-- MYR is used as a proxy for tax jurisdiction, including a database JSON constraint; jurisdiction is not explicitly retained.
-- Tax class is descriptive only. IA/AA must be typed manually, and available deductions do not change the worksheet until utilisation is entered; the UI does not make this progression clear enough.
-- Existing immutable revisions, retry receipts, retained snapshots and GL separation are sound and must survive restructuring.
+## Calculation and evidence contract
 
-## Implementation sequence
+- A claimed asset requires a scheme that matches the worksheet's jurisdiction and tax year. The server retains its canonical version and recalculates the submitted amounts.
+- Tax jurisdiction is explicit and independent of book currency. Automatic prior-year balances require matching jurisdiction and currency; amounts are never silently relabelled or converted.
+- Business use adjusts qualifying expenditure once. Opening residual, qualifying additions and residual basis corrections reconcile to that eligible basis. Schemes calculate first-year and regular deductions and cap them at the remaining residual.
+- First-year policy uses asset dates, linked purchase provenance and prior claims. Previously recorded initial allowances count even when unused; an unfinished amendment cannot erase the last finalised claim. Missing decision metadata does not bypass server policy.
+- Selecting a scheme previews immediately. Saving confirms all included first-year treatments together; there is no per-asset approval step.
+- Current-year allowances and earlier-origin balances retain separate utilisation. Availability does not automatically allocate a claim or assert statutory eligibility.
+- No manual total mode, deduction override, disposal/balancing input, version-1 evidence reader, row reference or row effective-year field remains. The worksheet and scheme already supply the relevant years.
 
-1. Extract a shared tax write boundary (permissions, immediate transactions, versions, audit, committed events) and move capital commands into their own application module. Retain compatibility exports for existing callers. Separate export rendering from capital queries where useful.
-2. Add pure, precisely rounded custom scheme calculations and form adapters. Support original-cost rates and reducing-balance rates only, with explicit first-year election, business-use basis and residual caps. This is a configurable arithmetic tool, not a UK/US or Malaysian statutory engine.
-3. Add immutable, versioned book-local scheme definitions and an explicit jurisdiction on new schedule evidence. Currency remains the retained book currency, independent of jurisdiction; no cross-currency tax conversion. Migration preserves existing version-1 MYR evidence byte-for-byte and restores all immutability/overlap triggers.
-4. Add scheme creation/new-version UI, selection and live preview in asset workings, a purchase-cost reuse action, and an explicit Use available amount action for annual utilisation. Split the asset and utilisation forms into focused components rather than extending the existing monolith. Scheme choices retain the exact definition/version; edits never rewrite applied or finalised amounts. Manual overrides require a reason.
-5. Add country-neutral labels outside the legacy Malaysian view. All supplied schemes are custom and visibly unverified; no official Malaysian presets or statutory verification status will be asserted. UK pools, MACRS, special allowances and tax filing remain unsupported.
-6. Verify pure arithmetic, server preview agreement, permissions, immutable scheme versions, concurrent/stale edits, cross-book isolation, rollover/jurisdiction/currency compatibility, GL neutrality, legacy exports and migration preservation. Run existing regression manifest, static checks and changed-file lint. Follow repository policy: isolated fixtures/SSR only; no configured server, live database or browser checks.
+## Save and update contract
 
-## Acceptance
+Reads project editable drafts without writing. SSE brings accounting, asset and scheme changes into the page. One master payload carries staged expense decisions, adjustment changes and asset inputs. Optimistic versions and source/asset/predecessor hashes are verified in the same transaction; nested commands share deferred audit and SSE publication. A failed save leaves no partial evidence or notifications. Stable request keys allow an uncertain save result to be checked safely.
 
-A user can create a custom jurisdiction-specific scheme once, apply it to several assets, see calculated first-year/regular deductions immediately, explicitly select utilisation and observe the annual result. Finalised old versions and exports remain fixed. Code responsibilities are separated and documented. Owner validates the Malaysian scheme later; no legal rate assumptions are introduced in this change.
+Finalised and retained revisions use saved snapshots. Later changes create amendments. Readiness and completion respect independent update/review/finalise permissions and signed-session requirements.
 
-## Settings placement follow-up
+## Storage and validation
 
-Reusable scheme definitions belong under Settings -> Tax, independently of any annual worksheet. Move the management surface to `/settings/tax`, linked from Settings navigation and from the worksheet. Keep selection, tax-basis previews and annual utilisation in the worksheet. Preserve `tax.read` / `tax.update` authority: the focused Settings subpage exposes no general/admin settings and does not require an accountant to gain unrelated settings privileges. Decouple the editor from worksheet data and preserve its immutable versions, retry/audit and unsaved-change guards. No migration or financial calculation changes.
+Migration 0049 removes the unreleased manual storage state and clears old workings rather than translating them. It resets affected latest worksheet revisions, records the reset, and preserves financial data and reusable schemes. Tests must verify this intentional reset and rejection of removed inputs rather than maintaining historical manual fixtures.
 
-## Approved inline worksheet follow-up
-
-Replace routine asset and utilisation drawers with one staged inline table and claim summary. Keep scheme management in Settings. Reuse the asset form for expanded details, suggest visible cost/business use/first-year treatment for new pending assets, and keep exceptional operations under More options. Commit asset workings and explicit claim allocations once through the existing guarded save command. Preserve per-source/per-origin balances, untouched legacy manual workings, immutable scheme snapshots and finalised evidence. Make version-2 remarks optional without fabricating evidence; retain version-1 interpretation. Protect drafts against navigation and SSE updates, and prevent annual review/finalisation over unsaved inputs. Validate pure staging, transactional save/retry/finalisation, source/permission constraints, read-only rendering and responsive structure; owner performs browser checks under repository policy.
-
-## Approved automatic first-year treatment follow-up
-
-Replace the routine checkbox with history-aware status and a tucked-away treatment override. Use a shared pure policy on the client and server, plus book-scoped purchase provenance and earlier tax workings. Retain finalised claim evidence while amendments are unfinished. Previously calculated but unused initial allowance still counts as an earlier claim. Treat absent external/opening history as uncertain, preserve legacy decisions, and require a reasoned confirmation for ambiguous inclusion. Store versioned decision evidence with a history hash in optional schedule JSON fields; independently revalidate on save and block review when earlier evidence changes. Preserve finalised exports and bookkeeping; verify actual linked purchase, unused allowance, rollover, duplicate rejection, stale history and confirmation paths with isolated fixtures.
-
-## Owner revision: confirm treatments on worksheet save
-
-Scheme assignment must show a numerical preview without separate per-asset confirmation or eligibility remarks. Treat this-year qualifying additions as the declared basis for the preview, retain known duplicate and stale-history checks, and make the existing Save action a single acknowledgement of all included first-year treatments. Persist versioned batch-confirmation evidence and audit the assets covered; server validation must reject unacknowledged or forged pending decisions. Keep exceptional treatment adjustments available without making them part of the normal flow, preserve earlier decision versions/finalised evidence, and test multiple unlinked assets through preview/save/retry/finalisation without individual notes.
+Final verification must cover scheme arithmetic, unsupported-input rejection, automated first-year history, country/currency separation, prior-year changes, incomplete drafts, atomic rollback, retry identity, permissions and unchanged financial rows. Browser and mobile checks remain owner-run.

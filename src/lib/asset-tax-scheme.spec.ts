@@ -152,20 +152,18 @@ describe("custom asset tax scheme arithmetic", () => {
 });
 
 describe("asset tax form previews", () => {
-  it("clears a disposal and scheme when an asset is explicitly excluded", async () => {
+  it("clears the selected scheme when an asset is explicitly excluded", async () => {
     const { createAssetTaxForm, assetTaxRowFromForm } =
       await import("./components/tax-worksheets/asset-tax-form.js");
     const { blankCapitalRow } = await import("./capital-allowance.js");
-    const original = blankCapitalRow(1, 2025);
+    const original = blankCapitalRow(1);
     const form = createAssetTaxForm(original);
     form.treatment = "exclude";
     form.note = "Outside the scope of this tax computation";
-    form.disposed = true;
     form.schemeId = "999";
     expect(assetTaxRowFromForm(original, form, 2025, [])).toMatchObject({
       treatment: "exclude",
       schemeId: null,
-      disposal: null,
     });
   });
 });
@@ -175,19 +173,17 @@ describe("simplified asset tax workings", () => {
     const { createAssetTaxForm, assetTaxRowFromForm } =
       await import("./components/tax-worksheets/asset-tax-form.js");
     const { blankCapitalRow } = await import("./capital-allowance.js");
-    const original = blankCapitalRow(1, 2025);
+    const original = blankCapitalRow(1);
     const form = createAssetTaxForm(original);
     Object.assign(form, {
       treatment: "exclude",
       percentage: "invalid",
       note: "Personal asset",
-      disposed: true,
     });
     form.amounts.qualifyingMinor = "invalid";
     expect(assetTaxRowFromForm(original, form, 2025, [])).toMatchObject({
       treatment: "exclude",
       note: "Personal asset",
-      disposal: null,
       schemeId: null,
     });
   });
@@ -203,7 +199,7 @@ describe("simplified asset tax workings", () => {
     const { createAssetTaxForm, assetTaxRowFromForm } =
       await import("./components/tax-worksheets/asset-tax-form.js");
     const { blankCapitalRow } = await import("./capital-allowance.js");
-    const original = blankCapitalRow(1, 2025);
+    const original = blankCapitalRow(1);
     const form = createAssetTaxForm(original);
     Object.assign(form, {
       treatment: "claim",
@@ -228,9 +224,9 @@ describe("simplified asset tax workings", () => {
     form.schemeId = "999";
     expect(convert).toThrow("Choose a calculation scheme from Tax settings");
   });
-  it("derives new additions once from cost/business use and ignores manual allowance inputs or overrides", async () => {
+  it("derives allowance amounts from scheme rates and business-use qualifying cost", async () => {
     const { form, convert } = await setup();
-    Object.assign(form, { override: true, taxClass: "Unrelated class" });
+    Object.assign(form, { taxClass: "Unrelated class" });
     Object.assign(form.amounts, {
       initialMinor: "invalid hidden amount",
       annualMinor: "99999.00",
@@ -241,7 +237,6 @@ describe("simplified asset tax workings", () => {
       additionsMinor: 400000,
       initialMinor: 80000,
       annualMinor: 40000,
-      schemeOverride: false,
     });
     form.percentage = "60";
     expect(convert()).toMatchObject({
@@ -265,11 +260,13 @@ describe("simplified asset tax workings", () => {
       annualMinor: 40000,
     });
   });
-  it("preserves partial legacy additions instead of treating them as a full new purchase", async () => {
+  it("preserves partial additions instead of treating them as a full new purchase", async () => {
     const { original, createAssetTaxForm } = await setup();
     const retained = {
       ...original,
       treatment: "claim" as const,
+      schemeId: applied.id,
+      appliedScheme: applied,
       qualifyingMinor: 500000,
       businessUseBps: 8000,
       openingResidualMinor: 0,
@@ -282,17 +279,5 @@ describe("simplified asset tax workings", () => {
     expect(form.basisMode).toBe("detailed");
     expect(form.amounts.additionsMinor).toBe("1000.00");
     expect(JSON.stringify(retained)).toBe(before);
-  });
-  it("uses the single remark for a new disposal while preserving existing disposal evidence", async () => {
-    const { form, convert } = await setup();
-    Object.assign(form, {
-      disposed: true,
-      disposalDate: "2025-11-01",
-      proceeds: "2500.00",
-      note: "Reviewed disposal computation",
-    });
-    expect(convert().disposal?.evidence).toBe("Reviewed disposal computation");
-    form.disposalEvidence = "Retained working paper";
-    expect(convert().disposal?.evidence).toBe("Retained working paper");
   });
 });

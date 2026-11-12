@@ -183,34 +183,37 @@ beforeEach(() => {
 afterEach(() => sqlite.close());
 
 describe("worksheet-level draft and completion", () => {
-  it("preserves an explicit manual-total choice for automatically detected assets", () => {
+  it("rejects removed manual allowance operations without changing a worksheet", () => {
     printer();
-    let d = create();
-    expect(d.capital.autoPrepared).toBe(true);
-    d = value(
+    const d = create();
+    const before = state();
+    expect(
       changeCapitalSchedule(ctx(), d.worksheet.id, {
         action: "manual",
         expectedVersion: d.revision.version,
         requestKey: key(),
-        reason: "Use accountant-prepared tax allowance totals",
-      }),
-    );
-    expect(d.capital.active).toBe(false);
-    expect(read(d.worksheet.id).capital.autoPrepared).toBe(false);
-    d = value(
-      saveTaxWorksheet(
-        ctx(),
-        d.worksheet.id,
-        payload(d, {
-          target: "finalised",
-          adjustments: [
-            adjustment(d, { kind: "capital_allowance", amountMinor: 78166 }),
-          ],
-        }),
-      ),
-    );
-    expect(d.totals.resultMinor).toBe(-78166);
-    expect(d.capital.active).toBe(false);
+        reason: "Removed allowance mode",
+      }).ok,
+    ).toBe(false);
+    for (const kind of ["capital_allowance", "allowance_brought_forward"]) {
+      expect(
+        saveTaxWorksheet(
+          ctx(),
+          d.worksheet.id,
+          payload(d, {
+            adjustments: [
+              adjustment(d, {
+                kind,
+                ...(kind === "allowance_brought_forward"
+                  ? { balanceMinor: 5000, originYa: 2024 }
+                  : {}),
+              }),
+            ],
+          }),
+        ).ok,
+      ).toBe(false);
+      expect(state()).toBe(before);
+    }
   });
   it("saves scheme choices and utilisation together, then automatically updates brought-forward balances after an amendment", () => {
     printer();
@@ -609,7 +612,6 @@ describe("worksheet-level draft and completion", () => {
       schemeId: scheme.id,
       appliedScheme: schemeSnapshot(scheme),
       schemeFirstYear: true,
-      schemeOverride: false,
       taxClass: "Machinery",
       businessSource: "Trading",
       businessUseBps: 10000,
@@ -637,14 +639,12 @@ describe("worksheet-level draft and completion", () => {
               evidence: "Custom machinery workings",
             },
             liveAssetHash: detail.capital.liveAssetHash,
-            jurisdiction: "MY",
-            replaceManual: false,
             confirmFirstYearTreatments: true,
           },
         }),
       );
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.reason).toContain("preview");
+      if (!result.ok) expect(result.reason).toContain("scheme calculation");
       expect(state()).toBe(before);
       expect(emitted).toBe(0);
     } finally {
@@ -705,8 +705,6 @@ describe("worksheet-level draft and completion", () => {
               evidence: schedule.evidence,
             },
             liveAssetHash: detail.capital.liveAssetHash,
-            jurisdiction: "MY",
-            replaceManual: false,
             confirmFirstYearTreatments: true,
           },
         }),

@@ -26,12 +26,6 @@ export type AssetTaxForm = {
   amounts: Record<(typeof ASSET_TAX_AMOUNT_FIELDS)[number], string>;
   residualAdjustment: string;
   note: string;
-  disposed: boolean;
-  disposalDate: string;
-  proceeds: string;
-  balancingAllowance: string;
-  balancingCharge: string;
-  disposalEvidence: string;
   schemeId: string;
   firstYear: boolean;
   firstYearMode: FirstYearTreatment["mode"] | "retained";
@@ -87,14 +81,6 @@ export function createAssetTaxForm(
     ) as AssetTaxForm["amounts"],
     residualAdjustment: amountInput(row?.residualAdjustmentMinor ?? 0),
     note: row?.note ?? "",
-    disposed: !!row?.disposal,
-    disposalDate: row?.disposal?.date ?? "",
-    proceeds: amountInput(row?.disposal?.proceedsMinor),
-    balancingAllowance: amountInput(
-      row?.disposal?.balancingAllowanceMinor ?? 0,
-    ),
-    balancingCharge: amountInput(row?.disposal?.balancingChargeMinor ?? 0),
-    disposalEvidence: row?.disposal?.evidence ?? "",
     schemeId: row?.schemeId ? String(row.schemeId) : "",
     firstYear: row?.schemeFirstYear ?? false,
     firstYearMode:
@@ -122,13 +108,10 @@ export function assetTaxRowFromForm(
       ...original,
       treatment: form.treatment,
       note: form.note,
-      effectiveYa: year,
-      disposal: null,
       schemeId: null,
       appliedScheme: undefined,
       schemeFirstYear: false,
       firstYearTreatment: undefined,
-      schemeOverride: false,
     };
   const scheme =
     schemes.find((s) => String(s.id) === form.schemeId) ??
@@ -172,21 +155,9 @@ export function assetTaxRowFromForm(
       true,
     )!,
     note: form.note,
-    effectiveYa: year,
     schemeId: scheme.id,
     schemeFirstYear: form.firstYear,
-    schemeOverride: false,
     appliedScheme: undefined,
-    disposal:
-      form.treatment === "claim" && form.disposed
-        ? {
-            date: form.disposalDate,
-            proceedsMinor: parseTaxAmount(form.proceeds)!,
-            balancingAllowanceMinor: parseTaxAmount(form.balancingAllowance)!,
-            balancingChargeMinor: parseTaxAmount(form.balancingCharge)!,
-            evidence: form.disposalEvidence || form.note,
-          }
-        : null,
   };
   if (form.percentage.trim() && row.businessUseBps === null)
     throw Error(

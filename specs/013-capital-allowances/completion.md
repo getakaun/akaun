@@ -1,87 +1,37 @@
-# Phase 6 — capital allowance schedule
+# Phase 6 — delivery report
 
-**Follow-up:** [Reusable schemes and international foundation](schemes-completion.md) supersedes the original MYR-only/manual-input limitations below. Earlier finalised evidence stays unchanged.
+**Branch:** `codex/capital-allowance-schedule` · **PR:** #72 · **Owner acceptance:** pending.
 
-**Phase:** 6, manual Malaysian capital allowance preparation.
+The tax worksheet now uses scheme-based asset deductions and one worksheet save flow. No release, deployment or real-book migration was performed during development.
 
-**Branch:** `codex/capital-allowance-schedule`, based on main `decc118`.
+## Resulting workflow
 
-**Owner decision:** pending acceptance. No phase 7, deployment or live migration.
+Settings → Tax holds the default jurisdiction and reusable schemes. The worksheet shows relevant registered assets automatically, including matching prior-year opening tax balances. Selecting a scheme shows its calculated allowance immediately. Expand an asset only to adjust necessary basis facts or an exceptional first-year treatment; rates and deduction amounts come from the scheme.
 
-## What changed
+The claim summary separates available allowances from amounts actually used. **Use available** is explicit; opening tax residual and unused allowance balances are different quantities. Worksheet-level **Save draft** retains valid incomplete work and confirms included first-year treatments together. **Finalise worksheet** saves pending work, records review and locks a completed period in one action when the actor has all required permissions. Separate reviewers and finalisers retain their existing authority limits.
 
-Capital allowances live inside the existing Tax worksheet. Purchase registration remains unchanged. Prepare schedule captures registered assets acquired by the accounting period end, with eligibility, business use and allowance amounts initially unconfirmed. The compact desktop table and mobile list show opening tax residual, IA/AA, closing residual and review state. Selecting an asset opens its manual workings, with a live arithmetic preview. Allowance use and evidence has a shared working-paper reference and utilisation by business source and origin YA. Asset detail links to retained annual schedules for tax readers.
+Editable draft figures update from bookkeeping and asset events. Untouched inputs refresh automatically; edited inputs are protected. Changed-source annual corrections remain unresolved until replaced or withdrawn, and source hashes protect unsaved corrections. Concurrent saves cause a version conflict rather than overwriting edits. Finalised figures remain fixed, and later changes require an amendment. CSV and printable HTML use saved evidence; save a draft before exporting current changes.
 
-Users enter qualifying expenditure before business use; opening residual, qualifying additions, IA/AA and residual adjustments are already business-use-adjusted MYR amounts. The basis-point check uses integer arithmetic and halves away from zero; it does not multiply an accountant-entered allowance twice. No asset type implies tax eligibility, and no Malaysian statutory rate, disposal rule or utilisation ordering is inferred. Tax class, effective YA and individual/shared references are retained with calculation version 1. Unknown inputs remain Needs review.
+The asset section has no Manage schemes, Asset register or Create scheme hyperlinks, and no manual-totals switch. General tax adjustments and business losses remain available outside asset deductions.
 
-Tax residual expenditure and unabsorbed capital allowances are distinct. Current-year allowances include any manually reviewed balancing allowance. Amounts used, including zero, are separately confirmed. Brought-forward balances are attributed to business source and origin YA; current-year amounts reconcile to asset workings. Only utilisation decreases the preparatory tax result; balancing charges increase it. Book depreciation keeps its existing add-back once. These writes never call ledger posting services.
+## Upgrade impact
 
-Preparing or reactivating an asset schedule previews overlapping phase 5 manual capital allowance and brought-forward allowance entries and requires explicit confirmation to withdraw them with retained history. Database and application guards prevent overlapping allowance claims. Switching back to manual totals is explicit and preserves the inactive schedule. Other adjustments and brought-forward losses are unaffected. Existing phase 5 worksheets stay manual unless deliberately changed.
+Migration **0049** deliberately clears all pre-release capital schedules and affected command receipts and removes manual current-year/brought-forward allowance adjustment rows. Affected latest tax worksheet revisions return to draft with an increased version and cleared review/finalisation markers; a system audit entry explains the reset. Owners must select asset schemes again.
 
-The existing Draft -> Reviewed -> Finalised lifecycle is reused, with no extra per-asset approval process. Mutations return the worksheet to Draft. Server transactions revalidate worksheet versions, asset/purchase evidence and predecessor dependencies at review/finalisation. Changed assets require an explicit capture and return affected workings to Needs review. Finalised source divergence is flagged without modifying evidence. Amendments copy schedule evidence into a new revision. Multi-year dependency checks detect amendments anywhere in the carried-forward chain.
+The migration preserves scheme definitions, accounting records, movements, assets, depreciation, ordinary adjustments, business losses and existing audit history. It does not convert old manually entered amounts into scheme calculations. Older retained tax revisions are not made editable; unsupported pre-release deduction evidence is removed from them as part of the authorised cleanup. Do not roll back to an application expecting the removed manual schema; restore a development backup or use the updated application.
 
-Bring forward previews the most recent eligible preceding worksheet only when its latest revision and dependencies are finalised. It copies opening asset residuals and unabsorbed balances independently. Annual allowances and current-year utilisation require fresh review; no automatic yearly claim is created. Tax-disposed assets roll forward as excluded. Full tax disposal captures date, proceeds, evidence and reviewed balancing allowance/charge, removes the remaining tax residual and visibly explains that book disposal/depreciation need separate accounting work.
+## Owner walkthrough
 
-CSV and printable HTML contain all retained tax inputs, asset/purchase evidence, utilisation, calculations and references. Finalised exports do not need live asset/ledger reads. Existing phase 5 exports with no schedule remain byte-identical to the main baseline. Activity summaries use human-readable schedule descriptions; full evidence stays in append-only audit entries.
+1. In Settings → Tax, select the jurisdiction and create an appropriate custom scheme. Confirm its rules separately before relying on it for filing.
+2. Open a worksheet, select a scheme for each claimed asset and check qualifying cost, business use and first-year treatment.
+3. Enter utilisation in the claim summary, save a draft, and confirm reopening retains the worksheet.
+4. Change a bookkeeping record and check the draft updates while local edits remain protected.
+5. Resolve readiness items and finalise. Change another record and confirm the completed figures stay fixed and an amendment is offered.
 
-## Changed files and migration
+## Limits and verification
 
-- New shared rules: `src/lib/capital-allowance.ts`.
-- New retained evidence/query/export module: `src/lib/server/queries/capital-allowances.ts`.
-- Existing tax application/query and `tax-worksheet.ts`: new commands, totals, amendments, review/finalisation guards and exports.
-- New `CapitalAllowances.svelte` and `CapitalAllowanceSheet.svelte`; integration in TaxWorksheetDetail/Sheet and AssetDetail; tax/asset loaders and permission descriptions.
-- New `POST /api/tax/[id]/capital-allowances`; existing Tax SSE publishes committed signals. No new navigation, OAuth scopes or MCP tools.
-- `src/lib/components/audit/audit-format.ts`: readable schedule history summaries.
-- `drizzle/0047_capital_allowance_schedules.sql`, schema and metadata: `tax_capital_schedules` (revision-owned retained JSON) and append-only command receipts. SQLite triggers retain history, prevent finalised evidence edits/inserts/deletes and refuse overlapping manual claims. Existing tax snapshot format is unchanged.
-- New capital allowance application and migration regression suites.
+This is preparatory tax working software, not tax filing or a certified national tax engine. UK pools/AIA, US MACRS/Section 179/bonus, statutory utilisation limits/order, prorating, special incentives and disposal/balancing allowance or charge calculations are unsupported. Book asset disposal remains a separate accounting operation.
 
-Migration adds empty tables/constraints only. It changes no accounts, journals, source classifications, assets, depreciation, settings or tax worksheet evidence. No eligibility or historical claim backfill occurs. All development used in-memory or temporary fixture books through the safe preload; no configured database or receipt store was opened.
+**228 tests passed across 15 files**, including migration 0049 reset/rollback, scheme arithmetic, first-year history, master saves, permissions, live staging, records and fixed assets. Type checking reports zero errors/warnings. Changed-file ESLint/format and isolated server rendering pass. Repository-wide lint still stops on its existing 231-file formatting backlog. No configured application, real book or deployment was opened; browser/mobile checks remain with the owner under repository policy.
 
-## Verification
-
-- Before changes: **25 phase 5 tests passed**.
-- Full phase 5 regression manifest plus the new capital/migration suites: **1,742 tests passed across 115 files**, 2 snapshots, 16,846 assertions.
-- Final focused capital/migration/annual-tax/activity run after adding multi-source and transitive-dependency cases: **43 tests passed across 4 files**, 205 assertions. These overlap the full run and are not additive totals.
-- Command: `bun test --timeout 20000 --preload ./scripts/mcp-test-preload.ts <files from specs/012-annual-tax/validation-files.txt> src/lib/server/application/capital-allowances.spec.ts src/lib/server/db/migration-0047.spec.ts`.
-- Final focused command: `bun test --timeout 20000 --preload ./scripts/mcp-test-preload.ts src/lib/server/application/capital-allowances.spec.ts src/lib/server/db/migration-0047.spec.ts src/lib/server/application/tax-worksheets.spec.ts src/lib/components/audit/audit-time.spec.ts`.
-- Type checking reports zero errors/warnings; changed-file ESLint and Prettier checks pass. Repository-wide formatting retains the existing 231-file backlog; ESLint retains 59 existing errors outside this change. No full-repository lint pass is claimed.
-- Drizzle generation: no pending schema differences. Migration tests preserve phase 1–5 financial/closing/finalised evidence in modern and legacy SQLite rename modes, reject invalid schedule envelopes, enforce finalised/history locks and verify restart idempotence.
-- Isolated server rendering exercised the manual/active schedule and settings/manual/refresh/prepare drawers without starting the application. Browser interaction and visual checks remain with the owner.
-- An isolated comparison against the original main export functions confirmed byte-identical CSV and HTML for a phase 5 worksheet without a schedule.
-
-## Financial reconciliation evidence
-
-An illustrative manual fixture has RM12,000 qualifying expenditure at 100% business use, RM2,400 entered IA and RM1,200 entered AA. These are test inputs, not prescribed tax rates. Tax residual closes at RM8,400. Reviewed utilisation of RM3,000 reduces the preparatory result by RM3,000 and leaves RM600 unabsorbed allowances. Accounts, journals, movements, settlements, reconciliation allocations, settings, P&L, balance sheet and cash-flow outputs remain byte-identical.
-
-Rollover independently brings RM8,400 asset tax residual and RM600 unabsorbed allowances into the next YA, with no assumed new AA or utilisation. A separately reviewed RM600 balancing charge increases the result without changing the GL. Safe-integer overflow, duplicate claims, stale writes and invalid inputs are refused. An injected audit failure rolls back manual-entry withdrawal, schedule, command receipt, worksheet version and notifications together. Finalised exports remain unchanged after asset edits and amendment creation.
-
-## Owner walkthrough / UI locations
-
-Use an isolated MYR test book with registered assets and a completed annual period. Grant tax.read/update/review and explicitly tax.finalise/amend; grant tax.create for new worksheets. Asset/record permissions remain separate.
-
-1. Open Tax -> a worksheet -> Capital allowances. Existing phase 5 manual totals remain active. Choose Prepare schedule. New rows show Needs review and do not imply eligibility. No source or financial statement changes.
-2. If manual allowance claims already exist, inspect each amount/balance in the preview. The action refuses until Replace these manual allowance entries is selected. Save with a reason. Old entries remain visible as withdrawn; losses and other adjustments remain.
-3. Open an asset row. Confirm tax class, named business source, qualifying expenditure, business use and reviewed opening/addition/IA/AA amounts. Inspect the closing-residual preview, enter notes as appropriate and save. A missing amount/reference or unexplained adjustment prevents annual review.
-4. Open Allowance use and evidence. Add the common working-paper reference, enter this-year use for every source (including zero), and optionally add earlier-YA balances. Check available versus used versus unabsorbed amounts. Tax residual is shown separately in the asset table.
-5. Verify the summary bridge and export CSV / Print-PDF. Mark the annual worksheet reviewed and finalise once. Attempts to edit schedule or insert overlapping claims through the API/SQL refuse. Tax updates have not posted journals or modified bank reconciliation.
-6. Change an open source purchase or asset detail through its authorised workflow. The tax worksheet flags stale evidence. In a draft/amendment, Review updated asset evidence captures the current sources, resets affected rows and clears current-year utilisation for confirmation. A finalised revision keeps its original exports.
-7. Create the next annual worksheet and choose Bring forward YA. Inspect opening asset residuals and unabsorbed balances before confirming. AA and current-year use remain unreviewed. Amend an earlier year and confirm that dependent schedules are flagged until their predecessor chain is reviewed again.
-8. In an asset's optional disposal section, enter a full tax disposal and reviewed balancing allowance or charge. Check zero closing asset tax residual, the tax bridge and the visible notice to complete separate book disposal/depreciation work. No sale or GL journal is created.
-9. Choose Use manual totals in an editable revision. The schedule stays visible but contributes zero to the bridge; replacement manual entries can then be added. Reactivation again previews/withdraws overlapping manual allowances.
-10. Check read-only users, retained revisions and asset-history links. On desktop and phone widths, check long names/references, table/drawer scrolling, keyboard focus, required inputs, pending/error feedback, unsaved-change warnings and print output.
-
-**Screenshots / browser checks:** owner validation pending. `CLAUDE.md` Verification Policy says “Do not test the UI in a browser” and “Do not start the dev server to check your work.” No configured application was started.
-
-## Known limitations / deferred work
-
-- Manual preparatory schedule only, MYR books. No filing, tax payable, statutory eligibility/rate engine, automatic utilisation ordering, automatic claims or unattended rollover.
-- No special/accelerated allowances, hire purchase, partial disposal, transfers between business sources or complex incentives. Full tax disposal still needs separately reviewed book accounting; this feature does not claim a complete book asset lifecycle.
-- Tax class/business source are explicit reviewed text labels, not a statutory classification engine. Use consistent business-source names. Evidence is reference text and existing purchase-document links; no new attachment uploader.
-- Changes in business use, unusual tax residual adjustments and legacy opening balances require accountant evidence. Rollover is a reviewed starting point, not proof of eligibility or a substitute for statutory review.
-- Snapshot/audit history prioritises reproducibility. Large-book performance and broader release hardening remain phase 7.
-
-## Rollback
-
-Revert feature code while retaining migration 0047, schedule/receipt rows, finalised worksheet revisions and audit. Do not delete financial or tax evidence to roll back the UI. No phase 6 GL journals exist to reverse. A pre-feature backup restore would discard tax evidence and requires the established deliberate recovery process; it is not automatic rollback.
-
-**Owner decision:** APPROVE / REQUEST CHANGES / HOLD.
+See [schemes-completion.md](schemes-completion.md) for calculation and structure details.

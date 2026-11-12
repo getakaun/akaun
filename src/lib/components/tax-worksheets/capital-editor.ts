@@ -65,7 +65,7 @@ export function editorRows(
 }
 export function editorUses(
   schedule: CapitalSchedule,
-  year = schedule.rows[0]?.effectiveYa,
+  year?: number,
 ): EditorUse[] {
   return schedule.utilisation.map((u) => ({
     source: u.businessSource,
@@ -127,11 +127,7 @@ export function editorPreview(
         original.firstYearTreatment.historyHash !==
           firstYearContexts[original.assetId]?.historyHash
       ) &&
-      !(
-        original.schemeId &&
-        original.annualMinor === null &&
-        !original.schemeOverride
-      )
+      !(original.schemeId && original.annualMinor === null)
     )
       return original;
     try {
@@ -166,12 +162,7 @@ export function editorPreview(
     evidence: remark,
     utilisation: [],
   };
-  const available = capitalTotals(
-    base,
-    period.ya,
-    period.dateFrom,
-    period.dateTo,
-  );
+  const available = capitalTotals(base, period.ya);
   const sources = new Set([
     ...available.groups.map((g) => g.businessSource),
     ...uses.map((u) => u.source),
@@ -198,21 +189,14 @@ export function editorPreview(
     })),
   ];
   const candidate = {
-    jurisdiction:
-      schedule.jurisdiction ??
-      (schedule.calculationVersion === 1 ? "MY" : null),
+    jurisdiction: schedule.jurisdiction ?? null,
     rows: converted,
     evidence: remark,
     utilisation,
   };
   const checked = capitalInputSchema.safeParse(candidate);
   const staged = { ...base, ...candidate };
-  const totals = capitalTotals(
-    staged,
-    period.ya,
-    period.dateFrom,
-    period.dateTo,
-  );
+  const totals = capitalTotals(staged, period.ya);
   if (!checked.success)
     errors.push(...checked.error.issues.map((i) => i.message));
   return { input: candidate, schedule: staged, totals, errors };

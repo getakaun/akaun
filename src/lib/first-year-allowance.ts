@@ -4,7 +4,7 @@ import type { AssetTaxSchemeDefinition } from "./asset-tax-scheme.js";
 export class FirstYearAllowanceError extends Error {}
 export const firstYearTreatmentSchema = z
   .object({
-    version: z.union([z.literal(1), z.literal(2)]),
+    version: z.literal(2),
     confirmation: z.enum(["pending_save", "worksheet_save"]).optional(),
     mode: z.enum(["auto", "include", "exclude"]),
     included: z.boolean(),
@@ -29,7 +29,6 @@ export type FirstYearRecord = {
   ya: number;
   revisionId: number;
   status: string;
-  active: boolean;
   qualifyingMinor: number | null;
   businessUseBps: number | null;
   additionsMinor: number | null;
@@ -85,7 +84,6 @@ export function firstYearDecision(
     );
   const prior = context.records.filter(
     (r) =>
-      r.active &&
       r.status === "finalised" &&
       (r.jurisdiction === undefined ||
         r.jurisdiction === definition.jurisdiction) &&
@@ -169,8 +167,8 @@ export function resolveFirstYear(
   context: FirstYearContext | undefined,
   dateFrom: string,
   dateTo: string,
-  note: string,
-  confirmation?: "preview" | "worksheet_save",
+  _note: string,
+  confirmation: "preview" | "worksheet_save" = "preview",
 ): FirstYearTreatment {
   const automatic = firstYearDecision(
     definition,
@@ -199,28 +197,21 @@ export function resolveFirstYear(
       throw new FirstYearAllowanceError(
         "This scheme and expenditure have no first-year allowance to include.",
       );
-    if (!confirmation && automatic.included !== true && note.trim().length < 10)
-      throw new FirstYearAllowanceError(
-        "Add a remark explaining why this is eligible, previously unclaimed expenditure (at least 10 characters).",
-      );
     included = true;
     reason =
       automatic.included === true
         ? automatic.reason
-        : confirmation
-          ? `First-year inclusion selected for worksheet confirmation. ${automatic.reason}`
-          : `First-year treatment confirmed: ${note.trim()}`;
+        : `First-year inclusion selected for worksheet confirmation. ${automatic.reason}`;
   }
-  const needsConfirmation =
-    !!confirmation && (automatic.included === null || mode !== "auto");
-  if (included === null && confirmation) {
+  const needsConfirmation = automatic.included === null || mode !== "auto";
+  if (included === null) {
     included =
       definition.firstYearRateBps > 0 && (basis.additionsMinor ?? 0) > 0;
     reason = `Calculated from declared this-year qualifying additions. ${automatic.reason}`;
   }
   if (included === null) throw new FirstYearAllowanceError(automatic.reason);
   return {
-    version: confirmation ? 2 : 1,
+    version: 2,
     ...(needsConfirmation
       ? {
           confirmation:

@@ -147,7 +147,7 @@ const statements = () =>
     cash: cashFlowReport(db, "2025-01-01", "2025-12-31"),
     ledger: db.select().from(ledgerMovements).all(),
   });
-function manual(
+function adjustment(
   d: ReturnType<typeof create>,
   overrides: Record<string, unknown> = {},
 ) {
@@ -395,7 +395,9 @@ describe("annual tax preparation", () => {
     d = finalise(d);
     const csv = toCsv(taxWorksheetCsv(d));
     const html = taxWorksheetHtml(d);
-    expect(addTaxAdjustment(ctx(), d.worksheet.id, manual(d)).ok).toBe(false);
+    expect(addTaxAdjustment(ctx(), d.worksheet.id, adjustment(d)).ok).toBe(
+      false,
+    );
     expect(
       changeTaxWorksheet(ctx(), d.worksheet.id, {
         action: "withdraw",
@@ -508,7 +510,9 @@ describe("annual tax preparation", () => {
     const listener = () => emitted++;
     taxWorksheetEvents.on("changed", listener);
     try {
-      expect(addTaxAdjustment(ctx(), d.worksheet.id, manual(d)).ok).toBe(false);
+      expect(addTaxAdjustment(ctx(), d.worksheet.id, adjustment(d)).ok).toBe(
+        false,
+      );
       expect(emitted).toBe(0);
     } finally {
       taxWorksheetEvents.off("changed", listener);
@@ -516,15 +520,15 @@ describe("annual tax preparation", () => {
     expect(db.select().from(auditLog).all()).toHaveLength(auditCount);
     expect(db.select().from(taxWorksheetAdjustments).all()).toHaveLength(1);
   });
-  it("distinguishes balances from utilisation and prevents duplicate claims", () => {
+  it("distinguishes loss balances from utilisation and refuses manual allowance totals", () => {
     expense();
     let d = create();
     expect(
       addTaxAdjustment(
         ctx(),
         d.worksheet.id,
-        manual(d, {
-          kind: "allowance_brought_forward",
+        adjustment(d, {
+          kind: "loss_brought_forward",
           originYa: 2024,
           balanceMinor: 500,
           amountMinor: 600,
@@ -535,21 +539,21 @@ describe("annual tax preparation", () => {
       addTaxAdjustment(
         ctx(),
         d.worksheet.id,
-        manual(d, {
-          kind: "allowance_brought_forward",
+        adjustment(d, {
+          kind: "loss_brought_forward",
           originYa: 2024,
           balanceMinor: 5000,
           amountMinor: 600,
         }),
       ),
     );
-    expect(d.totals.manualMinor).toBe(-600);
+    expect(d.totals.adjustmentMinor).toBe(-600);
     expect(
       addTaxAdjustment(
         ctx(),
         d.worksheet.id,
-        manual(d, {
-          kind: "allowance_brought_forward",
+        adjustment(d, {
+          kind: "loss_brought_forward",
           originYa: 2024,
           balanceMinor: 5000,
           amountMinor: 200,
@@ -560,21 +564,21 @@ describe("annual tax preparation", () => {
       addTaxAdjustment(
         ctx(),
         d.worksheet.id,
-        manual(d, {
+        adjustment(d, {
           kind: "loss_brought_forward",
           originYa: 2025,
           balanceMinor: 5000,
         }),
       ).ok,
     ).toBe(false);
-    d = value(
+    expect(
       addTaxAdjustment(
         ctx(),
         d.worksheet.id,
-        manual(d, { kind: "capital_allowance", amountMinor: 1000 }),
-      ),
-    );
-    expect(d.totals.manualMinor).toBe(-1600);
+        adjustment(d, { kind: "capital_allowance", amountMinor: 1000 }),
+      ).ok,
+    ).toBe(false);
+    expect(d.totals.adjustmentMinor).toBe(-600);
   });
   it("retains signed line rounding and one depreciation add-back, and void pairs cancel", () => {
     const r = expense();
@@ -634,7 +638,7 @@ describe("annual tax preparation", () => {
       addTaxAdjustment(
         ctx(),
         d.worksheet.id,
-        manual(d, {
+        adjustment(d, {
           direction: "increase",
           amountMinor: Number.MAX_SAFE_INTEGER,
         }),
@@ -645,7 +649,7 @@ describe("annual tax preparation", () => {
       addTaxAdjustment(
         ctx(),
         d.worksheet.id,
-        manual(d, { direction: "increase", amountMinor: 1000000 }),
+        adjustment(d, { direction: "increase", amountMinor: 1000000 }),
       ).ok,
     ).toBe(false);
     expect(db.select().from(auditLog).all()).toHaveLength(count);
@@ -708,8 +712,8 @@ describe("annual tax preparation", () => {
       { ...base, percentageBps: 1.5 },
       { ...base, treatment: "requires_review" },
       { ...base, sourceMovementId: 999999 },
-      manual(d, { amountMinor: 0.5 }),
-      manual(d, { amountMinor: Number.MAX_SAFE_INTEGER + 1 }),
+      adjustment(d, { amountMinor: 0.5 }),
+      adjustment(d, { amountMinor: Number.MAX_SAFE_INTEGER + 1 }),
     ]) {
       expect(addTaxAdjustment(ctx(), d.worksheet.id, bad).ok).toBe(false);
     }
@@ -765,10 +769,10 @@ describe("annual tax preparation", () => {
     );
     expect(amended.revision.version).toBeGreaterThan(final.revision.version);
     expect(
-      addTaxAdjustment(ctx(), initial.worksheet.id, manual(initial)).ok,
+      addTaxAdjustment(ctx(), initial.worksheet.id, adjustment(initial)).ok,
     ).toBe(false);
     expect(
-      addTaxAdjustment(ctx(), initial.worksheet.id, manual(final)).ok,
+      addTaxAdjustment(ctx(), initial.worksheet.id, adjustment(final)).ok,
     ).toBe(false);
     expect(
       value(readTaxWorksheet(ctx(), initial.worksheet.id)).adjustments,

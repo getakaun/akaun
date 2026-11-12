@@ -8,13 +8,13 @@ import {
 } from "./worksheet-draft.js";
 import type { TaxWorksheetDetail as Detail } from "$lib/server/queries/tax-worksheets.js";
 
-const manual: StagedAdjustment = {
-  kind: "capital_allowance",
+const adjustment: StagedAdjustment = {
+  kind: "other",
   direction: "decrease",
   amountMinor: 1000,
   balanceMinor: 0,
   originYa: null,
-  reason: "Reviewed manual tax allowance",
+  reason: "Reviewed tax adjustment",
   evidence: "Working paper",
   requestKey: "f5b05d41-70a9-4cf5-a5b3-64580f2ca678",
   expectedVersion: 1,
@@ -39,22 +39,33 @@ const detail = {
       notes: [],
     },
   },
-  adjustments: [{ ...manual, id: 3, revisionId: 1, withdrawnAt: null }],
+  adjustments: [{ ...adjustment, id: 3, revisionId: 1, withdrawnAt: null }],
   capital: { active: false, totals: null },
 } as unknown as Detail;
 
 describe("worksheet draft projection", () => {
-  it("replaces manual totals in the preview without subtracting both allowance claims", () => {
+  it("combines staged tax adjustments and linked asset deductions without altering saved inputs", () => {
     const capital = { totals: { effectMinor: -3000 } } as CapitalDraft;
     expect(draftTotals(detail, [], [], null).resultMinor).toBe(9000);
-    expect(draftTotals(detail, [], [], capital, true).resultMinor).toBe(7000);
-    expect(stagedAdjustments(detail, [], [], true)[0].withdrawnAt).toBe(
+    expect(draftTotals(detail, [], [], capital).resultMinor).toBe(6000);
+    const foreign = {
+      ...detail,
+      capital: { ...detail.capital, currencyMismatch: true },
+    };
+    expect(draftTotals(foreign, [], [], capital).resultMinor).toBe(9000);
+    const withdrawals = [
+      { adjustmentId: 3, reason: "Withdraw duplicated annual adjustment" },
+    ];
+    expect(draftTotals(detail, [], withdrawals, capital).resultMinor).toBe(
+      7000,
+    );
+    expect(stagedAdjustments(detail, [], withdrawals)[0].withdrawnAt).toBe(
       "pending",
     );
     expect(detail.adjustments[0].withdrawnAt).toBeNull();
   });
   it("flags only edited expense decisions whose captured accounting facts changed or disappeared", () => {
-    const staged = [source, manual];
+    const staged = [source, adjustment];
     expect(
       changedStagedSources(
         staged,
@@ -70,6 +81,6 @@ describe("worksheet draft projection", () => {
       ),
     ).toEqual([source]);
     expect(changedStagedSources(staged, { "4": "old" }, {})).toEqual([source]);
-    expect(staged).toEqual([source, manual]);
+    expect(staged).toEqual([source, adjustment]);
   });
 });

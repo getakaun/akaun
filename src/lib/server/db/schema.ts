@@ -1676,13 +1676,7 @@ export const taxWorksheetAdjustments = sqliteTable(
       .notNull()
       .references(() => taxWorksheetRevisions.id, { onDelete: "restrict" }),
     kind: text("kind")
-      .$type<
-        | "source"
-        | "other"
-        | "capital_allowance"
-        | "allowance_brought_forward"
-        | "loss_brought_forward"
-      >()
+      .$type<"source" | "other" | "loss_brought_forward">()
       .notNull(),
     sourceMovementId: integer("source_movement_id"),
     percentageBps: integer("percentage_bps"),
@@ -1710,18 +1704,13 @@ export const taxWorksheetAdjustments = sqliteTable(
     uniqueIndex("tax_active_source_correction")
       .on(t.revisionId, t.sourceMovementId)
       .where(sql`"withdrawn_at" IS NULL AND "kind" = 'source'`),
-    uniqueIndex("tax_current_allowance_claim")
-      .on(t.revisionId)
-      .where(sql`"withdrawn_at" IS NULL AND "kind" = 'capital_allowance'`),
     uniqueIndex("tax_carry_origin")
       .on(t.revisionId, t.kind, t.originYa)
-      .where(
-        sql`"withdrawn_at" IS NULL AND "kind" IN ('allowance_brought_forward', 'loss_brought_forward')`,
-      ),
+      .where(sql`"withdrawn_at" IS NULL AND "kind" = 'loss_brought_forward'`),
     index("tax_adjustment_revision").on(t.revisionId),
     check(
       "tax_adjustment_kind",
-      sql`"kind" IN ('source', 'other', 'capital_allowance', 'allowance_brought_forward', 'loss_brought_forward')`,
+      sql`"kind" IN ('source', 'other', 'loss_brought_forward')`,
     ),
     check(
       "tax_adjustment_direction",
@@ -1732,8 +1721,8 @@ export const taxWorksheetAdjustments = sqliteTable(
       sql`typeof("amount_minor") = 'integer' AND "amount_minor" BETWEEN 0 AND 9007199254740991 AND typeof("balance_minor") = 'integer' AND "balance_minor" BETWEEN 0 AND 9007199254740991`,
     ),
     check(
-      "tax_manual_claim",
-      sql`coalesce("kind" = 'source' OR ("kind" = 'other' AND "amount_minor" > 0 AND "balance_minor" = 0 AND "origin_ya" IS NULL) OR ("kind" = 'capital_allowance' AND "direction" = 'decrease' AND "amount_minor" > 0 AND "balance_minor" = 0 AND "origin_ya" IS NULL) OR ("kind" IN ('allowance_brought_forward', 'loss_brought_forward') AND "direction" = 'decrease' AND typeof("origin_ya") = 'integer' AND "origin_ya" BETWEEN 2000 AND 9999 AND "amount_minor" <= "balance_minor"), 0)`,
+      "tax_adjustment_values",
+      sql`coalesce("kind" = 'source' OR ("kind" = 'other' AND "amount_minor" > 0 AND "balance_minor" = 0 AND "origin_ya" IS NULL) OR ("kind" = 'loss_brought_forward' AND "direction" = 'decrease' AND typeof("origin_ya") = 'integer' AND "origin_ya" BETWEEN 2000 AND 9999 AND "amount_minor" <= "balance_minor"), 0)`,
     ),
     check(
       "tax_adjustment_source",
@@ -1742,23 +1731,21 @@ export const taxWorksheetAdjustments = sqliteTable(
   ],
 );
 
-/** Revision-owned manual tax evidence; never a source of book depreciation journals. */
+/** Revision-owned scheme calculations; never a source of book depreciation journals. */
 export const taxCapitalSchedules = sqliteTable(
   "tax_capital_schedules",
   {
     revisionId: integer("revision_id")
       .primaryKey()
       .references(() => taxWorksheetRevisions.id, { onDelete: "restrict" }),
-    active: integer("active", { mode: "boolean" }).notNull(),
     evidence: text("evidence", { mode: "json" })
       .$type<CapitalSchedule>()
       .notNull(),
   },
   () => [
-    check("tax_capital_active", sql`"active" IN (0, 1)`),
     check(
       "tax_capital_json",
-      sql`CASE WHEN json_valid("evidence") THEN coalesce((json_extract("evidence", '$.calculationVersion') = 1 AND json_extract("evidence", '$.currency') = 'MYR' OR json_extract("evidence", '$.calculationVersion') = 2 AND json_type("evidence", '$.currency') = 'text' AND length(json_extract("evidence", '$.currency')) = 3) AND json_type("evidence", '$.rows') = 'array' AND json_type("evidence", '$.assets') = 'array' AND json_type("evidence", '$.utilisation') = 'array', 0) ELSE 0 END`,
+      sql`CASE WHEN json_valid("evidence") THEN coalesce(json_extract("evidence", '$.calculationVersion') = 2 AND json_type("evidence", '$.currency') = 'text' AND length(json_extract("evidence", '$.currency')) = 3 AND json_type("evidence", '$.rows') = 'array' AND json_type("evidence", '$.assets') = 'array' AND json_type("evidence", '$.utilisation') = 'array', 0) ELSE 0 END`,
     ),
   ],
 );

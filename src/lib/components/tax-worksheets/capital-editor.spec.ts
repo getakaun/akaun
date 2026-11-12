@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   blankCapitalRow,
-  capitalTotals,
   type CapitalSchedule,
 } from "$lib/capital-allowance.js";
 import type { AppliedAssetTaxScheme } from "$lib/asset-tax-scheme.js";
@@ -36,7 +35,7 @@ function fixture(): CapitalSchedule {
     evidence: "",
     predecessor: null,
     utilisation: [],
-    rows: [blankCapitalRow(1, 2025)],
+    rows: [blankCapitalRow(1)],
     assets: [
       {
         assetId: 1,
@@ -75,7 +74,7 @@ describe("inline asset deduction staging", () => {
     oldRows[0].form.percentage = "75";
     const incoming = {
       ...s,
-      rows: [...s.rows, blankCapitalRow(2, 2025)],
+      rows: [...s.rows, blankCapitalRow(2)],
       assets: [
         { ...s.assets[0], costMinor: 600000 },
         { ...s.assets[0], assetId: 2, name: "New printer", costMinor: 100000 },
@@ -193,25 +192,19 @@ describe("inline asset deduction staging", () => {
     ]);
     expect(result.totals.usedMinor).toBe(10000);
   });
-  it("preserves an untouched historical override while editing another asset", () => {
+  it("retains an untouched scheme calculation while editing its worksheet", () => {
     const { preview } = draft();
     const s = preview().schedule;
-    s.rows[0] = {
-      ...s.rows[0],
-      schemeOverride: true,
-      initialMinor: 0,
-      annualMinor: 12300,
-      note: "Reviewed historical override",
-    };
     const result = editorPreview(
       s,
       editorRows(s, period),
       [scheme],
       editorUses(s),
-      "",
+      "Worksheet remark",
       period,
     );
     expect(result.input.rows[0]).toEqual(s.rows[0]);
+    expect(result.input.evidence).toBe("Worksheet remark");
   });
   it("does not drop a claim when its business source is removed", () => {
     const { rows, preview } = draft();
@@ -247,12 +240,5 @@ describe("inline asset deduction staging", () => {
     expect(() => preview([{ ...use, earlier: true }])).toThrow(
       "before this tax year",
     );
-  });
-  it("retains the reference requirement when interpreting original version-1 workings", () => {
-    const s = fixture();
-    s.calculationVersion = 1;
-    expect(
-      capitalTotals(s, 2025, period.dateFrom, period.dateTo).problems,
-    ).toContain("Add the shared accountant working-paper reference.");
   });
 });

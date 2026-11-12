@@ -15,10 +15,10 @@
   import {
     formatTaxMinor,
     taxMoneyMinor,
-    taxManualKinds,
-    taxManualLabels,
+    taxAdjustmentKinds,
+    taxAdjustmentLabels,
     safeTaxSum,
-    type TaxManualKind,
+    type TaxAdjustmentKind,
   } from "$lib/tax-worksheet.js";
   import {
     taxFormValues,
@@ -37,7 +37,7 @@
     onsaved,
     onstage,
   }: {
-    mode: "create" | "source" | "manual" | "refresh" | "amend" | "withdraw";
+    mode: "create" | "source" | "adjustment" | "refresh" | "amend" | "withdraw";
     detail?: TaxWorksheetDetail | null;
     line?: TaxWorksheetDetail["totals"]["lines"][number] | null;
     adjustmentId?: number | null;
@@ -68,7 +68,7 @@
         : (line.effectivePercentageBps / 100).toFixed(2),
     ),
   );
-  let kind = $state<TaxManualKind>("other");
+  let kind = $state<TaxAdjustmentKind>("other");
   let direction = $state<"increase" | "decrease">("decrease");
   let amount = $state("");
   let balance = $state("");
@@ -111,9 +111,7 @@
       originYa,
     ]) !== initialForm,
   );
-  const carry = $derived(
-    kind === "allowance_brought_forward" || kind === "loss_brought_forward",
-  );
+  const carry = $derived(kind === "loss_brought_forward");
   const values = $derived(taxFormValues(treatment, percentage));
   const nextAddBack = $derived(
     source &&
@@ -136,7 +134,7 @@
   const titles = {
     create: "New annual worksheet",
     source: "Change annual treatment",
-    manual: "Add tax adjustment",
+    adjustment: "Add tax adjustment",
     refresh: "Refresh accounting figures",
     amend: "Create amendment",
     withdraw: "Withdraw adjustment",
@@ -192,7 +190,7 @@
         evidence,
       };
       endpoint += "/adjustments";
-    } else if (mode === "manual") {
+    } else if (mode === "adjustment") {
       const minor = taxMoneyMinor(amount);
       const balanceMinor = carry ? taxMoneyMinor(balance) : 0;
       if (minor === null || balanceMinor === null) {
@@ -217,7 +215,7 @@
         ...(mode === "withdraw" ? { adjustmentId } : {}),
       };
     if (mode !== "create") payload.expectedVersion = initial!.revision.version;
-    if (["create", "source", "manual", "amend"].includes(mode)) {
+    if (["create", "source", "adjustment", "amend"].includes(mode)) {
       const fingerprint = JSON.stringify(payload);
       if (fingerprint !== retryPayload) {
         retryPayload = fingerprint;
@@ -225,10 +223,10 @@
       }
       payload.requestKey = retryKey;
     }
-    if (onstage && ["source", "manual", "withdraw"].includes(mode)) {
+    if (onstage && ["source", "adjustment", "withdraw"].includes(mode)) {
       if (
         reason.trim().length < 10 ||
-        ((mode === "source" || mode === "manual") && !evidence.trim())
+        ((mode === "source" || mode === "adjustment") && !evidence.trim())
       ) {
         error =
           "Add a reason (at least 10 characters) and supporting reference.";
@@ -377,7 +375,7 @@
                   ? "The worksheet total stays the same."
                   : `This ${effect < 0 ? "reduces" : "increases"} the annual add-back by ${money(Math.abs(effect))}.`}
             </p>{/if}
-        {:else if mode === "manual"}
+        {:else if mode === "adjustment"}
           <div class="field">
             <label class="field-label" for="tax-kind">Adjustment category</label
             >
@@ -385,18 +383,18 @@
               type="single"
               value={kind}
               onValueChange={(value) => {
-                if (taxManualKinds.includes(value as TaxManualKind))
-                  kind = value as TaxManualKind;
+                if (taxAdjustmentKinds.includes(value as TaxAdjustmentKind))
+                  kind = value as TaxAdjustmentKind;
               }}
               disabled={saving}
             >
               <Select.Trigger id="tax-kind" class="w-full justify-between"
-                >{taxManualLabels[kind]}</Select.Trigger
+                >{taxAdjustmentLabels[kind]}</Select.Trigger
               >
               <Select.Content
-                >{#each taxManualKinds.filter((k) => !initial?.capital.active || !["capital_allowance", "allowance_brought_forward"].includes(k)) as k (k)}<Select.Item
+                >{#each taxAdjustmentKinds as k (k)}<Select.Item
                     value={k}
-                    label={taxManualLabels[k]}
+                    label={taxAdjustmentLabels[k]}
                   />{/each}</Select.Content
               >
             </Select.Root>
@@ -470,9 +468,7 @@
           <p class="field-hint">
             {carry
               ? "Enter only the amount reviewed as eligible for use this year. The balance is not deducted automatically."
-              : kind === "capital_allowance"
-                ? "Enter the reviewed current-year claim. Book depreciation is already included in expense add-backs."
-                : "Enter a positive amount. Akaun applies the direction you selected."}
+              : "Enter a positive amount. Akaun applies the direction you selected."}
           </p>
         {:else if mode === "refresh"}
           <p>
@@ -481,7 +477,7 @@
             lines must first be withdrawn.
           </p>
           <p class="field-hint">
-            This clears reviewed status. Unchanged-line corrections and manual
+            This clears reviewed status. Unchanged-line corrections and other
             adjustments remain for review.
           </p>
         {:else if mode === "amend"}
@@ -512,7 +508,7 @@
             />
           </div>
         {/if}
-        {#if mode === "source" || mode === "manual"}
+        {#if mode === "source" || mode === "adjustment"}
           <div class="field">
             <label class="field-label" for="tax-evidence"
               >Supporting document or review reference</label
@@ -552,11 +548,11 @@
             ? "Saving…"
             : mode === "create"
               ? "Create worksheet"
-              : onstage && ["source", "manual", "withdraw"].includes(mode)
+              : onstage && ["source", "adjustment", "withdraw"].includes(mode)
                 ? "Apply to draft"
                 : mode === "source"
                   ? "Save annual treatment"
-                  : mode === "manual"
+                  : mode === "adjustment"
                     ? "Add adjustment"
                     : titles[mode]}</button
         >

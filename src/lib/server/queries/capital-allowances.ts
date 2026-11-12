@@ -11,7 +11,6 @@ import {
 import {
   ledgerRecords,
   taxCapitalSchedules,
-  taxWorksheetAdjustments,
   taxWorksheetRevisions,
   taxWorksheets,
 } from "../db/schema.js";
@@ -77,7 +76,7 @@ export function capitalPredecessorCurrent(
     if (
       !revision ||
       revision.status !== "finalised" ||
-      !previous?.active ||
+      !previous ||
       revision.id !== reference.revisionId ||
       capitalHash(previous.evidence) !== reference.hash
     )
@@ -103,36 +102,28 @@ export function capitalRollover(
   if (!previousRevision || previousRevision.status !== "finalised") return null;
   const previous = capitalScheduleFor(db, previousRevision.id);
   if (
-    !previous?.active ||
+    !previous ||
     previous.evidence.currency !== currency ||
     !capitalPredecessorCurrent(db, previous.evidence)
   )
     return null;
-  const totals = capitalTotals(
-    previous.evidence,
-    previousWorksheet.ya,
-    previousWorksheet.dateFrom,
-    previousWorksheet.dateTo,
-  );
+  const totals = capitalTotals(previous.evidence, previousWorksheet.ya);
   if (totals.problems.length) return null;
   const rows = assets.map((asset) => {
     const old = totals.rows.find((r) => r.assetId === asset.assetId);
-    const blank = blankCapitalRow(asset.assetId, worksheet.ya);
+    const blank = blankCapitalRow(asset.assetId);
     if (!old) return blank;
-    if (old.treatment === "exclude" || old.disposal)
+    if (old.treatment === "exclude")
       return {
         ...blank,
         treatment: "exclude" as const,
-        note: old.disposal
-          ? `Tax disposal recorded in YA ${previousWorksheet.ya}.`
-          : old.note,
+        note: old.note,
       };
     return {
       ...blank,
       treatment: "claim" as const,
       schemeId: old.schemeId,
       schemeFirstYear: false,
-      schemeOverride: false,
       appliedScheme: old.appliedScheme,
       taxClass: old.taxClass,
       businessSource: old.businessSource,
@@ -149,9 +140,7 @@ export function capitalRollover(
   return {
     calculationVersion: 2,
     currency,
-    jurisdiction:
-      previous.evidence.jurisdiction ??
-      (previous.evidence.calculationVersion === 1 ? "MY" : null),
+    jurisdiction: previous.evidence.jurisdiction,
     assets,
     rows,
     evidence: "",
@@ -241,13 +230,10 @@ export function firstYearContexts(
         if (row.treatment !== "claim") continue;
         recordsByAsset.get(row.assetId)?.push({
           ya: item.ya,
-          jurisdiction:
-            saved.evidence.jurisdiction ??
-            (saved.evidence.calculationVersion === 1 ? "MY" : null),
+          jurisdiction: saved.evidence.jurisdiction,
           currency: saved.evidence.currency,
           revisionId: revision.id,
           status: revision.status,
-          active: saved.active,
           qualifyingMinor: row.qualifyingMinor,
           businessUseBps: row.businessUseBps,
           additionsMinor: row.additionsMinor,
@@ -322,16 +308,6 @@ export function capitalDetail(
     compareLive &&
     revision?.status !== "finalised" &&
     latest(db, worksheet.id)?.id === revisionId;
-  const manualOverlap = db
-    .select()
-    .from(taxWorksheetAdjustments)
-    .all()
-    .some(
-      (a) =>
-        a.revisionId === revisionId &&
-        a.withdrawnAt === null &&
-        ["capital_allowance", "allowance_brought_forward"].includes(a.kind),
-    );
   const earlierWorksheets = new Map(
     db
       .select()
@@ -355,17 +331,14 @@ export function capitalDetail(
   const priorJurisdiction =
     priorRevisions.flatMap((r) => {
       const prior = capitalScheduleFor(db, r.id);
-      return prior?.active && prior.evidence.jurisdiction
+      return prior && prior.evidence.jurisdiction
         ? [prior.evidence.jurisdiction]
         : [];
     })[0] ?? null;
   const defaultJurisdiction =
     configuredJurisdiction || rollover?.jurisdiction || priorJurisdiction;
   const autoPrepared =
-    working &&
-    !saved &&
-    !manualOverlap &&
-    (candidates.length > 0 || !!rollover);
+    working && !saved && (candidates.length > 0 || !!rollover);
   let schedule = saved?.evidence ?? null;
   if (autoPrepared)
     schedule = rollover ?? {
@@ -374,13 +347,13 @@ export function capitalDetail(
       jurisdiction: defaultJurisdiction,
       evidence: "",
       assets: candidates,
-      rows: candidates.map((a) => blankCapitalRow(a.assetId, worksheet.ya)),
+      rows: candidates.map((a) => blankCapitalRow(a.assetId)),
       utilisation: [],
       predecessor: null,
     };
   if (
     working &&
-    saved?.active &&
+    saved &&
     schedule &&
     schedule.currency === revision?.snapshot.currency
   ) {
@@ -395,7 +368,7 @@ export function capitalDetail(
         return old && capitalHash(oldAsset) === capitalHash(a)
           ? old
           : {
-              ...(old ?? blankCapitalRow(a.assetId, worksheet.ya)),
+              ...(old ?? blankCapitalRow(a.assetId)),
               treatment: "pending" as const,
               firstYearTreatment: undefined,
             };
@@ -406,7 +379,7 @@ export function capitalDetail(
     !!saved && !capitalPredecessorCurrent(db, saved.evidence);
   const autoRollover =
     working &&
-    !!saved?.active &&
+    !!saved &&
     predecessorChanged &&
     !!rollover &&
     schedule?.currency === rollover.currency &&
@@ -429,14 +402,7 @@ export function capitalDetail(
       utilisation: rollover.utilisation,
     };
   }
-  const totals = schedule
-    ? capitalTotals(
-        schedule,
-        worksheet.ya,
-        worksheet.dateFrom,
-        worksheet.dateTo,
-      )
-    : null;
+  const totals = schedule ? capitalTotals(schedule, worksheet.ya) : null;
   if (
     compareLive &&
     saved &&
@@ -476,7 +442,7 @@ export function capitalDetail(
   return {
     firstYearContexts: contexts,
     schemes: compareLive ? assetTaxSchemeVersions(db) : [],
-    active: autoPrepared || (saved?.active ?? false),
+    active: !!schedule,
     autoPrepared,
     autoRollover,
     defaultJurisdiction,

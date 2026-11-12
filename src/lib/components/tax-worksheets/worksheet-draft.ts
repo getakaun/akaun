@@ -23,7 +23,6 @@ export function stagedAdjustments(
   detail: Detail,
   additions: StagedAdjustment[],
   withdrawals: WorksheetWithdrawal[],
-  replaceManual = false,
 ): TaxAdjustment[] {
   const replaced = new Set(
     additions.filter((a) => a.kind === "source").map((a) => a.sourceMovementId),
@@ -31,8 +30,6 @@ export function stagedAdjustments(
   const removed = new Set(withdrawals.map((w) => w.adjustmentId));
   const retained = detail.adjustments.map((a) =>
     removed.has(a.id) ||
-    (replaceManual &&
-      ["capital_allowance", "allowance_brought_forward"].includes(a.kind)) ||
     (a.kind === "source" && replaced.has(a.sourceMovementId!))
       ? {
           ...a,
@@ -72,12 +69,14 @@ export function draftTotals(
   additions: StagedAdjustment[],
   withdrawals: WorksheetWithdrawal[],
   capital: CapitalDraft | null,
-  replaceManual = false,
 ) {
   return taxWorksheetTotals(
     detail.revision.snapshot,
-    stagedAdjustments(detail, additions, withdrawals, replaceManual),
-    capital?.totals ?? (detail.capital.active ? detail.capital.totals : null),
+    stagedAdjustments(detail, additions, withdrawals),
+    detail.capital.currencyMismatch
+      ? null
+      : (capital?.totals ??
+          (detail.capital.active ? detail.capital.totals : null)),
   );
 }
 

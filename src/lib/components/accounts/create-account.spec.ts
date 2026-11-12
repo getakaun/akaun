@@ -1,23 +1,28 @@
-import { mock } from "bun:test";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as schema from "$lib/server/db/schema.js";
 import type { LedgerDb } from "$lib/server/ledger/types.js";
 import { localsFor } from "$lib/server/permissions/test-locals.js";
 import { submitAccount, type AccountSender } from "./create-account.js";
 
-const holder = { db: null as LedgerDb | null };
-const testDb = new Proxy({} as LedgerDb, {
-  get(_target, property) {
-    const db = holder.db;
-    if (!db) throw Error("Fixture not initialised");
-    const item = Reflect.get(db, property, db);
-    return typeof item === "function" ? item.bind(db) : item;
-  },
+// Vitest's own mock, hoisted above every import. This spec used `mock.module`
+// from `bun:test`, which does nothing under Vitest: the route then imported
+// the real `db/client.ts` and wrote to `data/akaun.db`.
+const { holder, testDb } = vi.hoisted(() => {
+  const holder = { db: null as LedgerDb | null };
+  const testDb = new Proxy({} as LedgerDb, {
+    get(_target, property) {
+      const db = holder.db;
+      if (!db) throw Error("Fixture not initialised");
+      const item = Reflect.get(db, property, db);
+      return typeof item === "function" ? item.bind(db) : item;
+    },
+  });
+  return { holder, testDb };
 });
-mock.module("$lib/server/db/client.js", () => ({ db: testDb }));
+vi.mock("$lib/server/db/client.js", () => ({ db: testDb }));
 const { POST } = await import("../../../routes/api/accounts/+server.js");
 let raw: Database;
 beforeEach(() => {

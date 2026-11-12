@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { readdirSync } from "fs";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AccountRole, AccountSubType, AccountType } from "$lib/enums.js";
@@ -13,13 +14,19 @@ import * as schema from "./schema.js";
 vi.mock("./client.js", () => {
   throw new Error("Only fixture databases are allowed");
 });
+/** The index of the newest migration in `drizzle/`. */
+const LATEST =
+  readdirSync("drizzle").filter((name) => /^\d{4}_.*\.sql$/.test(name)).length -
+  1;
+
 let raw: Database;
 afterEach(() => raw?.close());
 function fixture() {
   raw = new Database(":memory:");
   // Every migration: client.ts runs this repair after `migrate`, and the
-  // fixture below inserts through the current schema. Raise with each new one.
-  applyMigrationRange(raw, 0, 40);
+  // fixture below inserts through the current schema. A fixed upper bound went
+  // stale when 0041+ added columns to `accounts`, so read it from `drizzle/`.
+  applyMigrationRange(raw, 0, LATEST);
   const db = drizzle(raw, { schema });
   for (const [id, name, type, role, subType] of [
     [

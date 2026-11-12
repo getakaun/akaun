@@ -1,9 +1,10 @@
-import { createHash } from "node:crypto";
+import { localToday } from "$lib/local-date.js";
+import { evidenceHash } from "../tax-evidence.js";
 import { and, asc, desc, eq } from "drizzle-orm";
 import {
   TAX_PREPARATION_NOTE,
   taxDecimal,
-  taxManualLabels,
+  taxAdjustmentLabels,
   taxWorksheetTotals,
   safeTaxSum,
   type TaxSourceSnapshot,
@@ -18,9 +19,10 @@ import type { LedgerDb, CsvTable } from "../ledger/types.js";
 import { getSetting, SETTING_KEYS } from "../settings.js";
 import { expenseTaxReport } from "./expense-tax-report.js";
 import { profitLossReport } from "./reports.js";
+import { capitalDetail } from "./capital-allowances.js";
+import { capitalExportLines } from "$lib/asset-tax-export.js";
 
-export const taxHash = (value: unknown) =>
-  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+export const taxHash = evidenceHash;
 
 /** No current defaults, dates of capture or live-source FKs in retained evidence. */
 export function captureTaxSources(
@@ -120,9 +122,57 @@ export function taxWorksheetDetail(
   const live = compareLive
     ? captureTaxSources(db, worksheet.dateFrom, worksheet.dateTo)
     : revision.snapshot;
+  const isLatest = revision.id === revisions[0].id;
+  const working = compareLive && isLatest && revision.status !== "finalised";
+  const changedIds = new Set(
+    taxSourceChanges(revision.snapshot, live).map((c) => c.movementId),
+  );
+  const sourceConflicts = adjustments
+    .filter(
+      (a) =>
+        a.kind === "source" &&
+        a.withdrawnAt === null &&
+        (revision.snapshot.pendingCorrectionIds?.includes(a.id) ||
+          (working && changedIds.has(a.sourceMovementId!))),
+    )
+    .map((a) => ({
+      adjustmentId: a.id,
+      movementId: a.sourceMovementId!,
+      reason:
+        "The accounting record changed after this annual correction. Replace or withdraw the correction.",
+    }));
+  const snapshot = working
+    ? {
+        ...live,
+        pendingCorrectionIds: sourceConflicts.map((c) => c.adjustmentId),
+      }
+    : revision.snapshot;
+  const capital = capitalDetail(db, worksheet, revision.id, compareLive);
   return {
     worksheet,
-    revision,
+    revision: working
+      ? {
+          ...revision,
+          snapshot,
+          status:
+            taxHash(live) !== revision.sourceHash ||
+            capital.assetsStale ||
+            capital.predecessorStale ||
+            !!capital.totals?.problems.length
+              ? ("draft" as const)
+              : revision.status,
+        }
+      : revision,
+    savedRevision: revision,
+    sourceConflicts,
+    sourceHashes: Object.fromEntries(
+      snapshot.expenses.map((source) => [
+        String(source.movementId),
+        taxHash(source),
+      ]),
+    ),
+    working,
+    periodEnded: worksheet.dateTo < localToday(),
     revisions: revisions.map(
       ({ id, revision, status, capturedAt, finalisedAt, amendmentReason }) => ({
         id,
@@ -133,9 +183,14 @@ export function taxWorksheetDetail(
         amendmentReason,
       }),
     ),
-    isLatest: revision.id === revisions[0].id,
+    isLatest,
     adjustments,
-    totals: taxWorksheetTotals(revision.snapshot, adjustments),
+    totals: taxWorksheetTotals(
+      snapshot,
+      adjustments,
+      capital.active && !capital.currencyMismatch ? capital.totals : null,
+    ),
+    capital,
     stale: taxHash(live) !== revision.sourceHash,
     liveHash: taxHash(live),
     changes: taxSourceChanges(revision.snapshot, live),
@@ -174,7 +229,7 @@ export function taxWorksheetCsv(detail: TaxWorksheetDetail): CsvTable {
     ["Summary", "Original estimated add-backs", money(t.baseAddBackMinor)],
     ["Summary", "Annual treatment corrections", money(t.correctionMinor)],
     ["Summary", "Effective add-backs", money(t.addBackMinor)],
-    ["Summary", "Other adjustments and manual claims", money(t.manualMinor)],
+    ["Summary", "Other tax adjustments", money(t.adjustmentMinor)],
     ["Summary", "Preparatory tax result", money(t.resultMinor)],
     ["Summary", "Unresolved expense lines", t.unresolvedCount],
     ["Summary", "Unresolved expense amount", money(t.unresolvedMinor)],
@@ -217,7 +272,7 @@ export function taxWorksheetCsv(detail: TaxWorksheetDetail): CsvTable {
       "Adjustment",
       a.kind === "source"
         ? "Annual expense treatment"
-        : taxManualLabels[a.kind],
+        : taxAdjustmentLabels[a.kind],
       money(a.direction === "increase" ? a.amountMinor : -a.amountMinor),
       a.createdAt,
       null,
@@ -236,6 +291,14 @@ export function taxWorksheetCsv(detail: TaxWorksheetDetail): CsvTable {
       a.id,
       a.withdrawalReason,
     ]);
+  if (detail.capital.schedule) {
+    rows.push(["Summary", "Asset schedule effect", money(t.capitalMinor)]);
+    rows.push(
+      ...capitalExportLines(detail.capital.schedule, w.ya).map(
+        ([label, value]) => ["Capital allowances", label, value],
+      ),
+    );
+  }
   const columns = [
     "Section",
     "Description",
@@ -266,6 +329,11 @@ export function taxWorksheetCsv(detail: TaxWorksheetDetail): CsvTable {
     notes: [
       TAX_PREPARATION_NOTE,
       `${r.snapshot.companyName}; YA ${w.ya}; ${w.dateFrom} to ${w.dateTo}; ${r.snapshot.currency}; revision ${r.revision}; ${r.status}; captured ${r.capturedAt}; reviewed ${r.reviewedAt ?? "—"}; finalised ${r.finalisedAt ?? "—"}.`,
+      ...(detail.capital.currencyMismatch
+        ? [
+            "The retained asset schedule currency differs from this worksheet; its amounts are excluded from the annual result and have not been converted.",
+          ]
+        : []),
       ...r.snapshot.notes,
     ],
   };
@@ -300,7 +368,7 @@ export function taxWorksheetHtml(detail: TaxWorksheetDetail): string {
   const row = (cells: unknown[]) =>
     `<tr>${cells.map((c) => `<td>${escape(c)}</td>`).join("")}</tr>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YA ${w.ya} — revision ${r.revision}</title><style>body{font:14px system-ui;max-width:1100px;margin:32px auto;padding:0 20px;color:#222}h1{font-size:24px}h2{margin-top:28px;font-size:18px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{border-bottom:1px solid #ddd;padding:8px;text-align:left;overflow-wrap:anywhere}th{background:#f5f5f5}p{line-height:1.6}.muted{color:#555}@media print{body{margin:0;padding:0}.print-help{display:none}thead{display:table-header-group}tr{break-inside:avoid}}</style></head><body>
-  <p class="print-help">Use your browser's Print command to print or save as PDF.</p><h1>${escape(r.snapshot.companyName)} — YA ${w.ya}</h1><p>${escape(w.dateFrom)} to ${escape(w.dateTo)} · ${escape(r.snapshot.currency)} · Revision ${r.revision} · ${escape(r.status)}</p><p class="muted">${escape(TAX_PREPARATION_NOTE)}</p>
+  <p class="print-help">Use your browser's Print command to print or save as PDF.</p><h1>${escape(r.snapshot.companyName)} — YA ${w.ya}</h1><p>${escape(w.dateFrom)} to ${escape(w.dateTo)} · ${escape(r.snapshot.currency)} · Revision ${r.revision} · ${escape(r.status)}</p><p class="muted">${escape(TAX_PREPARATION_NOTE)}</p>${detail.capital.currencyMismatch ? "<p>The retained asset schedule currency differs from this worksheet. Its amounts are excluded from the annual result; no conversion has been performed.</p>" : ""}
   <p>Captured ${escape(r.capturedAt)} · Reviewed ${escape(r.reviewedAt ?? "—")} · Finalised ${escape(r.finalisedAt ?? "—")}</p>
   ${r.amendmentReason ? `<p>Amendment: ${escape(r.amendmentReason)}</p>` : ""}
   <h2>Reconciliation bridge</h2><table><tbody>${[
@@ -311,16 +379,28 @@ export function taxWorksheetHtml(detail: TaxWorksheetDetail): string {
     ...adjustments
       .filter((a) => a.kind !== "source" && a.withdrawnAt === null)
       .map((a) => [
-        a.kind === "source" ? "" : taxManualLabels[a.kind],
+        a.kind === "source" ? "" : taxAdjustmentLabels[a.kind],
         money(a.direction === "increase" ? a.amountMinor : -a.amountMinor),
       ]),
+    ...(detail.capital.active
+      ? [["Asset schedule effect", money(t.capitalMinor)]]
+      : []),
     ["Preparatory tax result", money(t.resultMinor)],
     ["Unresolved lines", t.unresolvedCount],
     ["Unresolved amount", money(t.unresolvedMinor)],
   ]
     .map(row)
     .join("")}</tbody></table>
-  <h2>Profit &amp; Loss evidence</h2><table><thead><tr><th>Type</th><th>Account</th><th>Amount</th></tr></thead><tbody>${r.snapshot.profitLines.map((l) => row([l.type, l.accountName, money(l.amountMinor)])).join("")}</tbody></table>
+  ${
+    detail.capital.schedule
+      ? `<h2>Capital allowance schedule</h2><table><thead><tr><th>Working</th><th>Value</th></tr></thead><tbody>${capitalExportLines(
+          detail.capital.schedule,
+          w.ya,
+        )
+          .map((line) => row(line))
+          .join("")}</tbody></table>`
+      : ""
+  }<h2>Profit &amp; Loss evidence</h2><table><thead><tr><th>Type</th><th>Account</th><th>Amount</th></tr></thead><tbody>${r.snapshot.profitLines.map((l) => row([l.type, l.accountName, money(l.amountMinor)])).join("")}</tbody></table>
   <h2>Expense classifications</h2><table><thead><tr><th>Date / record</th><th>Expense / account</th><th>Book expense</th><th>Saved %</th><th>Annual % / treatment</th><th>Add-back</th></tr></thead><tbody>${t.lines.map((l) => row([`${l.date} / ${l.recordNumber ?? l.recordId} / line ${l.movementId}`, `${l.label ?? l.description} / ${l.accountName}`, money(l.expenseMinor), l.classification?.percentageBps == null ? "Unclassified" : l.classification.percentageBps / 100, `${l.effectivePercentageBps == null ? "—" : l.effectivePercentageBps / 100} / ${TaxTreatmentLabels[l.effectiveTreatment]}${l.voided ? " / Void pair" : ""}`, money(l.addBackMinor)])).join("")}</tbody></table>
-  <h2>Adjustments and retained history</h2><table><thead><tr><th>Entry</th><th>Decision / amount</th><th>Reason / evidence</th><th>Actor / timestamp</th><th>Status</th></tr></thead><tbody>${adjustments.map((a) => row([`${a.id} / ${a.kind === "source" ? `Expense line ${a.sourceMovementId}` : taxManualLabels[a.kind]}`, a.kind === "source" ? `${a.percentageBps! / 100}% / ${a.treatment}` : `${a.direction} ${money(a.amountMinor)}${a.originYa ? ` / origin YA ${a.originYa}, balance ${money(a.balanceMinor)}` : ""}`, `${a.reason} / ${a.evidence}`, `${a.actorName} / ${a.createdAt}`, a.withdrawnAt ? `Withdrawn ${a.withdrawnAt}: ${a.withdrawalReason}` : "Active"])).join("")}</tbody></table>${r.snapshot.notes.map((n) => `<p class="muted">${escape(n)}</p>`).join("")}</body></html>`;
+  <h2>Adjustments and retained history</h2><table><thead><tr><th>Entry</th><th>Decision / amount</th><th>Reason / evidence</th><th>Actor / timestamp</th><th>Status</th></tr></thead><tbody>${adjustments.map((a) => row([`${a.id} / ${a.kind === "source" ? `Expense line ${a.sourceMovementId}` : taxAdjustmentLabels[a.kind]}`, a.kind === "source" ? `${a.percentageBps! / 100}% / ${a.treatment}` : `${a.direction} ${money(a.amountMinor)}${a.originYa ? ` / origin YA ${a.originYa}, balance ${money(a.balanceMinor)}` : ""}`, `${a.reason} / ${a.evidence}`, `${a.actorName} / ${a.createdAt}`, a.withdrawnAt ? `Withdrawn ${a.withdrawnAt}: ${a.withdrawalReason}` : "Active"])).join("")}</tbody></table>${r.snapshot.notes.map((n) => `<p class="muted">${escape(n)}</p>`).join("")}</body></html>`;
 }

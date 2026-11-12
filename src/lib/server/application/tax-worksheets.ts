@@ -1,10 +1,25 @@
-import { EventEmitter } from "node:events";
+export { saveTaxWorksheet } from "./tax-worksheet-save.js";
+import {
+  capitalScheduleFor,
+  capitalDetail,
+} from "../queries/capital-allowances.js";
+import {
+  write,
+  current,
+  draft,
+  audit,
+  refuse,
+} from "./tax-worksheet-boundary.js";
+export { taxWorksheetEvents } from "./tax-worksheet-boundary.js";
+export {
+  changeCapitalSchedule,
+  capitalCommandSchema,
+} from "./capital-allowances.js";
 import { deductionMinor, needsTaxReview } from "$lib/expense-tax.js";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { localToday } from "$lib/local-date.js";
 import {
-  TaxCalculationError,
   taxAdjustmentSchema,
   taxCreateSchema,
   taxReason,
@@ -12,13 +27,12 @@ import {
   taxWorksheetTotals,
   safeTaxSum,
 } from "$lib/tax-worksheet.js";
-import type { LeafPermission } from "$lib/permissions/catalog.js";
 import {
   taxWorksheets,
   taxWorksheetRevisions,
   taxWorksheetAdjustments,
+  taxCapitalSchedules,
 } from "../db/schema.js";
-import { recordAudit, type FieldChange } from "../audit.js";
 import {
   captureTaxSources,
   latestTaxRevision,
@@ -30,17 +44,8 @@ import {
   type TaxWorksheetDetail,
 } from "../queries/tax-worksheets.js";
 import { actor, requirePermissions, type AppContext } from "./context.js";
-import {
-  fail,
-  invalid,
-  ok,
-  Rollback,
-  type AppResult,
-  type AppFailure,
-} from "./result.js";
+import { fail, invalid, ok, type AppResult } from "./result.js";
 
-export const taxWorksheetEvents = new EventEmitter();
-taxWorksheetEvents.setMaxListeners(200);
 const idSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const commandBase = { expectedVersion: taxVersion };
 export const taxCommandSchema = z.discriminatedUnion("action", [
@@ -72,107 +77,6 @@ export const taxCommandSchema = z.discriminatedUnion("action", [
     .strict(),
   z.object({ action: z.literal("resume"), ...commandBase }).strict(),
 ]);
-function refuse(reason: string, code: AppFailure["code"] = "REFUSED"): never {
-  throw new Rollback(fail(code, reason));
-}
-function audit(
-  ctx: AppContext,
-  worksheetId: number,
-  changes: FieldChange[],
-  emits: (() => void)[],
-  create = false,
-) {
-  recordAudit(ctx.db, {
-    recordType: "tax_worksheet",
-    recordId: worksheetId,
-    userId: actor(ctx),
-    action: create ? "create" : "update",
-    changes,
-    deferredEmits: emits,
-  });
-}
-type Target = {
-  worksheetId: number;
-  revisionNumber?: number;
-  changed?: boolean;
-};
-/** One book connection, immediate transaction, and post-commit signals; never calls ledger writers. */
-function write(
-  ctx: AppContext,
-  permission: LeafPermission,
-  body: (emits: (() => void)[]) => Target,
-): AppResult<TaxWorksheetDetail> {
-  const denied = requirePermissions(ctx, ["tax.read", permission]);
-  if (denied) return denied;
-  if (
-    (permission === "tax.finalise" || permission === "tax.amend") &&
-    ctx.locals.credential
-  )
-    return fail(
-      "FORBIDDEN",
-      "Finalising or amending requires a signed-in session.",
-    );
-  const emits: (() => void)[] = [];
-  try {
-    const result = ctx.db.transaction(
-      () => {
-        const target = body(emits);
-        const detail = taxWorksheetDetail(
-          ctx.db,
-          target.worksheetId,
-          target.revisionNumber,
-        );
-        if (!detail)
-          refuse("That tax worksheet no longer exists.", "NOT_FOUND");
-        if (target.changed !== false)
-          emits.push(() => taxWorksheetEvents.emit("changed"));
-        return detail;
-      },
-      { behavior: "immediate" },
-    );
-    for (const emit of emits) emit();
-    return ok(result);
-  } catch (error) {
-    if (error instanceof Rollback) return error.failure;
-    if (error instanceof TaxCalculationError)
-      return fail("REFUSED", error.message);
-    throw error;
-  }
-}
-function current(ctx: AppContext, id: number, expectedVersion: number) {
-  const worksheet = ctx.db
-    .select()
-    .from(taxWorksheets)
-    .where(eq(taxWorksheets.id, id))
-    .get();
-  const revision = latestTaxRevision(ctx.db, id);
-  if (!worksheet || !revision)
-    refuse("That tax worksheet no longer exists.", "NOT_FOUND");
-  if (revision.version !== expectedVersion)
-    refuse(
-      "This worksheet changed. Refresh and review it before trying again.",
-      "CONFLICT",
-    );
-  return { worksheet, revision };
-}
-function draft(
-  ctx: AppContext,
-  revision: typeof taxWorksheetRevisions.$inferSelect,
-) {
-  if (revision.status === "finalised")
-    refuse("This revision is finalised. Create an amendment to make changes.");
-  ctx.db
-    .update(taxWorksheetRevisions)
-    .set({
-      status: "draft",
-      version: revision.version + 1,
-      reviewedBy: null,
-      reviewedAt: null,
-    })
-    .where(eq(taxWorksheetRevisions.id, revision.id))
-    .run();
-}
-
 export function readTaxWorksheets(ctx: AppContext) {
   const denied = requirePermissions(ctx, ["tax.read"]);
   if (denied) return denied;
@@ -524,6 +428,12 @@ export function changeTaxWorksheet(
           .values({ ...copy, revisionId: next.id })
           .run();
       }
+      const schedule = capitalScheduleFor(ctx.db, revision.id);
+      if (schedule)
+        ctx.db
+          .insert(taxCapitalSchedules)
+          .values({ ...schedule, revisionId: next.id })
+          .run();
       audit(
         ctx,
         id,
@@ -614,7 +524,19 @@ export function changeTaxWorksheet(
         draft(ctx, revision);
         ctx.db
           .update(taxWorksheetRevisions)
-          .set({ snapshot: live, sourceHash: liveHash, capturedAt: now })
+          .set({
+            snapshot: {
+              ...live,
+              ...(revision.snapshot.pendingCorrectionIds
+                ? {
+                    pendingCorrectionIds:
+                      revision.snapshot.pendingCorrectionIds,
+                  }
+                : {}),
+            },
+            sourceHash: liveHash,
+            capturedAt: now,
+          })
           .where(eq(taxWorksheetRevisions.id, revision.id))
           .run();
         audit(
@@ -632,7 +554,34 @@ export function changeTaxWorksheet(
             "Accounting records changed. Review and refresh the worksheet before reviewing or finalising.",
             "CONFLICT",
           );
-        const totals = taxWorksheetTotals(revision.snapshot, adjustments);
+        const capital = capitalDetail(ctx.db, worksheet, revision.id, true);
+        if (capital.active && capital.currencyMismatch)
+          refuse(
+            "The retained schedule currency differs from this worksheet. Use confirmed matching-currency asset workings; amounts cannot be relabelled.",
+            "CONFLICT",
+          );
+        if (capital.active && (capital.assetsStale || capital.predecessorStale))
+          refuse(
+            "Capital allowance evidence changed. Refresh the asset evidence or bring forward the latest finalised predecessor and review again.",
+            "CONFLICT",
+          );
+        if (capital.active && capital.totals?.problems.length)
+          refuse(
+            `Complete the capital allowance review: ${capital.totals.problems[0]}`,
+          );
+        const totals = taxWorksheetTotals(
+          revision.snapshot,
+          adjustments,
+          capital.active ? capital.totals : null,
+        );
+        if (
+          revision.snapshot.pendingCorrectionIds?.some((id) =>
+            adjustments.some((a) => a.id === id && a.withdrawnAt === null),
+          )
+        )
+          refuse(
+            "Resolve changed expense corrections before reviewing or finalising.",
+          );
         if (totals.unresolvedCount)
           refuse(
             `Resolve ${totals.unresolvedCount} expense classification(s) before reviewing or finalising.`,

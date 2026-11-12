@@ -26,17 +26,10 @@ export const taxCreateSchema = z
     (v) => v.dateFrom <= v.dateTo,
     "Choose a valid inclusive accounting period.",
   );
-export const taxManualKinds = [
-  "other",
-  "capital_allowance",
-  "allowance_brought_forward",
-  "loss_brought_forward",
-] as const;
-export type TaxManualKind = (typeof taxManualKinds)[number];
-export const taxManualLabels: Record<TaxManualKind, string> = {
+export const taxAdjustmentKinds = ["other", "loss_brought_forward"] as const;
+export type TaxAdjustmentKind = (typeof taxAdjustmentKinds)[number];
+export const taxAdjustmentLabels: Record<TaxAdjustmentKind, string> = {
   other: "Other tax adjustment",
-  capital_allowance: "Current-year capital allowance claim",
-  allowance_brought_forward: "Brought-forward capital allowances",
   loss_brought_forward: "Brought-forward business losses",
 };
 export const taxAdjustmentSchema = z.discriminatedUnion("kind", [
@@ -57,7 +50,7 @@ export const taxAdjustmentSchema = z.discriminatedUnion("kind", [
     ),
   z
     .object({
-      kind: z.enum(taxManualKinds),
+      kind: z.enum(taxAdjustmentKinds),
       direction: z.enum(["increase", "decrease"]),
       amountMinor: cents,
       balanceMinor: cents.default(0),
@@ -69,9 +62,7 @@ export const taxAdjustmentSchema = z.discriminatedUnion("kind", [
     })
     .strict()
     .superRefine((v, ctx) => {
-      const carry =
-        v.kind === "allowance_brought_forward" ||
-        v.kind === "loss_brought_forward";
+      const carry = v.kind === "loss_brought_forward";
       if (v.kind !== "other" && v.direction !== "decrease")
         ctx.addIssue({
           code: "custom",
@@ -107,6 +98,8 @@ export type TaxSource = {
 };
 export type TaxSourceSnapshot = {
   calculationVersion: 1;
+  /** Unresolved annual corrections retained across draft source updates. */
+  pendingCorrectionIds?: number[];
   currency: string;
   companyName: string;
   profitMinor: number;
@@ -124,7 +117,7 @@ export type TaxSourceSnapshot = {
 export type TaxAdjustment = {
   id: number;
   revisionId: number;
-  kind: "source" | TaxManualKind;
+  kind: "source" | TaxAdjustmentKind;
   sourceMovementId: number | null;
   percentageBps: number | null;
   treatment: TaxTreatment | null;
@@ -159,8 +152,12 @@ export function safeTaxSum(values: number[]): number {
 export function taxWorksheetTotals(
   snapshot: TaxSourceSnapshot,
   adjustments: TaxAdjustment[],
+  capital: { effectMinor: number } | null = null,
 ) {
-  const active = adjustments.filter((a) => a.withdrawnAt === null);
+  const active = adjustments.filter(
+    (a) =>
+      a.withdrawnAt === null && !snapshot.pendingCorrectionIds?.includes(a.id),
+  );
   const corrections = new Map(
     active
       .filter((a) => a.kind === "source")
@@ -205,9 +202,9 @@ export function taxWorksheetTotals(
     lines.map((l) => l.originalAddBackMinor ?? 0),
   );
   const addBackMinor = safeTaxSum(lines.map((l) => l.addBackMinor ?? 0));
-  const manual = active.filter((a) => a.kind !== "source");
-  const manualMinor = safeTaxSum(
-    manual.map((a) =>
+  const remaining = active.filter((a) => a.kind !== "source");
+  const adjustmentMinor = safeTaxSum(
+    remaining.map((a) =>
       a.direction === "increase" ? a.amountMinor : -a.amountMinor,
     ),
   );
@@ -216,12 +213,18 @@ export function taxWorksheetTotals(
     baseAddBackMinor,
     correctionMinor: safeTaxSum([addBackMinor, -baseAddBackMinor]),
     addBackMinor,
-    manualMinor,
+    adjustmentMinor,
     unresolvedCount: lines.filter((l) => l.unresolved).length,
     unresolvedMinor: safeTaxSum(
       lines.filter((l) => l.unresolved).map((l) => l.expenseMinor),
     ),
-    resultMinor: safeTaxSum([snapshot.profitMinor, addBackMinor, manualMinor]),
+    capitalMinor: capital?.effectMinor ?? 0,
+    resultMinor: safeTaxSum([
+      snapshot.profitMinor,
+      addBackMinor,
+      adjustmentMinor,
+      capital?.effectMinor ?? 0,
+    ]),
   };
 }
 

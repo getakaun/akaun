@@ -273,7 +273,9 @@ export const PERMISSION_CATALOG = {
     noun: "annual tax worksheets",
     description: "Prepare annual tax adjustments independently of the books.",
     children: {
-      read: read("annual tax worksheets and their supporting evidence"),
+      read: read(
+        "annual tax worksheets, asset tax schedules and their supporting purchase evidence",
+      ),
       create: create("annual tax worksheets"),
       update: update("draft tax worksheets and tax-only adjustments"),
       review: {

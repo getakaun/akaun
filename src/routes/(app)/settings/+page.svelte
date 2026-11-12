@@ -25,6 +25,7 @@
 	import { PDF_THEME_PRESETS } from '$lib/pdf/theme-presets.js';
 	import { renderTemplate, validateTemplate, TOKEN_REGEX, type SequenceDocType } from '$lib/sequence-template.js';
 	import type { PageData, ActionData } from './$types.js';
+	import SettingsNav, { type SettingsTab as Tab } from '$lib/components/settings/SettingsNav.svelte';
 	import AccountDefaults from '$lib/components/settings/AccountDefaults.svelte';
 	import CompanyImageField from '$lib/components/settings/CompanyImageField.svelte';
 	import type { PdfHeaderStyle } from '$lib/pdf/header-style.js';
@@ -32,7 +33,6 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	type Tab = 'general' | 'company' | 'books' | 'intelligence' | 'templates' | 'advanced';
 	const TAB_IDS: readonly Tab[] = ['general', 'company', 'books', 'intelligence', 'templates', 'advanced'];
 
 	// The open tab is kept in the address (`?tab=intelligence`), so a page
@@ -1258,16 +1258,6 @@
 		allowNavigation = false;
 	});
 
-	// Derived rather than fixed only because the Books tab is there or not
-	// depending on whether this user may see the reports side of things.
-	const TABS: { id: Tab; label: string }[] = $derived([
-		{ id: 'general', label: 'General' },
-		{ id: 'company', label: 'Company' },
-		...((data.canSeeBooks || data.canManageSettings) ? [{ id: 'books' as Tab, label: 'Ledger' }] : []),
-		{ id: 'intelligence', label: 'Intelligence' },
-		{ id: 'templates', label: 'Templates' },
-		{ id: 'advanced', label: 'Advanced' }
-	]);
 </script>
 
 <svelte:head>
@@ -1283,18 +1273,13 @@
 	</header>
 
 	<div class="set-layout">
-		<!-- Left nav -->
-		<nav class="set-nav">
-			{#each TABS as tab (tab.id)}
-				<button
-					class="set-nav-item"
-					class:active={activeTab === tab.id}
-					onclick={() => requestTabChange(tab.id)}
-				>
-					{tab.label}
-				</button>
-			{/each}
-		</nav>
+		<SettingsNav
+			active={activeTab}
+			canReadTax={data.canReadTax}
+			canSeeBooks={data.canSeeBooks}
+			canManageSettings={data.canManageSettings}
+			onselect={requestTabChange}
+		/>
 
 		<!-- Content -->
 		<div class="set-content">

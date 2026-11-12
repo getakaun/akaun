@@ -58,7 +58,7 @@
                   ><a
                     class="worksheet-link"
                     href={resolve("/(app)/tax/[id]", { id: String(w.id) })}
-                    >YA {w.ya}</a
+                    >Tax year {w.ya}</a
                   ></td
                 ><td>{formatDate(w.dateFrom)} – {formatDate(w.dateTo)}</td><td
                   >{w.revision}</td

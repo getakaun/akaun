@@ -31,5 +31,6 @@ export function loadTaxWorksheet(locals: App.Locals, id: number, url: URL) {
     canFinalise: can(locals, "tax.finalise") && !locals.credential,
     canAmend: can(locals, "tax.amend") && !locals.credential,
     canReadRecords: can(locals, "records.read"),
+    canReadAssets: can(locals, "accounts.read") && can(locals, "records.read"),
   };
 }

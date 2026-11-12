@@ -11,6 +11,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import type { ExpenseTaxSnapshot, TaxTreatment } from "$lib/expense-tax.js";
+import type { CapitalSchedule } from "$lib/capital-allowance.js";
 import type { TaxSourceSnapshot } from "$lib/tax-worksheet.js";
 import type { AssetSourceSnapshot } from "$lib/fixed-assets.js";
 
@@ -1675,13 +1676,7 @@ export const taxWorksheetAdjustments = sqliteTable(
       .notNull()
       .references(() => taxWorksheetRevisions.id, { onDelete: "restrict" }),
     kind: text("kind")
-      .$type<
-        | "source"
-        | "other"
-        | "capital_allowance"
-        | "allowance_brought_forward"
-        | "loss_brought_forward"
-      >()
+      .$type<"source" | "other" | "loss_brought_forward">()
       .notNull(),
     sourceMovementId: integer("source_movement_id"),
     percentageBps: integer("percentage_bps"),
@@ -1709,18 +1704,13 @@ export const taxWorksheetAdjustments = sqliteTable(
     uniqueIndex("tax_active_source_correction")
       .on(t.revisionId, t.sourceMovementId)
       .where(sql`"withdrawn_at" IS NULL AND "kind" = 'source'`),
-    uniqueIndex("tax_current_allowance_claim")
-      .on(t.revisionId)
-      .where(sql`"withdrawn_at" IS NULL AND "kind" = 'capital_allowance'`),
     uniqueIndex("tax_carry_origin")
       .on(t.revisionId, t.kind, t.originYa)
-      .where(
-        sql`"withdrawn_at" IS NULL AND "kind" IN ('allowance_brought_forward', 'loss_brought_forward')`,
-      ),
+      .where(sql`"withdrawn_at" IS NULL AND "kind" = 'loss_brought_forward'`),
     index("tax_adjustment_revision").on(t.revisionId),
     check(
       "tax_adjustment_kind",
-      sql`"kind" IN ('source', 'other', 'capital_allowance', 'allowance_brought_forward', 'loss_brought_forward')`,
+      sql`"kind" IN ('source', 'other', 'loss_brought_forward')`,
     ),
     check(
       "tax_adjustment_direction",
@@ -1731,12 +1721,64 @@ export const taxWorksheetAdjustments = sqliteTable(
       sql`typeof("amount_minor") = 'integer' AND "amount_minor" BETWEEN 0 AND 9007199254740991 AND typeof("balance_minor") = 'integer' AND "balance_minor" BETWEEN 0 AND 9007199254740991`,
     ),
     check(
-      "tax_manual_claim",
-      sql`coalesce("kind" = 'source' OR ("kind" = 'other' AND "amount_minor" > 0 AND "balance_minor" = 0 AND "origin_ya" IS NULL) OR ("kind" = 'capital_allowance' AND "direction" = 'decrease' AND "amount_minor" > 0 AND "balance_minor" = 0 AND "origin_ya" IS NULL) OR ("kind" IN ('allowance_brought_forward', 'loss_brought_forward') AND "direction" = 'decrease' AND typeof("origin_ya") = 'integer' AND "origin_ya" BETWEEN 2000 AND 9999 AND "amount_minor" <= "balance_minor"), 0)`,
+      "tax_adjustment_values",
+      sql`coalesce("kind" = 'source' OR ("kind" = 'other' AND "amount_minor" > 0 AND "balance_minor" = 0 AND "origin_ya" IS NULL) OR ("kind" = 'loss_brought_forward' AND "direction" = 'decrease' AND typeof("origin_ya") = 'integer' AND "origin_ya" BETWEEN 2000 AND 9999 AND "amount_minor" <= "balance_minor"), 0)`,
     ),
     check(
       "tax_adjustment_source",
       sql`coalesce(("kind" = 'source' AND typeof("source_movement_id") = 'integer' AND "source_movement_id" > 0 AND typeof("percentage_bps") = 'integer' AND "balance_minor" = 0 AND "origin_ya" IS NULL AND (("treatment" = 'ordinary_deductible' AND "percentage_bps" = 10000) OR ("treatment" = 'partial' AND "percentage_bps" BETWEEN 1 AND 9999) OR ("treatment" IN ('non_deductible', 'capital_expenditure') AND "percentage_bps" = 0))) OR ("kind" <> 'source' AND "source_movement_id" IS NULL AND "percentage_bps" IS NULL AND "treatment" IS NULL), 0)`,
     ),
+  ],
+);
+
+/** Revision-owned scheme calculations; never a source of book depreciation journals. */
+export const taxCapitalSchedules = sqliteTable(
+  "tax_capital_schedules",
+  {
+    revisionId: integer("revision_id")
+      .primaryKey()
+      .references(() => taxWorksheetRevisions.id, { onDelete: "restrict" }),
+    evidence: text("evidence", { mode: "json" })
+      .$type<CapitalSchedule>()
+      .notNull(),
+  },
+  () => [
+    check(
+      "tax_capital_json",
+      sql`CASE WHEN json_valid("evidence") THEN coalesce(json_extract("evidence", '$.calculationVersion') = 2 AND json_type("evidence", '$.currency') = 'text' AND length(json_extract("evidence", '$.currency')) = 3 AND json_type("evidence", '$.rows') = 'array' AND json_type("evidence", '$.assets') = 'array' AND json_type("evidence", '$.utilisation') = 'array', 0) ELSE 0 END`,
+    ),
+  ],
+);
+
+export const taxCapitalCommands = sqliteTable("tax_capital_commands", {
+  requestKey: text("request_key").primaryKey(),
+  revisionId: integer("revision_id")
+    .notNull()
+    .references(() => taxWorksheetRevisions.id, { onDelete: "restrict" }),
+  payloadHash: text("payload_hash").notNull(),
+});
+
+/** Every edit is a new immutable scheme version; applications retain the exact definition. */
+export const assetTaxSchemes = sqliteTable(
+  "asset_tax_schemes",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    familyKey: text("family_key").notNull(),
+    version: integer("version").notNull(),
+    definition: text("definition", { mode: "json" })
+      .$type<import("$lib/asset-tax-scheme.js").AssetTaxSchemeDefinition>()
+      .notNull(),
+    requestKey: text("request_key").notNull().unique(),
+    payloadHash: text("payload_hash").notNull(),
+    actorName: text("actor_name").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("asset_tax_scheme_version").on(t.familyKey, t.version),
+    check(
+      "asset_tax_scheme_version_check",
+      sql`typeof("version") = 'integer' AND "version" > 0`,
+    ),
+    check("asset_tax_scheme_definition", sql`json_valid("definition")`),
   ],
 );

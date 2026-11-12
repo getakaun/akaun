@@ -3,11 +3,17 @@ import { can } from "$lib/server/permissions.js";
 import { taxWorksheetEvents } from "$lib/server/application/tax-worksheets.js";
 import { ledgerEvents, accountEvents } from "$lib/server/ledger/events.js";
 import { eventStream } from "$lib/server/sse-stream.js";
+import { fixedAssetEvents } from "$lib/server/application/fixed-assets.js";
 export const GET: RequestHandler = ({ locals }) => {
   if (!can(locals, "tax.read"))
     return new Response("Forbidden", { status: 403 });
   return eventStream(
     [
+      {
+        emitter: fixedAssetEvents,
+        events: { "assets-refresh": "data-changed" },
+        signalOnly: true,
+      },
       {
         emitter: taxWorksheetEvents,
         events: { changed: "data-changed" },

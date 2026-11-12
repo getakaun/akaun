@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { goto, invalidateAll } from "$app/navigation";
+  import { untrack } from "svelte";
+  import { goto, invalidateAll, beforeNavigate } from "$app/navigation";
   import { resolve } from "$app/paths";
   import { Download, Printer, ChevronRight } from "@lucide/svelte";
+  import Disclosure from "$lib/components/ui/Disclosure.svelte";
   import DetailPage from "$lib/components/ui/DetailPage.svelte";
   import AuditTrail from "$lib/components/ui/AuditTrail.svelte";
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
@@ -12,118 +14,360 @@
   import {
     TAX_PREPARATION_NOTE,
     formatTaxMinor,
-    taxManualLabels,
+    taxAdjustmentLabels,
+    taxAdjustmentSchema,
   } from "$lib/tax-worksheet.js";
   import TaxWorksheetSheet from "./TaxWorksheetSheet.svelte";
   import type { loadTaxWorksheet } from "$lib/server/loaders/tax-worksheets.js";
   import type { TaxWorksheetDetail as Detail } from "$lib/server/queries/tax-worksheets.js";
+  import {
+    draftTotals,
+    stagedAdjustments,
+    type StagedAdjustment,
+    type WorksheetWithdrawal,
+    type CapitalDraft,
+    changedStagedSources,
+  } from "./worksheet-draft.js";
   import { toast } from "svelte-sonner";
   import ReportNotes from "$lib/components/reports/ReportNotes.svelte";
   import ListExpand, {
     visibleItems,
   } from "$lib/components/ui/ListExpand.svelte";
   import { formatAuditTime } from "$lib/components/audit/audit-format.js";
+  import CapitalAllowances from "./CapitalAllowances.svelte";
   import TaxExpenses from "./TaxExpenses.svelte";
   import TaxAdjustments from "./TaxAdjustments.svelte";
   import "./tax-worksheets.css";
   let { data }: { data: ReturnType<typeof loadTaxWorksheet> } = $props();
-  const d = $derived(data.detail);
-  const r = $derived(d.revision);
-  const t = $derived(d.totals);
+  const d = $derived(data.detail),
+    r = $derived(d.revision);
+  let sourceHashes = $state<Record<string, string>>({});
+  let additions = $state<StagedAdjustment[]>([]),
+    withdrawals = $state<WorksheetWithdrawal[]>([]);
+  let capitalDraft = $state<CapitalDraft | null>(null),
+    capitalDirty = $state(false);
+  let resetKey = $state(0),
+    saving = $state(false),
+    error = $state("");
+  let baseVersion = $state(untrack(() => data.detail.revision.version));
+  const dirty = $derived(
+    !!additions.length || !!withdrawals.length || capitalDirty,
+  );
+  const conflict = $derived(dirty && r.version !== baseVersion);
+  $effect(() => {
+    if (!dirty && !saving) baseVersion = r.version;
+  });
+  const adjustments = $derived(
+    r.status === "finalised"
+      ? d.adjustments
+      : stagedAdjustments(d, additions, withdrawals),
+  );
+  const t = $derived(
+    r.status === "finalised"
+      ? d.totals
+      : draftTotals(d, additions, withdrawals, capitalDraft),
+  );
   const money = (minor: number) => formatTaxMinor(minor, r.snapshot.currency);
   const editable = $derived(
     d.isLatest && r.status !== "finalised" && data.canUpdate,
   );
-  let mode = $state<
-    "source" | "manual" | "refresh" | "amend" | "withdraw" | null
-  >(null);
-  let line = $state<Detail["totals"]["lines"][number] | null>(null);
-  let adjustmentId = $state<number | null>(null);
-  let saving = $state(false);
-  let error = $state("");
-  let revisionsExpanded = $state(false);
-  let confirm = $state<"review" | "finalise" | "resume" | null>(null);
-  let confirmOpen = $state(false);
-  let confirmedVersion = 0;
+  let mode = $state<"source" | "adjustment" | "amend" | "withdraw" | null>(
+    null,
+  );
+  let line = $state<Detail["totals"]["lines"][number] | null>(null),
+    adjustmentId = $state<number | null>(null);
+  let revisionsExpanded = $state(false),
+    confirmOpen = $state(false);
+  let completion = $state<"reviewed" | "finalised">("finalised"),
+    confirmedPayload = $state("");
   let auditRef = $state<{ refresh: () => Promise<void> } | null>(null);
   createResourceStream("/api/tax/stream", () => {
     void invalidateAll();
     void auditRef?.refresh();
   });
-  function ask(action: "review" | "finalise" | "resume") {
-    confirmedVersion = r.version;
-    confirm = action;
+  const outstanding = $derived.by(() => {
+    const problems: string[] = [];
+    if (
+      !data.canReview &&
+      data.canFinalise &&
+      r.status !== "reviewed" &&
+      d.savedRevision.status === "reviewed"
+    )
+      problems.push(
+        "Figures changed after review. Save the current draft and have it reviewed again before finalising.",
+      );
+    if (conflict)
+      problems.push(
+        "This worksheet was saved elsewhere. Discard changes to load the latest version.",
+      );
+    if (
+      !data.canUpdate &&
+      (d.stale || d.capital.assetsStale || d.capital.predecessorStale)
+    )
+      problems.push(
+        "Accounting evidence changed. A preparer must save the latest draft before review or finalisation.",
+      );
+    if (changedStagedSources(additions, sourceHashes, d.sourceHashes).length)
+      problems.push(
+        "An expense changed after its annual treatment was entered. Reopen that treatment to confirm the updated record.",
+      );
+    if (t.unresolvedCount)
+      problems.push(
+        `${t.unresolvedCount} expense classification(s) need attention.`,
+      );
+    for (const c of d.sourceConflicts ?? [])
+      if (
+        !withdrawals.some((w) => w.adjustmentId === c.adjustmentId) &&
+        !additions.some(
+          (a) => a.kind === "source" && a.sourceMovementId === c.movementId,
+        )
+      )
+        problems.push(c.reason);
+    problems.push(
+      ...(capitalDraft?.errors ?? []),
+      ...(capitalDraft?.problems ?? []),
+    );
+    if (d.capital.active && d.capital.currencyMismatch && !capitalDraft?.input)
+      problems.push("The asset schedule currency differs from this worksheet.");
+    if (
+      d.capital.active &&
+      d.capital.predecessorStale &&
+      !d.capital.autoRollover
+    )
+      problems.push(
+        "Earlier tax balances changed. Complete the prior-year amendment before finalising this worksheet.",
+      );
+    return [...new Set(problems)];
+  });
+  const inputErrors = $derived([
+    ...(capitalDraft?.errors ?? []),
+    ...(conflict ? ["This worksheet was saved elsewhere."] : []),
+  ]);
+  const canComplete = $derived(!saving && !outstanding.length);
+  const finalisePeriodOpen = $derived(!d.periodEnded);
+  function correct(source: (typeof t.lines)[number]) {
+    line = source;
+    mode = "source";
+  }
+  function stage(payload: Record<string, unknown>) {
+    error = "";
+    if (payload.action === "withdraw") {
+      const id = Number(payload.adjustmentId);
+      if (id < 0) additions.splice(-id - 1, 1);
+      else
+        withdrawals = [
+          ...withdrawals.filter((w) => w.adjustmentId !== id),
+          { adjustmentId: id, reason: String(payload.reason) },
+        ];
+    } else {
+      const { sourceHash, ...input } = payload;
+      const parsed = taxAdjustmentSchema.safeParse(input);
+      if (!parsed.success) {
+        error = parsed.error.issues[0]?.message ?? "Check the adjustment.";
+        return;
+      }
+      const value = parsed.data;
+      if (value.kind === "source") {
+        sourceHashes[String(value.sourceMovementId)] = String(sourceHash ?? "");
+        additions = additions.filter(
+          (a) =>
+            a.kind !== "source" ||
+            a.sourceMovementId !== value.sourceMovementId,
+        );
+      }
+      additions = [...additions, value];
+    }
+  }
+  function discard() {
+    additions = [];
+    sourceHashes = {};
+    withdrawals = [];
+    capitalDraft = null;
+    capitalDirty = false;
+    baseVersion = r.version;
+    resetKey++;
+    error = "";
+    uncertainSave = null;
+  }
+  let retryPayload = "",
+    retryKey = "";
+  type SaveTarget = "draft" | "reviewed" | "finalised";
+  let uncertainSave = $state<{ body: string; target: SaveTarget } | null>(null);
+  function makePayload(target: "draft" | "reviewed" | "finalised") {
+    // Review and finalisation permissions do not imply edit permission.
+    if (
+      target !== "draft" &&
+      (!data.canUpdate || (target === "finalised" && !data.canReview))
+    )
+      return {
+        action: target === "reviewed" ? "review" : "finalise",
+        expectedVersion: baseVersion,
+      };
+    return {
+      action: "save-worksheet",
+      target,
+      expectedVersion: baseVersion,
+      liveHash: d.liveHash,
+      sourceHashes,
+      adjustments: additions.map((a) => ({
+        ...a,
+        expectedVersion: baseVersion,
+      })),
+      withdrawals,
+      ...(capitalDraft?.input
+        ? {
+            capital: {
+              input: capitalDraft.input,
+              liveAssetHash: capitalDraft.liveAssetHash,
+              ...(capitalDraft.rolloverHash
+                ? { rolloverHash: capitalDraft.rolloverHash }
+                : {}),
+              confirmFirstYearTreatments: true,
+            },
+          }
+        : {}),
+    };
+  }
+  function askCompletion(target: "reviewed" | "finalised") {
+    completion = target;
+    confirmedPayload = JSON.stringify(makePayload(target));
     confirmOpen = true;
   }
-  async function command(action: string) {
+  async function save(
+    target: "draft" | "reviewed" | "finalised",
+    frozen?: string,
+  ) {
+    if (
+      saving ||
+      uncertainSave ||
+      inputErrors.length ||
+      (target !== "draft" &&
+        (!canComplete || (target === "finalised" && finalisePeriodOpen)))
+    )
+      return;
+    const payload = frozen ? JSON.parse(frozen) : makePayload(target);
+    const encoded = JSON.stringify(payload);
+    if (encoded !== retryPayload) {
+      retryPayload = encoded;
+      retryKey = crypto.randomUUID();
+    }
+    const body = JSON.stringify(
+      payload.action === "save-worksheet"
+        ? { ...payload, requestKey: retryKey }
+        : payload,
+    );
+    await sendSave(body, target);
+  }
+  async function sendSave(body: string, target: SaveTarget) {
+    if (saving) return;
     saving = true;
     error = "";
     try {
       const response = await fetch(`/api/tax/${d.worksheet.id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, expectedVersion: confirmedVersion }),
+        body,
       });
       const result = await response.json();
       if (!response.ok) {
-        error = result.error ?? "This action could not be completed.";
+        uncertainSave = null;
+        error =
+          result.issues?.[0]?.message ??
+          result.error ??
+          "The worksheet could not be saved.";
+        if (response.status === 409) await invalidateAll().catch(() => {});
         return;
       }
       await invalidateAll();
-      await auditRef?.refresh();
+      discard();
+      void auditRef?.refresh().catch(() => {});
       toast.success(
-        action === "finalise"
-          ? "Revision finalised."
-          : action === "review"
-            ? "Worksheet marked reviewed."
-            : "Worksheet returned to draft.",
+        target === "draft"
+          ? "Worksheet draft saved."
+          : target === "reviewed"
+            ? "Worksheet saved and reviewed."
+            : "Worksheet finalised.",
       );
     } catch {
-      error =
-        "The result could not be confirmed. Refresh the worksheet before retrying.";
+      if (JSON.parse(body).action === "save-worksheet") {
+        uncertainSave = { body, target };
+        error =
+          "The result could not be confirmed. Retry the last save to check its result before making further changes.";
+      } else
+        error =
+          "The result could not be confirmed. Reload the worksheet to check its latest status.";
     } finally {
       saving = false;
     }
   }
-  function correct(source: (typeof t.lines)[number]) {
-    line = source;
-    mode = "source";
-  }
   async function saved(result: Detail) {
-    error = "";
     if (result.revision.revision !== r.revision)
       await goto(resolve("/(app)/tax/[id]", { id: String(d.worksheet.id) }));
     await invalidateAll();
+    discard();
     await auditRef?.refresh();
-    toast.success("Annual tax worksheet saved.");
+  }
+  let leaveOpen = $state(false),
+    pendingHref: string | null = null,
+    leaving = false;
+  beforeNavigate((nav) => {
+    if (leaving || !dirty || nav.willUnload || !nav.to) return;
+    nav.cancel();
+    pendingHref = nav.to.url.href;
+    leaveOpen = true;
+  });
+  function discardAndLeave() {
+    discard();
+    leaving = true;
+    // eslint-disable-next-line svelte/no-navigation-without-resolve -- SvelteKit supplied the destination.
+    if (pendingHref) void goto(pendingHref);
   }
 </script>
 
+<svelte:window
+  onbeforeunload={(event) => {
+    if (dirty) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  }}
+/>
+
 <DetailPage backHref={resolve("/(app)/tax")} backLabel="Annual tax">
   {#snippet actions()}
-    <Button
-      variant="outline"
-      size="sm"
-      href={resolve(
-        `/api/tax/${d.worksheet.id}?revision=${r.revision}&format=csv`,
-      )}
-      download><Download size={14} />Export CSV</Button
-    >
-    <Button
-      variant="outline"
-      size="sm"
-      href={resolve(
-        `/api/tax/${d.worksheet.id}?revision=${r.revision}&format=html`,
-      )}
-      target="_blank"
-      rel="noopener noreferrer"><Printer size={14} />Print / PDF</Button
-    >
+    {#if outstanding.length && r.status !== "finalised"}<a
+        class="detail-card-action"
+        href="#worksheet-attention"
+        >{outstanding.length} item(s) need attention</a
+      >{/if}
+    {#if editable}<Button
+        variant="outline"
+        disabled={saving || !!uncertainSave || !!inputErrors.length}
+        onclick={() => save("draft")}
+        >{saving ? "Saving…" : "Save draft"}</Button
+      >{/if}
+    {#if d.isLatest && r.status !== "finalised"}
+      {#if data.canFinalise && (d.savedRevision.status === "reviewed" || data.canReview)}<Button
+          disabled={!!uncertainSave ||
+            !canComplete ||
+            finalisePeriodOpen ||
+            ((!data.canUpdate || !data.canReview) && dirty)}
+          onclick={() => askCompletion("finalised")}>Finalise worksheet</Button
+        >
+      {:else if data.canReview}<Button
+          disabled={!!uncertainSave ||
+            !canComplete ||
+            ((!data.canUpdate || !data.canReview) && dirty)}
+          onclick={() => askCompletion("reviewed")}
+          >{data.canUpdate ? "Save & mark reviewed" : "Mark reviewed"}</Button
+        >{/if}
+    {/if}
   {/snippet}
   {#snippet hero()}
     <div class="detail-hero-eyebrow">
       Annual tax · Revision {r.revision} · {r.snapshot.currency}
     </div>
-    <h1 class="detail-hero-title">YA {d.worksheet.ya}</h1>
+    <h1 class="detail-hero-title">Tax year {d.worksheet.ya}</h1>
     <div class="detail-hero-figure">
       <span class="detail-hero-amount">{money(t.resultMinor)}</span><StatusBadge
         status={`tax-${r.status}`}
@@ -134,83 +378,57 @@
         d.worksheet.dateTo,
       )}
     </p>
+    {#if editable}<p class="field-hint">
+        {dirty
+          ? "Unsaved worksheet changes"
+          : "Up to date with accounting records"} · Figures update automatically.
+      </p>{/if}
   {/snippet}
   {#snippet main()}
+    {#if conflict && r.status === "finalised"}<ReportNotes
+        notes={[
+          "Another user finalised this worksheet. The summary shows its saved figures. Your unsaved asset inputs are kept below; discard worksheet changes to display the completed asset workings.",
+        ]}
+        firstIsWarning
+      />{/if}
     {#if error}<div role="alert">
         <ReportNotes notes={[error]} firstIsWarning />
       </div>{/if}
-    {#if d.stale}
-      <section class="detail-card" aria-labelledby="tax-changes-title">
+    {#if uncertainSave}<Button
+        variant="outline"
+        disabled={saving}
+        onclick={() => {
+          if (uncertainSave)
+            void sendSave(uncertainSave.body, uncertainSave.target);
+        }}>Retry last save</Button
+      >{/if}
+    {#if outstanding.length && r.status !== "finalised"}<section
+        class="detail-card"
+        id="worksheet-attention"
+        aria-labelledby="worksheet-attention-title"
+      >
         <div class="detail-card-head">
-          <h2 id="tax-changes-title" class="detail-card-title">
-            Accounting records changed
+          <h2 id="worksheet-attention-title" class="detail-card-title">
+            Needs attention ({outstanding.length})
           </h2>
         </div>
-        <div class="tax-stack">
-          <ReportNotes
-            notes={[
-              r.status === "finalised"
-                ? "This revision keeps its finalised figures. Create an amendment to include later accounting changes."
-                : "Review the changes below before refreshing. Refreshing returns the worksheet to draft.",
-            ]}
-            firstIsWarning
-          />
-          {#if d.profitChanged}<dl class="detail-list tax-summary">
-              <div class="detail-row">
-                <dt class="detail-key">Saved accounting profit</dt>
-                <dd class="detail-val tax-amount">
-                  {money(r.snapshot.profitMinor)}
-                </dd>
-              </div>
-              <div class="detail-row">
-                <dt class="detail-key">Current accounting profit</dt>
-                <dd class="detail-val tax-amount">
-                  {money(d.liveProfitMinor)}
-                </dd>
-              </div>
-            </dl>{/if}
-          {#if d.changes.length}<details class="tax-disclosure">
-              <summary>Changed expense lines ({d.changes.length})</summary>
-              <div class="tax-disclosure-body">
-                <ul class="tax-support-list">
-                  {#each d.changes as change (change.movementId)}<li>
-                      <span class="tax-item-title"
-                        >{change.after?.label ??
-                          change.after?.description ??
-                          change.before?.label ??
-                          change.before?.description}</span
-                      >
-                      <p class="field-hint">
-                        {change.after?.recordNumber ??
-                          change.before?.recordNumber ??
-                          `Record ${change.after?.recordId ?? change.before?.recordId}`}
-                      </p>
-                      <p class="hint">
-                        {change.before
-                          ? money(change.before.expenseMinor)
-                          : "New expense"} → {change.after
-                          ? money(change.after.expenseMinor)
-                          : "Removed"}{change.before &&
-                        change.after &&
-                        change.before.expenseMinor === change.after.expenseMinor
-                          ? " · Classification or source details changed"
-                          : ""}
-                      </p>
-                    </li>{/each}
-                </ul>
-              </div>
-            </details>{/if}
-          {#if editable}<div class="tax-actions">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={saving}
-                onclick={() => (mode = "refresh")}>Review and refresh</Button
-              >
-            </div>{/if}
+        <ReportNotes notes={outstanding} firstIsWarning />
+        <div class="tax-actions">
+          <a class="detail-card-action" href="#tax-expenses-title"
+            >Review expense treatments ({t.unresolvedCount})</a
+          ><a class="detail-card-action" href="#capital-allowances-title"
+            >Review asset deductions ({capitalDraft?.problems.length ?? 0})</a
+          ><a class="detail-card-action" href="#tax-adjustments-title"
+            >Review adjustments</a
+          >
         </div>
-      </section>
-    {/if}
+      </section>{/if}
+    {#if d.stale && r.status === "finalised"}<ReportNotes
+        notes={[
+          "Accounting records changed after finalisation. This revision keeps its original figures. Create an amendment to include the changes.",
+        ]}
+        firstIsWarning
+      />{/if}
     <section class="detail-card" aria-labelledby="tax-summary-title">
       <div class="detail-card-head">
         <h2 id="tax-summary-title" class="detail-card-title">Tax summary</h2>
@@ -227,11 +445,13 @@
             <dt class="detail-key">Expense add-backs</dt>
             <dd class="detail-val tax-amount">{money(t.addBackMinor)}</dd>
           </div>
-          {#each d.adjustments.filter((a) => a.kind !== "source" && a.withdrawnAt === null) as a (a.id)}<div
+          {#each adjustments.filter((a) => a.kind !== "source" && a.withdrawnAt === null) as a (a.id)}<div
               class="detail-row"
             >
               <dt class="detail-key">
-                {a.kind === "source" ? "" : taxManualLabels[a.kind]}{a.originYa
+                {a.kind === "source"
+                  ? ""
+                  : taxAdjustmentLabels[a.kind]}{a.originYa
                   ? ` · YA ${a.originYa}`
                   : ""}
               </dt>
@@ -241,6 +461,10 @@
                 )}
               </dd>
             </div>{/each}
+          {#if d.capital.active}<div class="detail-row">
+              <dt class="detail-key">Asset allowance schedule</dt>
+              <dd class="detail-val tax-amount">{money(t.capitalMinor)}</dd>
+            </div>{/if}
           <div class="detail-row tax-result">
             <dt class="detail-key">Preparatory tax result</dt>
             <dd class="detail-val tax-amount">{money(t.resultMinor)}</dd>
@@ -282,16 +506,26 @@
       currency={r.snapshot.currency}
       canChange={editable}
       canReadRecords={data.canReadRecords}
-      disabled={saving || d.stale}
+      disabled={saving || !!uncertainSave || conflict}
       onchange={correct}
     />
+    {#key resetKey}<CapitalAllowances
+        detail={d}
+        {editable}
+        bind:dirty={capitalDirty}
+        saving={saving || !!uncertainSave}
+        worksheetDirty={dirty}
+        resultBase={t.resultMinor - t.capitalMinor}
+        bind:draft={capitalDraft}
+      />
+    {/key}
     <TaxAdjustments
-      adjustments={d.adjustments}
+      {adjustments}
       lines={t.lines}
       currency={r.snapshot.currency}
       canChange={editable}
-      disabled={saving}
-      onadd={() => (mode = "manual")}
+      disabled={saving || !!uncertainSave || conflict}
+      onadd={() => (mode = "adjustment")}
       onwithdraw={(id) => {
         adjustmentId = id;
         mode = "withdraw";
@@ -300,65 +534,42 @@
     <ReportNotes notes={[TAX_PREPARATION_NOTE, ...r.snapshot.notes]} />
   {/snippet}
   {#snippet rail()}
-    <section class="detail-card" aria-labelledby="tax-review-title">
+    <section class="detail-card" aria-labelledby="worksheet-status-title">
       <div class="detail-card-head">
-        <h2 id="tax-review-title" class="detail-card-title">
-          Review and finalise
+        <h2 id="worksheet-status-title" class="detail-card-title">
+          Worksheet status
         </h2>
       </div>
       <div class="tax-stack">
         <p class="hint">
-          {r.status === "draft"
-            ? "Check expense classifications and manual claims, then mark the worksheet reviewed."
-            : r.status === "reviewed"
-              ? "Review is recorded. Finalise to lock this revision."
-              : "This revision is locked. Create an amendment for further changes."}
+          {r.status === "finalised"
+            ? "This revision is locked. Further changes require an amendment."
+            : "Save a draft at any time. Finalise when all tax treatments and claims are ready."}
         </p>
-        {#if d.isLatest}
-          <div class="tax-actions">
-            {#if r.status === "draft" && data.canReview}<Button
-                size="sm"
-                disabled={saving || d.stale || t.unresolvedCount > 0}
-                onclick={() => ask("review")}
-                >{saving ? "Saving…" : "Mark reviewed"}</Button
-              >{/if}
-            {#if r.status === "reviewed" && data.canFinalise}<Button
-                size="sm"
-                disabled={saving || d.stale || t.unresolvedCount > 0}
-                onclick={() => ask("finalise")}
-                >{saving ? "Saving…" : "Finalise worksheet"}</Button
-              >{/if}
-            {#if r.status === "reviewed" && data.canUpdate}<button
-                type="button"
-                class="detail-card-action"
-                disabled={saving}
-                onclick={() => ask("resume")}>Return to draft</button
-              >{/if}
-            {#if r.status === "finalised" && data.canAmend}<Button
-                size="sm"
-                variant="outline"
-                disabled={saving}
-                onclick={() => (mode = "amend")}>Create amendment</Button
-              >{/if}
-          </div>
-          {#if d.stale && r.status !== "finalised"}<p class="field-hint">
-              Refresh the changed accounting figures before continuing.
-            </p>{:else if t.unresolvedCount && r.status !== "finalised"}<p
-              class="field-hint"
-            >
-              {t.unresolvedCount} expense line(s) still need classification.
-            </p>{/if}
-        {:else}<div>
-            <p class="hint">You are viewing a retained revision.</p>
-            <a
-              class="detail-card-action"
-              href={resolve("/(app)/tax/[id]", { id: String(d.worksheet.id) })}
-              >Open latest revision<ChevronRight size={13} /></a
-            >
-          </div>{/if}
-        <dl class="detail-list tax-summary">
+        {#if finalisePeriodOpen && r.status !== "finalised"}<p
+            class="field-hint"
+          >
+            Finalisation is available after this accounting period ends. You can
+            save a draft now.
+          </p>{/if}
+        {#if dirty}<button
+            class="detail-card-action"
+            type="button"
+            disabled={saving}
+            onclick={discard}>Discard worksheet changes</button
+          >{/if}
+        {#if r.status === "finalised" && d.isLatest && data.canAmend}<Button
+            variant="outline"
+            onclick={() => (mode = "amend")}>Create amendment</Button
+          >{/if}
+        {#if !d.isLatest}<a
+            class="detail-card-action"
+            href={resolve("/(app)/tax/[id]", { id: String(d.worksheet.id) })}
+            >Open latest revision<ChevronRight size={13} /></a
+          >{/if}
+        <dl class="detail-list">
           <div class="detail-row">
-            <dt class="detail-key">Captured</dt>
+            <dt class="detail-key">Last saved</dt>
             <dd class="detail-val tax-date">{formatAuditTime(r.capturedAt)}</dd>
           </div>
           {#if r.reviewedAt}<div class="detail-row">
@@ -374,6 +585,30 @@
               </dd>
             </div>{/if}
         </dl>
+        <Disclosure label="Export saved worksheet"
+          ><p class="field-hint">
+            Exports contain the last saved figures. Save this draft first to
+            include the latest records and your changes.
+          </p>
+          <div class="tax-actions">
+            <Button
+              variant="outline"
+              size="sm"
+              href={resolve(
+                `/api/tax/${d.worksheet.id}?revision=${r.revision}&format=csv`,
+              )}
+              download><Download size={14} />Export CSV</Button
+            ><Button
+              variant="outline"
+              size="sm"
+              href={resolve(
+                `/api/tax/${d.worksheet.id}?revision=${r.revision}&format=html`,
+              )}
+              target="_blank"
+              rel="noopener noreferrer"><Printer size={14} />Print / PDF</Button
+            >
+          </div></Disclosure
+        >
       </div>
     </section>
     <section class="detail-card" aria-labelledby="tax-revisions-title">
@@ -419,27 +654,31 @@
 </DetailPage>
 {#if mode}<TaxWorksheetSheet
     {mode}
-    detail={d}
+    detail={{ ...d, adjustments }}
     {line}
     {adjustmentId}
     onclose={() => (mode = null)}
     onsaved={saved}
+    onstage={mode !== "amend" ? stage : undefined}
   />{/if}
 <ConfirmDialog
   bind:open={confirmOpen}
-  title={confirm === "finalise"
-    ? "Finalise this revision?"
-    : confirm === "review"
-      ? "Mark this worksheet reviewed?"
-      : "Return to draft?"}
-  description={confirm === "finalise"
-    ? "The saved figures and adjustments will be locked. Later corrections require a separate amendment."
-    : confirm === "review"
-      ? "Confirm that classifications, manual claims and their supporting references have been reviewed. This does not submit a tax return."
-      : "Reviewed status will be cleared so you can change annual tax preparation."}
-  onConfirm={() => {
-    const action = confirm;
-    confirm = null;
-    if (action) void command(action);
-  }}
+  title={completion === "finalised"
+    ? "Finalise this worksheet?"
+    : "Save and mark reviewed?"}
+  description={completion === "finalised"
+    ? "Save all changes, record review and lock these figures. Later changes require an amendment. This does not file a tax return."
+    : "Save all changes and record that the tax treatments and claims have been reviewed. This does not file a tax return."}
+  confirmLabel={completion === "finalised"
+    ? "Finalise worksheet"
+    : "Save & mark reviewed"}
+  onConfirm={() => save(completion, confirmedPayload)}
+/>
+<ConfirmDialog
+  bind:open={leaveOpen}
+  title="Discard unsaved worksheet changes?"
+  description="Your worksheet changes have not been saved."
+  confirmLabel="Discard and leave"
+  danger
+  onConfirm={discardAndLeave}
 />

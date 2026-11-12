@@ -2,6 +2,7 @@ import { readAssetDepreciation } from "../application/depreciation.js";
 import { error, redirect } from "@sveltejs/kit";
 import { db } from "../db/client.js";
 import { readFixedAssets } from "../application/fixed-assets.js";
+import { assetCapitalHistory } from "../queries/capital-allowances.js";
 import { can } from "../permissions.js";
 
 export function loadFixedAssetsPage(locals: App.Locals, url: URL) {
@@ -27,6 +28,7 @@ export function loadFixedAssetDetail(locals: App.Locals, id: number) {
   if (!asset) throw redirect(302, "/assets");
   const depreciation = readAssetDepreciation({ db, locals }, id);
   return {
+    taxHistory: can(locals, "tax.read") ? assetCapitalHistory(db, id) : [],
     depreciation: depreciation.ok ? depreciation.value : null,
     asset,
     accounts: result.value.accounts,

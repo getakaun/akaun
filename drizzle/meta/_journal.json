@@ -330,6 +330,27 @@
       "when": 1794309150330,
       "tag": "0046_annual_tax_worksheets",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1794322573526,
+      "tag": "0047_capital_allowance_schedules",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1794372723523,
+      "tag": "0048_asset_tax_schemes",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1794372723524,
+      "tag": "0049_scheme_only_tax",
+      "breakpoints": true
     }
   ]
 }

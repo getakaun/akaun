@@ -9,6 +9,7 @@ import { auditEvents } from "./audit-events.js";
 type Db = BunSQLiteDatabase<any>;
 
 export type RecordType =
+  | "tax_scheme"
   | "tax_worksheet"
   | "fixed_asset"
   | "contact"
@@ -48,6 +49,7 @@ export type { AuditVia };
  */
 export const AUDIT_PERMISSION: Record<RecordType, LeafPermission> = {
   tax_worksheet: "tax.read",
+  tax_scheme: "tax.read",
   fixed_asset: "records.read",
   record: "records.read",
   account: "accounts.read",
@@ -168,6 +170,7 @@ export function redactChanges(changes: FieldChange[]): FieldChange[] {
 }
 
 const SETTINGS_SECTION_LABELS: Record<string, string> = {
+  tax: "Tax settings",
   general: "General settings",
   closing: "Month closing",
   ledger: "Ledger settings",
@@ -187,6 +190,10 @@ function labelOf(db: Db, query: SQL): string | null {
 function currentLabel(db: Db, type: RecordType, id: string): string | null {
   const one = (query: SQL) => labelOf(db, query);
   switch (type) {
+    case "tax_scheme":
+      return one(
+        sql`SELECT json_extract(definition, '$.name') || ' · v' || version AS label FROM asset_tax_schemes WHERE id = ${id}`,
+      );
     case "tax_worksheet":
       return one(
         sql`SELECT 'YA ' || ya AS label FROM tax_worksheets WHERE id = ${id}`,

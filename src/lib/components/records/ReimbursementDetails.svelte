@@ -23,13 +23,28 @@
 		<div class="detail-card-head">
 			<span class="detail-card-title">Reimbursement #{group.id}</span>
 		</div>
-		{#if group.reversedAt}
+		{#if group.removedForRecord && !group.reversedAt}
+			<!-- This expense was taken out with Correct allocation; the rest of the
+			     reimbursement is no longer about it. -->
+			<div class="bg-muted mb-3 rounded-md p-3 text-sm" role="status">
+				<p class="font-semibold">Taken out of this reimbursement</p>
+				<p class="mt-1">
+					{formatMinor(group.removedForRecord.amountMinor)} is no longer reimbursed by this reimbursement{group
+						.removedForRecord.removedAt
+						? ` since ${formatDate(group.removedForRecord.removedAt.slice(0, 10))}`
+						: ''}. The amount it paid stays as credit on the payment.
+				</p>
+				{#if group.removedForRecord.reason}<p class="mt-1">
+						Reason: {group.removedForRecord.reason}
+					</p>{/if}
+			</div>
+		{:else if group.reversedAt}
 			<div class="bg-muted mb-3 rounded-md p-3 text-sm" role="status">
 				<p class="font-semibold">Reimbursement reversed</p>
 				<p class="mt-1">
 					{formatMinor(group.reversedAmountMinor)} reversed on {formatDate(
 						group.reversalDate ?? group.reversedAt.slice(0, 10)
-					)}. All {group.items.length} expenses were removed from this reimbursement.
+					)}. All {group.activeItemCount} expenses were removed from this reimbursement.
 				</p>
 				<p class="mt-1">
 					The original bank payment stays recorded. Any released credit can be used for a new
@@ -53,16 +68,16 @@
 			</p>
 		{/if}
 
-		{#if group.reversedAt || reimbursement.generated || group.fundedMinor !== group.totalMinor || group.funding.length !== 1}
+		{#if !group.removedForRecord && (group.reversedAt || reimbursement.generated || group.fundedMinor !== group.totalMinor || group.funding.length !== 1)}
 			<details class="mb-3" open={!!group.reversedAt}>
 				<summary class="cursor-pointer text-sm font-medium"
-					>{group.reversedAt ? 'Previously included expenses' : 'Reimbursement expenses'} ({group
-						.items.length})</summary
+					>{group.reversedAt ? 'Previously included expenses' : 'Reimbursement expenses'} ({group.activeItemCount})</summary
 				>
 				<div class="mt-2 flex flex-col gap-2">
 					{#each group.items as item (item.id)}
 						<a
 							class="related-link flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
+							class:text-muted-foreground={!!item.removedAt}
 							href={resolve('/(app)/records/[id]', {
 								id: String(item.recordId)
 							})}
@@ -73,10 +88,14 @@
 								>
 								<span class="text-muted-foreground block text-xs"
 									>{item.contactName || ''} · {formatDate(item.date)} · {item.recordNumber ||
-										`#${item.recordId}`}</span
+										`#${item.recordId}`}{item.removedAt
+										? ` · Taken out ${formatDate(item.removedAt.slice(0, 10))}`
+										: ''}</span
 								></span
 							>
-							<span class="shrink-0">{formatMinor(item.amountMinor)}</span>
+							<span class="shrink-0" class:line-through={!!item.removedAt}
+								>{formatMinor(item.amountMinor)}</span
+							>
 						</a>
 					{/each}
 				</div>
@@ -103,7 +122,7 @@
 			{/each}
 		{/if}
 
-		<details class="mt-3">
+		<details class="mt-3" hidden={!!group.removedForRecord && !group.reversedAt}>
 			<summary class="cursor-pointer text-sm font-medium">Accounting details</summary>
 			<p class="text-muted-foreground my-2 text-sm">
 				These entries connect the original expense contacts to the reimbursement recipient. They do
@@ -128,7 +147,7 @@
 				{/each}
 			</div>
 		</details>
-		{#if !group.reversedAt && canReverse}
+		{#if !group.reversedAt && !group.removedForRecord && canReverse}
 			<button type="button" class="sheet-btn mt-3" {disabled} onclick={() => onreverse(group.id)}
 				>Reverse entire reimbursement…</button
 			>
@@ -153,10 +172,15 @@
 				<div class="mt-3 border-t pt-3 text-sm">
 					<p class="font-medium">{formatDate(correction.date.slice(0, 10))}</p>
 					{#if correction.removedMinor > 0}<p>
-							{formatMinor(correction.removedMinor)} allocation reversed
+							{formatMinor(correction.removedMinor)} allocation reversed{correction.removedLabels.length
+								? ` · ${correction.removedLabels.join(', ')}`
+								: ''}
 						</p>{/if}
 					{#if correction.addedMinor > 0}<p>
-							{formatMinor(correction.addedMinor)} allocated to replacement records
+							{formatMinor(correction.addedMinor)} allocated to replacement records{correction
+								.addedLabels.length
+								? ` · ${correction.addedLabels.join(', ')}`
+								: ''}
 						</p>{/if}
 					{#if correction.reason}<p class="text-muted-foreground mt-1">
 							Reason: {correction.reason}

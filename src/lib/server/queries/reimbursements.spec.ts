@@ -197,7 +197,19 @@ describe("reimbursement record presentation", () => {
     expect(result.displayLinks.reduce((sum, l) => sum + l.amountMinor, 0)).toBe(
       55494,
     );
-    expect(result.displayLinks.every((l) => l.canUndo === false)).toBe(true);
+    // One payment funds the whole group, so each expense is that payment's own
+    // reversible allocation, keyed by its supplier-entry → expense settlement.
+    expect(result.displayLinks.every((l) => l.canUndo === true)).toBe(true);
+    const itemSettlements = db
+      .select()
+      .from(schema.settlements)
+      .where(eq(schema.settlements.paymentMovementId, f.transfer.positive))
+      .all();
+    expect(result.displayLinks.map((l) => l.settlementId)).toEqual(
+      f.expenses.map(
+        (e) => itemSettlements.find((s) => s.owedMovementId === e.negative)!.id,
+      ),
+    );
     expect(result.reimbursement.groups[0].fundingForRecordMinor).toBe(55494);
     const helperEntries = recordRelations(db, 252).reimbursement.groups[0]
       .entries;
@@ -219,7 +231,7 @@ describe("reimbursement record presentation", () => {
       )?.amountMinor,
     ).toBe(55494);
     expect(recordRelations(db, 100).displayLinks).toMatchObject([
-      { otherRecordId: 219, amountMinor: 5000, canUndo: false },
+      { otherRecordId: 219, amountMinor: 5000, canUndo: true },
     ]);
   });
 

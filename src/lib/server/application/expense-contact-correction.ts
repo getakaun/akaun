@@ -1,6 +1,6 @@
 import { withClosingRefusal } from "./closing-refusal.js";
 import { createHash } from "node:crypto";
-import { and, asc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 import {
   AccountSubType,
@@ -101,7 +101,13 @@ function snapshot(ctx: AppContext, id: number) {
       reimbursements,
       eq(reimbursements.id, reimbursementItems.groupId),
     )
-    .where(inArray(reimbursementItems.sourceMovementId, movementIds))
+    .where(
+      and(
+        inArray(reimbursementItems.sourceMovementId, movementIds),
+        // An expense taken out of a reimbursement no longer belongs to it.
+        isNull(reimbursementItems.removedAt),
+      ),
+    )
     .orderBy(asc(reimbursementItems.id))
     .all();
   const generatedLinks = relatedIds.filter(

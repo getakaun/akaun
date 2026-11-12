@@ -125,3 +125,24 @@ Find additional consumers with `rg -n '\bsettlements\b' src`; the table is share
 At implementation commit `2452942`, `bun run check` passed with zero errors and warnings. `bun run test` reported 2,000 passing server tests and two failures in `src/lib/server/services/ledger-defaults.spec.ts`: its `account-defaults.js` mock does not export `accountDefaultId`. The client suite was not reached because the server suite failed. This is a recorded baseline, not evidence that future changes pass.
 
 During implementation, run focused allocation/correction/query tests first, then `bun run check` and the full `bun run test`. Address or explicitly account for the baseline mock failures. This handover document itself requires no application test run.
+
+## Correct allocation on a legacy group reimbursement
+
+A legacy group (`reimbursements` + generated `reimbursement_entries` + `reimbursement_items`) used to offer only "Reverse entire reimbursement". Correct allocation now takes one expense out of it, through the same dialog, routes and MCP tools as any allocation.
+
+- **Rules live in one place.** `queries/reimbursement-groups.ts` (`inspectGroup`, `groupAllocationsForPayment`, `correctionMovementFor`) and `services/reimbursement-groups.ts` (`removeGroupExpenses`).
+- **What the user sees.** A payment that funds a group alone and in full lists the group's expenses as its own allocations. Each is keyed by its real supplier-entry → expense settlement. A supplier entry's movement resolves to that payment, so `undo_settlement` on the expense's settlement works too.
+- **What is posted.** All on the group's own date:
+  - the expense's allocation is reversed;
+  - a `supplier-removal` entry nets the supplier entry;
+  - the funding allocation is reversed and re-made smaller;
+  - a `recipient-removal` entry nets the recipient entry;
+  - the item gets `reimbursement_items.removed_at`.
+- **Effect.** The payment keeps every movement and the removed amount becomes its credit. Removing every remaining expense runs the whole reversal instead.
+- **Deliberately refused:**
+  - groups funded by several payments, or not fully funded, since the released amount has no single owner;
+  - a funding payment with no payee, or a different payee from the recipient entry;
+  - entries that disagree with their items;
+  - a closed month on the group's date. A plain allocation correction still works in a closed month, because settlements carry no date.
+- **Unchanged.** `paymentAllocationSnapshot().allocations` stays raw, because payee correction and "release the whole funding" read it. Only `preparePaymentCorrection` and `correctPaymentAllocations` use the per-expense view.
+- **Made removal-aware.** The whole reversal, payee correction, void and contact correction now ignore removed items and the removal pairs. Coverage is in `application/group-allocation-correction.spec.ts`.

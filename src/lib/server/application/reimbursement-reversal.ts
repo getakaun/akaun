@@ -5,7 +5,7 @@ import {
   originalReimbursementDescription,
 } from "$lib/reimbursement-labels.js";
 import { createHash } from "node:crypto";
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 import { DefaultAccountPurpose } from "$lib/enums.js";
 import {
@@ -73,6 +73,10 @@ function snapshot(ctx: AppContext, id: number) {
   const movementIds = records.flatMap((e) =>
     e.record.movements.map((m) => m.id),
   );
+  const own = new Set(movementIds);
+  // An expense already taken out by Correct allocation left a removal entry
+  // settled against its original entry. That pair stays as it is: it is
+  // neither undone here nor counted as funding.
   const allocations = movementIds.length
     ? ctx.db
         .select()
@@ -87,6 +91,9 @@ function snapshot(ctx: AppContext, id: number) {
           ),
         )
         .all()
+        .filter(
+          (a) => !(own.has(a.paymentMovementId) && own.has(a.owedMovementId)),
+        )
     : [];
   const items = ctx.db
     .select({
@@ -100,7 +107,12 @@ function snapshot(ctx: AppContext, id: number) {
       eq(ledgerMovements.id, reimbursementItems.sourceMovementId),
     )
     .innerJoin(ledgerRecords, eq(ledgerRecords.id, ledgerMovements.recordId))
-    .where(eq(reimbursementItems.groupId, id))
+    .where(
+      and(
+        eq(reimbursementItems.groupId, id),
+        isNull(reimbursementItems.removedAt),
+      ),
+    )
     .all();
   const recipient = records.find((entry) => entry.role === "recipient");
   const recipientMovementIds = new Set(
@@ -209,117 +221,7 @@ function reverseReimbursementOperation(
         );
       const stale = checkVersion(before.version, input.expectedVersion);
       if (stale) throw new Rollback(stale);
-      if (before.group.reversedAt)
-        throw new Rollback(
-          fail("REFUSED", "This reimbursement has already been reversed."),
-        );
-      const payable = must(
-        requireAccountDefault(ctx.db, DefaultAccountPurpose.Payable),
-      );
-      for (const allocation of before.allocations) {
-        must(
-          undoSettlement(
-            ctx.db,
-            allocation.id,
-            actor(ctx),
-            emits,
-            input.reason,
-            true,
-          ),
-        );
-      }
-      const originalDescription = originalReimbursementDescription(
-        before.entries.find((entry) => entry.role === "recipient")!.record
-          .description,
-      );
-      const reversalIds: number[] = [];
-      for (const entry of before.entries) {
-        const owed = entry.record.movements.find(
-          (m) => m.accountId === payable,
-        )!;
-        const clearing = entry.record.movements.find(
-          (m) => m.accountId !== payable,
-        )!;
-        const reverse = must(
-          createRecord(
-            ctx.db,
-            actor(ctx),
-            {
-              kind: "reimbursement-transfer",
-              leg:
-                entry.role === "supplier"
-                  ? "supplier-reversal"
-                  : "recipient-reversal",
-              clearingAccountId: clearing.accountId,
-              date: input.date,
-              description: reimbursementEntryDescription(
-                "recipient-reversal",
-                originalDescription,
-              ),
-              amount: Math.abs(owed.amountMinor) / 100,
-              currency: entry.record.currency,
-              exchangeRate: 1,
-              contactId: entry.record.contactId,
-              reference: entry.record.reference,
-              remark: input.reason,
-            },
-            emits,
-          ),
-        );
-        ctx.db
-          .insert(reimbursementEntries)
-          .values({
-            recordId: reverse.id,
-            groupId: before.group.id,
-            role:
-              entry.role === "supplier"
-                ? "supplier-reversal"
-                : "recipient-reversal",
-          })
-          .run();
-        const reverseOwed = reverse.movements.find(
-          (m) => m.accountId === payable,
-        )!;
-        must(
-          createSettlements(
-            ctx.db,
-            actor(ctx),
-            owed.amountMinor > 0 ? owed.id : reverseOwed.id,
-            [
-              {
-                owedMovementId: owed.amountMinor > 0 ? reverseOwed.id : owed.id,
-                amountMinor: Math.abs(owed.amountMinor),
-              },
-            ],
-            emits,
-          ),
-        );
-        reversalIds.push(reverse.id);
-      }
-      ctx.db
-        .update(reimbursements)
-        .set({ reversedAt: new Date().toISOString() })
-        .where(eq(reimbursements.id, input.groupId))
-        .run();
-      recordAudit(ctx.db, {
-        recordType: "record",
-        recordId: before.group.payableRecordId,
-        userId: actor(ctx),
-        action: "update",
-        changes: [
-          {
-            field: "reimbursementReversal",
-            before: before.group,
-            after: { date: input.date, reversalIds },
-          },
-          { field: "correctionReason", before: null, after: input.reason },
-        ],
-      });
-      return {
-        groupId: input.groupId,
-        reversalIds,
-        paymentRecordId: before.group.paymentRecordId,
-      };
+      return reverseGroup(ctx, before, input, emits);
     });
     emits.forEach((emit) => emit());
     return ok(value);
@@ -327,4 +229,144 @@ function reverseReimbursementOperation(
     if (error instanceof Rollback) return error.failure;
     throw error;
   }
+}
+
+/**
+ * The whole reversal inside the caller's transaction, for Correct allocation
+ * when every remaining expense of a group is taken out. Throws `Rollback`.
+ */
+export function reverseReimbursementInTransaction(
+  ctx: AppContext,
+  groupId: number,
+  input: { date: string; reason: string },
+  emits: DeferredEmits,
+) {
+  const before = snapshot(ctx, groupId);
+  if (!before)
+    throw new Rollback(
+      fail("NOT_FOUND", "That reimbursement no longer exists."),
+    );
+  return reverseGroup(ctx, before, input, emits);
+}
+
+function reverseGroup(
+  ctx: AppContext,
+  before: NonNullable<ReturnType<typeof snapshot>>,
+  input: { date: string; reason: string },
+  emits: DeferredEmits,
+) {
+  if (before.group.reversedAt)
+    throw new Rollback(
+      fail("REFUSED", "This reimbursement has already been reversed."),
+    );
+  const payable = must(
+    requireAccountDefault(ctx.db, DefaultAccountPurpose.Payable),
+  );
+  for (const allocation of before.allocations) {
+    must(
+      undoSettlement(
+        ctx.db,
+        allocation.id,
+        actor(ctx),
+        emits,
+        input.reason,
+        true,
+      ),
+    );
+  }
+  const originalDescription = originalReimbursementDescription(
+    before.entries.find((entry) => entry.role === "recipient")!.record
+      .description,
+  );
+  const reversalIds: number[] = [];
+  // Only the original entries are reversed, and only by what is still on them:
+  // an expense taken out earlier is already netted by its removal entry.
+  for (const entry of before.entries) {
+    if (entry.role !== "recipient" && entry.role !== "supplier") continue;
+    const owed = entry.record.movements.find((m) => m.accountId === payable)!;
+    const clearing = entry.record.movements.find(
+      (m) => m.accountId !== payable,
+    )!;
+    const remainingMinor =
+      Math.abs(owed.amountMinor) -
+      (getSide(ctx.db, owed.id)?.settledMinor ?? 0);
+    if (remainingMinor <= 0) continue;
+    const reverse = must(
+      createRecord(
+        ctx.db,
+        actor(ctx),
+        {
+          kind: "reimbursement-transfer",
+          leg:
+            entry.role === "supplier"
+              ? "supplier-reversal"
+              : "recipient-reversal",
+          clearingAccountId: clearing.accountId,
+          date: input.date,
+          description: reimbursementEntryDescription(
+            "recipient-reversal",
+            originalDescription,
+          ),
+          amount: remainingMinor / 100,
+          currency: entry.record.currency,
+          exchangeRate: 1,
+          contactId: entry.record.contactId,
+          reference: entry.record.reference,
+          remark: input.reason,
+        },
+        emits,
+      ),
+    );
+    ctx.db
+      .insert(reimbursementEntries)
+      .values({
+        recordId: reverse.id,
+        groupId: before.group.id,
+        role:
+          entry.role === "supplier"
+            ? "supplier-reversal"
+            : "recipient-reversal",
+      })
+      .run();
+    const reverseOwed = reverse.movements.find((m) => m.accountId === payable)!;
+    must(
+      createSettlements(
+        ctx.db,
+        actor(ctx),
+        owed.amountMinor > 0 ? owed.id : reverseOwed.id,
+        [
+          {
+            owedMovementId: owed.amountMinor > 0 ? reverseOwed.id : owed.id,
+            amountMinor: remainingMinor,
+          },
+        ],
+        emits,
+      ),
+    );
+    reversalIds.push(reverse.id);
+  }
+  ctx.db
+    .update(reimbursements)
+    .set({ reversedAt: new Date().toISOString() })
+    .where(eq(reimbursements.id, before.group.id))
+    .run();
+  recordAudit(ctx.db, {
+    recordType: "record",
+    recordId: before.group.payableRecordId,
+    userId: actor(ctx),
+    action: "update",
+    changes: [
+      {
+        field: "reimbursementReversal",
+        before: before.group,
+        after: { date: input.date, reversalIds },
+      },
+      { field: "correctionReason", before: null, after: input.reason },
+    ],
+  });
+  return {
+    groupId: before.group.id,
+    reversalIds,
+    paymentRecordId: before.group.paymentRecordId,
+  };
 }

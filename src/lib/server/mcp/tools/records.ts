@@ -17,7 +17,10 @@ import { can } from "../../permissions.js";
 import { permissionForKind } from "../../ledger/record-permissions.js";
 import { issueFileLink, attachmentLinkSchema } from "../file-links.js";
 import { storedFileType } from "../../storage/file-type.js";
-import { settlementsForRecord } from "../../queries/settlements.js";
+import {
+  getSettlement,
+  settlementsForRecord,
+} from "../../queries/settlements.js";
 import { reversedAllocationsForRecord } from "../../queries/reimbursements.js";
 import type { RecordView } from "../../ledger/types.js";
 import { recordVersion, recordVersions } from "../../application/version.js";
@@ -187,6 +190,11 @@ export function registerRecords(server: McpServer, context: McpContext) {
           ? {
               settlements: links.slice(0, 200).map((link) => ({
                 ...link,
+                // What get_payment_allocations takes. A generated reimbursement
+                // entry's movement resolves to the payment that funds it.
+                paymentMovementId:
+                  getSettlement(context.db, link.settlementId)
+                    ?.paymentMovementId ?? null,
                 otherKind: LedgerRecordKindLabels[link.otherKind],
                 path: `/records/${link.otherRecordId}`,
               })),

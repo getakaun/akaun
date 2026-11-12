@@ -38,6 +38,9 @@
 		>(candidates.map((i) => [i.movementId, { ...i }]));
 		for (const allocation of snapshot?.allocations ?? []) {
 			if (!selected.includes(allocation.id)) continue;
+			// An expense taken out of a group reimbursement is being taken out on
+			// purpose; offering it back would only re-reimburse it.
+			if ('groupAllocation' in allocation && allocation.groupAllocation) continue;
 			const link = snapshot?.links.find((l) => l.settlementId === allocation.id);
 			if (
 				!link ||

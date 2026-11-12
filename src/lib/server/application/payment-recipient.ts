@@ -13,6 +13,7 @@ import {
 import { getRecord, updateRecord } from "../queries/ledger.js";
 import { getSide, recordIdsForSettlement } from "../queries/settlements.js";
 import { paymentAllocationSnapshot } from "./payment-corrections.js";
+import { isInternalAllocation } from "../queries/reimbursement-groups.js";
 import { requireAccountDefault } from "../services/account-defaults.js";
 import { createSettlements, undoSettlement } from "../services/settlements.js";
 import { emitRecordUpdate, type DeferredEmits } from "../services/ledger.js";
@@ -125,7 +126,11 @@ function snapshot(ctx: AppContext, id: number) {
       )[0],
       reason: "This overpayment has been refunded or offset.",
     });
-  for (const a of funding.filter((a) => a.paymentMovementId !== side.id))
+  // An expense taken out by Correct allocation leaves a removal entry settled
+  // against the recipient entry; that is the group's own bookkeeping.
+  for (const a of funding.filter(
+    (a) => a.paymentMovementId !== side.id && !isInternalAllocation(ctx.db, a),
+  ))
     dependencies.push({
       settlementId: a.id,
       recordId: recordIdsForSettlement(
@@ -278,7 +283,25 @@ function correctPaymentRecipientOperation(
       updateRecord(ctx.db, before.record.id, actor(ctx), {
         contactId: input.contactId,
       });
-      for (const id of ownPayableIds) {
+      // A recipient-removal entry nets part of the recipient entry, so it must
+      // name the same person or the two stop settling each other.
+      const recipientRemovals = before.groups.length
+        ? ctx.db
+            .select({ recordId: reimbursementEntries.recordId })
+            .from(reimbursementEntries)
+            .where(
+              and(
+                inArray(
+                  reimbursementEntries.groupId,
+                  before.groups.map((g) => g.id),
+                ),
+                eq(reimbursementEntries.role, "recipient-removal"),
+              ),
+            )
+            .all()
+            .map((e) => e.recordId)
+        : [];
+      for (const id of [...ownPayableIds, ...recipientRemovals]) {
         const old = getRecord(ctx.db, id)!;
         updateRecord(ctx.db, id, actor(ctx), { contactId: input.contactId });
         recordAudit(ctx.db, {

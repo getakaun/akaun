@@ -14,8 +14,12 @@
   use allowances up to eligible same-business income. The derived income basis is
   limited to an ordinary MY single-business book with operating revenue (including
   unclassified revenue, as on the P&L), tax add-backs and signed annual adjustments.
-  Multiple businesses, explicit non-operating income and other jurisdictions are
-  outside the simple automatic flow; completion blocks with an explanation.
+  Other revenue (such as bank interest) is excluded from allowance capacity but
+  remains in accounting profit and the annual result. This uses the saved revenue
+  classification; tax eligibility still needs verification. Expenses/add-backs
+  remain on the single-business basis; source-specific expense allocation is not
+  calculated. Multiple businesses and other jurisdictions remain outside the
+  simple automatic flow; completion blocks with the exact cause.
   Reductions below usable allowances are not automatically carried forward.
   Earlier manual schedules and finalised evidence retain their saved figures;
   reviewed carry-forward eligibility remains the accountant's responsibility.

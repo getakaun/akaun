@@ -935,6 +935,54 @@ describe("automatic capital utilisation at the application boundary", () => {
     });
     expect(d.revision.status).toBe("finalised");
   });
+  it("automatically handles one Malaysian business plus bank interest without using interest to absorb allowances", () => {
+    income(1000);
+    const interest = income(100);
+    db.update(schema.accounts)
+      .set({ name: "Bank interest", subType: RevenueSubType.OtherRevenue })
+      .where(eq(schema.accounts.id, interest))
+      .run();
+    let d = prepare(create());
+    const input = ready(d, { businessSource: "Main business" });
+    input.utilisation = input.utilisation.map((u) => ({
+      ...u,
+      businessSource: "Main business",
+    }));
+    const before = financial();
+    d = finalise(autoSave(d, input));
+    expect(d.capital.totals).toMatchObject({
+      usedMinor: 100000,
+      carryForwardMinor: 260000,
+      problems: [],
+    });
+    expect(d.revision.snapshot.profitMinor).toBe(110000);
+    expect(d.totals.resultMinor).toBe(10000); // Interest remains in the overall worksheet.
+    expect(d.capital.schedule!.utilisationEvidence!.excludedIncome).toEqual([
+      { accountId: interest, accountName: "Bank interest", amountMinor: 10000 },
+    ]);
+    expect(financial()).toBe(before);
+    const csv = toCsv(taxWorksheetCsv(read(d.worksheet.id, false)));
+    db.update(schema.accounts)
+      .set({ subType: RevenueSubType.OperatingRevenue })
+      .where(eq(schema.accounts.id, interest))
+      .run();
+    expect(toCsv(taxWorksheetCsv(read(d.worksheet.id, false)))).toBe(csv);
+    expect(read(d.worksheet.id).capital.totals!.usedMinor).toBe(100000);
+  });
+  it("carries all allowances when the only income is bank interest", () => {
+    const interest = income(100);
+    db.update(schema.accounts)
+      .set({ subType: RevenueSubType.OtherRevenue })
+      .where(eq(schema.accounts.id, interest))
+      .run();
+    const d = finalise(autoSave(prepare(create())));
+    expect(d.capital.totals).toMatchObject({
+      usedMinor: 0,
+      carryForwardMinor: 360000,
+      problems: [],
+    });
+    expect(d.totals.resultMinor).toBe(10000);
+  });
   it("detects changed income classifications even when GL amounts did not change", () => {
     const sales = income(1000);
     const d = prepare(create()),
@@ -976,7 +1024,7 @@ describe("automatic capital utilisation at the application boundary", () => {
         adjustments: fresh.adjustments,
       },
     );
-    expect(preview.utilisationEvidence!.groups[0].capacityMinor).toBeNull();
+    expect(preview.utilisationEvidence!.groups[0].capacityMinor).toBe(0);
   });
   it("preserves saved legacy manual evidence and starts the following YA in automatic mode", () => {
     income(1000);

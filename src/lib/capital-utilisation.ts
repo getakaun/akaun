@@ -106,13 +106,14 @@ export function calculateUtilisation(
         ? "This worksheet retains a saved multiple-business setting. Use automatic calculation only if these workings belong to one business."
         : sources.length > 1
           ? `This schedule has different business-source labels: ${sources.map((s) => `“${s}”`).join(", ")}. Use the same label on assets and earlier balances only when they belong to the same business.`
-          : nonOperatingIncome.length
-            ? `These income accounts are outside the operating-income classification: ${nonOperatingIncome.map((l) => `“${l.accountName}”`).join(", ")}. The worksheet cannot automatically assign their income and related expenses to the business for allowance usage.`
-            : null;
+          : null;
   const derived =
     !unsupportedReason && sources.length === 1 && !tax.unresolvedCount;
   // Annual adjustments belong to this single-business worksheet. Brought-forward
   // losses apply after capital allowances and cannot reduce absorption capacity.
+  // On this single-business basis, revenue classified as Other is outside the
+  // business allowance capacity, but stays in the overall tax worksheet. Subtract
+  // signed net amounts, including contra-other revenue and refunds.
   const annualAdjustments = active
     .filter((a) => a.kind === "other")
     .map((a) => (a.direction === "increase" ? a.amountMinor : -a.amountMinor));
@@ -123,6 +124,7 @@ export function calculateUtilisation(
           context.snapshot.profitMinor,
           tax.addBackMinor,
           ...annualAdjustments,
+          ...nonOperatingIncome.map((l) => -l.amountMinor),
         ]),
       )
     : null;
@@ -132,6 +134,15 @@ export function calculateUtilisation(
     basisHash: context.hash,
     adjustmentKey: key,
     allocation: "oldest_first",
+    ...(nonOperatingIncome.length
+      ? {
+          excludedIncome: nonOperatingIncome.map((l) => ({
+            accountId: l.accountId,
+            accountName: l.accountName,
+            amountMinor: l.amountMinor,
+          })),
+        }
+      : {}),
     groups: [],
     problems: [],
   };

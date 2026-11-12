@@ -12,9 +12,15 @@ The ordinary Malaysian single-business calculation uses accounting profit, tax
 add-backs/source corrections and signed Other tax adjustments. Brought-forward
 losses apply after allowances. Revenue without a subtype is operating income,
 consistent with P&L reporting; it no longer forces manual review. Same-business
-income caps remain in the calculation. Explicit non-operating income, multiple
-business sources and other jurisdictions get one unsupported-case explanation,
-with completion blocked rather than an invented allocation or extra forms.
+income caps remain in the calculation. Other revenue, including bank interest,
+is excluded from allowance absorption capacity using its signed net amount, while
+remaining in accounting profit and the overall annual result. Contra-other revenue
+and refunds use their signed amounts. Excluded accounts/amounts are retained in
+utilisation evidence. The single-business basis continues to attribute the book's
+expenses/add-backs to that business; allocation of shared/non-business expenses is
+not inferred. This is a preparatory classification convention, not a determination
+that all bank interest is legally non-business income. Multiple business sources
+and other jurisdictions get an exact explanation and block completion.
 Unresolved expense classifications/corrections still need resolution at source.
 
 Existing version-1 manual income limits/overrides remain supported for retained

@@ -245,6 +245,37 @@ describe("automatic same-business capital allowance utilisation", () => {
       carriedMinor: 29000,
     });
   });
+  it.each([
+    [10000, 2000, 10000],
+    [0, 12000, 0],
+    [-1000, 5000, 0],
+    [10000, -2000, 10000],
+  ])(
+    "excludes other income from allowance capacity: trading %i, other %i",
+    (trading, other, used) => {
+      const c = context(trading);
+      c.snapshot.profitMinor += other;
+      c.snapshot.incomeMinor += other;
+      c.snapshot.profitLines.push({
+        accountId: 2,
+        accountName: "Bank interest",
+        type: "income",
+        amountMinor: other,
+      });
+      const result = calculateUtilisation(schedule(), 2025, c);
+      expect(result.utilisationEvidence!.problems).toEqual([]);
+      expect(result.utilisationEvidence!.groups[0]).toMatchObject({
+        capacityMinor: used,
+        usedMinor: used,
+        carriedMinor: 30000 - used,
+        basis: "bookkeeping",
+      });
+      expect(result.utilisationEvidence!.excludedIncome).toEqual([
+        { accountId: 2, accountName: "Bank interest", amountMinor: other },
+      ]);
+      expect(c.snapshot.profitMinor).toBe(trading + other);
+    },
+  );
   it("allocates oldest origins first and rebuilds forged current uses", () => {
     const s = schedule();
     s.utilisation = [
@@ -276,14 +307,12 @@ describe("automatic same-business capital allowance utilisation", () => {
     expect(result.utilisationEvidence!.groups[0].carriedMinor).toBe(33000);
   });
   it.each([
-    "other_income",
     "multiple_sources",
     "unknown_jurisdiction",
     "single_business_unchecked",
   ])("requires a reviewed income limit for %s", (condition) => {
     const s = schedule(),
       c = context();
-    if (condition === "other_income") c.businessIncomeAccounts = [];
     if (condition === "multiple_sources")
       s.utilisation.push({
         businessSource: "Rental",
@@ -304,7 +333,6 @@ describe("automatic same-business capital allowance utilisation", () => {
       2025,
       c,
     ).utilisationEvidence!.problems.join(" ");
-    if (condition === "other_income") expect(problem).toContain("Sales");
     if (condition === "multiple_sources") {
       expect(problem).toContain("Trading");
       expect(problem).toContain("Rental");

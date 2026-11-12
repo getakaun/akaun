@@ -96,8 +96,10 @@
       Choose an asset scheme to calculate available allowances.
     </p>
   {:else if !savedManualSettings && !problems.length}<p class="claim-note">
-      Calculated automatically from the worksheet. Allowances exceeding this
-      year's adjusted business income carry forward.
+      Calculated automatically from business income.{evidence?.excludedIncome
+        ?.length
+        ? " Other revenue is kept separate."
+        : ""} Unabsorbed allowances carry forward.
     </p>{/if}
   {#if savedManualSettings && groups.length}
     <p class="claim-note">

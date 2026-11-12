@@ -16,7 +16,10 @@ real-copy rehearsal and owner UI acceptance are not cleared.
   annual adjustments are included, while brought-forward losses follow allowances.
 - The claim summary shows available allowances, automatic usage and unabsorbed
   carry-forward without income-limit or override forms or a **Use available** action.
-  Unsupported business/income cases get one explanation and block completion.
+  Multiple business-source labels/unsupported jurisdictions identify the exact
+  cause and block completion. Other revenue such as bank interest is kept in the
+  annual result but excluded from business allowance capacity; it no longer blocks
+  automatic usage. Excluded accounts and signed amounts are retained in evidence.
   Previously saved manual settings remain retained with one explicit switch to
   automatic for a draft. Previously unclaimed amounts stay separate from carry;
   year-specific restrictions/limits reset on rollover. Saved manual schedules
@@ -75,14 +78,14 @@ Original phase 7 verification at `46feca8` on Bun 1.3.11:
 
 Automatic utilisation and simplification verification on Bun 1.3.11:
 
-- `bun run test:release`: **1,892 passed, 0 failed across 130 files**, 2 snapshots (186.41s).
+- `bun run test:release`: **1,898 passed, 0 failed across 130 files**, 2 snapshots (303.70s).
 - `bun run --shell=system check`: zero errors and warnings; direct `svelte-check`
   also passes.
 - ESLint on all changed/new TypeScript and Svelte files: pass.
 - Prettier on changed/new supported files and `git diff --check`: pass.
 - `bun run lint` still stops at the existing 231-file formatting backlog.
 
-The 25 added regressions cover income caps and loss years, signed add-backs and
+The 31 added regressions cover income caps and loss years, signed add-backs and
 annual corrections, loss ordering, separate business income, stale reviewed
 limits, oldest-origin allocation, manual restriction versus unabsorbed carry,
 asset/source edits, canonical server recalculation, save/finalisation, frozen
@@ -90,7 +93,11 @@ exports, legacy preservation and rollover. The stopped-book restore rehearsal
 now exercises automatic usage against synthetic eligible trading income. Revenue
 without subtypes and signed annual adjustments have explicit automatic-use
 regressions. Income-limit, override and reason forms are removed from the normal
-UI; retained manual evidence is still tested for compatibility.
+UI; retained manual evidence is still tested for compatibility. Bank-interest
+regressions cover business income plus interest, interest-only income, business
+losses, signed other-revenue reversals, no GL changes and fixed finalised exports.
+RM1,000 business income plus RM100 Other revenue uses RM1,000 from RM3,600
+allowances, carries RM2,600 and leaves RM100 in the overall worksheet result.
 Comparison, authority and scope are documented in
 [automatic-utilisation-plan.md](automatic-utilisation-plan.md).
 

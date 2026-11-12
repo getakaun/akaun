@@ -37,8 +37,11 @@ real books. No UI acceptance or screenshot is claimed by automated tests.
    all RM3,600 is used; in a loss year none is used. No **Use available** click is
    required. Revenue without a subtype must calculate as operating income, and
    signed annual adjustments must update usage automatically. No income-limit,
-   reason or override form is required. Multiple businesses or non-operating
-   income show one limitation and block completion. Saved manual settings need
+   reason or override form is required. Add RM100 bank interest as Other revenue:
+   business usage stays RM1,000 and the RM100 remains in the overall result. With
+   only bank interest, usage is zero and all allowances carry forward. Multiple
+   business-source labels or unsupported jurisdictions identify the exact cause
+   and block completion. Saved manual settings need
    an explicit switch to automatic; finalised evidence stays fixed. These rates are
    arithmetic fixtures, not recommended Malaysian tax rates.
 9. **Completion and rollover:** save/finalise a completed YA with the required

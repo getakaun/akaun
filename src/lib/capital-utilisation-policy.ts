@@ -43,6 +43,11 @@ export type UtilisationEvidence = {
   basisHash: string;
   adjustmentKey: string;
   allocation: "oldest_first";
+  excludedIncome?: {
+    accountId: number;
+    accountName: string;
+    amountMinor: number;
+  }[];
   groups: {
     businessSource: string;
     capacityMinor: number | null;

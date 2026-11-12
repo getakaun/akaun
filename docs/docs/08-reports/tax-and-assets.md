@@ -64,10 +64,19 @@ signed annual adjustments. Brought-forward losses apply after allowances. The
 summary shows allowance available, used this year and carried forward; there is
 no income-limit form or utilisation override to complete.
 
-Separate businesses, explicitly non-operating income and other jurisdictions are
-outside this simple automatic flow. Akaun explains the limitation and blocks
-completion instead of inventing an allocation. Resolve incomplete expense tax
-treatments in the worksheet before completing it.
+Other revenue, such as bank interest, stays in accounting profit and the overall
+worksheet result. For this simple calculation, its signed net amount is excluded
+from the business income available to absorb capital allowances. It does not block
+automatic usage. If there is only Other revenue or the business has a loss,
+allowances remain unabsorbed and carry forward. The book's expenses and tax
+add-backs remain attributed to the single business; allocation of expenses to
+separate income sources is not inferred. Classifications and eligibility still
+require accountant verification.
+
+Separate businesses and other jurisdictions are outside this simple automatic
+flow. Akaun identifies the business-source labels or jurisdiction involved and
+blocks completion instead of inventing an allocation. Resolve incomplete expense
+tax treatments in the worksheet before completing it.
 
 Previously saved manual schedules and overrides remain retained. A draft can be
 switched to automatic calculation with one action; finalised evidence stays fixed.

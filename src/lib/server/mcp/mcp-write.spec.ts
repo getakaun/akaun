@@ -2689,7 +2689,11 @@ for (const era of ["legacy", "modern"] as const) {
           new Request(metadata.downloadUrl),
         );
         expect(response.status).toBe(200);
-        expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+        // Buffer.equals, not toEqual: Vitest's deep equality walks all 5 MB
+        // one element at a time (~8 s locally, 26-30 s on a CI runner).
+        const downloaded = Buffer.from(await response.arrayBuffer());
+        expect(downloaded.length).toBe(MAX_FILE_BYTES);
+        expect(downloaded.equals(bytes)).toBe(true);
         const large = await statementFile(
           "reconciliation/large.pdf",
           Buffer.concat([bytes, Buffer.from("x")]),
@@ -2701,10 +2705,7 @@ for (const era of ["legacy", "modern"] as const) {
             }),
           ),
         ).toContain("OUTPUT_TOO_LARGE");
-        // Writes, reads back and compares a full MAX_FILE_BYTES file, which can
-        // take longer than Vitest's 5 s default on a CI runner. `test:release`
-        // already allows 20 s.
-      }, 20_000);
+      });
 
       it("rejects expired, tampered, missing, revoked and oversized statement downloads", async () => {
         const statementId = await statementFile(

@@ -1,4 +1,4 @@
-import { EventEmitter } from "events";
+import { DeferrableEmitter } from "../unit-of-work.js";
 
 /**
  * Live updates for the import screens. Every change is emitted after the
@@ -11,7 +11,7 @@ import { EventEmitter } from "events";
  *   stream sends no snapshot of items: a group's page loads them, and these
  *   events only carry the changes (see `job-event.ts`).
  */
-export const importEvents = new EventEmitter();
+export const importEvents = new DeferrableEmitter();
 // Each open SSE connection adds one listener to each of the four events and
 // removes them on disconnect. The cap counts listeners per event, so adding
 // the item events did not change it. See the matching note in

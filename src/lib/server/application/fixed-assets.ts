@@ -28,9 +28,9 @@ import {
   type FixedAsset,
 } from "../queries/fixed-assets.js";
 import { inVoidPair } from "../queries/void-state.js";
-import { EventEmitter } from "node:events";
+import { DeferrableEmitter } from "../unit-of-work.js";
 
-export const fixedAssetEvents = new EventEmitter();
+export const fixedAssetEvents = new DeferrableEmitter();
 fixedAssetEvents.setMaxListeners(200);
 export const ASSET_READ_PERMISSIONS = [
   "accounts.read",

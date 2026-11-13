@@ -94,6 +94,27 @@ describe("similarity", () => {
     expect(similarity("rent", "advertising")).toBeLessThan(0.3);
     expect(similarity("", "rent")).toBe(0);
   });
+
+  it("ignores legal forms and filler words, which say nothing of which business", () => {
+    // Below the 0.3 a candidate needs; 0.5 with "trading sdn bhd" counted.
+    expect(
+      similarity("abc trading sdn bhd", "xyz holdings sdn bhd"),
+    ).toBeLessThan(0.3);
+    expect(similarity("the abc company", "xyz co")).toBeLessThan(0.3);
+    expect(similarity("abc m sdn bhd", "xyz pte ltd")).toBeLessThan(0.3);
+    // The same business under two legal forms is as alike as can be.
+    expect(similarity("acme sdn bhd", "acme berhad")).toBe(1);
+    // Names without legal forms are compared as before.
+    expect(similarity("grab malaysia", "grabcar")).toBeGreaterThanOrEqual(0.3);
+    expect(similarity("tenaga nasional berhad", "tnb")).toBeLessThan(0.3);
+  });
+
+  it("compares names made only of legal forms as they are", () => {
+    expect(
+      similarity("holdings berhad", "abc holdings berhad"),
+    ).toBeGreaterThan(0.5);
+    expect(similarity("trading company", "holdings group")).toBeLessThan(0.3);
+  });
 });
 
 describe("resolveRecord", () => {
@@ -398,6 +419,23 @@ describe("resolveContact", () => {
     expect(miss(resolveContact(book.ctx, 999_999)).message).toBe(
       "No contact has id 999999.",
     );
+  });
+
+  it("offers no contact that shares only a legal form, and still the same business", () => {
+    const xyz = contact("XYZ Holdings Sdn Bhd");
+    const grab = contact("GrabCar");
+    const tnb = contact("Tenaga Nasional Berhad");
+    expect(ids(resolveContact(book.ctx, "ABC Trading Sdn Bhd"))).toEqual([]);
+    expect(ids(resolveContact(book.ctx, "Grab Malaysia"))).toContain(grab);
+    // An abbreviation is no near match, but the exact name still resolves.
+    expect(ids(resolveContact(book.ctx, "TNB"))).not.toContain(tnb);
+    expect(resolveContact(book.ctx, "tenaga nasional berhad.")).toMatchObject({
+      ok: true,
+      id: tnb,
+    });
+    // Another legal form of a name is offered first, never used.
+    const other = miss(resolveContact(book.ctx, "XYZ Holdings Berhad"));
+    expect(other.candidates[0].id).toBe(xyz);
   });
 });
 

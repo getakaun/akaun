@@ -131,17 +131,64 @@ function dice<T>(a: Set<T>, b: Set<T>): number {
 }
 
 /**
+ * Words that say what sort of business a name belongs to, not which one, and
+ * filler. Left in, they make most company names look alike: "ABC Trading Sdn
+ * Bhd" and "XYZ Holdings Sdn Bhd" share half their words. `m` is what
+ * `normalizeName` leaves of "(M)".
+ */
+const LEGAL_FORM_WORDS: ReadonlySet<string> = new Set([
+  "sdn",
+  "bhd",
+  "berhad",
+  "sendirian",
+  "pte",
+  "ltd",
+  "limited",
+  "plc",
+  "inc",
+  "llc",
+  "llp",
+  "co",
+  "company",
+  "corp",
+  "corporation",
+  "enterprise",
+  "enterprises",
+  "trading",
+  "holdings",
+  "group",
+  "m",
+  "the",
+  "and",
+]);
+
+/** A normalised name without its legal-form and filler words. */
+function withoutLegalForm(name: string): string {
+  return name
+    .split(" ")
+    .filter((word) => !LEGAL_FORM_WORDS.has(word))
+    .join(" ");
+}
+
+/**
  * How alike two names are, from 0 to 1, given both through `normalizeName`:
  * the better of the words they share (the measure `resolveContactCandidates`
  * uses) and the three-letter runs they share, which a typo leaves mostly
- * intact. For ranking candidates only. Nothing resolves on it.
+ * intact. For ranking candidates only. Nothing resolves on it: an exact match
+ * is `normalizeName` equality, decided by the resolvers.
+ *
+ * Both are compared without legal-form and filler words (`LEGAL_FORM_WORDS`),
+ * unless that leaves nothing of one of them; then as they are.
  */
 export function similarity(a: string, b: string): number {
   if (!a || !b) return 0;
   if (a === b) return 1;
+  const strippedA = withoutLegalForm(a);
+  const strippedB = withoutLegalForm(b);
+  const [x, y] = strippedA && strippedB ? [strippedA, strippedB] : [a, b];
   return Math.max(
-    dice(new Set(a.split(" ")), new Set(b.split(" "))),
-    dice(trigrams(a), trigrams(b)),
+    dice(new Set(x.split(" ")), new Set(y.split(" "))),
+    dice(trigrams(x), trigrams(y)),
   );
 }
 

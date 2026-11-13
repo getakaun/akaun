@@ -4,6 +4,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import {
   DefaultAccountPurpose,
   EntityType,
+  LedgerRecordKind,
   LedgerRecordKindLabels,
   Role,
   RoleLabels,
@@ -23,6 +24,10 @@ import {
   isMoneyPotAccount,
 } from "../../../ledger/account-type.js";
 import { getRecord } from "../../../queries/ledger.js";
+import {
+  findDuplicateRecords,
+  type DuplicateSignal,
+} from "../../../queries/duplicate-records.js";
 import { accountDefaultId } from "../../../services/account-defaults.js";
 import { getExchangeRate } from "../../../currency/rates.js";
 import { mainCurrencyCode } from "../../../currency/form.js";
@@ -73,15 +78,16 @@ import {
   hashInput,
   runBatch,
   type BatchItem,
-  type BatchResult,
 } from "../../../application/batch.js";
-import { batchToolResult } from "../../batch-result.js";
+import {
+  batchToolResult,
+  type ItemFailure,
+  type ItemFailureDetails,
+} from "../../batch-result.js";
 import {
   envelopePayload,
   toolError,
   toolResult,
-  type ToolErrorBody,
-  type ToolErrorCode,
   type ToolIssue,
 } from "../../envelope.js";
 import { dateInput, enumCodec, money, moneyInput } from "../../format.js";
@@ -114,9 +120,14 @@ import {
  * items in the same call wrote (a contact `new_contact` just created) and
  * every miss is reported together with every other failure. A miss carries
  * its candidates, a routing refusal its `blocked[]`, a refused void the
- * release that would allow it: `AppFailure` has no room for them, so they
- * ride on the failure as `extra` and are merged into the item's error after
- * `batchToolResult` (`withItemExtras`).
+ * release that would allow it: they ride on the failure as
+ * `ItemFailureDetails` (`batch-result.ts`), which keeps them in the item's
+ * error.
+ *
+ * Amounts, split lines included, are in the record's currency on both
+ * `create_records` and `change_records.update`. A split in another currency
+ * is converted by sharing the record's main-currency total out over its lines
+ * (`splitByLargestRemainder`), so the lines always cancel the money side.
  */
 
 // ---------------------------------------------------------------------------
@@ -173,18 +184,18 @@ const currencyInput = z
   .toUpperCase()
   .describe("ISO code, e.g. USD. Default: the main currency.");
 
-type ItemFailure = AppFailure & {
-  /** Merged into the item's error: a `code` override, `fix`, `candidates`, `blocked`, ... */
-  extra?: Record<string, unknown>;
-};
-
+/** An item's refusal, with what its error should say beyond the sentence. */
 function failWith(
   code: AppErrorCode,
   reason: string,
-  extra?: Record<string, unknown>,
+  details: ItemFailureDetails = {},
 ): ItemFailure {
-  return { ...fail(code, reason), ...(extra ? { extra } : {}) };
+  return { ...fail(code, reason), ...details };
 }
+
+/** What an item refused for blocked fields says to do. */
+const BLOCKED_FIX =
+  "Change only the fields that are not blocked, or do what each blocked field's fix says first.";
 
 /**
  * The application layer's argument names, as an agent sends them here. Its
@@ -214,7 +225,7 @@ function refMiss(
     body.code === "NOT_FOUND" ? "NOT_FOUND" : "INVALID_INPUT",
     body.message,
     {
-      code: body.code,
+      toolCode: body.code,
       path: body.path,
       fix: body.fix,
       candidates: body.candidates,
@@ -222,52 +233,84 @@ function refMiss(
   );
 }
 
+/** `batchToolResult`'s answer; a success gains a top-level `currency`, the book's main currency. */
+function withMainCurrency(db: LedgerDb, out: CallToolResult): CallToolResult {
+  if (out.isError) return out;
+  const payload = envelopePayload(out);
+  return payload
+    ? toolResult({ ...payload, currency: mainCurrencyCode(db) })
+    : out;
+}
+
 /**
- * `batchToolResult`'s answer, with what only this tool knows merged into each
- * failed item's error, and the top-level code re-derived from the items. A
- * success gains a top-level `currency`, the book's main currency.
+ * `totalMinor` shared out over `weights` in proportion, in whole minor units
+ * that add up to exactly `totalMinor` (the largest-remainder method): each
+ * part is its exact share rounded down, and the units left over go one each
+ * to the parts that lost the most in rounding down, ties to the larger
+ * weight, then the earlier part. Integer arithmetic throughout (BigInt, so a
+ * product never loses a digit): no float touches a figure.
+ *
+ * `weights` are positive whole numbers and `totalMinor` a whole number of at
+ * least zero. Equal to `weights` itself when `totalMinor` is their sum.
  */
-function finishBatch<T>(
-  db: LedgerDb,
-  result: BatchResult<T>,
-  out: CallToolResult,
-): CallToolResult {
-  if (!out.isError) {
-    const payload = envelopePayload(out);
-    return payload
-      ? toolResult({ ...payload, currency: mainCurrencyCode(db) })
-      : out;
+export function splitByLargestRemainder(
+  totalMinor: number,
+  weights: readonly number[],
+): number[] {
+  const whole = weights.reduce((sum, weight) => sum + BigInt(weight), 0n);
+  if (whole <= 0n) return weights.map(() => 0);
+  const total = BigInt(totalMinor);
+  const shares = weights.map((weight, index) => {
+    const exact = total * BigInt(weight);
+    return { index, weight, part: exact / whole, cut: exact % whole };
+  });
+  let left = total - shares.reduce((sum, share) => sum + share.part, 0n);
+  const byCut = [...shares].sort((a, b) =>
+    a.cut === b.cut
+      ? b.weight - a.weight || a.index - b.index
+      : a.cut < b.cut
+        ? 1
+        : -1,
+  );
+  for (const share of byCut) {
+    if (left <= 0n) break;
+    share.part += 1n;
+    left -= 1n;
   }
-  if (!result.ok) return out;
-  const extras = new Map<number, Record<string, unknown>>();
-  for (const item of result.value.items)
-    if (!item.ok && !item.skipped) {
-      const extra = (item.failure as ItemFailure).extra;
-      if (extra) extras.set(item.index + 1, extra);
-    }
-  if (extras.size === 0) return out;
-  const block = out.content[0];
-  if (!block || block.type !== "text") return out;
-  type Item = { n: number; error?: ToolErrorBody };
-  const parsed = JSON.parse(block.text) as {
-    error: ToolErrorBody & { items?: Item[] };
-  };
-  const body = parsed.error;
-  if (!body.items) return out;
-  body.items = body.items.map((item) =>
-    item.error && extras.has(item.n)
-      ? {
-          ...item,
-          error: { ...item.error, ...extras.get(item.n) } as ToolErrorBody,
-        }
-      : item,
+  return shares.map((share) => Number(share.part));
+}
+
+/**
+ * Split lines in another currency (`linesMinor`, adding up to the record's
+ * amount) as main-currency cents: `totalMain`, what the money side holds in
+ * the main currency, shared out over them by largest remainder, so they
+ * cancel it exactly. A line too small to come to one cent is refused by index.
+ */
+function linesInMain(
+  linesMinor: readonly number[],
+  totalMain: number,
+): { ok: true; parts: number[] } | { ok: false; index: number } {
+  const parts = splitByLargestRemainder(totalMain, linesMinor);
+  const index = parts.findIndex((part) => part <= 0);
+  return index < 0 ? { ok: true, parts } : { ok: false, index };
+}
+
+/** The refusal for a line `linesInMain` could not convert. */
+function lineTooSmall(
+  path: string,
+  lineMinor: number,
+  currency: string,
+  main: string,
+  rate: number,
+): ItemFailure {
+  return failWith(
+    "INVALID_INPUT",
+    `${path}: ${money_(lineMinor)} ${currency} is less than 0.01 ${main} at the rate ${rate}.`,
+    {
+      path,
+      fix: "Add it to another line; the lines must still add up to the amount.",
+    },
   );
-  const codes = new Set<ToolErrorCode>(
-    body.items.flatMap((item) => (item.error ? [item.error.code] : [])),
-  );
-  if (codes.size === 1) body.code = [...codes][0];
-  else if (codes.size > 1) body.code = "REFUSED";
-  return toolError(body);
 }
 
 /** `INVALID_INPUT` for problems the schema cannot see, all at once. */
@@ -484,11 +527,48 @@ type Created = {
   contact_created?: { id: number; name: string };
   v: string;
   sides: { account: string; amount: string; label?: string | null }[];
-  // TODO(C2): fill from `queries/duplicate-records.ts` once the duplicate
-  // finder is merged: same amount, date ±3 days and contact, excluding the
-  // record itself. Empty until then, and the envelope drops it.
-  duplicate_suspects: { record: number; no: string; why: string }[];
+  /** Records that look like this one entered before. Empty is dropped. */
+  duplicate_suspects: DuplicateSuspect[];
 };
+
+/** A record that may be the one just created, entered before. `amount` is in the main currency. */
+type DuplicateSuspect = {
+  record: number;
+  no: string | null;
+  date: string;
+  amount: string;
+  signals: DuplicateSignal[];
+};
+
+/** The most suspects one created record lists. */
+const MAX_SUSPECTS = 3;
+
+/**
+ * The records the duplicate finder groups with `id`, strongest group first:
+ * the same amount and contact within 3 days, the same reference, the same
+ * file. Run inside the item, so it sees the new record (and earlier items of
+ * the same call) in a dry run too. No file source: a new record has no files
+ * yet, and nothing is hashed inside a write.
+ */
+function duplicateSuspects(db: LedgerDb, id: number): DuplicateSuspect[] {
+  const { groups } = findDuplicateRecords(db, { recordIds: [id], maxDays: 3 });
+  const seen = new Set([id]);
+  const suspects: DuplicateSuspect[] = [];
+  for (const group of groups)
+    for (const member of group.records) {
+      if (seen.has(member.id)) continue;
+      seen.add(member.id);
+      suspects.push({
+        record: member.id,
+        no: member.recordNumber,
+        date: member.date,
+        amount: money(member.amountMinor),
+        signals: group.signals,
+      });
+      if (suspects.length === MAX_SUSPECTS) return suspects;
+    }
+  return suspects;
+}
 
 /** Structural problems with one item, located. The resolver and the operation check the rest. */
 function createItemProblems(item: CreateItem, at: string): ToolIssue[] {
@@ -679,7 +759,7 @@ class CreateBuilder {
             ? `A contact named "${existing.value.legalName}" already exists.`
             : `Contacts with names like "${wanted.name}" already exist.`,
           {
-            code: "AMBIGUOUS",
+            toolCode: "AMBIGUOUS",
             path: `${this.at}.new_contact`,
             fix: "To use one of candidates, send contact with its id instead of new_contact. If it really is a different contact, send new_contact again with force_new: true.",
             candidates: topCandidates(candidates),
@@ -907,16 +987,32 @@ class CreateBuilder {
       };
     }
 
+    // The lines in the main currency, adding up to exactly the total the
+    // money side gets (`createRecord`'s `toMinor(amount, rate)`); the first is
+    // what the others leave of it. At rate 1 they already are.
+    let mainLines = item.lines?.map((line) => line.amount) ?? [];
+    if (item.lines && rate !== 1) {
+      const converted = linesInMain(
+        mainLines,
+        toMinor(fromMinor(amountMinor), rate),
+      );
+      if (!converted.ok)
+        return lineTooSmall(
+          `${this.at}.lines[${converted.index}].amount`,
+          item.lines[converted.index].amount,
+          currency,
+          main,
+          rate,
+        );
+      mainLines = converted.parts;
+    }
     const sign = item.type === "expense" ? 1 : -1;
     const [first, ...rest] = lineAccounts;
-    const extraSides = rest.map((accountId, i) => {
-      const line = item.lines![i + 1];
-      return {
-        accountId,
-        amountMinor: sign * toMinor(fromMinor(line.amount), rate),
-        label: line.label ?? null,
-      };
-    });
+    const extraSides = rest.map((accountId, i) => ({
+      accountId,
+      amountMinor: sign * mainLines[i + 1],
+      label: item.lines![i + 1].label ?? null,
+    }));
     const split =
       extraSides.length > 0
         ? {
@@ -967,6 +1063,7 @@ function createdValue(
     rate: number;
     lookedUp?: CreatePrepared;
     contactCreated?: { id: number; name: string };
+    suspects: DuplicateSuspect[];
   },
 ): Created {
   const foreign = record.currency !== main;
@@ -999,22 +1096,22 @@ function createdValue(
       amount: money(m.amountMinor),
       ...(m.label ? { label: m.label } : {}),
     })),
-    duplicate_suspects: [],
+    duplicate_suspects: extra.suspects,
   };
 }
 
-const CREATE_DESCRIPTION = `Records new transactions: expenses, income, transfers between the business's own money accounts, and journals. To change, void or delete a record use akaun_change_records; to pay a bill use akaun_record_payments; attach the receipt afterwards with akaun_attach_file.
+const CREATE_DESCRIPTION = `Records new expenses, income, transfers between the business's own money accounts, and journals. Change, void or delete records with akaun_change_records; pay bills with akaun_record_payments; attach receipts afterwards with akaun_attach_file.
 
 Each item in records[] is one record:
-- expense: the money side is paid_from (a bank, cash or card account), owed: true (a bill not yet paid; needs contact) or personally_paid_by (who paid it themselves); what it was for is category, or lines to split it.
+- expense: paid_from (a bank, cash or card account), owed: true (an unpaid bill; needs contact) or personally_paid_by (who paid it themselves); plus category, or lines to split it.
 - income: received_into or owed: true, plus category or lines.
 - transfer: paid_from and received_into.
 - journal: lines with signed amounts (+ into the account, - out of it) adding up to zero. Needs the Adjustments ability.
 Accounts are an id, code ("5100"), name or "5100 Name"; contacts an id or exact name. Anything else returns NOT_FOUND or AMBIGUOUS with candidates: pick one or ask, never guess. new_contact also creates the contact; a similar existing name returns AMBIGUOUS unless force_new.
 
-Amounts are decimal strings ("1285.50") in currency (default: the main currency); lines add up to amount. For another currency send exchange_rate or main_amount, or the day's rate is looked up, frozen and reported.
+Amounts and lines are decimal strings ("1285.50") in the record's currency (default: main); lines add up to amount. For another currency send exchange_rate or main_amount, or the day's rate is looked up, frozen and reported.
 
-A call saves at once, all or nothing (at most 50 items); dry_run: true saves nothing. Send an idempotency_key if you may retry. Each result gives the record id, number, derived kind and v; detail: "full" adds its sides.`;
+A call saves at once, all or nothing (at most 50 items); dry_run: true saves nothing. Send an idempotency_key if you may retry. Each result gives the record id, number, derived kind and v; detail: "full" adds its sides. duplicate_suspects: records that look entered before; check them with the user.`;
 
 export const createRecordsTool = defineWriteTool({
   base: "create_records",
@@ -1082,18 +1179,14 @@ export const createRecordsTool = defineWriteTool({
           if ("ok" in built) return built;
           const created = createRecord(c, built.input);
           if (!created.ok) return reworded(created);
+          const record = created.value.record;
           return ok(
-            createdValue(
-              created.value.record,
-              created.value.version,
-              main,
-              name,
-              {
-                rate: built.rate,
-                lookedUp: prepared as CreatePrepared,
-                contactCreated: built.contactCreated,
-              },
-            ),
+            createdValue(record, created.value.version, main, name, {
+              rate: built.rate,
+              lookedUp: prepared as CreatePrepared,
+              contactCreated: built.contactCreated,
+              suspects: duplicateSuspects(c.db, record.id),
+            }),
           );
         },
       };
@@ -1111,9 +1204,8 @@ export const createRecordsTool = defineWriteTool({
         : undefined,
     });
     const full = args.detail === "full";
-    return finishBatch(
+    return withMainCurrency(
       ctx.db,
-      result,
       batchToolResult(result, {
         requestId: meta.requestId,
         formatValue: (value) => {
@@ -1133,7 +1225,7 @@ const changeLineInput = z
   .object({
     category: refInput,
     amount: moneyInput.describe(
-      'Decimal in the main currency, e.g. "85.00". The lines add up to the record\'s main-currency total.',
+      'Decimal in the record\'s currency (the new one, when set changes it), e.g. "85.00". The lines add up to the amount.',
     ),
     label: z.string().trim().max(200).optional(),
   })
@@ -1254,6 +1346,15 @@ function updateItemProblems(item: UpdateItem, at: string): ToolIssue[] {
         message: "A line's amount must be above zero.",
       });
   });
+  if (set.lines && set.amount !== undefined) {
+    // Both in the record's currency, as on create.
+    const total = set.lines.reduce((sum, line) => sum + line.amount, 0);
+    if (total !== set.amount)
+      issues.push({
+        path: `${at}.set.lines`,
+        message: `The lines add up to ${money_(total)}, but the amount is ${money_(set.amount)}.`,
+      });
+  }
   set.tax?.forEach((tax, i) => {
     if (tax.treatment === "partial" && tax.percent === undefined)
       issues.push({
@@ -1271,6 +1372,8 @@ function recordFacts(
   name: (id: number) => string,
 ): Record<string, unknown> {
   const lines = categoryLines(record);
+  // A line's own figure is kept in the main currency only.
+  const lineAmount = record.currency === main ? "amount" : "amount_main";
   return {
     description: record.description,
     reference: record.reference ?? "",
@@ -1284,7 +1387,7 @@ function recordFacts(
       record.currency === main ? undefined : money(record.amountMinor),
     lines: lines.map((m) => ({
       category: name(m.accountId),
-      amount: money(Math.abs(m.amountMinor)),
+      [lineAmount]: money(Math.abs(m.amountMinor)),
       ...(m.label ? { label: m.label } : {}),
     })),
     tax: lines.map((m, i) => ({
@@ -1353,6 +1456,66 @@ function stepEffects(steps: ChangeRecordStep[]): Record<string, unknown> {
   return out;
 }
 
+/**
+ * An update's `set.lines`, sent in the record's currency (the new one when the
+ * update sets one), as the main-currency cents `changeRecord` takes: at the
+ * update's new rate, else 1 for the main currency, else the record's rate, and
+ * adding up to exactly what the money side will hold — its figure now when
+ * the amount, currency and rate stay, else `toMinor(amount, rate)`, as
+ * `updateRecord` and the settled-amount correction compute it.
+ *
+ * Lines that do not add up to the record's amount are refused here, in its own
+ * currency, as the router would refuse them in main-currency figures. A record
+ * that is not an expense or income has no split: its lines go on as sent, for
+ * the router to refuse.
+ */
+function updateLinesInMain(
+  record: RecordView,
+  set: UpdateItem["set"],
+  at: string,
+  main: string,
+): number[] | ItemFailure {
+  const lines = set.lines!.map((line) => line.amount);
+  const currency = set.currency ?? record.currency;
+  const rate =
+    set.exchange_rate ?? (currency === main ? 1 : record.exchangeRate);
+  const everyday =
+    record.kind === LedgerRecordKind.Expense ||
+    record.kind === LedgerRecordKind.Income;
+  if (!everyday || rate === 1) return lines;
+  const sum = lines.reduce((total, line) => total + line, 0);
+  // With a new amount the input check has already compared the two.
+  const amountMinor = set.amount ?? toMinor(record.amount, 1);
+  if (sum !== amountMinor) {
+    const why = `The lines add up to ${money_(sum)} ${currency}, but the record's amount is ${money_(amountMinor)} ${record.currency}.`;
+    const fix =
+      "Send the new amount with the lines, or make the lines add up to the amount.";
+    return failWith("REFUSED", `lines: ${why} ${fix}`, {
+      blocked: [{ field: "lines", why, fix }],
+      fix: BLOCKED_FIX,
+    });
+  }
+  const amount =
+    set.amount !== undefined ? fromMinor(set.amount) : record.amount;
+  const moneyStays =
+    amount === record.amount &&
+    currency === record.currency &&
+    rate === record.exchangeRate;
+  const converted = linesInMain(
+    lines,
+    moneyStays ? record.amountMinor : toMinor(amount, rate),
+  );
+  return converted.ok
+    ? converted.parts
+    : lineTooSmall(
+        `${at}.set.lines[${converted.index}].amount`,
+        lines[converted.index],
+        currency,
+        main,
+        rate,
+      );
+}
+
 function updateItem(
   item: UpdateItem,
   at: string,
@@ -1374,6 +1537,7 @@ function updateItem(
         });
       const id = found.id;
       const set = item.set;
+      const before = getRecord(c.db, id);
       const change: RecordChange = {};
       if (set.description !== undefined) change.description = set.description;
       if (set.reference !== undefined) change.reference = set.reference;
@@ -1417,16 +1581,21 @@ function updateItem(
         change.categoryAccountId = accountId;
       }
       if (set.lines !== undefined) {
-        change.lines = [];
+        const accountIds: number[] = [];
         for (const [i, line] of set.lines.entries()) {
           const accountId = category(line.category, `lines[${i}].category`);
           if (typeof accountId !== "number") return accountId;
-          change.lines.push({
-            accountId,
-            amountMinor: line.amount,
-            ...(line.label !== undefined ? { label: line.label } : {}),
-          });
+          accountIds.push(accountId);
         }
+        const amounts = before
+          ? updateLinesInMain(before, set, at, main)
+          : set.lines.map((line) => line.amount);
+        if (!Array.isArray(amounts)) return amounts;
+        change.lines = set.lines.map((line, i) => ({
+          accountId: accountIds[i],
+          amountMinor: amounts[i],
+          ...(line.label !== undefined ? { label: line.label } : {}),
+        }));
       }
       if (set.tax !== undefined)
         change.tax = set.tax.map((tax) => ({
@@ -1454,7 +1623,6 @@ function updateItem(
         }
       }
 
-      const before = getRecord(c.db, id);
       const changed = changeRecord(c, {
         recordId: id,
         expectedVersion: item.expected_version,
@@ -1472,17 +1640,12 @@ function updateItem(
           why: toolWords(b.why),
           fix: toolWords(b.fix),
         }));
+        // The router's own blocks name its fields; only the reworded ones go out.
         return {
           ...reworded(failure),
-          ...(blocked?.length
-            ? {
-                extra: {
-                  blocked,
-                  fix: "Change only the fields that are not blocked, or do what each blocked field's fix says first.",
-                },
-              }
-            : {}),
-        } as ItemFailure;
+          blocked: blocked?.length ? blocked : undefined,
+          ...(blocked?.length ? { fix: BLOCKED_FIX } : {}),
+        } satisfies ItemFailure;
       }
       const value = changed.value;
       return ok({
@@ -1606,7 +1769,7 @@ function voidItem(
         return next && next.release !== release
           ? failWith("REFUSED", toolWords(done.reason), {
               fix: `Send it again with release: "${next.release}", which first undoes what release_preview lists (dry_run first to check).`,
-              release_preview: next.preview,
+              details: { release_preview: next.preview },
             })
           : reworded(done);
       }
@@ -1653,7 +1816,7 @@ function deleteItem(
         return next
           ? failWith("REFUSED", toolWords(done.reason), {
               fix: `Void it instead: send it in void[] with a reason${next.release === "none" ? "" : ` and release: "${next.release}"`}. A void keeps the record's history and nets it to zero.`,
-              ...(next.preview ? { release_preview: next.preview } : {}),
+              details: { release_preview: next.preview },
             })
           : reworded(done);
       }
@@ -1662,13 +1825,13 @@ function deleteItem(
   };
 }
 
-const CHANGE_DESCRIPTION = `Changes existing records. Read the record first (akaun_get_record) and pass its v as expected_version; a stale one returns CONFLICT with the current version. A record is an id or number ("EXP-2026-0042").
+const CHANGE_DESCRIPTION = `Changes existing records. Read the record (akaun_get_record) and pass its v as expected_version; a stale one returns CONFLICT with the current version. A record is an id or number ("EXP-2026-0042").
 
-- update[]: put in set what the record should end up saying: description, reference, remark, contact, date, category, lines (a split, in the main currency, adding up to the total), amount, currency, exchange_rate, tax per line. The server picks the path: a plain edit, or a correction when payments or bank lines rely on the record. A correction needs a reason; a date in another month needs acknowledge_period_change; a bank-matched date needs release_bank_matches. A field that cannot change comes back in blocked[] with why and what to undo first.
+- update[]: put in set what the record should end up saying: description, reference, remark, contact, date, category, lines (a split adding up to the amount), amount, currency, exchange_rate, tax per line. The server picks a plain edit, or a correction when payments or bank lines rely on the record. A correction needs a reason; a date in another month needs acknowledge_period_change; a bank-matched date needs release_bank_matches. A field that cannot change comes back in blocked[] with why and what to undo first.
 - void[]: undo a record as if it never happened, keeping its history; needs a reason. release "allocations" first reverses payments applied to it; "all" also unmatches its bank lines. A reimbursement payment reverses its reimbursement.
 - delete[]: remove a record entered by mistake that nothing relies on. When history keeps it, the error suggests a void.
 
-A call saves at once, all or nothing (at most 50 items). For corrections, voids and deletes run dry_run: true first, show the user what would change, and save only once they agree. Each result gives the path taken, changed fields before and after, allocations reversed and reapplied, and the new v. Amounts are decimal strings ("1285.50"). Send an idempotency_key if you may retry.`;
+A call saves at once, all or nothing (at most 50 items). For corrections, voids and deletes run dry_run: true first, show the user what would change, and save only once they agree. Each result gives the path taken, changed fields before and after, allocations reversed and reapplied, and the new v. Amounts and lines are decimal strings ("1285.50") in the record's currency. Send an idempotency_key if you may retry.`;
 
 export const changeRecordsTool = defineWriteTool({
   base: "change_records",
@@ -1735,9 +1898,8 @@ export const changeRecordsTool = defineWriteTool({
           }
         : undefined,
     });
-    return finishBatch(
+    return withMainCurrency(
       ctx.db,
-      result,
       batchToolResult(result, {
         requestId: meta.requestId,
         formatValue: (value) => value,

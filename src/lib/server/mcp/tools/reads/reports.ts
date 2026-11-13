@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AccountType, AccountTypeLabels } from "$lib/enums.js";
 import { addDaysISO, localToday } from "$lib/local-date.js";
+import { assetNumber } from "$lib/fixed-assets.js";
 import { readFixedAssets } from "../../../application/fixed-assets.js";
 import { accounts } from "../../../db/schema.js";
 import { isValidDate } from "../../../date.js";
@@ -607,6 +608,7 @@ const getReport = defineReadTool({
             .slice(page.value.offset, page.value.offset + page.value.limit + 1)
             .map((a) => ({
               id: a.id,
+              no: assetNumber(a.id),
               name: a.name,
               type: a.assetType,
               serial: a.serialNumber || undefined,
@@ -621,6 +623,8 @@ const getReport = defineReadTool({
               review:
                 a.depreciation.reviewReason ?? a.reviewReason ?? undefined,
               source_record: a.sourceRecordId ?? undefined,
+              // The version manage_fixed_assets needs as expected_version.
+              v: a.version,
               drill: drill(a.assetAccountId),
             })),
           page: page.value,

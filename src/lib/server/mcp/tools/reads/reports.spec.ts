@@ -433,6 +433,12 @@ describe("get_report", () => {
         depreciation: expect.stringMatching(/^-?\d+\.\d{2}$/),
         net_book_value: expect.stringMatching(/^-?\d+\.\d{2}$/),
       });
+      // Each registered asset carries its number and the version
+      // manage_fixed_assets needs as expected_version.
+      for (const asset of body.assets ?? []) {
+        expect(asset.no).toMatch(/^FA-\d{4}$/);
+        expect(typeof asset.v).toBe("string");
+      }
       noInternalIds(replies);
     },
     SLOW,

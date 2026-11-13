@@ -21,12 +21,15 @@ import { auditEvents } from "../audit-events.js";
 import { localsFor } from "../permissions/test-locals.js";
 import { getRecord } from "../queries/ledger.js";
 import { createAccount } from "../services/accounts.js";
+import { ensureReimbursementsPayableAccount } from "../services/account-defaults.js";
+import { contactBalances } from "../queries/settlements.js";
 import { SETTING_KEYS, setSetting } from "../settings.js";
 import { runUnitOfWork } from "../unit-of-work.js";
 import { runBatch } from "./batch.js";
 import type { AppContext } from "./context.js";
 import { releaseBook, resultValue } from "./__fixtures__/release-book.js";
 import { createRecord } from "./records.js";
+import { setOpeningBalance } from "./accounts.js";
 import {
   autoMatchTolerant,
   createRecordFromLines,
@@ -947,6 +950,29 @@ describe("autoMatchTolerant", () => {
     }
   });
 
+  it("never pairs a line with an opening balance of the same amount (review finding 5)", () => {
+    const s = seed();
+    // The bank opened with 500.00 on 1 September; the statement shows a
+    // 500.00 deposit two days later. They are different events.
+    resultValue(
+      setOpeningBalance(s.ctx, s.bank, {
+        date: "2026-09-01",
+        amountMinor: 50000,
+      }),
+    );
+    const deposit = s.line("2026-09-03", 500, IN, "CASH DEPOSIT");
+
+    const result = resultValue(
+      autoMatchTolerant(s.ctx, { accountId: s.bank, maxDays: 3 }),
+    );
+
+    expect(result).toEqual({
+      matched: [],
+      skipped: [{ lineId: deposit, reason: "no_candidate" }],
+    });
+    expect(count(s, "reconciliation_allocations")).toBe(0);
+  });
+
   it("skips a line no record fits exactly, and two lines that fit one record", () => {
     const s = seed();
     const a = s.line("2026-09-08", 59, OUT, "SOFTWARE CO");
@@ -1219,5 +1245,239 @@ describe("inside an outer transaction", () => {
     );
     expect(saved.saved).toBe(true);
     expect(allocationsOf(s, fresh)).toHaveLength(1);
+  });
+});
+
+describe("a payment from bank lines settles the control account its contact's balance is on (review finding 2)", () => {
+  const receivableOf = (s: Seeded) =>
+    s.db
+      .select()
+      .from(schema.accountDefaults)
+      .where(
+        eq(schema.accountDefaults.purpose, DefaultAccountPurpose.Receivable),
+      )
+      .get()!.accountId;
+
+  /** We paid the supplier 200.00 that nothing was owed for: Payable +200 for them. */
+  function overpaid(s: Seeded, amount = 200) {
+    return resultValue(
+      createRecord(s.ctx, {
+        kind: "payment",
+        date: "2026-09-02",
+        amount,
+        currency: "MYR",
+        exchangeRate: 1,
+        description: "Paid twice by mistake",
+        paidFromAccountId: s.bank,
+        contactId: s.supplier,
+        direction: "we-pay",
+        settlements: [],
+      }),
+    ).record;
+  }
+
+  /** An employee paid 150.00 of supplies personally: ReimbursementsPayable −150 for them. */
+  function personallyPaid(s: Seeded) {
+    const reimbursements = resultValue(
+      ensureReimbursementsPayableAccount(s.db, 1),
+    );
+    const employee = s.db
+      .insert(schema.contacts)
+      .values({ legalName: "Siti Employee", entityType: 1 })
+      .returning()
+      .get()!.id;
+    resultValue(
+      createRecord(s.ctx, {
+        kind: "expense",
+        date: "2026-09-03",
+        amount: 150,
+        currency: "MYR",
+        exchangeRate: 1,
+        description: "Supplies, paid personally",
+        categoryAccountId: s.charges,
+        paidFromAccountId: null,
+        expensePaymentSource: "personal",
+        paidByContactId: employee,
+      }),
+    );
+    return { reimbursements, employee };
+  }
+
+  it("A: records a supplier's refund of an overpayment against Payable, not Receivable", () => {
+    const s = seed();
+    const payment = overpaid(s);
+    const credit = payment.movements.find((m) => m.accountId === s.payable)!;
+    expect(contactBalances(s.db, "we-owe", s.supplier)[0]).toMatchObject({
+      creditsMinor: 20000,
+    });
+    const lineId = s.line("2026-09-25", 200, IN, "ACME REFUND");
+
+    const made = resultValue(
+      createRecordFromLines(s.ctx, {
+        lineIds: [lineId],
+        kind: "payment",
+        contactId: s.supplier,
+      }),
+    );
+
+    expect(sides(made.record)).toEqual({
+      [s.bank]: 20000,
+      [s.payable]: -20000,
+    });
+    expect(sides(made.record)[receivableOf(s)]).toBeUndefined();
+    // The refund used up the overpayment, so the supplier is square.
+    expect(contactBalances(s.db, "we-owe", s.supplier)).toEqual([]);
+    expect(contactBalances(s.db, "owed-to-us", s.supplier)).toEqual([]);
+    const settled = s.db
+      .select()
+      .from(schema.settlements)
+      .where(eq(schema.settlements.owedMovementId, credit.id))
+      .all();
+    expect(settled.map((row) => row.amountMinor)).toEqual([20000]);
+  });
+
+  it("A: takes the direction when it is given, and refuses one that runs against the lines", () => {
+    const s = seed();
+    overpaid(s);
+    const lineId = s.line("2026-09-25", 200, IN, "ACME REFUND");
+    const before = snapshot(s);
+    const wrongWay = createRecordFromLines(s.ctx, {
+      lineIds: [lineId],
+      kind: "payment",
+      contactId: s.supplier,
+      direction: "we-pay",
+    });
+    expect(wrongWay).toMatchObject({ ok: false, code: "REFUSED" });
+    if (!wrongWay.ok) expect(wrongWay.reason).toMatch(/money in/);
+    expect(snapshot(s)).toEqual(before);
+
+    const made = resultValue(
+      createRecordFromLines(s.ctx, {
+        lineIds: [lineId],
+        kind: "payment",
+        contactId: s.supplier,
+        direction: "refund-received",
+      }),
+    );
+    expect(sides(made.record)).toEqual({
+      [s.bank]: 20000,
+      [s.payable]: -20000,
+    });
+  });
+
+  it("A: refuses a refund larger than the overpayment, by createRecord's own rule", () => {
+    const s = seed();
+    overpaid(s);
+    const lineId = s.line("2026-09-25", 250, IN, "ACME REFUND");
+    const before = snapshot(s);
+    const result = createRecordFromLines(s.ctx, {
+      lineIds: [lineId],
+      kind: "payment",
+      contactId: s.supplier,
+      direction: "refund-received",
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      code: "REFUSED",
+      reason:
+        "A refund must name one contact and be fully applied to their overpayment.",
+    });
+    expect(snapshot(s)).toEqual(before);
+  });
+
+  it("B: pays an employee's reimbursement out of ReimbursementsPayable, not Payable", () => {
+    const s = seed();
+    const { reimbursements, employee } = personallyPaid(s);
+    const lineId = s.line("2026-09-26", 150, OUT, "SITI CLAIM");
+
+    const made = resultValue(
+      createRecordFromLines(s.ctx, {
+        lineIds: [lineId],
+        kind: "payment",
+        contactId: employee,
+      }),
+    );
+
+    expect(sides(made.record)).toEqual({
+      [reimbursements]: 15000,
+      [s.bank]: -15000,
+    });
+    expect(sides(made.record)[s.payable]).toBeUndefined();
+    expect(
+      contactBalances(s.db, "we-owe", employee)[0]?.outstandingMinor ?? 0,
+    ).toBe(0);
+  });
+
+  it("names the settlement account when it is given", () => {
+    const s = seed();
+    const { reimbursements, employee } = personallyPaid(s);
+    const lineId = s.line("2026-09-26", 150, OUT, "SITI CLAIM");
+    const made = resultValue(
+      createRecordFromLines(s.ctx, {
+        lineIds: [lineId],
+        kind: "payment",
+        contactId: employee,
+        direction: "we-pay",
+        settlementAccountId: reimbursements,
+      }),
+    );
+    expect(sides(made.record)).toEqual({
+      [reimbursements]: 15000,
+      [s.bank]: -15000,
+    });
+  });
+
+  it("keeps the defaults: money out to a supplier we owe settles Payable, money in from nobody owed is Receivable", () => {
+    const s = seed();
+    unpaidBill(s, 80);
+    const out = s.line("2026-09-20", 80, OUT, "ACME");
+    expect(
+      sides(
+        resultValue(
+          createRecordFromLines(s.ctx, {
+            lineIds: [out],
+            kind: "payment",
+            contactId: s.supplier,
+          }),
+        ).record,
+      ),
+    ).toEqual({ [s.payable]: 8000, [s.bank]: -8000 });
+
+    const customer = s.db
+      .insert(schema.contacts)
+      .values({ legalName: "New Customer", entityType: 2 })
+      .returning()
+      .get()!.id;
+    const into = s.line("2026-09-21", 60, IN, "DEPOSIT");
+    expect(
+      sides(
+        resultValue(
+          createRecordFromLines(s.ctx, {
+            lineIds: [into],
+            kind: "payment",
+            contactId: customer,
+          }),
+        ).record,
+      ),
+    ).toEqual({ [s.bank]: 6000, [receivableOf(s)]: -6000 });
+  });
+
+  it("refuses rather than guess when the contact's balance is on the other control account", () => {
+    const s = seed();
+    unpaidBill(s, 120);
+    const lineId = s.line("2026-09-25", 120, IN, "ACME");
+    const before = snapshot(s);
+    const result = createRecordFromLines(s.ctx, {
+      lineIds: [lineId],
+      kind: "payment",
+      contactId: s.supplier,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      code: "REFUSED",
+      paymentDirections: ["we-receive", "refund-received"],
+    });
+    if (!result.ok) expect(result.reason).toMatch(/direction/);
+    expect(snapshot(s)).toEqual(before);
   });
 });

@@ -322,7 +322,9 @@ describe("routeRecordChange", () => {
       tax: [{ line: 0, treatment: "ordinary_deductible", reason: "Business" }],
     });
     expect(all.blocked).toEqual([]);
-    expect(pathsOf(all)).toEqual(["update"]);
+    // The new lines first, then tax against them.
+    expect(pathsOf(all)).toEqual(["update", "update"]);
+    expect(all.steps[1].fields).toEqual(["tax"]);
     expect(all.steps[0].needs).toEqual({ reason: false });
   });
 
@@ -804,5 +806,142 @@ describe("recordEditability", () => {
     const frozen = resultValue(recordEditability(s.ctx, voided.id)).fields;
     for (const field of RECORD_CHANGE_FIELDS)
       expect(frozen[field].mode).toBe("blocked");
+  });
+});
+
+describe("tax with a new split (review finding 1)", () => {
+  /** An expense of 100.00 split [Office 60, Meals 40], paid from the bank. */
+  function officeAndMeals() {
+    const s = seed();
+    const office = resultValue(
+      createAccount(s.db, 1, { name: "Office", type: AccountType.Expense }),
+    ).id;
+    const meals = resultValue(
+      createAccount(s.db, 1, { name: "Meals", type: AccountType.Expense }),
+    ).id;
+    const record = s.bankExpense(100);
+    resultValue(
+      changeRecord(s.ctx, {
+        recordId: record.id,
+        expectedVersion: recordVersion(s.db, record.id),
+        change: {
+          lines: [
+            { accountId: office, amountMinor: 6_000 },
+            { accountId: meals, amountMinor: 4_000 },
+          ],
+        },
+      }),
+    );
+    return { s, office, meals, id: record.id };
+  }
+
+  /** Each category line in movement order, with its tax treatment. */
+  function taxByLine(s: ReturnType<typeof seed>, id: number) {
+    return getRecord(s.db, id)!
+      .movements.filter((m) => m.amountMinor > 0 && m.accountId !== s.bank)
+      .map((m) => ({
+        accountId: m.accountId,
+        amountMinor: m.amountMinor,
+        treatment: m.taxClassification?.treatment ?? null,
+      }));
+  }
+
+  it("classifies the line at the index after the change, not before", () => {
+    const { s, office, meals, id } = officeAndMeals();
+    const value = resultValue(
+      changeRecord(s.ctx, {
+        recordId: id,
+        expectedVersion: recordVersion(s.db, id),
+        change: {
+          lines: [
+            { accountId: meals, amountMinor: 7_000 },
+            { accountId: office, amountMinor: 3_000 },
+          ],
+          tax: [{ line: 0, treatment: "non_deductible" }],
+        },
+        reason: "Client lunch, not deductible.",
+      }),
+    );
+    const lines = taxByLine(s, id);
+    expect(lines[1]).toMatchObject({ accountId: office, amountMinor: 3_000 });
+    expect(lines[1].treatment).not.toBe("non_deductible");
+    expect(lines[0]).toMatchObject({
+      accountId: meals,
+      amountMinor: 7_000,
+      treatment: "non_deductible",
+    });
+    expect(value.steps.map((step) => step.fields)).toEqual([
+      ["lines"],
+      ["tax"],
+    ]);
+  });
+
+  it("classifies a line the change adds", () => {
+    const s = seed();
+    const meals = resultValue(
+      createAccount(s.db, 1, { name: "Meals", type: AccountType.Expense }),
+    ).id;
+    const record = s.bankExpense(100);
+    const value = resultValue(
+      changeRecord(s.ctx, {
+        recordId: record.id,
+        expectedVersion: recordVersion(s.db, record.id),
+        change: {
+          lines: [
+            { accountId: s.expense, amountMinor: 6_000 },
+            { accountId: meals, amountMinor: 4_000 },
+          ],
+          tax: [{ line: 1, treatment: "non_deductible" }],
+        },
+        reason: "Client lunch, not deductible.",
+      }),
+    );
+    expect(value.steps).toHaveLength(2);
+    expect(taxByLine(s, record.id)[1]).toMatchObject({
+      accountId: meals,
+      treatment: "non_deductible",
+    });
+  });
+
+  it("classifies the new category when the category changes", () => {
+    const s = seed();
+    const record = s.bankExpense(100);
+    const value = resultValue(
+      changeRecord(s.ctx, {
+        recordId: record.id,
+        expectedVersion: recordVersion(s.db, record.id),
+        change: {
+          categoryAccountId: s.freight,
+          tax: [{ treatment: "non_deductible" }],
+        },
+        reason: "Freight for a private parcel.",
+      }),
+    );
+    expect(value.steps.map((step) => step.fields)).toEqual([
+      ["categoryAccountId"],
+      ["tax"],
+    ]);
+    expect(taxByLine(s, record.id)).toEqual([
+      {
+        accountId: s.freight,
+        amountMinor: 10_000,
+        treatment: "non_deductible",
+      },
+    ]);
+  });
+
+  it("still folds tax into a plain update that leaves the lines alone", () => {
+    const s = seed();
+    const record = s.bankExpense(100);
+    const r = route(s, record.id, {
+      description: "Stationery",
+      tax: [{ treatment: "non_deductible", reason: "Private use" }],
+    });
+    expect(r.steps).toEqual([
+      expect.objectContaining({
+        path: "update",
+        fields: ["description", "tax"],
+      }),
+    ]);
   });
 });

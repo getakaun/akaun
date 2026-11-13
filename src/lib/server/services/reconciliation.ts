@@ -1,4 +1,5 @@
 import {
+  LedgerRecordKind,
   StatementExtractionState,
   type StatementDirectionCode,
 } from "$lib/enums.js";
@@ -877,7 +878,8 @@ function dayNumber(date: string): number | null {
  *
  * Untouched means no match at all: a line with no allocation, and a movement
  * no bank line covers any part of. A voided record and its reversal are never
- * candidates. Uniqueness is judged against every untouched line on the
+ * candidates, and neither is an opening balance: a person may still match one
+ * by hand. Uniqueness is judged against every untouched line on the
  * account, so a twin just outside `from`..`to` still makes a movement
  * ambiguous; the period only picks which lines are acted on.
  *
@@ -906,7 +908,10 @@ export function planTolerantMatches(
     if (
       day === null ||
       movement.amountMinor === 0 ||
-      (movement.allocationCount ?? 0) > 0
+      (movement.allocationCount ?? 0) > 0 ||
+      // What an account held on the day the books start is no bank event,
+      // however exactly a deposit's amount happens to equal it.
+      movement.kind === LedgerRecordKind.OpeningBalance
     )
       continue;
     const key = `${directionFor(movement.amountMinor)}:${Math.abs(movement.amountMinor)}`;

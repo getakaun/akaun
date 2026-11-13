@@ -4,7 +4,16 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
-import { LedgerRecordKind } from "$lib/enums.js";
+import {
+  DefaultAccountPurpose,
+  LedgerRecordKind,
+  StatementDirection,
+} from "$lib/enums.js";
+import * as schema from "../../../db/schema.js";
+import { createRecord } from "../../../application/records.js";
+import { localsFor } from "../../../permissions/test-locals.js";
+import { accountDefaultId } from "../../../services/account-defaults.js";
+import { contactBalances } from "../../../queries/settlements.js";
 import { buildEvalBook, type EvalBook } from "../../__fixtures__/eval-book.js";
 import { createServerV2 } from "../../registry.js";
 import { patLocals } from "../../../tokens/pat.js";
@@ -390,6 +399,93 @@ describe("match_bank_lines and unmatch_bank_lines", () => {
       expect(refused.isError).toBe(true);
       expect(refused.body.error.code).toBe("FORBIDDEN");
       expect(refused.body.error.message).toContain("create_from_lines");
+    },
+    SLOW,
+  );
+});
+
+describe("create_from_lines payments (review finding 2)", () => {
+  /** A new supplier we paid 200.00 nothing was owed for, and their 200.00 refund on the bank statement. */
+  function overpaidSupplier(book: EvalBook) {
+    const m = book.manifest;
+    const owner = {
+      db: book.db,
+      locals: localsFor([], { superuser: true, userId: m.users.owner }),
+    };
+    const supplier = book.db
+      .insert(schema.contacts)
+      .values({ legalName: "Refunding Supplier Sdn Bhd", entityType: 2 })
+      .returning()
+      .get()!.id;
+    const date = `${m.statementMonth}-10`;
+    const overpayment = createRecord(owner, {
+      kind: "payment",
+      date,
+      amount: 200,
+      currency: "MYR",
+      exchangeRate: 1,
+      description: "Paid twice by mistake",
+      paidFromAccountId: m.accounts.bank,
+      contactId: supplier,
+      direction: "we-pay",
+      settlements: [],
+    });
+    if (!overpayment.ok) throw new Error(overpayment.reason);
+    const line = book.db
+      .insert(schema.bankStatementLines)
+      .values({
+        statementId: m.statements.bank,
+        date: `${m.statementMonth}-24`,
+        amount: 200,
+        direction: StatementDirection.In,
+        description: "REFUND REFUNDING SUPPLIER",
+      })
+      .returning()
+      .get()!.id;
+    return { supplier, line };
+  }
+
+  it(
+    "records a supplier's refund against Payable, and asks for direction when one runs the wrong way",
+    async () => {
+      const { book, call, replies } = await open();
+      const { supplier, line } = overpaidSupplier(book);
+      const payable = accountDefaultId(book.db, DefaultAccountPurpose.Payable)!;
+      const receivable = accountDefaultId(
+        book.db,
+        DefaultAccountPurpose.Receivable,
+      )!;
+
+      const wrongWay = await call("akaun_match_bank_lines", {
+        create_from_lines: [
+          {
+            lines: [`L${line}`],
+            kind: "payment",
+            contact: supplier,
+            direction: "we_pay",
+          },
+        ],
+      });
+      expect(wrongWay.isError).toBe(true);
+      const item = wrongWay.body.error.items?.[0]?.error ?? wrongWay.body.error;
+      expect(item.code).toBe("REFUSED");
+      expect(item.path).toBe("create_from_lines[0].direction");
+      expect(item.fix).toMatch(/we_receive or refund_received/);
+
+      const saved = await call("akaun_match_bank_lines", {
+        create_from_lines: [
+          { lines: [`L${line}`], kind: "payment", contact: supplier },
+        ],
+      });
+      expect(saved.isError).toBe(false);
+      const record = getRecord(book.db, saved.body.items[0].record.id)!;
+      const byAccount = Object.fromEntries(
+        record.movements.map((mv) => [mv.accountId, mv.amountMinor]),
+      );
+      expect(byAccount[payable]).toBe(-20000);
+      expect(byAccount[receivable]).toBeUndefined();
+      expect(contactBalances(book.db, "we-owe", supplier)).toEqual([]);
+      noInternalIds(replies);
     },
     SLOW,
   );

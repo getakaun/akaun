@@ -546,12 +546,12 @@ describe("search_records on the evaluation book", () => {
         }[];
         expect(groups.length).toBe(body.group_count);
         expect(groups.length).toBeGreaterThan(1);
-        // Largest first, and the grand total is the groups added up.
+        // Largest first. The whole book mixes income and spending, so the
+        // groups have no grand total, and the note says why.
         const sizes = groups.map((g) => Math.abs(minor(g.total)));
         expect(sizes).toEqual([...sizes].sort((a, b) => b - a));
-        expect(groups.reduce((sum, g) => sum + minor(g.total), 0)).toBe(
-          minor(body.grand_total),
-        );
+        expect(body.grand_total).toBeUndefined();
+        expect(body.note).toMatch(/No grand total is given/);
         expect(body.matching_records).toBe(
           listRecords(book.db, { limit: 1 }).total,
         );
@@ -584,6 +584,37 @@ describe("search_records on the evaluation book", () => {
       SLOW,
     );
   }
+
+  it(
+    "gives a grand total for one kind of money only (review finding 4)",
+    async () => {
+      const book = await shared;
+      const { call } = await connect(book);
+      for (const by of ["month", "category", "contact"] as const) {
+        const spent = await call("search_records", {
+          group_by: by,
+          kinds: ["expense"],
+          limit: 200,
+        });
+        expect(spent.isError).toBe(false);
+        expect(
+          spent.body.groups.reduce(
+            (sum: number, g: { total: string }) => sum + minor(g.total),
+            0,
+          ),
+        ).toBe(minor(spent.body.grand_total));
+      }
+      // Invoices earned and bills spent: adding them would net one against the other.
+      const mixed = await call("search_records", {
+        group_by: "month",
+        kinds: ["expense", "invoice_issue"],
+      });
+      expect(mixed.isError).toBe(false);
+      expect(mixed.body.grand_total).toBeUndefined();
+      expect(mixed.body.note).toMatch(/mix income and spending/);
+    },
+    SLOW,
+  );
 
   it(
     "keeps the filters in a drill, and narrows a month to the period asked for",

@@ -3,7 +3,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { EntityType } from "$lib/enums.js";
+import {
+  EntityType,
+  StatementDirection,
+  StatementExtractionState,
+} from "$lib/enums.js";
 import { monthEndFor } from "$lib/closing.js";
 import { addDaysISO, localToday } from "$lib/local-date.js";
 import * as schema from "../db/schema.js";
@@ -593,5 +597,71 @@ describe("descriptionProblems", () => {
       "a".repeat(60),
     ])
       expect([fine, descriptionProblems(fine)]).toEqual([fine, []]);
+  });
+});
+
+describe("unmatched_bank remainders (review finding 5)", () => {
+  it("works a line's remainder out in whole cents, so 0.10 + 0.20 covers 0.30", () => {
+    const book = releaseBook();
+    try {
+      const { db, bank } = book;
+      const statementId = db
+        .insert(schema.bankStatements)
+        .values({
+          originalFilename: "may.pdf",
+          storedFilePath: "reconciliation/may.pdf",
+          extractionState: StatementExtractionState.Ready,
+          uploadedBy: 1,
+          accountId: bank,
+        })
+        .returning()
+        .get()!.id;
+      const line = (amount: number, description: string) =>
+        db
+          .insert(schema.bankStatementLines)
+          .values({
+            statementId,
+            date: "2026-05-04",
+            amount,
+            direction: StatementDirection.Out,
+            description,
+          })
+          .returning()
+          .get()!.id;
+      const allocate = (lineId: number, amounts: number[]) =>
+        db
+          .insert(schema.reconciliationAllocations)
+          .values(
+            amounts.map((amount) => ({
+              lineId,
+              amount,
+              itemAmountSnapshot: amount,
+            })),
+          )
+          .run();
+      const covered = line(0.3, "COVERED");
+      allocate(covered, [0.1, 0.2]);
+      const tenths = line(0.7, "TENTHS");
+      allocate(tenths, [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]);
+      const partly = line(0.3, "PARTLY");
+      allocate(partly, [0.1]);
+      const over = line(0.3, "OVER");
+      allocate(over, [0.2, 0.2]);
+
+      const review = reviewBooks(db, {
+        can: everything,
+        perCheck: 50,
+        today: "2026-05-10",
+      });
+      const bankFinding = finding(review, "unmatched_bank")!;
+      const byLine = new Map(
+        bankFinding.items.map((item) => [item.ref!.id, item.summary]),
+      );
+      expect([...byLine.keys()].sort()).toEqual([partly, over].sort());
+      expect(byLine.get(partly)).toContain("MYR 0.20 still unmatched");
+      expect(byLine.get(over)).toContain("matched MYR 0.10 more than the line");
+    } finally {
+      book.raw.close();
+    }
   });
 });

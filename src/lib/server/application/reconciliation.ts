@@ -1,6 +1,6 @@
 import { withClosingRefusal } from "./closing-refusal.js";
 import { z } from "zod";
-import { StatementDirection } from "$lib/enums.js";
+import { DefaultAccountPurpose, StatementDirection } from "$lib/enums.js";
 import { taxOverrideSchema } from "$lib/expense-tax.js";
 import type { LeafPermission } from "$lib/permissions/catalog.js";
 import {
@@ -18,6 +18,12 @@ import {
 import type { DeferredEmits } from "../services/ledger.js";
 import { getLine, getMovementCandidate } from "../queries/reconciliation.js";
 import { getRecord } from "../queries/ledger.js";
+import {
+  balancesByContact,
+  getSides,
+  listOutstanding,
+} from "../queries/settlements.js";
+import { accountDefaultId } from "../services/account-defaults.js";
 import { canonicalAccountId } from "../queries/accounts.js";
 import { mainCurrencyCode } from "../currency/form.js";
 import { fromMinor } from "../ledger/money.js";
@@ -212,6 +218,22 @@ export const recordFromLinesKinds = [
 ] as const;
 export type RecordFromLinesKind = (typeof recordFromLinesKinds)[number];
 
+export const PAYMENT_DIRECTIONS = [
+  "we-receive",
+  "we-pay",
+  "refund-received",
+  "refund-paid",
+] as const;
+export type PaymentDirection = (typeof PAYMENT_DIRECTIONS)[number];
+
+/**
+ * A payment from bank lines that could not tell which way it settles: the
+ * directions the lines allow, for the caller to choose from.
+ */
+export type PaymentDirectionFailure = AppFailure & {
+  paymentDirections?: PaymentDirection[];
+};
+
 export const recordFromLinesShape = {
   /** Lines on one account's statements, all moving money the same way. */
   lineIds: z.array(positiveId).min(1).max(MAX_LINES_PER_RECORD),
@@ -229,6 +251,18 @@ export const recordFromLinesShape = {
   taxOverrides: z.array(taxOverrideSchema).optional(),
   /** Payment only: the open items it settles, as `createRecord`'s settlements. */
   allocations: z.array(allocationShape).max(200).optional(),
+  /**
+   * Payment only. Money in is `we-receive` or `refund-received`; money out is
+   * `we-pay` or `refund-paid`. Absent: worked out from the allocations, the
+   * settlement account, or where the contact's open balance sits
+   * (`paymentRoute`), and refused when that cannot be told.
+   */
+  direction: z.enum(PAYMENT_DIRECTIONS).optional(),
+  /**
+   * Payment only: the control account it settles — the Receivable, Payable or
+   * ReimbursementsPayable account. Absent: the one the direction implies.
+   */
+  settlementAccountId: positiveId.optional(),
 };
 export const recordFromLinesSchema = z.object(recordFromLinesShape).strict();
 export type RecordFromLinesInput = z.input<typeof recordFromLinesSchema>;
@@ -314,6 +348,14 @@ function fieldsRefusal(input: RecordFromLinesParsed): AppFailure | null {
     );
   if (input.kind !== "payment" && (input.allocations?.length ?? 0) > 0)
     return fail("INVALID_INPUT", "Only a payment settles open items.");
+  if (
+    input.kind !== "payment" &&
+    (input.direction !== undefined || input.settlementAccountId !== undefined)
+  )
+    return fail(
+      "INVALID_INPUT",
+      "Only a payment takes a direction or a settlement account.",
+    );
   return null;
 }
 
@@ -381,6 +423,8 @@ function recordFor(
     movesIn: boolean;
     totalMinor: number;
     lines: readonly LineToRecord[];
+    /** Payment only. */
+    payment?: PaymentRoute;
   },
 ): CreateInput {
   const common = {
@@ -425,10 +469,264 @@ function recordFor(
         kind: "payment",
         contactId: input.contactId!,
         paidFromAccountId: at.accountId,
-        direction: at.movesIn ? "we-receive" : "we-pay",
-        settlements: input.allocations ?? [],
+        direction: at.payment!.direction,
+        ...(at.payment!.settlementAccountId !== undefined
+          ? { settlementAccountId: at.payment!.settlementAccountId }
+          : {}),
+        settlements: at.payment!.settlements,
       };
   }
+}
+
+/** Which way a payment from bank lines settles, and what it settles. */
+type PaymentRoute = {
+  direction: PaymentDirection;
+  /** Set only when it is not the account the direction implies. */
+  settlementAccountId?: number;
+  settlements: { owedMovementId: number; amountMinor: number }[];
+};
+
+const RECEIVABLE_SIDE: readonly PaymentDirection[] = [
+  "we-receive",
+  "refund-paid",
+];
+const MONEY_IN: readonly PaymentDirection[] = ["we-receive", "refund-received"];
+const MONEY_OUT: readonly PaymentDirection[] = ["we-pay", "refund-paid"];
+
+/**
+ * Which way a payment made from bank lines settles. The lines say whether the
+ * money came in or went out; this says which control account it clears:
+ *
+ * 1. `direction` and `settlementAccountId` when the caller gives them;
+ * 2. else the account the allocations' open items are on;
+ * 3. else where the contact's open balance sits: money in from a contact we
+ *    overpaid is a refund of that overpayment, and money out to a contact we
+ *    owe a reimbursement settles ReimbursementsPayable;
+ * 4. else the default: money in is `we-receive`, money out `we-pay`.
+ *
+ * A contact whose only open balance is on the other control account, or on
+ * two that would each fit, is refused with the choices rather than guessed:
+ * a payment on the wrong control account leaves both accounts wrong.
+ *
+ * Only the direction and the account are chosen here. Every rule about them —
+ * the settlement account fits the direction, a refund names one contact and is
+ * applied in full to their overpayment, an allocation is that contact's and on
+ * that account — is `createRecord`'s, which then builds and checks the record.
+ * A refund given no allocations is applied to the contact's overpayments on
+ * that account, oldest first, up to the lines' amount.
+ */
+function paymentRoute(
+  ctx: AppContext,
+  input: RecordFromLinesParsed,
+  movesIn: boolean,
+  totalMinor: number,
+): AppResult<PaymentRoute> | PaymentDirectionFailure {
+  const { db } = ctx;
+  const receivable = accountDefaultId(db, DefaultAccountPurpose.Receivable);
+  const payable = accountDefaultId(db, DefaultAccountPurpose.Payable);
+  const reimbursements = accountDefaultId(
+    db,
+    DefaultAccountPurpose.ReimbursementsPayable,
+  );
+  const allowed = movesIn ? MONEY_IN : MONEY_OUT;
+  const way = movesIn ? "money in" : "money out";
+  if (input.direction !== undefined && !allowed.includes(input.direction))
+    return {
+      ...fail(
+        "REFUSED",
+        `These lines are ${way}, so a payment from them is ${allowed.join(" or ")}, not ${input.direction}.`,
+      ),
+      paymentDirections: [...allowed],
+    };
+  /** The direction a payment of these lines takes on one control account. */
+  const directionOn = (accountId: number): PaymentDirection | null => {
+    if (accountId === receivable) return movesIn ? "we-receive" : "refund-paid";
+    if (accountId === payable || accountId === reimbursements)
+      return movesIn ? "refund-received" : "we-pay";
+    return null;
+  };
+
+  const allocations = input.allocations ?? [];
+  const allocatedOn = new Set(
+    [
+      ...getSides(
+        db,
+        allocations.map((a) => a.owedMovementId),
+      ).values(),
+    ].map((side) => side.accountId),
+  );
+  if (allocatedOn.size > 1)
+    return fail(
+      "REFUSED",
+      "The allocations are on more than one control account. Record one payment for each.",
+    );
+  const named = input.settlementAccountId;
+  if (named !== undefined && directionOn(named) === null)
+    return fail(
+      "REFUSED",
+      "The settlement account must be the saved Receivable, Payable or Reimbursements payable account.",
+    );
+  let account: number | undefined = named ?? [...allocatedOn][0];
+  let direction =
+    input.direction ?? (account !== undefined ? directionOn(account) : null);
+
+  if (direction === null) {
+    const chosen = fromOpenBalance(ctx, input.contactId!, movesIn, {
+      receivable,
+      payable,
+      reimbursements,
+    });
+    if (!chosen.ok) return chosen;
+    direction = chosen.value.direction;
+    account = chosen.value.accountId;
+  }
+
+  // The account the direction implies needs no naming; a payable-side
+  // direction on ReimbursementsPayable does.
+  const settlementAccountId =
+    named ??
+    (account !== undefined &&
+    account === reimbursements &&
+    !RECEIVABLE_SIDE.includes(direction)
+      ? account
+      : undefined);
+
+  let settlements = allocations;
+  if (
+    settlements.length === 0 &&
+    (direction === "refund-received" || direction === "refund-paid")
+  )
+    settlements = overpaymentsFor(ctx, {
+      contactId: input.contactId!,
+      accountId:
+        settlementAccountId ??
+        (direction === "refund-paid" ? receivable : payable),
+      receiving: RECEIVABLE_SIDE.includes(direction),
+      totalMinor,
+    });
+  return ok({
+    direction,
+    ...(settlementAccountId !== undefined ? { settlementAccountId } : {}),
+    settlements,
+  });
+}
+
+/** One contact's open items on one control account, as `contactBalances` totals them. */
+function openOn(
+  ctx: AppContext,
+  contactId: number,
+  accountId: number | null,
+  receiving: boolean,
+): { obligationsMinor: number; creditsMinor: number } {
+  if (accountId === null) return { obligationsMinor: 0, creditsMinor: 0 };
+  const [balance] = balancesByContact(
+    listOutstanding(ctx.db, {
+      direction: receiving ? "owed-to-us" : "we-owe",
+      accountId,
+      contactId,
+    }).items,
+  );
+  return {
+    obligationsMinor: balance?.obligationsMinor ?? 0,
+    creditsMinor: balance?.creditsMinor ?? 0,
+  };
+}
+
+/** Step 3 and 4 of `paymentRoute`: the direction from where the contact's open balance sits. */
+function fromOpenBalance(
+  ctx: AppContext,
+  contactId: number,
+  movesIn: boolean,
+  accounts: {
+    receivable: number | null;
+    payable: number | null;
+    reimbursements: number | null;
+  },
+):
+  | AppResult<{ direction: PaymentDirection; accountId?: number }>
+  | PaymentDirectionFailure {
+  const r = openOn(ctx, contactId, accounts.receivable, true);
+  const p = openOn(ctx, contactId, accounts.payable, false);
+  const e = openOn(ctx, contactId, accounts.reimbursements, false);
+  const open = (b: typeof r) => b.obligationsMinor + b.creditsMinor > 0;
+  const ambiguous = (why: string): PaymentDirectionFailure => ({
+    ...fail(
+      "REFUSED",
+      `${why} Say which with the payment's direction (${(movesIn ? MONEY_IN : MONEY_OUT).join(" or ")}), or the settlement account it clears.`,
+    ),
+    paymentDirections: [...(movesIn ? MONEY_IN : MONEY_OUT)],
+  });
+
+  if (movesIn) {
+    // Money back from someone we overpaid, on Payable or ReimbursementsPayable.
+    const overpaid = [
+      ...(p.creditsMinor > 0 && accounts.payable !== null
+        ? [accounts.payable]
+        : []),
+      ...(e.creditsMinor > 0 && accounts.reimbursements !== null
+        ? [accounts.reimbursements]
+        : []),
+    ];
+    if (overpaid.length === 1 && !open(r))
+      return ok({ direction: "refund-received", accountId: overpaid[0] });
+    if (overpaid.length > 0)
+      return ambiguous(
+        open(r)
+          ? "This contact owes us money and was also overpaid, so this money in could be either."
+          : "This contact was overpaid on both Payable and Reimbursements payable.",
+      );
+    if (open(r) || (!open(p) && !open(e)))
+      return ok({ direction: "we-receive" });
+    return ambiguous(
+      "This contact's open balance is money we owe them, not money they owe us, so this money in could be a refund or a payment.",
+    );
+  }
+
+  // Money out to someone we owe a reimbursement.
+  if (e.obligationsMinor > 0) {
+    if (open(p))
+      return ambiguous(
+        "This contact is owed on both Payable and Reimbursements payable.",
+      );
+    return ok({ direction: "we-pay", accountId: accounts.reimbursements! });
+  }
+  if (open(p) || (!open(r) && !open(e))) return ok({ direction: "we-pay" });
+  return ambiguous(
+    open(r)
+      ? "This contact's open balance is on Receivable, not on Payable, so this money out could be a refund of their overpayment or a payment to them."
+      : "This contact's open balance is on Reimbursements payable and is not money we owe them.",
+  );
+}
+
+/**
+ * A refund given no allocations: the contact's overpayments on the account,
+ * oldest first, up to the refund. When they cover less than the refund,
+ * `createRecord`'s own rule (a refund is applied in full) refuses it.
+ */
+function overpaymentsFor(
+  ctx: AppContext,
+  at: {
+    contactId: number;
+    accountId: number | null;
+    receiving: boolean;
+    totalMinor: number;
+  },
+): { owedMovementId: number; amountMinor: number }[] {
+  if (at.accountId === null) return [];
+  let left = at.totalMinor;
+  const out: { owedMovementId: number; amountMinor: number }[] = [];
+  for (const item of listOutstanding(ctx.db, {
+    direction: at.receiving ? "owed-to-us" : "we-owe",
+    accountId: at.accountId,
+    contactId: at.contactId,
+  }).items) {
+    if (left <= 0) break;
+    if (item.position !== "credit") continue;
+    const amountMinor = Math.min(item.outstandingMinor, left);
+    out.push({ owedMovementId: item.movementId, amountMinor });
+    left -= amountMinor;
+  }
+  return out;
 }
 
 /**
@@ -521,9 +819,21 @@ function recordFromLines(
       (sum, { remainingMinor }) => sum + remainingMinor,
       0,
     );
+    let payment: PaymentRoute | undefined;
+    if (input.kind === "payment") {
+      const routed = paymentRoute(ctx, input, movesIn, totalMinor);
+      if (!routed.ok) throw new Rollback(routed);
+      payment = routed.value;
+    }
     const created = createRecord(
       ctx,
-      recordFor(ctx, input, { accountId, movesIn, totalMinor, lines }),
+      recordFor(ctx, input, {
+        accountId,
+        movesIn,
+        totalMinor,
+        lines,
+        payment,
+      }),
     );
     if (!created.ok) throw new Rollback(created);
 

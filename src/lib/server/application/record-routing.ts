@@ -79,7 +79,7 @@ import { checkVersion, recordVersion } from "./version.js";
  * |--------------------------------|---------------------------|--------------------------------|
  * | description, reference, remark | any changeable record     | update                         |
  * | category, split at same total  | any expense or income     | update (locked ones too)       |
- * | tax                            | any changeable record     | update, after any correction   |
+ * | tax                            | any changeable record     | update, after any correction or change of category lines |
  * | date                           | unlocked                  | update                         |
  * | date                           | settled expense or income | correct_date                   |
  * | date                           | bank-matched              | blocked unless releaseBankMatches: unmatch, change, rematch |
@@ -762,7 +762,15 @@ function decide(
     return step ? [step] : [];
   });
   if (taxStep) {
-    const only = steps.length === 1 && steps[0].path === "update";
+    // `tax[].line` is an index into the lines AFTER the change, and a patch
+    // resolves it against the record as it stands before the patch. So tax
+    // folds into the plain update only when that update leaves the category
+    // lines as they are; otherwise it is its own last step, which re-reads
+    // the record the earlier steps wrote.
+    const only =
+      steps.length === 1 &&
+      steps[0].path === "update" &&
+      !steps[0].fields.some((f) => f === "lines" || f === "categoryAccountId");
     if (only) {
       steps[0].fields.push("tax");
       steps[0].needs = mergeNeeds(steps[0].needs, taxStep.needs);

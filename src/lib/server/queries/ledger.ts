@@ -924,8 +924,15 @@ export type RecordGroup = {
 export type RecordAggregate = {
   /** Largest `|totalMinor|` first, cut to `limit`. */
   groups: RecordGroup[];
-  /** Every group's total added up, those `limit` cut included. */
-  totalMinor: Minor;
+  /**
+   * Every group's total added up, those `limit` cut included. Null when the
+   * groups are not one kind of money — income with spending, money in with
+   * money out, or accounts read with opposite signs — so that their sum would
+   * net unlike figures against each other; `mixedNote` says why.
+   */
+  totalMinor: Minor | null;
+  /** Why `totalMinor` is null. */
+  mixedNote?: string;
   /** How many records matched. */
   count: number;
   /** How many groups there were before `limit` cut them. */
@@ -942,10 +949,11 @@ export type RecordAggregate = {
  *   `displaySignForAccountType` the way the P&L turns them, so that spending
  *   and earning both read positive. A record split across two categories is
  *   in both groups.
- * - `account`: the lines on every other account, as stored: positive where
- *   value went in. The two groupings are a partition of each record's lines,
- *   so neither repeats the other, and a record is in each group whose
- *   account it touches.
+ * - `account`: the lines on every other account, turned the same way, so
+ *   each reads as the screens show it: money into a bank account positive,
+ *   and a payable owed positive too. The two groupings are a partition of
+ *   each record's lines, so neither repeats the other, and a record is in
+ *   each group whose account it touches.
  * - `contact`, `month`, `kind`: each record's own figure
  *   (`mainAmountMinor`), so a record is in exactly one group. The contact is
  *   the one the Records list names first: the supplier when the record has
@@ -955,6 +963,8 @@ export type RecordAggregate = {
  * On each account a pair nets to zero, but a record's own figure is positive
  * on both halves, so keeping them would add a voided record twice to the
  * contact, month and kind totals. `voided: "only"` therefore has no groups.
+ *
+ * The grand total is given only for one kind of money (`mixedTotalNote`).
  *
  * `limit`, `offset` and `sort` in `filters` page the list and are not read
  * here. `opts.limit` cuts the sorted groups after the totals are taken.
@@ -974,10 +984,14 @@ export function aggregateRecords(
       .where(where)
       .get()?.n ?? 0;
 
-  const groups =
+  const signed: (RecordGroup & { displaySign?: 1 | -1 })[] =
     groupBy === "category" || groupBy === "account"
       ? accountGroups(db, where, groupBy)
       : recordGroups(db, where, groupBy);
+  const mixedNote = mixedTotalNote(db, where, groupBy, signed);
+  const groups: RecordGroup[] = signed.map(
+    ({ key, label, totalMinor, count }) => ({ key, label, totalMinor, count }),
+  );
   groups.sort(
     (a, b) =>
       Math.abs(b.totalMinor) - Math.abs(a.totalMinor) ||
@@ -990,11 +1004,98 @@ export function aggregateRecords(
       opts.limit === undefined
         ? groups
         : groups.slice(0, Math.max(0, Math.trunc(opts.limit))),
-    totalMinor: groups.reduce((sum, group) => sum + group.totalMinor, 0),
+    totalMinor: mixedNote
+      ? null
+      : groups.reduce((sum, group) => sum + group.totalMinor, 0),
+    ...(mixedNote ? { mixedNote } : {}),
     count,
     groupCount: groups.length,
   };
 }
+
+/**
+ * Why the groups' total would mean nothing, or null when it means something.
+ *
+ * A total is one kind of money: spending, income, money in, money out, or
+ * one other kind of record (transfers, journals, opening balances). Contact,
+ * month and kind groups read every record's figure as positive, so a
+ * selection holding two of these would add income to spending. Account and
+ * category groups are read through `displaySignForAccountType`, so a group of
+ * money held and a group of money owed carry opposite meanings even when
+ * both read positive; those keep a total only when every group's account is
+ * read with the same sign.
+ */
+function mixedTotalNote(
+  db: LedgerDb,
+  where: SQL | undefined,
+  groupBy: RecordGroupBy,
+  groups: (RecordGroup & { displaySign?: 1 | -1 })[],
+): string | null {
+  const kinds = moneyKinds(db, where);
+  if (kinds.length > 1)
+    return `These records mix ${kinds.slice(0, -1).join(", ")} and ${kinds.at(-1)}, so adding the groups would net them against each other. No grand total is given; filter to one kind of money to total it.`;
+  if (
+    (groupBy === "category" || groupBy === "account") &&
+    new Set(groups.map((g) => g.displaySign)).size > 1
+  )
+    return groupBy === "category"
+      ? "These categories mix spending and earnings, so adding them would mean nothing. No grand total is given; read each group on its own."
+      : "These accounts mix what is held with what is owed, so adding them would mean nothing. No grand total is given; read each group on its own.";
+  return null;
+}
+
+/** The kinds of money the records `where` selects: see `mixedTotalNote`. */
+function moneyKinds(db: LedgerDb, where: SQL | undefined): string[] {
+  const controls = db
+    .select({ id: accountDefaults.accountId })
+    .from(accountDefaults)
+    .where(
+      inArray(accountDefaults.purpose, [
+        DefaultAccountPurpose.Receivable,
+        DefaultAccountPurpose.Payable,
+        DefaultAccountPurpose.ReimbursementsPayable,
+      ]),
+    )
+    .all()
+    .map((row) => row.id);
+  // A payment's way: value leaving the control account is money in.
+  const way = sql<number>`(SELECT sign(coalesce(sum(${recordSides.amountMinor}), 0)) FROM ${ledgerMovements} AS "record_sides" WHERE ${recordSides.recordId} = ${ledgerRecords.id} AND ${inArray(recordSides.accountId, controls.length ? controls : [-1])})`;
+  const rows = db
+    .selectDistinct({ kind: ledgerRecords.kind, way })
+    .from(ledgerRecords)
+    .where(where)
+    .all();
+  const names = new Set<string>();
+  for (const row of rows)
+    names.add(
+      row.kind === LedgerRecordKind.Payment
+        ? row.way < 0
+          ? "money in"
+          : "money out"
+        : (MONEY_KIND[row.kind as LedgerRecordKindCode] ?? "other records"),
+    );
+  return MONEY_KIND_ORDER.filter((name) => names.has(name));
+}
+
+/** What kind of money each record kind is, for `moneyKinds`. Payments split by way. */
+const MONEY_KIND: Partial<Record<LedgerRecordKindCode, string>> = {
+  [LedgerRecordKind.Expense]: "spending",
+  [LedgerRecordKind.Income]: "income",
+  [LedgerRecordKind.InvoiceIssue]: "income",
+  [LedgerRecordKind.Transfer]: "transfers",
+  [LedgerRecordKind.Journal]: "journal entries",
+  [LedgerRecordKind.OpeningBalance]: "opening balances",
+};
+const MONEY_KIND_ORDER = [
+  "income",
+  "spending",
+  "money in",
+  "money out",
+  "transfers",
+  "journal entries",
+  "opening balances",
+  "other records",
+];
 
 function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
@@ -1025,7 +1126,7 @@ function accountGroups(
     .groupBy(ledgerMovements.accountId)
     .all();
 
-  const groups: RecordGroup[] = [];
+  const groups: (RecordGroup & { displaySign: 1 | -1 })[] = [];
   for (const row of rows) {
     const account = {
       type: row.type as AccountTypeCode,
@@ -1033,14 +1134,16 @@ function accountGroups(
     };
     const isCategory = isCategoryAccount(account);
     if (isCategory !== (groupBy === "category")) continue;
+    // Read the way the screens read it: spending and earning both positive,
+    // and a payable owed reads positive too.
+    const displaySign = displaySignForAccountType(account.type);
     groups.push({
       key: String(row.accountId),
       label: row.name,
       // `|| 0`: a zero total turned by -1 would otherwise read -0.
-      totalMinor: isCategory
-        ? row.totalMinor * displaySignForAccountType(account.type) || 0
-        : row.totalMinor,
+      totalMinor: row.totalMinor * displaySign || 0,
       count: row.count,
+      displaySign,
     });
   }
   return groups;

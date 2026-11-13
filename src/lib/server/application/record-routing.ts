@@ -821,11 +821,24 @@ export function routeRecordChange(
   if (denied) return denied;
   const parsed = recordChangeSchema.safeParse(change);
   if (!parsed.success) return invalid(parsed.error);
-  const s = loadState(ctx, recordId, opts.releaseBankMatches ?? false);
-  if (!s) return missing("That record no longer exists.");
-  const wanted = wantedOf(s.record, parsed.data);
-  if (!wanted.ok) return wanted;
-  return ok(decide(ctx, s, fieldsOf(wanted.value), wanted.value));
+  return asRead(() => {
+    const s = loadState(ctx, recordId, opts.releaseBankMatches ?? false);
+    if (!s) return missing("That record no longer exists.");
+    const wanted = wantedOf(s.record, parsed.data);
+    if (!wanted.ok) return wanted;
+    return ok(decide(ctx, s, fieldsOf(wanted.value), wanted.value));
+  });
+}
+
+/**
+ * Routing and editability are reads, but deciding a bank-matched record runs
+ * the correction's own rules in a savepoint that is always rolled back
+ * (`afterReleasing`), and those rules audit. Outside a unit of work, run the
+ * read as a dry run so nothing the probe would announce reaches a listener;
+ * inside one, the caller's unit already decides what is delivered.
+ */
+function asRead<T>(read: () => T): T {
+  return currentUnitOfWork() ? read() : runUnitOfWork("dry_run", read);
 }
 
 /**
@@ -840,6 +853,13 @@ export function recordEditability(
 ): AppResult<RecordEditability> {
   const denied = requirePermissions(ctx, ["records.read"]);
   if (denied) return denied;
+  return asRead(() => editabilityOf(ctx, recordId));
+}
+
+function editabilityOf(
+  ctx: AppContext,
+  recordId: number,
+): AppResult<RecordEditability> {
   const s = loadState(ctx, recordId, true);
   if (!s) return missing("That record no longer exists.");
   const fields = {} as Record<RecordChangeField, FieldEditability>;

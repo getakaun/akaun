@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { EventEmitter } from "node:events";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -9,6 +10,9 @@ import {
   StatementExtractionState,
 } from "$lib/enums.js";
 import * as schema from "../db/schema.js";
+import { auditEvents } from "../audit-events.js";
+import { ledgerEvents } from "../ledger/events.js";
+import { reconciliationEvents } from "../reconciliation/events.js";
 import type { RecordView } from "../ledger/types.js";
 import { getRecord } from "../queries/ledger.js";
 import { contactBalances } from "../queries/settlements.js";
@@ -675,6 +679,80 @@ describe("changeRecord", () => {
 });
 
 describe("recordEditability", () => {
+  it("tells no listener anything while it probes a bank-matched record", async () => {
+    // Deciding a matched record's date runs the correction's own rules in a
+    // savepoint that is always rolled back; a read must not announce that.
+    const s = seed();
+    const { record } = s.matched();
+    // A settled expense whose owed side is itself matched (a statement on
+    // the payable account, built directly as record-amount-correction.spec
+    // does): deciding its date runs the probe in `afterReleasing`.
+    const { expense } = s.freightCase();
+    const payable = accountDefaultId(s.db, DefaultAccountPurpose.Payable)!;
+    const owed = getRecord(s.db, expense.id)!.movements.find(
+      (m) => m.accountId === payable,
+    )!;
+    const statementId = s.db
+      .insert(schema.bankStatements)
+      .values({
+        originalFilename: "payable.pdf",
+        storedFilePath: "reconciliation/payable.pdf",
+        extractionState: StatementExtractionState.Ready,
+        uploadedBy: 1,
+        accountId: payable,
+      })
+      .returning()
+      .get()!.id;
+    const lineId = s.db
+      .insert(schema.bankStatementLines)
+      .values({
+        statementId,
+        date: expense.date,
+        amount: 1200,
+        direction: StatementDirection.Out,
+      })
+      .returning()
+      .get()!.id;
+    s.db
+      .insert(schema.reconciliationAllocations)
+      .values({
+        lineId,
+        movementId: owed.id,
+        amount: 1200,
+        itemAmountSnapshot: 1200,
+        createdBy: 1,
+      })
+      .run();
+    // Let the fixture's own audit announcements (queued as microtasks while
+    // it was built outside any unit of work) go out before we listen.
+    await new Promise((settle) => setTimeout(settle, 0));
+    const heard: string[] = [];
+    const subscriptions: [EventEmitter, string, () => void][] = [
+      [auditEvents, "entry-added", () => heard.push("audit entry-added")],
+      [
+        reconciliationEvents,
+        "allocation-update",
+        () => heard.push("allocation-update"),
+      ],
+      [ledgerEvents, "record-update", () => heard.push("record-update")],
+    ];
+    for (const [emitter, name, listener] of subscriptions)
+      emitter.on(name, listener);
+    try {
+      resultValue(recordEditability(s.ctx, record.id));
+      route(s, record.id, { date: "2026-09-05" }, true);
+      const settled = resultValue(recordEditability(s.ctx, expense.id));
+      // The probe really ran: the date is a correction once matches are released.
+      expect(settled.fields.date).toMatchObject({ mode: "correction" });
+      route(s, expense.id, { date: "2026-09-05" }, true);
+      await new Promise((settle) => setTimeout(settle, 0));
+    } finally {
+      for (const [emitter, name, listener] of subscriptions)
+        emitter.off(name, listener);
+    }
+    expect(heard).toEqual([]);
+  });
+
   it("agrees with routeRecordChange for every field of every fixture record", () => {
     const s = seed();
     const { expense, payment } = s.freightCase();

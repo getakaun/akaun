@@ -128,6 +128,20 @@ would silently widen every app already granted the grouped scope. The operation 
 needs `records.read`. No data migration: nothing could void before, and a superuser
 holds every leaf.
 
+`contacts:merge` independently grants only `contacts.merge` and is the opt-in scope that lets
+an MCP agent merge contacts (`akaun_change_contacts`, `merge[]`). A merge moves every record,
+quotation and invoice of the merged contacts to the one kept and deletes the others, and it
+cannot be undone. v1 left merging out of MCP for that reason; v2 brings it back behind this
+scope, because cleaning up duplicate suppliers needs it. The merge still needs `contacts.update`
+and `contacts.delete`, so the MCP action asks for `contacts:merge` + `contacts:write` +
+`contacts:delete`, and granting the new scope adds no update or delete. It is deliberately
+**not** part of `contacts:write` or `contacts:delete`: adding it there would silently widen
+every app already granted them. The leaf `contacts.merge` is unchanged (tier Full, not
+explicit), so the REST route and the Contacts screen behave as before. The consent page shows
+the scope beside the deletes (`scopeTier`), unchecked, with its own warning that a merge cannot
+be undone. No data migration: nothing could merge through MCP before, and a superuser holds
+every leaf.
+
 Allocation and payee operations accept the new explicit leaves or their original
 delete-based permission route. This preserves existing session, PAT and OAuth
 behavior without rewriting any grants or running a data migration. MCP requirements

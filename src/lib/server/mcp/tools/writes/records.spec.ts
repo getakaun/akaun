@@ -555,6 +555,21 @@ describe("akaun_create_records", () => {
     expect(s.count("ledger_records")).toBe(0);
   });
 
+  it("shows no candidates to a token that may not read accounts", async () => {
+    // Candidates name other accounts; the payment tools hide them the same way.
+    const s = seed();
+    const { call } = await serve(s.db, token(["records.create"]));
+    const { isError, body } = await call(CREATE, {
+      records: [expense({ category: "Freigth" })],
+    });
+    expect(isError).toBe(true);
+    const failure = body.error.items[0].error;
+    expect(failure.code).toBe("NOT_FOUND");
+    expect(failure.candidates ?? []).toEqual([]);
+    expect(JSON.stringify(failure)).not.toMatch(/freight/i);
+    expect(s.count("ledger_records")).toBe(0);
+  });
+
   it("is not offered to a token without records.create", async () => {
     const s = seed();
     const { client } = await serve(
@@ -794,6 +809,25 @@ describe("akaun_change_records", () => {
       }),
     ).record;
   }
+
+  it("stores rate 1 when a record moves back to the main currency", async () => {
+    const s = seed();
+    const record = usdExpense(s);
+    const { call } = await serve(s.db, OWNER());
+    const { body } = await call(CHANGE, {
+      update: [
+        {
+          record: record.id,
+          expected_version: s.v(record.id),
+          set: { currency: "MYR", amount: "445.67" },
+        },
+      ],
+    });
+    expect(body.saved).toBe(true);
+    const after = getRecord(s.db, record.id)!;
+    expect(after.currency).toBe("MYR");
+    expect(after.exchangeRate).toBe(1);
+  });
 
   it("keeps a main-currency split as sent", async () => {
     const s = seed();

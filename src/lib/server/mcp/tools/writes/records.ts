@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { and, eq, isNull } from "drizzle-orm";
 import type { CallToolResult } from "@modelcontextprotocol/server";
+import type { LeafPermission } from "$lib/permissions/catalog.js";
 import {
   DefaultAccountPurpose,
   EntityType,
@@ -32,6 +33,7 @@ import { accountDefaultId } from "../../../services/account-defaults.js";
 import { getExchangeRate } from "../../../currency/rates.js";
 import { mainCurrencyCode } from "../../../currency/form.js";
 import type { AppContext } from "../../../application/context.js";
+import { can } from "../../../permissions.js";
 import {
   fail,
   ok,
@@ -216,11 +218,29 @@ function reworded<T>(failure: AppFailure & T): AppFailure & T {
 }
 
 /** A reference miss as the item's failure, with its candidates kept. */
+/** The read each kind of reference needs before a miss may show candidates. */
+const REF_READ_LEAF: Readonly<Record<string, LeafPermission>> = {
+  record: "records.read",
+  account: "accounts.read",
+  contact: "contacts.read",
+};
+
+/**
+ * A reference miss as an item failure. Candidates and the resolver's own
+ * explanation name other records, accounts or contacts, so a caller who may
+ * not read that kind gets a bare NOT_FOUND, as the payment tools answer.
+ */
 function refMiss(
+  ctx: AppContext,
   miss: Extract<Resolved<unknown>, { ok: false }>,
   opts: { what: string; ref: string | number; path: string; lookup: string },
 ): ItemFailure {
-  const body = resolveError(miss, opts);
+  const leaf = REF_READ_LEAF[opts.what];
+  const readable = leaf === undefined || can(ctx.locals, leaf);
+  const body = resolveError(
+    readable ? miss : { kind: "not_found", candidates: [] },
+    opts,
+  );
   return failWith(
     body.code === "NOT_FOUND" ? "NOT_FOUND" : "INVALID_INPUT",
     body.message,
@@ -724,7 +744,7 @@ class CreateBuilder {
     const found = resolveAccount(this.ctx, ref, opts);
     return found.ok
       ? found.id
-      : refMiss(found, {
+      : refMiss(this.ctx, found, {
           what: "account",
           ref,
           path: `${this.at}.${field}`,
@@ -736,7 +756,7 @@ class CreateBuilder {
     const found = resolveContact(this.ctx, ref);
     return found.ok
       ? found.id
-      : refMiss(found, {
+      : refMiss(this.ctx, found, {
           what: "contact",
           ref,
           path: `${this.at}.${field}`,
@@ -1529,7 +1549,7 @@ function updateItem(
     run: (c) => {
       const found = resolveRecord(c, item.record);
       if (!found.ok)
-        return refMiss(found, {
+        return refMiss(c, found, {
           what: "record",
           ref: item.record,
           path: `${at}.record`,
@@ -1546,13 +1566,21 @@ function updateItem(
       if (set.currency !== undefined) change.currency = set.currency;
       if (set.exchange_rate !== undefined)
         change.exchangeRate = set.exchange_rate;
+      else if (
+        set.currency !== undefined &&
+        set.currency === mainCurrencyCode(c.db)
+      )
+        // Back in the main currency the rate is 1: `updateLinesInMain`
+        // converts at 1, and keeping the old rate would store a foreign rate
+        // on a main-currency record.
+        change.exchangeRate = 1;
       if (set.amount !== undefined) change.amount = money(set.amount);
       if (set.contact !== undefined) {
         if (set.contact === null) change.contactId = null;
         else {
           const contact = resolveContact(c, set.contact);
           if (!contact.ok)
-            return refMiss(contact, {
+            return refMiss(c, contact, {
               what: "contact",
               ref: set.contact,
               path: `${at}.set.contact`,
@@ -1568,7 +1596,7 @@ function updateItem(
         });
         return account.ok
           ? account.id
-          : refMiss(account, {
+          : refMiss(c, account, {
               what: "account",
               ref,
               path: `${at}.set.${field}`,
@@ -1705,7 +1733,7 @@ function voidItem(
     run: (c) => {
       const found = resolveRecord(c, item.record);
       if (!found.ok)
-        return refMiss(found, {
+        return refMiss(c, found, {
           what: "record",
           ref: item.record,
           path: `${at}.record`,
@@ -1799,7 +1827,7 @@ function deleteItem(
     run: (c) => {
       const found = resolveRecord(c, item.record);
       if (!found.ok)
-        return refMiss(found, {
+        return refMiss(c, found, {
           what: "record",
           ref: item.record,
           path: `${at}.record`,

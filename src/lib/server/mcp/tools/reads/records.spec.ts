@@ -672,7 +672,7 @@ describe("search_records on the evaluation book", () => {
         /voided records and their reversals/,
       );
       expect(only.body.error.fix).toMatch(/Drop group_by/);
-      for (const status of ["owed", "part_paid", "paid"]) {
+      for (const status of ["owed", "part_paid"]) {
         const refused = await call("search_records", {
           group_by: "contact",
           status,
@@ -680,6 +680,13 @@ describe("search_records on the evaluation book", () => {
         expect(refused.body.error.code).toBe("INVALID_INPUT");
         expect(refused.body.error.fix).toMatch(/unpaid/);
       }
+      // paid is the database's own filter, so it can be totalled.
+      const paid = await call("search_records", {
+        group_by: "contact",
+        status: "paid",
+      });
+      expect(paid.isError).toBe(false);
+      expect(paid.body.matching_records).toBeGreaterThan(0);
       const unpaid = await call("search_records", {
         group_by: "contact",
         status: "unpaid",

@@ -478,12 +478,11 @@ function buildFilters(
   if (period.value?.to) filters.dateTo = period.value.to;
   if (args.min !== undefined) filters.minMainMinor = args.min;
   if (args.max !== undefined) filters.maxMainMinor = args.max;
-  // `paid: false` is exactly "part paid or owed" once the kinds are limited
-  // above. `paid: true` is not asked of the database: `recordConditions`
-  // writes it as `NOT <void test> AND EXISTS (...)` with no brackets, which
-  // reads as `(NOT NOT ...) AND ...` and matches nothing. Paid is decided
-  // per record instead, as part_paid and owed are.
-  if (args.status && args.status !== "paid") filters.paid = false;
+  // Once the kinds are limited above, `paid: true` is exactly "paid" and
+  // `paid: false` is "part paid or owed"; telling those two apart is done
+  // per record below.
+  if (args.status === "paid") filters.paid = true;
+  else if (args.status) filters.paid = false;
   if (args.cleared !== undefined) filters.cleared = args.cleared;
   if (args.has_attachment !== undefined)
     filters.hasAttachment = args.has_attachment;
@@ -607,16 +606,12 @@ function searchRecordsHandler(
           'voided "only" cannot be grouped: counts and totals leave out voided records and their reversals, so there is nothing to total.',
         fix: "Drop group_by to list the voided records, or drop voided to total the rest.",
       });
-    if (
-      args.status === "owed" ||
-      args.status === "part_paid" ||
-      args.status === "paid"
-    )
+    if (args.status === "owed" || args.status === "part_paid")
       return toolError({
         code: "INVALID_INPUT",
         path: "status",
         message: `status "${args.status}" cannot be grouped: it is worked out record by record.`,
-        fix: 'Use status "unpaid" (owed and part-paid together) with group_by, or drop group_by and list the records.',
+        fix: 'Use status "unpaid" (owed and part-paid together) or "paid" with group_by, or drop group_by and list the records.',
       });
     const aggregate = aggregateRecords(ctx.db, filters, args.group_by);
     const groups = aggregate.groups
@@ -730,13 +725,10 @@ function searchRecordsHandler(
   }
 
   // --- a list of records ---
-  // `unpaid` is the database's `paid: false`; the other three are decided per record.
+  // `paid` and `unpaid` are the database's `paid: true` / `paid: false`;
+  // owed and part_paid split `paid: false` and are decided per record.
   const wanted =
-    args.status === "owed" ||
-    args.status === "part_paid" ||
-    args.status === "paid"
-      ? args.status
-      : null;
+    args.status === "owed" || args.status === "part_paid" ? args.status : null;
   let records: RecordView[];
   let total: number;
   if (wanted) {

@@ -18,7 +18,6 @@ import { DEPRECIATION_WRITE } from "../../application/depreciation.js";
 import { ASSET_READ_PERMISSIONS } from "../../application/fixed-assets.js";
 import type { LedgerDb } from "../../ledger/types.js";
 import type { BlobStore } from "../../storage/blob-store.js";
-import { TOOL_REQUIREMENTS, toolAccessOptions } from "../tool-requirements.js";
 import {
   inspectRpc,
   MAX_ATTACH_RPC_BYTES,
@@ -153,9 +152,6 @@ const plain = (requirements: ToolRequirements | ToolAccess[]) =>
     permissions: [...permissions],
   }));
 
-/** v1's requirement for a tool, as v2 routes. */
-const v1 = (name: string) => plain(toolAccessOptions(TOOL_REQUIREMENTS[name]));
-
 /** An app: the user's role (everything, unless limited) ∩ these scopes. */
 function app(
   scopes: OAuthScope[],
@@ -289,85 +285,6 @@ describe("the v2 requirement tables", () => {
         for (const option of requirements)
           for (const permission of option.permissions)
             expect(permission, base).toMatch(/\.read$/);
-    }
-  });
-
-  it("copy v1's entry for every tool and action that replaces a v1 tool", () => {
-    const copies: [string, string | null, string][] = [
-      ["search_records", null, "list_records"],
-      ["get_record", null, "get_record"],
-      ["get_attachment", null, "get_attachment"],
-      ["get_bank_statement_file", null, "get_bank_statement_file"],
-      ["list_accounts", null, "list_accounts"],
-      ["find_contacts", null, "list_contacts"],
-      ["get_contact", null, "get_contact_balance"],
-      ["get_category_history", null, "list_records"],
-      ["get_report", "profit_loss", "get_financial_report"],
-      ["get_bank_reconciliation", null, "get_bank_statement"],
-      ["get_sales_documents", "invoice", "list_invoices"],
-      ["get_sales_documents", "quotation", "list_quotations"],
-      ["get_import_queue", null, "list_import_jobs"],
-      ["attach_file", null, "attach_file"],
-      ["create_records", "records", "create_record"],
-      ["change_records", "update", "update_record"],
-      ["change_records", "void", "void_record"],
-      ["change_records", "delete", "delete_record"],
-      ["change_records", "correct_record_date", "correct_record_date"],
-      ["change_records", "correct_expense_contact", "correct_expense_contact"],
-      [
-        "change_records",
-        "correct_payment_recipient",
-        "correct_payment_recipient",
-      ],
-      [
-        "change_records",
-        "correct_reimbursement_amount",
-        "correct_reimbursement_amount",
-      ],
-      ["record_payments", "pay", "record_payment"],
-      ["record_payments", "allocate", "settle_payment"],
-      ["record_payments", "reimburse", "create_reimbursement"],
-      ["change_allocations", "reallocate", "correct_payment_allocations"],
-      ["match_bank_lines", "match", "set_movement_matches"],
-      ["match_bank_lines", "create_from_lines", "record_transfer_from_line"],
-      ["match_bank_lines", "auto_match", "auto_match"],
-      ["unmatch_bank_lines", "unmatch", "set_movement_matches"],
-      ["change_contacts", "create", "create_contact"],
-      ["change_contacts", "update", "update_contact"],
-      ["change_contacts", "delete", "delete_contact"],
-      ["change_accounts", "create", "create_account"],
-      ["change_accounts", "update", "update_account"],
-      ["change_accounts", "delete", "delete_account"],
-      ["change_accounts", "set_opening_balance", "set_opening_balance"],
-      ["create_sales_documents", "invoices", "create_invoice"],
-      ["create_sales_documents", "quotations", "create_quotation"],
-      ["change_sales_documents", "invoice_update", "update_invoice"],
-      ["change_sales_documents", "invoice_issue", "issue_invoice"],
-      ["change_sales_documents", "invoice_void", "void_invoice"],
-      ["change_sales_documents", "invoice_delete", "delete_invoice"],
-      ["change_sales_documents", "quotation_update", "update_quotation"],
-      ["change_sales_documents", "quotation_status", "set_quotation_status"],
-      ["change_sales_documents", "quotation_revise", "revise_quotation"],
-      [
-        "change_sales_documents",
-        "quotation_convert",
-        "convert_quotation_to_invoice",
-      ],
-      ["change_sales_documents", "quotation_delete", "delete_quotation"],
-      ["review_imports", "update_item", "update_import_item"],
-      ["review_imports", "confirm", "confirm_import"],
-      ["review_imports", "skip", "skip_import"],
-      ["review_imports", "discard", "discard_import_job"],
-    ];
-    for (const [base, part, v1Name] of copies) {
-      const entry = requirementEntry(base);
-      const v2 =
-        part === null
-          ? entry.requirements
-          : (entry.actions?.[part] ?? entry.checks?.[part]);
-      expect(plain(v2!), `${base} ${part ?? ""} = v1 ${v1Name}`).toEqual(
-        v1(v1Name),
-      );
     }
   });
 
@@ -526,7 +443,8 @@ describe("finding and refusing actions", () => {
     );
     expect(toolBaseOf("change_records")).toBeNull();
     expect(toolBaseOf("change_records", "plain")).toBe("change_records");
-    for (const v1Name of Object.keys(TOOL_REQUIREMENTS))
+    // v1's names (the tools were removed) are not tools of any scheme.
+    for (const v1Name of ["create_record", "void_record", "list_records"])
       expect(toolBaseOf(v1Name)).toBeNull();
     expect(toolBaseOf("akaun_constructor")).toBeNull();
     for (const base of Object.keys(TOOL_REQUIREMENTS_V2))
@@ -853,32 +771,60 @@ describe("inspectRpc step-up for v2 tools", () => {
     ).toBe("records:read records:void");
   });
 
-  it("never challenges a token, and leaves v1's names to v1's rule", async () => {
+  it("never challenges a token, a removed v1 name or a prototype key", async () => {
     expect(
       await challenged(token(["records.read"]), "akaun_change_records", {
         void: [{}],
       }),
     ).toBeNull();
-    // v1's void_record, unchanged.
-    expect(await challenged(app(writer), "void_record", { recordId: 1 })).toBe(
-      "records:read records:void",
-    );
-    // A v2 base is not a v1 name, and outside the plain scheme not a v2 one.
+    // v1 was removed: its names are unknown tools, never challenged.
+    expect(
+      await challenged(app(writer), "void_record", { recordId: 1 }),
+    ).toBeNull();
+    expect(
+      await challenged(app(writer), "create_record", { amount: 1 }),
+    ).toBeNull();
+    // A v2 base outside the plain scheme is not a tool either.
     expect(
       await challenged(app(writer), "change_records", { void: [{}] }),
     ).toBeNull();
+    // Names are looked up as own keys only: no throw, so never a 500.
+    for (const name of [
+      "constructor",
+      "__proto__",
+      "toString",
+      "hasOwnProperty",
+      "akaun_constructor",
+      "akaun___proto__",
+    ])
+      for (const naming of [undefined, "plain"] as const)
+        expect(
+          await challenged(app(writer), name, { void: [{}] }, naming),
+        ).toBeNull();
   });
 
   it("gives akaun_attach_file the attach allowance and every other v2 tool the ordinary one", async () => {
     const body = MAX_RPC_BYTES + 1024;
     const pat = token(["records.update"]);
-    for (const name of ["attach_file", "akaun_attach_file"]) {
-      const inspection = await inspectRpc(rpc(name, {}, body), pat);
+    for (const [name, naming] of [
+      ["akaun_attach_file", "akaun_verb_noun"],
+      ["akaun_file_attach", "akaun_noun_verb"],
+      ["attach_file", "plain"],
+    ] as const) {
+      const inspection = await inspectRpc(rpc(name, {}, body), pat, {
+        naming,
+      });
       expect(inspection.response).toBeNull();
       expect(
         inspection.response === null && inspection.maxRequestBodySize,
       ).toBe(MAX_ATTACH_RPC_BYTES);
     }
+    // Only the name served gets it: v1's bare name under the default scheme
+    // is held to the ordinary limit, like any other tool.
+    for (const name of ["attach_file", "akaun_file_attach"])
+      expect(
+        (await inspectRpc(rpc(name, {}, body), pat)).response?.status,
+      ).toBe(413);
     const other = await inspectRpc(rpc("akaun_change_records", {}, body), pat);
     expect(other.response?.status).toBe(413);
     const small = await inspectRpc(rpc("akaun_change_records", {}), pat);
@@ -921,7 +867,7 @@ describe("the contacts:merge scope", () => {
     expect(allowedScopes(blocked)).not.toContain("contacts:merge");
   });
 
-  it("is what a merge needs beyond writing and deleting contacts, and no v1 tool asks for it", () => {
+  it("is what a merge needs beyond writing and deleting contacts, and only a merge asks for it", () => {
     expect(
       missingForActions(
         app(["contacts:read", "contacts:write", "contacts:delete"]),
@@ -940,12 +886,17 @@ describe("the contacts:merge scope", () => {
         "merge",
       ])[0].missingScopes,
     ).toEqual(["contacts:write", "contacts:delete"]);
-    for (const requirement of Object.values(TOOL_REQUIREMENTS))
-      for (const option of toolAccessOptions(requirement)) {
-        expect(option.scopes).not.toContain("contacts:merge");
-        expect(option.permissions).not.toContain(
-          "contacts.merge" as LeafPermission,
-        );
+    for (const [base, entry] of Object.entries(TOOL_REQUIREMENTS_V2))
+      for (const [part, requirements] of routesOf(entry)) {
+        if (base === "change_contacts" && part === "merge") continue;
+        for (const option of requirements) {
+          expect(option.scopes, `${base} ${part}`).not.toContain(
+            "contacts:merge",
+          );
+          expect(option.permissions, `${base} ${part}`).not.toContain(
+            "contacts.merge" as LeafPermission,
+          );
+        }
       }
   });
 });

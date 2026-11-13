@@ -35,7 +35,8 @@ import { SCOPE_PERMISSIONS } from "$lib/permissions/oauth-scopes.js";
 import { createRequestHandle } from "../request-hook.js";
 import { handleMcpRequest } from "../mcp/http.js";
 import { LocalBlobStore } from "../storage/blob-store.js";
-import { requireView } from "../mcp/common.js";
+import { requirementsMet } from "../mcp/registry.js";
+import { FIND_CONTACTS, GET_CONTACT } from "../mcp/requirements/index.js";
 import { allowedScopes } from "./scopes.js";
 import { handleOAuthProtocol } from "./http.js";
 import { isSameOriginRequest } from "../browser-origin.js";
@@ -67,8 +68,11 @@ let verifier: string;
 let browser: string;
 let address: string;
 const protocolClients: Client[] = [];
+// The MCP file store's root: an empty folder under os.tmpdir(), never data/.
+let storageRoot: string;
 
 beforeEach(() => {
+  storageRoot = mkdtempSync(join(tmpdir(), "akaun-oauth-mcp-"));
   sqlite = new Database(":memory:");
   db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: "drizzle" });
@@ -108,6 +112,7 @@ beforeEach(() => {
 afterEach(async () => {
   await Promise.all(protocolClients.splice(0).map((c) => c.close()));
   sqlite.close();
+  rmSync(storageRoot, { recursive: true, force: true });
 });
 /** A signed-in browser session for the user: what the consent page acts with. */
 function actor(user = 1): App.Locals {
@@ -211,7 +216,12 @@ async function throughHook(
           ? handleMcpRequest(
               e.request,
               // No tool here reads a file; the store is an empty folder.
-              { db, locals: e.locals, store: new LocalBlobStore(tmpdir()) },
+              {
+                db,
+                locals: e.locals,
+                store: new LocalBlobStore(storageRoot),
+                storageRoot,
+              },
               config.issuer,
             )
           : new Response(JSON.stringify({ userId: e.locals.user?.id }), {
@@ -1178,7 +1188,9 @@ describe("OAuth hook and MCP scope integration", () => {
           jsonrpc: "2.0",
           id: 1,
           method: "tools/call",
-          params: { name: "get_contact_balance", arguments: { contactId: 1 } },
+          // akaun_get_contact reads balances from the records too (v1
+          // get_contact_balance), so a contacts:read token is asked for both.
+          params: { name: "akaun_get_contact", arguments: { contact: 1 } },
         }),
       }),
     );
@@ -1203,7 +1215,7 @@ describe("OAuth hook and MCP scope integration", () => {
           id: 1,
           method: "tools/call",
           params: {
-            name: "get_attachment",
+            name: "akaun_get_attachment",
             arguments: { recordId: 1, attachmentId: 1 },
           },
         }),
@@ -1305,9 +1317,15 @@ describe("OAuth hook and MCP scope integration", () => {
     expect(locals.role?.isSuperuser).toBe(true);
     expect(can(locals, "contacts.read")).toBe(true);
     expect(can(locals, "records.read")).toBe(false);
-    expect(() =>
-      requireView({ locals }, ["contacts.read", "records.read"]),
-    ).toThrow();
+    // The registry's check, listing and call alike: the scopes bound a
+    // superuser, so a read needing records.read is refused.
+    expect(
+      requirementsMet(locals, [
+        { scopes: [], permissions: ["contacts.read", "records.read"] },
+      ]),
+    ).toBe(false);
+    expect(requirementsMet(locals, GET_CONTACT.requirements)).toBe(false);
+    expect(requirementsMet(locals, FIND_CONTACTS.requirements)).toBe(true);
     const limited = await tokens(["contacts:read"], 2);
     db.delete(schema.groupGrants)
       .where(eq(schema.groupGrants.permission, "contacts.read"))
@@ -1407,26 +1425,37 @@ describe("OAuth hook and MCP scope integration", () => {
           },
         }),
       );
-      // get_audit_history is listed to anyone who can read something; it
-      // checks the item's own resource when it runs.
+      // The overview, the change history and the books review are listed to
+      // anyone who can read something; each decides per area when it runs.
       expect((await c.listTools()).tools.map((tool) => tool.name)).toEqual([
-        "list_accounts",
-        "get_audit_history",
+        "akaun_get_books_overview",
+        "akaun_list_accounts",
+        "akaun_get_change_history",
+        "akaun_review_books",
       ]);
+      // The prompts start from records, which this app may not read; v2
+      // serves no resources (akaun://context moved into the overview).
       expect((await c.listPrompts()).prompts).toEqual([]);
-      expect((await c.listResources()).resources.map((r) => r.uri)).toEqual([
-        "akaun://context",
-      ]);
-      const context = await c.readResource({ uri: "akaun://context" });
-      const content = context.contents[0];
-      if (!("text" in content)) throw new Error("Expected context text");
-      const flags = JSON.parse(content.text).permissions;
-      expect(flags.accounts).toBe(true);
-      expect(flags.records).toBe(false);
+      expect(c.getServerCapabilities()?.resources).toBeUndefined();
+      const overview = await c.callTool({
+        name: "akaun_get_books_overview",
+        arguments: {},
+      });
+      expect(overview.isError).not.toBe(true);
+      const flags = JSON.parse(
+        (overview.content as { type: string; text: string }[])[0].text,
+      );
+      // No records.read: no record queues; reads only: the app may change
+      // nothing. accounts.read is shown by akaun_list_accounts answering below.
+      expect(flags.queues?.uncategorised).toBeUndefined();
+      expect(flags.can).toMatch(/^nothing/);
       await expect(
-        c.callTool({ name: "list_records", arguments: {} }),
+        c.callTool({ name: "akaun_search_records", arguments: {} }),
       ).rejects.toThrow();
-      const result = await c.callTool({ name: "list_accounts", arguments: {} });
+      const result = await c.callTool({
+        name: "akaun_list_accounts",
+        arguments: {},
+      });
       expect(result.isError).not.toBe(true);
       oauth.revokeUser(1);
       expect((await throughHook(bearer(saved!.access_token))).status).toBe(401);

@@ -61,7 +61,10 @@ import {
 import { createReimbursement } from "./reimbursements.js";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
-import { createServer } from "../mcp/server.js";
+import { createServerV2 } from "../mcp/registry.js";
+import { READ_TOOLS } from "../mcp/tools/reads/index.js";
+import { WRITE_TOOLS } from "../mcp/tools/writes/index.js";
+import { recordVersion } from "./version.js";
 import { LocalBlobStore } from "../storage/blob-store.js";
 
 let sqlite: Database;
@@ -627,7 +630,7 @@ describe("month closing across alternate accounting write paths", () => {
       before.movements,
     );
   });
-  it("returns actionable REFUSED errors through MCP create and correction tools without partial writes", async () => {
+  it("returns actionable CLOSED_PERIOD errors through MCP create and correction tools without partial writes", async () => {
     const expense = bill();
     payment(expense);
     const preview = prepareRecordDateCorrection(ctx, expense.id);
@@ -635,10 +638,11 @@ describe("month closing across alternate accounting write paths", () => {
     close();
     const root = mkdtempSync(join(tmpdir(), "akaun-close-mcp-"));
     roots.push(root);
-    const server = createServer({
+    const server = createServerV2({
       ...ctx,
       storageRoot: root,
       store: new LocalBlobStore(root),
+      tools: { reads: READ_TOOLS, writes: WRITE_TOOLS },
     });
     const client = new Client({ name: "closing-test", version: "1" });
     const [clientTransport, serverTransport] =
@@ -652,31 +656,70 @@ describe("month closing across alternate accounting write paths", () => {
       await client.connect(clientTransport);
       for (const [name, input] of [
         [
-          "create_record",
-          { ...common, amount: 25, fromAccountId: bank, toAccountId: category },
-        ],
-        [
-          "correct_record_date",
+          "akaun_create_records",
           {
-            recordId: expense.id,
-            date: "2026-11-01",
-            reason: "Corrected against the original receipt",
-            expectedVersion: preview.value.version,
-            acknowledgePeriodChange: true,
+            records: [
+              {
+                type: "expense",
+                date: common.date,
+                description: common.description,
+                amount: "25.00",
+                currency: common.currency,
+                paid_from: bank,
+                category,
+              },
+            ],
+          },
+        ],
+        // A settled expense's date: change_records routes it to the date
+        // correction (v1 correct_record_date).
+        [
+          "akaun_change_records",
+          {
+            update: [
+              {
+                record: expense.id,
+                expected_version: recordVersion(db, expense.id),
+                set: { date: "2026-11-01" },
+                reason: "Corrected against the original receipt",
+                acknowledge_period_change: true,
+              },
+            ],
           },
         ],
       ] as const) {
-        const response = (await client.callTool({
-          name,
-          arguments: input,
-        })) as {
-          isError?: boolean;
-          content: { type: string; text?: string }[];
-        };
-        expect(response.isError).toBe(true);
-        const error = JSON.parse(response.content[0].text!).error;
-        expect(error.code).toBe("REFUSED");
-        expect(error.message).toMatch(/closed through 2026-10-31/i);
+        for (const dry_run of [true, false]) {
+          const response = (await client.callTool({
+            name,
+            arguments: { ...input, dry_run },
+          })) as {
+            isError?: boolean;
+            content: { type: string; text?: string }[];
+          };
+          expect(response.isError).toBe(true);
+          const error = JSON.parse(response.content[0].text!).error;
+          const [item] = error.items;
+          expect(item.error.message, name).toMatch(
+            /closed through 2026-10-31/i,
+          );
+          if (name === "akaun_create_records") {
+            expect(error.code).toBe("CLOSED_PERIOD");
+            expect(item.error.code).toBe("CLOSED_PERIOD");
+            // Actionable: a person must reopen the month in Akaun.
+            expect(error.fix).toMatch(/reopen the month/i);
+          } else {
+            // change_records refuses a closed record before any correction
+            // runs, naming the blocked field and the same fix.
+            expect(error.code).toBe("REFUSED");
+            expect(item.error.blocked).toEqual([
+              expect.objectContaining({
+                field: "date",
+                why: expect.stringMatching(/closed through 2026-10-31/),
+                fix: expect.stringMatching(/reopen that month in Akaun/),
+              }),
+            ]);
+          }
+        }
       }
       expect(snapshot()).toEqual(before);
       expect(seen).toEqual([]);

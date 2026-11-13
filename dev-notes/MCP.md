@@ -382,7 +382,7 @@ Reverse proxies need to forward `/mcp`, Authorization, Accept, Content-Type, `Mc
 
 ### Modern protocol support
 
-Akaun uses `@modelcontextprotocol/server` v2 in production and `@modelcontextprotocol/client` v2 in its integration tests. `src/lib/server/mcp/http.ts` serves both eras through `createMcpHandler(() => createServer…(context))`, with `legacy: "stateless"`. The factory captures only the current authenticated request's database and locals. Bearer authentication, exact Origin checks, POST-only access, the request limit and per-call permission checks apply to both eras.
+Akaun uses `@modelcontextprotocol/server` v2 in production and `@modelcontextprotocol/client` v2 in its integration tests. `src/lib/server/mcp/http.ts` serves both eras through `createMcpHandler(() => createServerV2({ ...context, tools: { reads: READ_TOOLS, writes: WRITE_TOOLS }, naming }))`, with `legacy: "stateless"`. The factory captures only the current authenticated request's database and locals. Bearer authentication, exact Origin checks, POST-only access, the request limit and per-call permission checks apply to both eras.
 
 In MCP Inspector, select **Streamable HTTP**, enter the `/mcp` URL and configure the bearer header, then choose Protocol Era **Modern** or **Auto**. Auto probes `server/discover` and selects the modern era. **Legacy** remains supported for clients using the initialize handshake.
 
@@ -431,7 +431,7 @@ bun run test:mcp
 bun run test:oauth
 ```
 
-`test:mcp` runs the MCP integration specs and relevant bookkeeping regressions directly with Bun. A small preload (`scripts/mcp-test-preload.ts`) maps the shared Vitest assertion/hook imports to Bun's native test API, stands in for `$env/dynamic/private` with a temp folder, and makes any import of `db/client.ts` throw. Specs build their own temporary database (`:memory:` or a folder under `os.tmpdir()`) and their own temporary file storage; none touches `data/`.
+`test:mcp` runs the MCP integration specs and relevant bookkeeping regressions directly with Bun. A small preload (`scripts/mcp-test-preload.ts`) maps the shared Vitest assertion/hook imports to Bun's native test API, stands in for `$env/dynamic/private` with a temp folder, and makes any import of `db/client.ts` throw. Specs build their own temporary database (`:memory:` or a folder under `os.tmpdir()`) and their own temporary file storage; none touches `data/`. `file-links-route.spec.ts` needs Vitest's module mocks, so it runs in the server Vitest project rather than in `test:mcp`.
 
 What the specs hold fixed:
 
@@ -459,19 +459,19 @@ bun run eval:analyze -- work/eval-mcp/v3          # what the transcripts say abo
 
 Always start it through `bun run eval:mcp`: the script adds `--no-env-file` and the safety preload, and `run.ts` refuses to start without it. The flags (`--help` prints them):
 
-| Flag                                                                   | Meaning                                                                                                                                                                                            |
-| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--task D05,D08`, `--tag uc7`, `--split dev\|heldout\|all`             | Which tasks. `--task` overrides `--split`; the default split is `dev`                                                                                                                              |
-| `--model <id>[,<id>…]`                                                 | Required for a model run, for example `claude-sonnet-5-5`. Known prices: Opus 5.5, Sonnet 5.5, Haiku 5.5. `fake:<tool>,…` is a scripted model that costs nothing                                   |
-| `--effort low\|medium\|high\|xhigh\|max`                               | Default `high`                                                                                                                                                                                     |
-| `--null`                                                               | No model: the untouched book. Every task must fail                                                                                                                                                 |
-| `--oracle`                                                             | No model: each task's oracle (`scripts/eval/oracles.ts`). Every task must pass                                                                                                                     |
-| `--surface v1\|v2`, `--naming akaun_verb_noun\|akaun_noun_verb\|plain` | Which tools to offer (v1 for the baseline); the naming scheme is v2 only                                                                                                                           |
-| `--reps N`, `--concurrency N`                                          | Default 1 and 4. Each trial is its own process                                                                                                                                                     |
-| `--max-usd X`                                                          | Spending cap, default 10. No trial starts that could pass it                                                                                                                                       |
-| `--yes`                                                                | Do not ask before spending                                                                                                                                                                         |
-| `--out <dir>`, `--round baseline\|vN`, `--resume`, `--keep`            | Results directory (default `work/eval-mcp`, which git ignores); name the round; add to the latest run with the same configuration; keep each trial's book                                          |
-| `--serve [--book A\|B] [--port N]`                                     | No trials: serve a temporary book on `127.0.0.1` so a real client (Claude Code, Cowork, or ChatGPT or Grok through a tunnel) can run the same tasks. Prints the URL, a token and the owner's rules |
+| Flag                                                               | Meaning                                                                                                                                                                                            |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--task D05,D08`, `--tag uc7`, `--split dev\|heldout\|all`         | Which tasks. `--task` overrides `--split`; the default split is `dev`                                                                                                                              |
+| `--model <id>[,<id>…]`                                             | Required for a model run, for example `claude-sonnet-5-5`. Known prices: Opus 5.5, Sonnet 5.5, Haiku 5.5. `fake:<tool>,…` is a scripted model that costs nothing                                   |
+| `--effort low\|medium\|high\|xhigh\|max`                           | Default `high`                                                                                                                                                                                     |
+| `--null`                                                           | No model: the untouched book. Every task must fail                                                                                                                                                 |
+| `--oracle`                                                         | No model: each task's oracle (`scripts/eval/oracles.ts`). Every task must pass                                                                                                                     |
+| `--surface v2`, `--naming akaun_verb_noun\|akaun_noun_verb\|plain` | The tools to offer: v2, the default and only surface. `--surface v1` is refused; v1 was removed, so run its baseline from the tag `mcp-v1-baseline`                                                |
+| `--reps N`, `--concurrency N`                                      | Default 1 and 4. Each trial is its own process                                                                                                                                                     |
+| `--max-usd X`                                                      | Spending cap, default 10. No trial starts that could pass it                                                                                                                                       |
+| `--yes`                                                            | Do not ask before spending                                                                                                                                                                         |
+| `--out <dir>`, `--round baseline\|vN`, `--resume`, `--keep`        | Results directory (default `work/eval-mcp`, which git ignores); name the round; add to the latest run with the same configuration; keep each trial's book                                          |
+| `--serve [--book A\|B] [--port N]`                                 | No trials: serve a temporary book on `127.0.0.1` so a real client (Claude Code, Cowork, or ChatGPT or Grok through a tunnel) can run the same tasks. Prints the URL, a token and the owner's rules |
 
 Results use the layout `_state.json`, `vN/results.jsonl`, `vN/tools.json`, `vN/traces/`.
 

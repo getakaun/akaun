@@ -6,9 +6,12 @@ import { permissionForKind } from "../../../ledger/record-permissions.js";
 import { getAttachment, getRecord } from "../../../queries/ledger.js";
 import { getStatement } from "../../../queries/reconciliation.js";
 import { storedFileType } from "../../../storage/file-type.js";
-import { McpToolError } from "../../common.js";
 import { toolError, type ToolErrorBody } from "../../envelope.js";
-import { checkFileReadLimit, MAX_FILE_BYTES } from "../../file-read-policy.js";
+import {
+  checkFileReadLimit,
+  MAX_FILE_BYTES,
+  McpToolError,
+} from "../../file-read-policy.js";
 import {
   attachmentLinkSchema,
   issueFileLink,

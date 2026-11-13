@@ -408,7 +408,7 @@ function withTemplate(
   );
 }
 
-describe("a trial against the v1 surface", () => {
+describe("a trial against the v2 surface", () => {
   withTemplate(
     "runs a scripted model that lists accounts, verifies, and records metrics and a trace",
     async (template, root) => {
@@ -420,16 +420,16 @@ describe("a trial against the v1 surface", () => {
         model: "fake:list_accounts",
         effort: "high",
         rep: 0,
-        surface: "v1",
+        surface: "v2",
         naming: "akaun_verb_noun",
       });
       expect(outcome.mode).toBe("model");
       expect(outcome.responseModel).toBe("fake:list_accounts");
-      expect(outcome.toolCount).toBe(68);
+      expect(outcome.toolCount).toBe(28);
       expect(outcome.toolSurfaceHash).toMatch(/^[a-f0-9]{64}$/);
       expect(outcome.agent?.stop).toBe("end_turn");
       expect(outcome.agent?.calls.map((c) => [c.tool, c.isError])).toEqual([
-        ["list_accounts", false],
+        ["akaun_list_accounts", false],
       ]);
       expect(outcome.agent?.calls[0].outputBytes).toBeGreaterThan(100);
       // The verifier ran: the scripted answer gives no August figures, so it fails.
@@ -465,7 +465,7 @@ describe("a trial against the v1 surface", () => {
       try {
         const locals = patLocals(book.db, `Bearer ${info.agentToken}`)!;
         const connection = await connectSurface(
-          { surface: "v1", naming: "akaun_verb_noun" },
+          { surface: "v2", naming: "akaun_verb_noun" },
           {
             db: book.db,
             locals,
@@ -477,7 +477,7 @@ describe("a trial against the v1 surface", () => {
         try {
           const executor = mcpToolExecutor(connection);
           const attachment = info.manifest.attachments.canvaPro!;
-          const linked = await executor.call("get_attachment", {
+          const linked = await executor.call("akaun_get_attachment", {
             recordId: info.manifest.records.canvaPro,
             attachmentId: attachment.id,
           });
@@ -502,13 +502,13 @@ describe("a trial against the v1 surface", () => {
               .isError,
           ).toBe(true);
 
-          const missing = await executor.call("get_record", {
-            recordId: 999_999,
+          const missing = await executor.call("akaun_get_record", {
+            record: 999_999,
           });
           expect(missing.isError).toBe(true);
           expect(missing.errorCode).toBe("NOT_FOUND");
-          const invalid = await executor.call("get_record", {
-            recordId: "seven",
+          const invalid = await executor.call("akaun_get_record", {
+            record: { id: "seven" },
           });
           expect(invalid.isError).toBe(true);
           expect(invalid.errorCode).toBe("INVALID_INPUT");
@@ -606,7 +606,7 @@ describe("the v2 surface", () => {
     },
   );
 
-  it("scripts a model that names its tools by suffix, on either surface", async () => {
+  it("scripts a model that names its tools by suffix, under any naming scheme", async () => {
     const client = scriptedModelClient("fake:list_accounts");
     const result = await runAgent({
       client,

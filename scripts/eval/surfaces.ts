@@ -2,13 +2,11 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/client";
 import {
-  createMcpHandler,
   InMemoryTransport,
   type CallToolResult,
   type McpServer,
   type Tool as McpTool,
 } from "@modelcontextprotocol/server";
-import { createServer } from "../../src/lib/server/mcp/server.ts";
 import { handleMcpRequest } from "../../src/lib/server/mcp/http.ts";
 import {
   createServerV2,
@@ -24,19 +22,33 @@ import { patLocals } from "../../src/lib/server/tokens/pat.ts";
 import type { ToolExecutor, ToolOutcome } from "./agent.ts";
 
 /**
- * The tool surfaces an evaluation can run against:
+ * The tool surface an evaluation runs against: `v2`, the registry
+ * (`createServerV2`) with its tool lists, under one of the naming schemes of
+ * the naming experiment. The v1 surface (68 endpoint-shaped tools) was
+ * removed with the v1 server; its baseline runs from the tag
+ * `mcp-v1-baseline`.
  *
- * - `v1`: today's server (`createServer`), 68 endpoint-shaped tools;
- * - `v2`: the new registry (`createServerV2`) with its tool lists, under one
- *   of the naming schemes of the naming experiment.
- *
- * A trial talks to its surface in-process over `InMemoryTransport`, the same
- * way for both, so the comparison is between tools rather than transports.
- * `--serve` exposes the same surfaces over HTTP for real clients.
+ * A trial talks to its surface in-process over `InMemoryTransport`, so runs
+ * compare tools rather than transports. `--serve` exposes the same surface
+ * over the app's own `/mcp` transport for real clients.
  */
 
-export const SURFACES = ["v1", "v2"] as const;
+export const SURFACES = ["v2"] as const;
 export type SurfaceKind = (typeof SURFACES)[number];
+
+/** What asking for the removed v1 surface answers. */
+export const V1_REMOVED =
+  "v1 was removed; check out the tag mcp-v1-baseline to run it";
+
+/** A `--surface` value, checked. Throws for v1 (removed) and anything unknown. */
+export function parseSurface(value: string): SurfaceKind {
+  if (value === "v1") throw new Error(V1_REMOVED);
+  if (!(SURFACES as readonly string[]).includes(value))
+    throw new Error(
+      `Unknown surface ${value}; the surface is ${SURFACES.join(" or ")}.`,
+    );
+  return value as SurfaceKind;
+}
 export const NAMINGS: readonly NamingScheme[] = [
   "akaun_verb_noun",
   "akaun_noun_verb",
@@ -55,7 +67,6 @@ export function createSurfaceServer(
   ctx: SurfaceContext,
   toolSet?: ToolSet,
 ): McpServer {
-  if (config.surface === "v1") return createServer(ctx);
   return createServerV2({
     ...ctx,
     tools: toolSet ?? { reads: READ_TOOLS, writes: WRITE_TOOLS },
@@ -295,14 +306,12 @@ export function mcpToolExecutor(connection: SurfaceConnection): ToolExecutor {
   };
 }
 
-/** Body limit for `--serve`'s v2 endpoint: one attached file (15 MiB) as base64, with room to spare. */
-const SERVE_V2_MAX_BODY = 21 * 1024 * 1024;
-
 /**
  * An HTTP handler for `--serve`: `POST /mcp` with a personal access token,
  * and the signed file links (`GET /api/mcp-files/<token>`), against one book.
- * v1 goes through the app's own `handleMcpRequest`; v2 has no HTTP route yet,
- * so this builds the same per-request handler around `createServerV2`.
+ * `/mcp` goes through the app's own `handleMcpRequest`, so a real client meets
+ * the production transport (the Origin check, POST only, the 128 KiB limit
+ * with its `attach_file` allowance) under the naming scheme asked for.
  */
 export function createSurfaceHandler(
   config: SurfaceConfig,
@@ -320,38 +329,8 @@ export function createSurfaceHandler(
       user: null,
       permissions: null,
     };
-    if (config.surface === "v1")
-      return handleMcpRequest(request, { ...base, locals }, origin);
-    if (!locals.user)
-      return new Response("Unauthorized", {
-        status: 401,
-        headers: { "WWW-Authenticate": 'Bearer realm="akaun-mcp"' },
-      });
-    if (request.method !== "POST")
-      return new Response("This stateless MCP endpoint accepts POST only.", {
-        status: 405,
-        headers: { Allow: "POST" },
-      });
-    const handler = createMcpHandler(
-      () =>
-        createSurfaceServer(config, {
-          ...base,
-          locals,
-          requestOrigin: url.origin,
-        }),
-      {
-        legacy: "stateless",
-        responseMode: "auto",
-        maxRequestBodySize: SERVE_V2_MAX_BODY,
-        maxSubscriptions: 0,
-      },
-    );
-    try {
-      const response = await handler.fetch(request);
-      response.headers.set("Cache-Control", "no-store");
-      return response;
-    } finally {
-      await handler.close();
-    }
+    return handleMcpRequest(request, { ...base, locals }, origin, {
+      naming: config.naming ?? DEFAULT_NAMING,
+    });
   };
 }

@@ -243,9 +243,10 @@ A write that both a REST route and an MCP tool can make is **one function** in
 `application/<domain>.ts`, taking `(ctx: AppContext, input)` and returning an `AppResult`. It asks
 for every permission itself (`requirePermissions`) and enforces every rule a route used to hold —
 the adjustments gate, sealed sent documents, a payment and its settlements in one transaction. The
-route parses and calls `toResponse`; the MCP tool calls `registerWrite`. A rule written in the
-route alone is a hole the MCP tool walks through. That is how the explicit-journal and
-invoice-issue gaps existed.
+route parses and calls `toResponse`; the MCP write tool calls it inside `runBatch`
+(`application/batch.ts`), and `runTool` (`mcp/registry.ts`) opens one audit scope per call. A
+rule written in the route alone is a hole the MCP tool walks through. That is how the
+explicit-journal and invoice-issue gaps existed.
 
 - **Nothing under `application/` imports `db/client.ts` or opens storage by default.** The database,
   `locals`, `store` and `storageRoot` arrive in the context. A file helper is always called with
@@ -254,9 +255,9 @@ invoice-issue gaps existed.
   instead of touching `data/`.
 - **Every update/delete takes an optional `expectedVersion`** (`application/version.ts`: a hash
   of the row and its children, never `updatedAt`). MCP tools require it; REST may omit it.
-- **Each MCP tool has one entry in `mcp/tool-requirements.ts`** (OAuth scopes + RBAC). Discovery,
-  the call-time check and the `insufficient_scope` challenge all read that table, and a spec fails
-  when a registered tool is missing from it.
+- **Each MCP tool, and each action array of a write tool, has one entry in `mcp/requirements/`**
+  (OAuth scopes + RBAC). Discovery (any-of), the call-time check and the `insufficient_scope`
+  challenge all read those tables, and `requirements.spec.ts` fails when an entry is missing.
 - **Deliberate exception:** import confirm needs only `import.confirm`, not `records.create`
   (006 FR-045). Do not "fix" it.
 

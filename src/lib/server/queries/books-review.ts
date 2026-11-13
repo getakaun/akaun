@@ -699,7 +699,13 @@ const CHECKS: Readonly<Record<Exclude<BooksReviewCheck, "month_end">, Check>> =
           : {
               next: {
                 tool: "get_bank_reconciliation",
-                args: { account, ...period },
+                // The bank tool takes a period, not `as_at`: an open-ended
+                // review names just the account, and lines after that date
+                // show too, each with its date.
+                args: {
+                  account,
+                  ...("period" in period ? { period: period.period } : {}),
+                },
               },
             }),
         fixWith: "match_bank_lines",

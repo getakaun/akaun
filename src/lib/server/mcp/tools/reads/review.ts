@@ -185,22 +185,12 @@ function printRef(ref: BooksReviewRef, names: Names): PrintedRef {
   }
 }
 
-/**
- * The read to make next, named in the active scheme. Statements are listed by
- * period only: the bank tool takes no `as_at`, so an open-ended review names
- * just the account (its lines after that date show too, each with its date).
- */
+/** The read to make next, named in the active scheme; the engine's args are the tool's own. */
 function printNext(
   next: NonNullable<BooksReviewFinding["next"]>,
   nameOf: (base: string) => string,
 ): NonNullable<PrintedFinding["next"]> {
-  const args =
-    next.tool === "get_bank_reconciliation"
-      ? Object.fromEntries(
-          Object.entries(next.args).filter(([key]) => key !== "as_at"),
-        )
-      : next.args;
-  return { tool: nameOf(next.tool), args };
+  return { tool: nameOf(next.tool), args: next.args };
 }
 
 function printFinding(

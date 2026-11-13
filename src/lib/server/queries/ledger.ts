@@ -838,7 +838,7 @@ function recordConditions(filters: RecordListFilters): SQL[] {
              OR ${settlements.paymentMovementId} = ${ledgerMovements.id})
         ), 0)
     )`;
-    conditions.push(filters.paid ? sql`NOT ${stillOwed}` : stillOwed);
+    conditions.push(filters.paid ? sql`NOT (${stillOwed})` : stillOwed);
   }
 
   return conditions;

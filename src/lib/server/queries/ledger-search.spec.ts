@@ -332,6 +332,16 @@ function seed() {
 }
 
 describe("record search filters", () => {
+  it("finds paid records with paid: true, and leaves them out of paid: false", () => {
+    // `NOT ${stillOwed}` without brackets read as `(NOT notVoided) AND EXISTS`,
+    // so paid: true matched nothing at all.
+    const { ids, records, bill } = seed();
+    const paid = ids({ paid: true });
+    expect(paid).toContain(bill.id);
+    expect(paid).toContain(records.e1.id);
+    expect(ids({ paid: false })).not.toContain(bill.id);
+  });
+
   it("selects records with and without an attachment", () => {
     const { ids, sorted, records, bill, batch } = seed();
     const { e1, e2, e3, i1, i2, t1, j1, e4, e5, e6 } = records;

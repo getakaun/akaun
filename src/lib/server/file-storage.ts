@@ -16,6 +16,7 @@ import { STORAGE_PATH } from "./env.js";
 import { importQueue, recordAttachments } from "./db/schema.js";
 import type { LedgerDb } from "./ledger/types.js";
 import { LocalBlobStore, type BlobStore } from "./storage/blob-store.js";
+import { afterCommit, currentUnitOfWork, onRollback } from "./unit-of-work.js";
 
 /** Largest accepted upload, in bytes. */
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15 MB
@@ -33,6 +34,17 @@ export { sniffAllowedType } from "./storage/file-type.js";
  */
 export function isImportTempPath(relativePath: string): boolean {
   return relativePath.startsWith("import/temp/");
+}
+
+/**
+ * True when a file move must only be planned, not made: inside a dry run, or
+ * in a unit of work that has already rolled back. Outside a unit of work, and
+ * in a unit that writes, files move as they always did.
+ */
+function fileMovesSuppressed(): boolean {
+  const unit = currentUnitOfWork();
+  if (!unit || unit.state === "committed") return false;
+  return unit.mode === "dry_run" || unit.state === "rolled_back";
 }
 
 /**
@@ -167,6 +179,11 @@ export function recordAttachmentPath(
  * same date (the document's, not each record's own), or a later call looks in
  * a different month and misses the file. When the file is in neither place
  * this throws: returning the temp path would attach a file that does not exist.
+ *
+ * Inside a unit of work (`unit-of-work.ts`): a dry run returns the destination
+ * without moving anything (and still throws when the file is in neither
+ * place), and a unit that writes moves the file now and moves it back if the
+ * unit rolls back.
  */
 export function moveToRecordStorage(
   tempRelPath: string,
@@ -178,8 +195,15 @@ export function moveToRecordStorage(
   const dest = join(root, rel);
   assertInsideStorage(dest, root);
   if (!existsSync(src) && existsSync(dest)) return rel;
+  if (fileMovesSuppressed()) {
+    if (!existsSync(src)) {
+      throw new Error(`No stored file to move at ${tempRelPath}`);
+    }
+    return rel;
+  }
   mkdirSync(dirname(dest), { recursive: true });
   renameSync(src, dest);
+  onRollback(() => returnToTemp(rel, tempRelPath, root));
   return rel;
 }
 
@@ -191,12 +215,17 @@ export function moveToRecordStorage(
  * nothing when the temp path is already taken or the moved file is not there.
  * Only call it for a move this same save made. A file that was already in
  * `records/` before the save may belong to a record another save made.
+ *
+ * In a dry run it does nothing, because the dry run's move did not happen. It
+ * registers no rollback of its own: it is already the undo of a move, and that
+ * move's own rollback task leaves the file at its temp path either way.
  */
 export function returnToTemp(
   recordRelPath: string,
   tempRelPath: string,
   root = STORAGE_PATH,
 ): void {
+  if (fileMovesSuppressed()) return;
   const src = join(root, recordRelPath);
   const dest = join(root, tempRelPath);
   assertInsideStorage(dest, root);
@@ -337,12 +366,21 @@ export function displayName(relativePath: string): string {
   return match ? match[1] : filename;
 }
 
+/**
+ * Deletes a stored file, ignoring one that is already gone.
+ *
+ * Inside a unit of work the delete waits for the unit to commit, and never
+ * happens in a dry run or a unit that rolls back: a rolled-back row may still
+ * point at the file.
+ */
 export function deleteFile(relativePath: string, root = STORAGE_PATH): void {
-  try {
-    unlinkSync(join(root, relativePath));
-  } catch {
-    // ignore missing files
-  }
+  afterCommit(() => {
+    try {
+      unlinkSync(join(root, relativePath));
+    } catch {
+      // ignore missing files
+    }
+  });
 }
 
 /**
@@ -371,6 +409,10 @@ const IMPORT_STATES_DONE_WITH_FILE: number[] = [
  * This is how one file can be shared safely: an import that makes several
  * records from one document gives each the same file, and removing one of them
  * must not delete the file the others still show.
+ *
+ * Inside a unit of work the answer is for the rows as they stand now, and the
+ * delete waits for the commit, asking again then whether anything uses the
+ * file. A dry run, or a unit that rolls back, deletes nothing.
  */
 export function releaseIfUnreferenced(
   db: LedgerDb,
@@ -381,13 +423,26 @@ export function releaseIfUnreferenced(
   if (!resolve(root, relativePath).startsWith(resolve(root) + sep)) {
     return false;
   }
+  if (fileInUse(db, relativePath)) return false;
+  if (currentUnitOfWork()) {
+    afterCommit(() => {
+      if (!fileInUse(db, relativePath)) deleteFile(relativePath, root);
+    });
+  } else {
+    deleteFile(relativePath, root);
+  }
+  return true;
+}
+
+/** True while an attachment, or an import job not done with it, uses the file. */
+function fileInUse(db: LedgerDb, relativePath: string): boolean {
   const attached = db
     .select({ id: recordAttachments.id })
     .from(recordAttachments)
     .where(eq(recordAttachments.filename, relativePath))
     .limit(1)
     .get();
-  if (attached) return false;
+  if (attached) return true;
   const pending = db
     .select({ id: importQueue.id })
     .from(importQueue)
@@ -399,9 +454,7 @@ export function releaseIfUnreferenced(
     )
     .limit(1)
     .get();
-  if (pending) return false;
-  deleteFile(relativePath, root);
-  return true;
+  return pending !== undefined;
 }
 
 /**
@@ -409,6 +462,9 @@ export function releaseIfUnreferenced(
  * (`reconciliation/<key>/`), which `saveReconciliationStatement` made for it
  * alone. The folder is removed only when it is empty, so a file that is not
  * this statement's is never deleted with it.
+ *
+ * Inside a unit of work both deletes wait for the unit to commit, and never
+ * happen in a dry run or a unit that rolls back.
  */
 export function deleteStatementFile(
   storedFilePath: string,
@@ -418,12 +474,16 @@ export function deleteStatementFile(
   const file = resolve(root, storedFilePath);
   const dir = dirname(file);
   if (dirname(dir) !== statementsRoot) return;
-  deleteFile(storedFilePath, root);
-  try {
-    rmdirSync(dir);
-  } catch {
-    // not empty, or already gone
-  }
+  // One task, so the folder is removed only after its file: an after-commit
+  // task runs outside the unit, where `deleteFile` deletes at once.
+  afterCommit(() => {
+    deleteFile(storedFilePath, root);
+    try {
+      rmdirSync(dir);
+    } catch {
+      // not empty, or already gone
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

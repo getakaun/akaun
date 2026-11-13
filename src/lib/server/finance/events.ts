@@ -1,4 +1,4 @@
-import { EventEmitter } from "events";
+import { DeferrableEmitter } from "../unit-of-work.js";
 
 // `expenseEvents`, `incomeEvents` and `claimEvents` are gone. One store of
 // records means one emitter — `ledgerEvents` in $lib/server/ledger/events.ts —
@@ -8,9 +8,9 @@ import { EventEmitter } from "events";
 // stream too: `/api/records/stream` forwards everything `ledgerEvents` carries
 // with no kind filter, and the per-kind stream URLs are retired with the screens
 // they fed (contracts/events.md).
-export const contactEvents = new EventEmitter();
-export const quotationEvents = new EventEmitter();
-export const invoiceEvents = new EventEmitter();
+export const contactEvents = new DeferrableEmitter();
+export const quotationEvents = new DeferrableEmitter();
+export const invoiceEvents = new DeferrableEmitter();
 
 // Each open SSE connection registers 2 listeners (an `*-update` + an `*-delete`
 // handler) and removes both on disconnect (`cancel()` in `eventStream`, sse-stream.ts).

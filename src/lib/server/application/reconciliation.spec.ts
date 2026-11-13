@@ -764,7 +764,7 @@ describe("createRecordFromLines refuses, and leaves nothing behind", () => {
     expect(snapshot(s)).toEqual(before);
   });
 
-  it("asks for reconciliation.match and records.create before looking anything up", () => {
+  it("asks for reconciliation.create and records.create before looking anything up", () => {
     const s = seed();
     const lineId = s.line("2026-09-15", 5, OUT, "SERVICE CHARGE");
     const as = (permissions: string[]): AppContext => ({
@@ -774,7 +774,7 @@ describe("createRecordFromLines refuses, and leaves nothing behind", () => {
     const input = { kind: "expense" as const, categoryAccountId: s.charges };
 
     for (const ctx of [
-      as(["reconciliation.read", "reconciliation.create", "records"]),
+      as(["reconciliation.read", "reconciliation.match", "records"]),
       as(["reconciliation", "records.read"]),
     ]) {
       // An id that does not exist is still FORBIDDEN, not NOT_FOUND.
@@ -792,7 +792,7 @@ describe("createRecordFromLines refuses, and leaves nothing behind", () => {
       });
     }
     resultValue(
-      createRecordFromLines(as(["reconciliation.match", "records.create"]), {
+      createRecordFromLines(as(["reconciliation.create", "records.create"]), {
         ...input,
         lineIds: [lineId],
       }),

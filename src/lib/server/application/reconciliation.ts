@@ -249,9 +249,14 @@ export type RecordFromLines = {
   lineVersions: Record<number, string>;
 };
 
-/** Matching lines is `reconciliation.match`; the record is `records.create`. */
+/**
+ * A record made from statement lines, matched to them: the catalog files
+ * this under `reconciliation.create` ("bank statements, and transfers from
+ * their lines"), as v1 and the one-line transfer route always have; the
+ * record itself is `records.create`. The MCP requirements table asks the same.
+ */
 const FROM_LINES_PERMISSIONS: readonly LeafPermission[] = [
-  "reconciliation.match",
+  "reconciliation.create",
   "records.create",
 ];
 /** What the one-line transfer route has always asked. */

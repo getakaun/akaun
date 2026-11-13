@@ -4,7 +4,7 @@ import { AccountType, QuotationStatusLabels } from "$lib/enums.js";
 import { invoiceStatusKey } from "$lib/sales/status.js";
 import { invoices, ledgerRecords, quotations } from "../../../db/schema.js";
 import { can } from "../../../permissions.js";
-import { runBatch } from "../../../application/batch.js";
+import { runBatch, storedReplay } from "../../../application/batch.js";
 import type { AppContext } from "../../../application/context.js";
 import {
   convertQuotation,
@@ -32,7 +32,6 @@ import type { AppResult } from "../../../application/result.js";
 import { formatMinor, parseMinor, toMinor } from "../../../ledger/money.js";
 import type { LedgerDb } from "../../../ledger/types.js";
 import { normalizeName } from "../../../queries/contacts.js";
-import { batchToolResult } from "../../batch-result.js";
 import { toolError } from "../../envelope.js";
 import { dateInput, enumLabel, mainCurrency, money } from "../../format.js";
 import { resolveError } from "../../resolve.js";
@@ -45,8 +44,9 @@ import {
   missingForActions,
 } from "../../requirements/index.js";
 import {
+  batchCall,
   batchControls,
-  idempotencyOf,
+  batchReply,
   nothingToDo,
   refInput,
   refuseActions,
@@ -65,7 +65,9 @@ import {
  * refuses, this refuses with the same sentence.
  *
  * Invoices and quotations are named by id or number and
- * resolved before the batch opens, with every miss reported together.
+ * resolved before the batch opens, with every miss reported together. A retry
+ * with the same idempotency_key is answered before that (`storedReplay`): a
+ * deleted document no longer resolves by number.
  */
 
 // --- input ---------------------------------------------------------------------
@@ -774,6 +776,14 @@ const createSalesDocuments = defineWriteTool({
   handler: async (ctx, args, meta) => {
     const refused = refuseActions(ctx, meta, "create_sales_documents", args);
     if (refused) return refused;
+    const call = batchCall(meta, args, {
+      invoices: args.invoices,
+      quotations: args.quotations,
+    });
+    // Before any reference is resolved: a retry must be answered with the
+    // first call's drafts, not meet the customer that call just created.
+    const replay = storedReplay<Value>(ctx, call);
+    if (replay) return batchReply(replay, meta);
     if (!args.invoices?.length && !args.quotations?.length)
       return nothingToDo("invoices or quotations");
 
@@ -788,8 +798,7 @@ const createSalesDocuments = defineWriteTool({
     if (missed) return missed;
 
     const result = await runBatch<Value>(ctx, {
-      tool: meta.name,
-      dryRun: args.dry_run ?? false,
+      ...call,
       items: [
         ...invoicePlans.map((plan) => ({
           action: "invoices",
@@ -818,15 +827,8 @@ const createSalesDocuments = defineWriteTool({
           },
         })),
       ],
-      idempotency: idempotencyOf(args, {
-        invoices: args.invoices,
-        quotations: args.quotations,
-      }),
     });
-    return batchToolResult(result, {
-      requestId: meta.requestId,
-      formatValue: (value) => value,
-    });
+    return batchReply(result, meta);
   },
 });
 
@@ -912,6 +914,21 @@ const changeSalesDocuments = defineWriteTool({
       asked,
     );
     if (short.length) return toolError(actionRefusal(meta.name, short));
+    const call = batchCall(meta, args, {
+      invoice_update: args.invoice_update,
+      invoice_issue: args.invoice_issue,
+      invoice_void: args.invoice_void,
+      invoice_delete: args.invoice_delete,
+      quotation_update: args.quotation_update,
+      quotation_status: args.quotation_status,
+      quotation_revise: args.quotation_revise,
+      quotation_convert: args.quotation_convert,
+      quotation_delete: args.quotation_delete,
+    });
+    // Before any reference is resolved: a deleted document no longer
+    // resolves by number, and its retry must replay, not miss.
+    const replay = storedReplay<Value>(ctx, call);
+    if (replay) return batchReply(replay, meta);
 
     const refs = new Refs(ctx, meta);
     const invoiceUpdates = planDocuments(
@@ -1003,8 +1020,7 @@ const changeSalesDocuments = defineWriteTool({
     const label = (plan: ChangePlan<unknown>) =>
       `${plan.path} ${plan.doc.number}`;
     const result = await runBatch<Value>(ctx, {
-      tool: meta.name,
-      dryRun: args.dry_run ?? false,
+      ...call,
       items: [
         ...invoiceUpdates.map((plan) => ({
           action: "invoice_update",
@@ -1154,22 +1170,8 @@ const changeSalesDocuments = defineWriteTool({
           },
         })),
       ],
-      idempotency: idempotencyOf(args, {
-        invoice_update: args.invoice_update,
-        invoice_issue: args.invoice_issue,
-        invoice_void: args.invoice_void,
-        invoice_delete: args.invoice_delete,
-        quotation_update: args.quotation_update,
-        quotation_status: args.quotation_status,
-        quotation_revise: args.quotation_revise,
-        quotation_convert: args.quotation_convert,
-        quotation_delete: args.quotation_delete,
-      }),
     });
-    return batchToolResult(result, {
-      requestId: meta.requestId,
-      formatValue: (value) => value,
-    });
+    return batchReply(result, meta);
   },
 });
 

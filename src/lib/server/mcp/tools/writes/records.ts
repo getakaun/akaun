@@ -769,10 +769,16 @@ class CreateBuilder {
         });
   }
 
-  /** `new_contact`: refused when a contact by that name or a similar one exists, unless `force_new`. */
+  /**
+   * `new_contact`: refused when a contact by that name or a similar one
+   * exists, unless `force_new`. The refusal names those contacts, so only a
+   * caller who may read contacts gets the check. For anyone else it is
+   * skipped and the contact is created, as `change_contacts` create does:
+   * the reply must not tell them which names exist.
+   */
   newContact(): { id: number; name: string } | ItemFailure {
     const wanted = this.item.new_contact!;
-    if (!wanted.force_new) {
+    if (!wanted.force_new && can(this.ctx.locals, "contacts.read")) {
       const existing = resolveContact(this.ctx, wanted.name);
       const candidates = existing.ok
         ? [{ id: existing.id, name: existing.value.legalName }]
@@ -1132,7 +1138,7 @@ Each item in records[] is one record:
 - income: received_into or owed: true, plus category or lines.
 - transfer: paid_from and received_into.
 - journal: lines with signed amounts (+ into the account, - out of it) adding up to zero. Needs the Adjustments ability.
-Accounts are an id, code ("5100"), name or "5100 Name"; contacts an id or exact name. Anything else returns NOT_FOUND or AMBIGUOUS with candidates: pick one or ask, never guess. new_contact also creates the contact; a similar existing name returns AMBIGUOUS unless force_new.
+Accounts are an id, code ("5100"), name or "5100 Name"; contacts an id or exact name. Anything else returns NOT_FOUND or AMBIGUOUS with candidates: pick one or ask, never guess. new_contact also creates the contact; with contacts.read, a similar name is AMBIGUOUS unless force_new.
 
 Amounts and lines are decimal strings ("1285.50") in the record's currency (default: main); lines add up to amount. For another currency send exchange_rate or main_amount, or the day's rate is looked up, frozen and reported.
 

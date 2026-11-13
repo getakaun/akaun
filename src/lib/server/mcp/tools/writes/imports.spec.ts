@@ -578,4 +578,90 @@ describe("review_imports", () => {
     },
     SLOW,
   );
+
+  it(
+    "replays a retried discard instead of answering NOT_FOUND for the job it removed",
+    async () => {
+      const { book, call } = await open();
+      queueReceipt(book);
+      const input = {
+        discard: [
+          {
+            job: receiptId,
+            expected_version: importJobVersion(book.db, receiptId),
+          },
+        ],
+        idempotency_key: "e4b-discard-1",
+      };
+
+      // A dry run with the key is not stored: the real call is not a replay.
+      const dry = await call({ ...input, dry_run: true });
+      expect(dry.body).toMatchObject({ saved: false, dry_run: true });
+      expect(dry.body.replayed).toBeUndefined();
+      expect(jobState(book, receiptId)).toBe(ImportState.PendingReview);
+
+      const first = await call(input);
+      expect(first.isError).toBe(false);
+      expect(first.body.saved).toBe(true);
+      expect(first.body.replayed).toBeUndefined();
+      expect(first.body.items[0]).toMatchObject({
+        job: receiptId,
+        discarded: true,
+      });
+      expect(jobState(book, receiptId)).toBeUndefined();
+      expect(fileExists(tempOf(receiptId), book.storageRoot)).toBe(false);
+
+      const again = await call(input);
+      expect(again.isError).toBe(false);
+      expect(again.body).toEqual({ ...first.body, replayed: true });
+
+      // What the replay spares the agent: unkeyed, the job is gone.
+      const unkeyed = await call({ discard: input.discard });
+      expect(unkeyed.isError).toBe(true);
+      expect(unkeyed.body.error.code).toBe("NOT_FOUND");
+
+      // The key with other input is refused before any job is looked up.
+      const other = await call({
+        ...input,
+        discard: [{ job: secondId, expected_version: "x" }],
+      });
+      expect(other.isError).toBe(true);
+      expect(other.body.error.code).toBe("IDEMPOTENCY_MISMATCH");
+    },
+    SLOW,
+  );
+
+  it(
+    "replays a retried confirm: the record is made once",
+    async () => {
+      const { book, call } = await open();
+      const m = book.manifest;
+      queueReceipt(book);
+      const input = {
+        confirm: [
+          {
+            job: receiptId,
+            expected_version: importJobVersion(book.db, receiptId),
+            overrides: {
+              account: m.accounts.bank,
+              category: m.accounts.officeSupplies,
+            },
+          },
+        ],
+        idempotency_key: "e4b-confirm-1",
+      };
+      const records = count(book, "ledger_records");
+
+      const first = await call(input);
+      expect(first.isError).toBe(false);
+      expect(first.body.saved).toBe(true);
+      expect(count(book, "ledger_records")).toBe(records + 1);
+
+      const again = await call(input);
+      expect(again.isError).toBe(false);
+      expect(again.body).toEqual({ ...first.body, replayed: true });
+      expect(count(book, "ledger_records")).toBe(records + 1);
+    },
+    SLOW,
+  );
 });

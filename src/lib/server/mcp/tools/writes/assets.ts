@@ -1,3 +1,4 @@
+import type { CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { LedgerRecordKind, AccountType } from "$lib/enums.js";
@@ -5,7 +6,11 @@ import { isAccumulatedDepreciationAccount } from "$lib/depreciation.js";
 import { assetNumber } from "$lib/fixed-assets.js";
 import { accounts, depreciationRuns, fixedAssets } from "../../../db/schema.js";
 import { canAll } from "../../../permissions.js";
-import { runBatch } from "../../../application/batch.js";
+import {
+  runBatch,
+  storedReplay,
+  type BatchResult,
+} from "../../../application/batch.js";
 import type { AppContext } from "../../../application/context.js";
 import {
   approveDepreciationProfile,
@@ -45,15 +50,15 @@ import {
   type FixedAsset,
 } from "../../../queries/fixed-assets.js";
 import { getRecord } from "../../../queries/ledger.js";
-import { batchToolResult } from "../../batch-result.js";
 import { envelopePayload, toolResult } from "../../envelope.js";
 import { dateInput, mainCurrency, money, moneyInput } from "../../format.js";
 import { resolveError } from "../../resolve.js";
 import { defineWriteTool, type ToolDefinition } from "../../registry.js";
 import { MANAGE_FIXED_ASSETS } from "../../requirements/index.js";
 import {
+  batchCall,
   batchControls,
-  idempotencyOf,
+  batchReply,
   nothingToDo,
   recordNo,
   refInput,
@@ -75,6 +80,10 @@ import {
  * Depreciation posts journals, so those actions need `records.adjust`; the
  * operations ask for it themselves (`DEPRECIATION_WRITE`), and the requirement
  * entry asks first, so a token without it is told which scope to add.
+ *
+ * A retry with the same idempotency_key is answered before any reference is
+ * resolved (`storedReplay`): a capitalised line has moved category and a
+ * reversed run is gone, so the retry would otherwise conflict or miss.
  */
 
 // --- input ---------------------------------------------------------------------
@@ -1137,7 +1146,7 @@ function runReverse(ctx: AppContext, plan: ReversePlan): AppResult<Value> {
 // --- the tool ------------------------------------------------------------------
 
 /** A success with the book's main currency on top: every figure here is in it. */
-function withCurrency(db: LedgerDb, out: ReturnType<typeof batchToolResult>) {
+function withCurrency(db: LedgerDb, out: CallToolResult) {
   if (out.isError) return out;
   const payload = envelopePayload(out);
   return payload ? toolResult({ ...payload, currency: mainCurrency(db) }) : out;
@@ -1158,6 +1167,22 @@ const manageFixedAssets = defineWriteTool({
   handler: async (ctx, args, meta) => {
     const refused = refuseActions(ctx, meta, "manage_fixed_assets", args);
     if (refused) return refused;
+    const call = batchCall(meta, args, {
+      capitalise: args.capitalise,
+      register: args.register,
+      update: args.update,
+      approve: args.approve,
+      post_depreciation: args.post_depreciation,
+      stop: args.stop,
+      reverse_run: args.reverse_run,
+    });
+    // Before any reference is resolved: a capitalised record's line has moved
+    // category, and a reversed run is gone, so a retry must replay, not miss.
+    // The replay is formatted by the same function as a first answer.
+    const reply = (result: BatchResult<Value>) =>
+      withCurrency(ctx.db, batchReply(result, meta));
+    const replay = storedReplay<Value>(ctx, call);
+    if (replay) return reply(replay);
     if (
       !args.capitalise?.length &&
       !args.register?.length &&
@@ -1187,8 +1212,7 @@ const manageFixedAssets = defineWriteTool({
     if (missed) return missed;
 
     const result = await runBatch<Value>(ctx, {
-      tool: meta.name,
-      dryRun: args.dry_run ?? false,
+      ...call,
       items: [
         ...capitalise.map((plan) => ({
           action: "capitalise",
@@ -1229,23 +1253,8 @@ const manageFixedAssets = defineWriteTool({
           run: (c: AppContext) => runReverse(c, plan),
         })),
       ],
-      idempotency: idempotencyOf(args, {
-        capitalise: args.capitalise,
-        register: args.register,
-        update: args.update,
-        approve: args.approve,
-        post_depreciation: args.post_depreciation,
-        stop: args.stop,
-        reverse_run: args.reverse_run,
-      }),
     });
-    return withCurrency(
-      ctx.db,
-      batchToolResult(result, {
-        requestId: meta.requestId,
-        formatValue: (value) => value,
-      }),
-    );
+    return reply(result);
   },
 });
 

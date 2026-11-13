@@ -1675,11 +1675,20 @@ function updateItem(
           why: toolWords(b.why),
           fix: toolWords(b.fix),
         }));
+        // A record in a closed month is blocked on every field it would
+        // change; that is a closed period, which only a person can reopen.
+        const closed =
+          blocked?.length &&
+          failure.blocked!.every((b) => /in a closed month/.test(b.why));
         // The router's own blocks name its fields; only the reworded ones go out.
         return {
           ...reworded(failure),
           blocked: blocked?.length ? blocked : undefined,
-          ...(blocked?.length ? { fix: BLOCKED_FIX } : {}),
+          ...(closed
+            ? { toolCode: "CLOSED_PERIOD" as const, fix: blocked![0].fix }
+            : blocked?.length
+              ? { fix: BLOCKED_FIX }
+              : {}),
         } satisfies ItemFailure;
       }
       const value = changed.value;

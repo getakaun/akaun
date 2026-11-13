@@ -702,15 +702,13 @@ describe("month closing across alternate accounting write paths", () => {
           expect(item.error.message, name).toMatch(
             /closed through 2026-10-31/i,
           );
-          if (name === "akaun_create_records") {
-            expect(error.code).toBe("CLOSED_PERIOD");
-            expect(item.error.code).toBe("CLOSED_PERIOD");
-            // Actionable: a person must reopen the month in Akaun.
-            expect(error.fix).toMatch(/reopen the month/i);
-          } else {
+          // Actionable either way: a person must reopen the month in Akaun.
+          expect(error.code).toBe("CLOSED_PERIOD");
+          expect(item.error.code).toBe("CLOSED_PERIOD");
+          expect(error.fix).toMatch(/reopen (the|that) month/i);
+          if (name !== "akaun_create_records") {
             // change_records refuses a closed record before any correction
-            // runs, naming the blocked field and the same fix.
-            expect(error.code).toBe("REFUSED");
+            // runs, naming the blocked field.
             expect(item.error.blocked).toEqual([
               expect.objectContaining({
                 field: "date",

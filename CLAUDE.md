@@ -331,7 +331,7 @@ writer, and the log is append-only: nothing deletes an entry.
   - The channel comes from the **audit scope** (`audit-context.ts`, an AsyncLocalStorage). No
     caller passes it. The channel is `session`, `pat`, `oauth` (a connected app) or `system`.
   - Scopes are opened in two places. `request-hook.ts` opens one for every authenticated
-    request, and `registerWrite` opens one per MCP tool call, so each call gets its own
+    request, and `runTool` (`mcp/registry.ts`) opens one per MCP write call, so each call gets its own
     `request_id`.
   - Work that runs with no scope is recorded as `system`.
   - **Detached work** (started with `void` after the response) must be wrapped in

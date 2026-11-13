@@ -17,6 +17,7 @@ import type { LeafPermission } from "./catalog.js";
  * Adjustments and corrections have opt-in scopes outside ordinary tiers.
  * The grouped correction scope has an explicit allowlist; the narrow date and
  * reimbursement-amount scopes remain available without gaining other powers.
+ * Merging contacts has its own opt-in scope too: it cannot be undone.
  */
 export const READ_SCOPES = [
   "records:read",
@@ -54,6 +55,12 @@ export const DELETE_SCOPES = [
   "quotations:delete",
   "import:delete",
 ] as const;
+/**
+ * Opt-in like a delete: merging moves every record of the merged contacts to
+ * the one kept and deletes the others. The consent page shows it with the
+ * deletes (`scopeTier`), never ticked in advance.
+ */
+export const MERGE_SCOPES = ["contacts:merge"] as const;
 export const ADJUST_SCOPES = ["records:adjust"] as const;
 export const CORRECTION_SCOPES = [
   "records:correction",
@@ -66,6 +73,7 @@ export const OAUTH_SCOPES = [
   ...READ_SCOPES,
   ...WRITE_SCOPES,
   ...DELETE_SCOPES,
+  ...MERGE_SCOPES,
   ...ADJUST_SCOPES,
   ...CORRECTION_SCOPES,
 ] as const;
@@ -96,8 +104,12 @@ export const SCOPE_PERMISSIONS: Record<OAuthScope, readonly LeafPermission[]> =
     "accounts:delete": ["accounts.delete"],
     "contacts:read": ["contacts.read"],
     "contacts:write": ["contacts.create", "contacts.update"],
-    // Merging contacts has no MCP tool, so no scope offers it.
     "contacts:delete": ["contacts.delete"],
+    // Merge alone: a merge also needs contacts:write and contacts:delete, so
+    // granting this never adds an update or a delete. Not part of
+    // contacts:write or contacts:delete either: adding it there would widen
+    // every app already granted them.
+    "contacts:merge": ["contacts.merge"],
     "reports:read": ["reports.read"],
     "import:read": ["import.read"],
     // Uploading and profile management have no MCP tool, so no scope offers them.
@@ -165,6 +177,8 @@ export const SCOPE_LABELS: Record<OAuthScope, string> = {
     "Delete records, reverse allocations, and clear opening balances",
   "accounts:delete": "Delete accounts",
   "contacts:delete": "Delete contacts",
+  "contacts:merge":
+    "Merge duplicate contacts — moves every record of the merged contacts to the one kept and deletes the others. Cannot be undone.",
   "invoices:delete": "Delete draft invoices",
   "quotations:delete": "Delete quotations",
   "import:delete": "Discard import jobs",
@@ -187,5 +201,7 @@ export type ScopeTier = "read" | "write" | "delete" | "adjust" | "correct";
 export function scopeTier(scope: string): ScopeTier {
   if ((CORRECTION_SCOPES as readonly string[]).includes(scope))
     return "correct";
+  // Permanent like a delete, so it is offered beside the deletes.
+  if ((MERGE_SCOPES as readonly string[]).includes(scope)) return "delete";
   return scope.split(":")[1] as ScopeTier;
 }

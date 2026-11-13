@@ -48,7 +48,9 @@ import {
  * Idempotency: with a key, a saved outcome is stored in `mcp_idempotency`
  * inside the same transaction, for 24 hours. The same key and input returns
  * it again with `replayed: true` and writes nothing; the same key with other
- * input is refused. Dry runs are never stored or looked up.
+ * input is refused. Dry runs are never stored or looked up. `storedReplay` is
+ * the lookup `runBatch` makes first, exported so a write tool can make it
+ * before resolving any reference.
  */
 
 const log = createLogger("batch");
@@ -123,16 +125,26 @@ export type BatchResult<T> =
   | { ok: true; value: BatchOutcome<T> }
   | BatchFailure;
 
-export type BatchOptions<T> = {
+/**
+ * Which stored outcome a call would replay: `runBatch`'s options without the
+ * items. A write tool builds it once and passes the same object to
+ * `storedReplay` and `runBatch`, so the two use one key, input hash and tool.
+ */
+export type ReplayLookup = {
   /** The tool's name, stored with an idempotency key and used in logs. */
   tool: string;
-  dryRun: boolean;
-  items: BatchItem<T>[];
+  /** A dry run neither looks a key up nor stores it. Default false. */
+  dryRun?: boolean;
   /**
    * `inputHash` is `hashInput` of the parsed arguments without the key
    * itself. The binding (which credential) comes from `ctx.locals`.
    */
   idempotency?: { key: string; inputHash: string };
+};
+
+export type BatchOptions<T> = ReplayLookup & {
+  dryRun: boolean;
+  items: BatchItem<T>[];
   /** Default `MAX_BATCH_ITEMS`. */
   maxItems?: number;
 };
@@ -298,6 +310,22 @@ type Slot = {
   inputHash: string;
 };
 
+/**
+ * The row a call's key claims: this user and credential, the key, the tool and
+ * the input. None for a dry run, a call without a key, or nobody signed in.
+ */
+function slotOf(ctx: AppContext, call: ReplayLookup): Slot | undefined {
+  const user = ctx.locals.user;
+  if (!call.idempotency || call.dryRun || !user) return undefined;
+  return {
+    userId: user.id,
+    binding: bindingOf(ctx.locals),
+    key: call.idempotency.key,
+    tool: call.tool,
+    inputHash: call.idempotency.inputHash,
+  };
+}
+
 type Stored<T> = { requestId?: string; items: BatchItemResult<T>[] };
 
 const lastSweep = new WeakMap<object, number>();
@@ -357,6 +385,41 @@ function replayOf<T>(
     ...(stored.requestId ? { requestId: stored.requestId } : {}),
     items: stored.items,
   });
+}
+
+/**
+ * What an earlier call with this idempotency key stored, looked up before any
+ * work is done. `runBatch` makes exactly this lookup first; a write tool makes
+ * it too, before it resolves a single reference, so a retry whose target is
+ * gone (a delete or merge by name) replays instead of answering NOT_FOUND.
+ *
+ * - The same key, tool and input hash: the stored outcome, with
+ *   `replayed: true` and the first call's `requestId`.
+ * - The same key with another input or tool: the `IDEMPOTENCY_MISMATCH`
+ *   failure.
+ * - Nothing stored (or expired), no key, a dry run, nobody signed in, or an
+ *   empty key: `null`, and the call goes on to `runBatch`.
+ * - The books busy, or the lookup failing: that failure, as `runBatch` would
+ *   answer.
+ *
+ * It only reads (and sweeps expired keys). It never stores, and `runBatch`
+ * looks again inside its write transaction, so a call is never saved twice.
+ */
+export function storedReplay<T = unknown>(
+  ctx: AppContext,
+  call: ReplayLookup,
+): BatchResult<T> | null {
+  const slot = slotOf(ctx, call);
+  if (!slot || !slot.key.trim()) return null;
+  try {
+    sweepExpired(ctx.db);
+    const row = findStored(ctx.db, slot);
+    return row ? replayOf<T>(row, slot) : null;
+  } catch (error) {
+    if (isBusy(error)) return busy();
+    log.error({ err: error, tool: slot.tool }, "Idempotency lookup failed");
+    return internal(`The change failed unexpectedly. ${NOTHING_SAVED}`);
+  }
 }
 
 // --- the executor -----------------------------------------------------------
@@ -435,7 +498,8 @@ type Finished<T> =
  *
  * Returns a failure only for the call as a whole: too many items, a reused
  * key, the books being busy, or something unexpected. Item refusals come back
- * as an outcome with `saved: false` and a result for every item.
+ * as an outcome with `saved: false` and a result for every item. A call whose
+ * key already stored an outcome answers as `storedReplay` does.
  */
 export async function runBatch<T>(
   ctx: AppContext,
@@ -443,8 +507,7 @@ export async function runBatch<T>(
 ): Promise<BatchResult<T>> {
   const { tool, dryRun, items } = opts;
   const maxItems = opts.maxItems ?? MAX_BATCH_ITEMS;
-  const user = ctx.locals.user;
-  if (!user) return denied();
+  if (!ctx.locals.user) return denied();
   if (items.length === 0)
     return fail("INVALID_INPUT", "Send at least one item.");
   if (items.length > maxItems)
@@ -454,30 +517,12 @@ export async function runBatch<T>(
     );
 
   // A dry run accepts a key but neither looks it up nor stores it.
-  const slot: Slot | undefined =
-    opts.idempotency && !dryRun
-      ? {
-          userId: user.id,
-          binding: bindingOf(ctx.locals),
-          key: opts.idempotency.key,
-          tool,
-          inputHash: opts.idempotency.inputHash,
-        }
-      : undefined;
+  const slot = slotOf(ctx, opts);
   if (slot && !slot.key.trim())
     return fail("INVALID_INPUT", "The idempotency_key is empty.");
-
-  try {
-    if (slot) {
-      sweepExpired(ctx.db);
-      const row = findStored(ctx.db, slot);
-      if (row) return replayOf<T>(row, slot);
-    }
-  } catch (error) {
-    if (isBusy(error)) return busy();
-    log.error({ err: error, tool }, "Idempotency lookup failed");
-    return internal(`The change failed unexpectedly. ${NOTHING_SAVED}`);
-  }
+  // The same lookup a write tool makes before resolving its references.
+  const replay = storedReplay<T>(ctx, opts);
+  if (replay) return replay;
 
   // Prepare, in order. One failure means no transaction at all.
   const prepared: unknown[] = [];

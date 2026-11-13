@@ -3,7 +3,7 @@ import { asc, inArray, or } from "drizzle-orm";
 import { EntityType, EntityTypeLabels, RoleLabels } from "$lib/enums.js";
 import { can } from "../../../permissions.js";
 import { contacts, ledgerRecords } from "../../../db/schema.js";
-import { runBatch } from "../../../application/batch.js";
+import { runBatch, storedReplay } from "../../../application/batch.js";
 import type { AppContext } from "../../../application/context.js";
 import {
   createContact,
@@ -22,13 +22,14 @@ import {
   rolesForContacts,
 } from "../../../queries/contacts.js";
 import { currentUnitOfWork } from "../../../unit-of-work.js";
-import { batchToolResult } from "../../batch-result.js";
+import type { ItemFailure } from "../../batch-result.js";
 import { enumCodec } from "../../format.js";
 import { defineWriteTool, type ToolDefinition } from "../../registry.js";
 import { CHANGE_CONTACTS } from "../../requirements/index.js";
 import {
+  batchCall,
   batchControls,
-  idempotencyOf,
+  batchReply,
   nothingToDo,
   refInput,
   refuseActions,
@@ -47,7 +48,8 @@ import {
  *
  * References are resolved before the batch opens, so every miss in a call is
  * reported together as `NOT_FOUND` / `AMBIGUOUS` with candidates, and nothing
- * runs.
+ * runs. A retry with the same idempotency_key is answered before that
+ * (`storedReplay`): the contact a delete or merge named may be gone by then.
  */
 
 const roleCodec = enumCodec(RoleLabels);
@@ -219,26 +221,27 @@ const isDryRun = () => currentUnitOfWork()?.mode === "dry_run";
 
 type CreatePlan = { path: string; item: CreateItem; mayRead: boolean };
 
-/** The contacts that already carry this name, best first. */
+/** The contacts that already carry this name, as candidates: roles tell them apart. */
 function sameName(db: LedgerDb, name: string) {
   const wanted = normalizeName(name);
   const same = db
     .select({ id: contacts.id, legalName: contacts.legalName })
     .from(contacts)
+    .orderBy(asc(contacts.id))
     .all()
-    .filter((row) => normalizeName(row.legalName) === wanted);
+    .filter((row) => normalizeName(row.legalName) === wanted)
+    .slice(0, 5);
   const roles = rolesForContacts(
     db,
     same.map((row) => row.id),
   );
-  return same.slice(0, 5).map((row) => ({
-    id: row.id,
-    name: row.legalName,
-    roles: (roles[row.id] ?? [])
+  return same.map((row) => {
+    const detail = (roles[row.id] ?? [])
       .map((role) => roleCodec.label(role))
       .filter(Boolean)
-      .join(", "),
-  }));
+      .join(", ");
+    return { id: row.id, name: row.legalName, ...(detail ? { detail } : {}) };
+  });
 }
 
 function planCreates(refs: Refs, items: CreateItem[]): CreatePlan[] {
@@ -262,22 +265,28 @@ function planCreates(refs: Refs, items: CreateItem[]): CreatePlan[] {
   });
 }
 
-function runCreate(ctx: AppContext, plan: CreatePlan): AppResult<Value> {
+function runCreate(
+  ctx: AppContext,
+  plan: CreatePlan,
+): AppResult<Value> | ItemFailure {
   const { item } = plan;
-  // Looked for here, inside the batch, so that a retry with the same
-  // idempotency_key replays the first result instead of meeting the contact
-  // it just made.
+  // Looked for inside the batch, so it also sees a contact an earlier item
+  // of this call created.
   if (!item.force_new && plan.mayRead) {
     const same = sameName(ctx.db, item.name);
     if (same.length)
-      return fail(
-        "REFUSED",
-        `${plan.path}.name: a contact named "${item.name}" already exists: ${same
-          .map((c) => `${c.name} (id ${c.id}${c.roles ? `, ${c.roles}` : ""})`)
-          .join(
-            "; ",
-          )}. To change it, use update with its id. If it really is another contact, send this create item again with force_new: true.`,
-      );
+      return {
+        ...fail(
+          "INVALID_INPUT",
+          same.length === 1
+            ? `A contact named "${item.name}" already exists.`
+            : `${same.length} contacts named "${item.name}" already exist.`,
+        ),
+        toolCode: "AMBIGUOUS",
+        path: `${plan.path}.name`,
+        candidates: same,
+        fix: "Use the existing contact, or resend with force_new: true.",
+      };
   }
   const created = createContact(ctx, {
     entityType: entityCodeOf(item.entity),
@@ -562,6 +571,16 @@ const changeContacts = defineWriteTool({
   handler: async (ctx, args: ChangeContactsArgs, meta) => {
     const refused = refuseActions(ctx, meta, "change_contacts", args);
     if (refused) return refused;
+    const call = batchCall(meta, args, {
+      create: args.create,
+      update: args.update,
+      merge: args.merge,
+      delete: args.delete,
+    });
+    // Before any reference is resolved: a deleted or merged contact no
+    // longer resolves by name, and its retry must replay, not miss.
+    const replay = storedReplay<Value>(ctx, call);
+    if (replay) return batchReply(replay, meta);
     if (
       !args.create?.length &&
       !args.update?.length &&
@@ -583,8 +602,7 @@ const changeContacts = defineWriteTool({
     if (missed) return missed;
 
     const result = await runBatch<Value>(ctx, {
-      tool: meta.name,
-      dryRun: args.dry_run ?? false,
+      ...call,
       items: [
         ...creates.map((plan) => ({
           action: "create",
@@ -608,17 +626,8 @@ const changeContacts = defineWriteTool({
           run: (c: AppContext) => runDelete(c, plan),
         })),
       ],
-      idempotency: idempotencyOf(args, {
-        create: args.create,
-        update: args.update,
-        merge: args.merge,
-        delete: args.delete,
-      }),
     });
-    return batchToolResult(result, {
-      requestId: meta.requestId,
-      formatValue: (value) => value,
-    });
+    return batchReply(result, meta);
   },
 });
 

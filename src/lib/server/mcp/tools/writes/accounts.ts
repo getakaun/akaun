@@ -29,7 +29,7 @@ import {
   setOpeningBalance,
   updateAccount,
 } from "../../../application/accounts.js";
-import { runBatch } from "../../../application/batch.js";
+import { runBatch, storedReplay } from "../../../application/batch.js";
 import type { AppContext } from "../../../application/context.js";
 import type { AccountBrief } from "../../../application/refs.js";
 import { fail, ok, type AppResult } from "../../../application/result.js";
@@ -38,7 +38,7 @@ import type { LedgerDb } from "../../../ledger/types.js";
 import { openingBalanceFor } from "../../../queries/accounts.js";
 import { ACCOUNT_DEFAULT_PURPOSES } from "../../../services/account-defaults.js";
 import { currentUnitOfWork } from "../../../unit-of-work.js";
-import { batchToolResult } from "../../batch-result.js";
+import type { ItemFailure } from "../../batch-result.js";
 import {
   dateInput,
   enumCodec,
@@ -55,8 +55,9 @@ import {
 } from "../../requirements/index.js";
 import { percentText } from "../reads/accounts.js";
 import {
+  batchCall,
   batchControls,
-  idempotencyOf,
+  batchReply,
   nothingToDo,
   refInput,
   refuseActions,
@@ -82,7 +83,8 @@ import {
  *
  * References are resolved before the batch opens, so every miss in a call is
  * reported together as `NOT_FOUND` / `AMBIGUOUS` with candidates, and nothing
- * runs.
+ * runs. A retry with the same idempotency_key is answered before that
+ * (`storedReplay`): an account a delete named may be gone by then.
  */
 
 const typeCodec = enumCodec(AccountTypeLabels);
@@ -641,7 +643,7 @@ function runApply(
   ctx: AppContext,
   plan: ApplyPlan,
   tool: string,
-): AppResult<Value> {
+): AppResult<Value> | ItemFailure {
   const id = plan.account.id;
   const label = briefLabel(plan.account);
 
@@ -710,11 +712,13 @@ function runApply(
     reason: plan.reason,
     revision: plan.revision,
   });
+  // Its only CONFLICT is a stale revision, and it has no current version to
+  // retry with: a new dry run gives the new revision.
   if (!applied.ok)
     return applied.code === "CONFLICT"
       ? {
           ...applied,
-          reason: `${applied.reason} Run this call again with dry_run: true to get a new revision, show the user, then apply with it.`,
+          fix: "Run it again with dry_run to get the current revision.",
         }
       : applied;
   const { updatedLineCount, updatedRecordCount, remainingCount } =
@@ -749,6 +753,18 @@ const changeAccounts = defineWriteTool({
   handler: async (ctx, args: ChangeAccountsArgs, meta) => {
     const refused = refuseActions(ctx, meta, "change_accounts", args);
     if (refused) return refused;
+    const call = batchCall(meta, args, {
+      create: args.create,
+      update: args.update,
+      delete: args.delete,
+      set_opening_balance: args.set_opening_balance,
+      set_default: args.set_default,
+      apply_tax_default: args.apply_tax_default,
+    });
+    // Before any reference is resolved: a deleted account no longer
+    // resolves, and its retry must replay, not miss.
+    const replay = storedReplay<Value>(ctx, call);
+    if (replay) return batchReply(replay, meta);
     if (
       !args.create?.length &&
       !args.update?.length &&
@@ -761,7 +777,7 @@ const changeAccounts = defineWriteTool({
         "create, update, delete, set_opening_balance, set_default or apply_tax_default",
       );
 
-    const dryRun = args.dry_run ?? false;
+    const { dryRun } = call;
     const refs = new Refs(ctx, meta);
     const creates = planCreates(refs, args.create ?? []);
     const updates = planUpdates(refs, args.update ?? []);
@@ -829,8 +845,7 @@ const changeAccounts = defineWriteTool({
     if (missed) return missed;
 
     const result = await runBatch<Value>(ctx, {
-      tool: meta.name,
-      dryRun,
+      ...call,
       items: [
         ...creates.map((plan) => ({
           action: "create",
@@ -863,19 +878,8 @@ const changeAccounts = defineWriteTool({
           run: (c: AppContext) => runApply(c, plan, meta.name),
         })),
       ],
-      idempotency: idempotencyOf(args, {
-        create: args.create,
-        update: args.update,
-        delete: args.delete,
-        set_opening_balance: args.set_opening_balance,
-        set_default: args.set_default,
-        apply_tax_default: args.apply_tax_default,
-      }),
     });
-    return batchToolResult(result, {
-      requestId: meta.requestId,
-      formatValue: (value) => value,
-    });
+    return batchReply(result, meta);
   },
 });
 

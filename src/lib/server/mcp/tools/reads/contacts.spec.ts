@@ -13,6 +13,7 @@ import { contacts } from "../../../db/schema.js";
 import { preparePaymentCorrection } from "../../../application/payment-corrections.js";
 import { resolvePaymentMovement } from "../../../application/refs.js";
 import { contactVersion, recordVersion } from "../../../application/version.js";
+import { reviewBooks } from "../../../queries/books-review.js";
 import { contactBalances } from "../../../queries/settlements.js";
 import { money } from "../../format.js";
 import { contactsReadTools } from "./contacts.js";
@@ -192,7 +193,7 @@ describe("find_contacts", () => {
   );
 
   it(
-    "groups the planted duplicates with a keep hint, and not the lookalikes",
+    "lists the books review's duplicate groups: the three names of one supplier together, the lookalikes apart",
     async () => {
       const { book, call, replies } = await open();
       const plants = book.manifest.plants.duplicateContacts;
@@ -200,32 +201,65 @@ describe("find_contacts", () => {
         duplicates: true,
       });
       expect(isError).toBe(false);
+
+      // The groups review_books' duplicate_contacts reports, in its order:
+      // its next call is this one, and must show the same groups.
+      const review = reviewBooks(book.db, {
+        checks: ["duplicate_contacts"],
+        perCheck: 50,
+        can: () => true,
+        today: TODAY,
+      });
+      const finding = review.findings.find(
+        (f) => f.check === "duplicate_contacts",
+      )!;
+      expect(finding.next).toEqual({
+        tool: "find_contacts",
+        args: { duplicates: true },
+      });
+      expect(body.total).toBe(finding.count);
+      expect(
+        body.groups.map((g: Loose) => g.contacts.map((c: Loose) => c.id)),
+      ).toEqual(
+        finding.items.map((item) => [
+          item.ref!.id,
+          ...(item.related ?? []).map((r) => r.id),
+        ]),
+      );
+
       const groupOf = (ids: number[]) =>
         body.groups.find((g: Loose) =>
-          ids.every((id) => g.contacts.some((c: Loose) => c.id === id)),
+          ids.some((id) => g.contacts.some((c: Loose) => c.id === id)),
         );
-      // One supplier under two names that differ by a company suffix: found by
-      // similar names. (An acronym or a brand extension is not: the agent
-      // searches for those with query, as the next call does.)
-      const pair = [
-        book.manifest.contacts.grabCompany,
-        book.manifest.contacts.grabMalaysia,
-      ];
-      const group = groupOf(pair);
-      expect(group, "a group holds the two Grab names").toBeTruthy();
-      expect(group.matched_on).toContain("similar_name");
-      const mostUsed = Math.max(...group.contacts.map((c: Loose) => c.usage));
-      const hinted = group.contacts.find(
-        (c: Loose) => c.id === group.keep_hint.id,
+      // P1: one supplier under three names is one group, kept by the
+      // contact with the registration number.
+      const grab = groupOf(plants.grab);
+      expect(
+        grab.contacts
+          .map((c: Loose) => c.id)
+          .sort((a: number, b: number) => a - b),
+      ).toEqual([...plants.grab].sort((a, b) => a - b));
+      expect(grab.matched_on).toEqual(
+        expect.arrayContaining([
+          "registration_no_in_documents",
+          "name_without_suffix",
+        ]),
       );
-      expect(hinted).toBeTruthy();
-      expect(hinted.name).toBe(group.keep_hint.name);
-      if (group.keep_hint.why.startsWith("most records"))
-        expect(hinted.usage).toBe(mostUsed);
-      expect(plants.grab).toEqual(expect.arrayContaining(pair));
-      // Two contacts that only look alike are never grouped.
-      const [a, b] = plants.lookalikesNotDuplicates;
-      expect(groupOf([a, b])).toBeUndefined();
+      expect(grab.keep_hint).toEqual({
+        id: book.manifest.contacts.grabCompany,
+        name: grab.contacts[0].name,
+        why: "it has a registration number",
+      });
+      expect(grab.contacts[0]).toMatchObject({
+        id: book.manifest.contacts.grabCompany,
+        roles: expect.any(Array),
+        usage: expect.any(Number),
+        v: contactVersion(book.db, book.manifest.contacts.grabCompany),
+      });
+      // Two contacts that only look alike are never grouped, together or apart.
+      const [shopee, express] = plants.lookalikesNotDuplicates;
+      expect(groupOf([shopee])).toBeUndefined();
+      expect(groupOf([express])).toBeUndefined();
       expect(body.total).toBe(body.groups.length);
 
       const narrowed = await call("akaun_find_contacts", {
@@ -266,9 +300,13 @@ describe("find_contacts", () => {
       const group = body.groups.find((g: Loose) =>
         [a, b].every((id) => g.contacts.some((c: Loose) => c.id === id)),
       );
-      expect(group.matched_on).toContain("similar_name");
-      expect(group.keep_hint.why).toBe("its legal name looks registered");
-      expect(group.keep_hint.id).toBe(a);
+      expect(group.matched_on).toEqual(["name_without_suffix"]);
+      expect(group.contacts.map((c: Loose) => c.id)).toEqual([a, b]);
+      expect(group.keep_hint).toEqual({
+        id: a,
+        name: "Zenith Packaging Sdn Bhd",
+        why: "its name reads as a registered company name",
+      });
     },
     SLOW,
   );

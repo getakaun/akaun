@@ -7,20 +7,17 @@ import {
 } from "$lib/enums.js";
 import { localToday } from "$lib/local-date.js";
 import { preparePaymentCorrection } from "../../../application/payment-corrections.js";
-import {
-  resolvePaymentMovement,
-  similarity,
-} from "../../../application/refs.js";
+import { resolvePaymentMovement } from "../../../application/refs.js";
 import {
   contactVersion,
   recordVersions,
 } from "../../../application/version.js";
 import { toMinor } from "../../../ledger/money.js";
 import type { RecordView } from "../../../ledger/types.js";
+import { findDuplicateContacts } from "../../../queries/books-review.js";
 import { categoryHistory } from "../../../queries/category-history.js";
 import {
   countContacts,
-  findDuplicates,
   getContact,
   getContactUsageCounts,
   listContacts,
@@ -54,8 +51,9 @@ import { Refs, recordNo, refInput } from "../writes/payments.js";
  *
  * Balances are never totalled here: `contactBalances` (`queries/settlements.ts`)
  * is the one source, and the open items come from `listOutstanding`, the rows
- * it totals. A contact's duplicates are `findDuplicates` plus a name
- * similarity pass over legal names with company suffixes dropped.
+ * it totals. Duplicates are the books review's own groups
+ * (`findDuplicateContacts`), so this list and review_books' duplicate_contacts
+ * check, whose next call is this one, always show the same groups.
  *
  * Movement and settlement ids never leave. A payment listed as a credit or an
  * open item carries `allocations_v`, the version `change_allocations` needs.
@@ -70,136 +68,11 @@ const roleLabel = (code: number) => enumLabel(RoleLabels, code);
 
 // --- find_contacts ------------------------------------------------------------
 
-/** Words that make a name legal, not distinctive: "Acme Sdn Bhd" is "Acme". */
-const LEGAL_FORM = new Set([
-  "sdn",
-  "bhd",
-  "berhad",
-  "pte",
-  "ltd",
-  "limited",
-  "inc",
-  "llc",
-  "pty",
-  "plt",
-  "co",
-  "corp",
-  "the",
-]);
-const coreOf = (name: string) =>
-  normalizeName(name)
-    .split(" ")
-    .filter((word) => word && !LEGAL_FORM.has(word))
-    .join(" ");
-
-/** How alike two cores must be to be offered as one party. High: lookalikes are common. */
-const SIMILAR_NAME = 0.85;
-/** Past this many contacts the pairwise pass is skipped; exact cores still group. */
-const FUZZY_LIMIT = 1500;
-
-type DuplicateGroup = { ids: number[]; matchedOn: string[] };
-
-const SIGNAL_NAMES: Record<string, string> = {
-  name: "name",
-  email: "email",
-  phone: "phone",
-  registrationNo: "registration_no",
-};
-
-/** Contacts that look like one party: findDuplicates' clusters plus alike names. */
-function duplicateGroups(db: Parameters<typeof findDuplicates>[0]): {
-  groups: DuplicateGroup[];
-  fuzzySkipped: boolean;
-} {
-  const everyone = listContacts(db, { limit: 1_000_000 });
-  const parent = new Map<number, number>(everyone.map((c) => [c.id, c.id]));
-  const find = (id: number): number => {
-    let root = id;
-    while (parent.get(root) !== root) root = parent.get(root)!;
-    parent.set(id, root);
-    return root;
-  };
-  const union = (a: number, b: number) => {
-    const [ra, rb] = [find(a), find(b)];
-    if (ra !== rb) parent.set(ra, rb);
-  };
-  const exact = findDuplicates(db);
-  for (const cluster of exact) {
-    const ids = cluster.contacts.map((c) => c.id);
-    for (const id of ids.slice(1)) union(ids[0], id);
-  }
-  // Signals follow the final root, so collect them once the groups are known.
-  const exactSignals = exact.map((cluster) => ({
-    ids: cluster.contacts.map((c) => c.id),
-    on: cluster.matchedOn.map((s) => SIGNAL_NAMES[s] ?? s),
-  }));
-
-  const cores = everyone.map((c) => ({ id: c.id, core: coreOf(c.legalName) }));
-  const similarPairs: [number, number][] = [];
-  // Blocks: contacts sharing a word, or the first three letters of the core.
-  const blocks = new Map<string, number[]>();
-  const put = (key: string, id: number) =>
-    (blocks.get(key) ?? blocks.set(key, []).get(key)!).push(id);
-  for (const { id, core } of cores) {
-    if (core.length < 3) continue;
-    put(`c:${core}`, id);
-    if (cores.length <= FUZZY_LIMIT) {
-      put(`p:${core.slice(0, 3)}`, id);
-      for (const word of core.split(" "))
-        if (word.length >= 3) put(`w:${word}`, id);
-    }
-  }
-  const coreById = new Map(cores.map((c) => [c.id, c.core]));
-  const seen = new Set<string>();
-  for (const [key, ids] of blocks) {
-    for (let i = 0; i < ids.length; i++)
-      for (let j = i + 1; j < ids.length; j++) {
-        const [a, b] = [ids[i], ids[j]];
-        const pair = `${a}:${b}`;
-        if (seen.has(pair)) continue;
-        seen.add(pair);
-        const same = key.startsWith("c:");
-        if (
-          same ||
-          similarity(coreById.get(a)!, coreById.get(b)!) >= SIMILAR_NAME
-        )
-          similarPairs.push([a, b]);
-      }
-  }
-  for (const [a, b] of similarPairs) union(a, b);
-
-  const members = new Map<number, number[]>();
-  for (const { id } of everyone)
-    (members.get(find(id)) ?? members.set(find(id), []).get(find(id))!).push(
-      id,
-    );
-  const groups: DuplicateGroup[] = [];
-  for (const ids of members.values()) {
-    if (ids.length < 2) continue;
-    const idSet = new Set(ids);
-    const on = new Set<string>();
-    for (const entry of exactSignals)
-      if (entry.ids.some((id) => idSet.has(id)))
-        entry.on.forEach((s) => on.add(s));
-    if (
-      similarPairs.some(([a, b]) => idSet.has(a) && idSet.has(b)) &&
-      !on.has("name")
-    )
-      on.add("similar_name");
-    groups.push({ ids: ids.sort((a, b) => a - b), matchedOn: [...on] });
-  }
-  groups.sort((a, b) => b.ids.length - a.ids.length || a.ids[0] - b.ids[0]);
-  return { groups, fuzzySkipped: cores.length > FUZZY_LIMIT };
-}
-
-const REGISTERED =
-  /\b(sdn\.?\s*bhd|berhad|bhd|pte|ltd|limited|plt|llc|inc|pty)\b/i;
-
 const FIND_DESCRIPTION = `Find the people and companies you deal with (customers, suppliers, employees, partners), or find contacts that look like duplicates.
 
 Rows: id, name, roles, usage (how many records name the contact), v (version, for changes) and, when you may read balances, balance: the net owed to you from open items in the main currency (positive: they owe you; negative: you owe them; left out when nothing is open). Filters: query (name, registration number, email or phone), role, has_balance (needs records read too). detail: "full" adds registration number, email, phone and address.
 
-duplicates: true returns groups instead: {matched_on, contacts, keep_hint}. Contacts group when they share a name (ignoring case and punctuation), an email, a phone number or a registration number, or when their names are alike once company suffixes such as Sdn Bhd are dropped (similar_name). keep_hint names the contact with the most records, or failing that the one whose legal name looks registered. Acronyms and brand names with an extra word are not grouped: search them with query. keep_hint is only a hint: read each with get_contact before changing anything. duplicates takes query to narrow, not role or has_balance.
+duplicates: true returns groups instead, the ones the books review flags: {matched_on, contacts, keep_hint}. matched_on says why, strongest first: registration_no, email, phone or name (the same, ignoring case and punctuation); registration_no_in_documents (one contact's registration number in the files of another's records); name_without_suffix (the same once a company suffix such as Sdn Bhd is dropped); name_in_documents (one contact's full name in another's files). contacts starts with the one keep_hint names: one with a registration number, else a registered company name, else the most records, else the oldest. It is only a hint: read each with get_contact before changing anything. Names that only look alike are not grouped: search them with query. duplicates takes query to narrow, not role or has_balance.
 
 Paging: limit (50, at most 200) and cursor; the last line says how to continue.`;
 
@@ -296,54 +169,38 @@ const findContacts = defineReadTool({
     };
 
     if (args.duplicates) {
-      const { groups, fuzzySkipped } = duplicateGroups(db);
+      // The books review's finder, in its order: the contact to keep first in
+      // each group, and the groups with the most records first.
+      const groups = findDuplicateContacts(db);
       const wanted = args.query ? normalizeName(args.query) : "";
-      const everyone = new Map(
-        listContacts(db, { limit: 1_000_000 }).map((c) => [c.id, c]),
-      );
       const shown = groups.filter(
         (g) =>
           !wanted ||
-          g.ids.some((id) => {
-            const c = everyone.get(id)!;
-            return (
-              normalizeName(c.legalName).includes(wanted) ||
+          g.contacts.some(
+            (c) =>
+              normalizeName(c.name).includes(wanted) ||
               (c.registrationNo ?? "")
                 .toLowerCase()
-                .includes(args.query!.toLowerCase())
-            );
-          }),
+                .includes(args.query!.toLowerCase()),
+          ),
       );
       const slice = shown.slice(
         page.value.offset,
         page.value.offset + page.value.limit + 1,
       );
+      const everyone = new Map(
+        listContacts(db, { limit: 1_000_000 }).map((c) => [c.id, c]),
+      );
       const balances = mayBalance ? balancesNow(db) : undefined;
       const rows = slice.map((g) => {
-        const contacts = rowsFor(
-          g.ids.map((id) => everyone.get(id)!),
-          balances,
-        );
-        const byRecords = [...contacts].sort(
-          (a, b) => b.usage - a.usage || a.id - b.id,
-        );
-        const top = byRecords[0];
-        const tied = byRecords.filter((c) => c.usage === top.usage);
-        const registered = tied.find((c) => REGISTERED.test(c.name));
-        const keep = tied.length > 1 ? (registered ?? top) : top;
+        const [keep] = g.contacts;
         return {
-          matched_on: g.matchedOn,
-          contacts,
-          keep_hint: {
-            id: keep.id,
-            name: keep.name,
-            why:
-              tied.length === 1
-                ? `most records (${top.usage})`
-                : registered
-                  ? "its legal name looks registered"
-                  : "lowest id",
-          },
+          matched_on: g.signals,
+          contacts: rowsFor(
+            g.contacts.map((c) => everyone.get(c.id)!),
+            balances,
+          ),
+          keep_hint: { id: keep.id, name: keep.name, why: g.keepReason },
         };
       });
       return pageResult({
@@ -352,14 +209,7 @@ const findContacts = defineReadTool({
         total: shown.length,
         narrow: "query",
         key: "groups",
-        head: {
-          currency: mayBalance ? mainCurrency(db) : undefined,
-          ...(fuzzySkipped
-            ? {
-                note: "The book has many contacts, so similar names were only compared when they match exactly once company suffixes are dropped.",
-              }
-            : {}),
-        },
+        head: { currency: mayBalance ? mainCurrency(db) : undefined },
       });
     }
 

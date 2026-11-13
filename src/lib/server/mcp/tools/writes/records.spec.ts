@@ -511,6 +511,44 @@ describe("akaun_create_records", () => {
     expect(s.count("ledger_records")).toBe(1);
   });
 
+  it("replays a retry before anything is resolved: the same record, nothing saved twice", async () => {
+    const s = seed();
+    const { call } = await serve(s.db, OWNER());
+    const input = {
+      records: [
+        expense({
+          owed: true,
+          paid_from: undefined,
+          new_contact: { name: "Retry Trading Sdn Bhd" },
+        }),
+      ],
+      idempotency_key: "f0-create-retry",
+    };
+    const first = await call(CREATE, input);
+    expect(first.body.saved).toBe(true);
+    const records = s.count("ledger_records");
+    const contacts = s.count("contacts");
+
+    const again = await call(CREATE, input);
+    expect(again.isError).toBe(false);
+    expect(again.body).toEqual({ ...first.body, replayed: true });
+    expect(again.body.items[0].record).toBe(first.body.items[0].record);
+    expect(s.count("ledger_records")).toBe(records);
+    expect(s.count("contacts")).toBe(contacts);
+
+    // Without the key, the same item meets the contact it created.
+    const unreplayed = await call(CREATE, { records: input.records });
+    expect(unreplayed.body.error.items[0].error.code).toBe("AMBIGUOUS");
+
+    // The key with other input is refused, and saves nothing either.
+    const other = await call(CREATE, {
+      ...input,
+      records: [expense({ amount: "99.00" })],
+    });
+    expect(other.body.error.code).toBe("IDEMPOTENCY_MISMATCH");
+    expect(s.count("ledger_records")).toBe(records);
+  });
+
   it("answers bad input with INVALID_INPUT and located issues", async () => {
     const s = seed();
     const { call } = await serve(s.db, OWNER());

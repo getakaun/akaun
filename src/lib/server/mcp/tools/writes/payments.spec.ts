@@ -310,6 +310,86 @@ describe("record_payments and change_allocations", () => {
   );
 
   it(
+    "replays a retried allocate or reallocate with its key, applying nothing twice",
+    async () => {
+      const { book, call, owner } = await open();
+      const m = book.manifest;
+      const credit = m.plants.freightLeftOut;
+      const bill = createRecord(owner, {
+        kind: "expense",
+        date: "2026-10-02",
+        description: "Packing materials",
+        amount: 50,
+        currency: "MYR",
+        exchangeRate: 1,
+        categoryAccountId: m.accounts.packaging,
+        paidFromAccountId: null,
+        contactId: credit.supplier,
+      });
+      if (!bill.ok) throw new Error(bill.reason);
+      const allocate = {
+        allocate: [
+          {
+            payment: no(book, credit.payment),
+            to: [{ record: bill.value.record.recordNumber }],
+          },
+        ],
+        idempotency_key: "f0-allocate-retry",
+      };
+      const first = await call("akaun_record_payments", allocate);
+      expect(first.isError).toBe(false);
+      expect(first.body.items[0].unapplied).toBe("35.00");
+      const rows = count(book, "settlements");
+
+      const again = await call("akaun_record_payments", allocate);
+      expect(again.isError).toBe(false);
+      expect(again.body).toEqual({ ...first.body, replayed: true });
+      expect(count(book, "settlements")).toBe(rows);
+
+      const other = await call("akaun_record_payments", {
+        ...allocate,
+        allocate: [
+          {
+            ...allocate.allocate[0],
+            to: [{ record: no(book, m.records.spotify) }],
+          },
+        ],
+      });
+      expect(other.body.error.code).toBe("IDEMPOTENCY_MISMATCH");
+      expect(count(book, "settlements")).toBe(rows);
+
+      // A reallocate's removed allocation is reversed once it saves, so its
+      // retry would no longer resolve: it replays first.
+      const plant = m.plants.misallocatedPayment;
+      const reallocate = {
+        reallocate: [
+          {
+            payment: no(book, plant.payment),
+            expected_version: allocationsVersion(owner, plant.payment),
+            remove: [no(book, plant.allocatedBill)],
+            add: [{ record: no(book, plant.intendedBill) }],
+            reason: `The payment reference names ${plant.reference}.`,
+          },
+        ],
+        idempotency_key: "f0-reallocate-retry",
+      };
+      const moved = await call("akaun_change_allocations", reallocate);
+      expect(moved.isError).toBe(false);
+      const after = count(book, "settlements");
+      const retried = await call("akaun_change_allocations", reallocate);
+      expect(retried.isError).toBe(false);
+      expect(retried.body).toEqual({ ...moved.body, replayed: true });
+      expect(count(book, "settlements")).toBe(after);
+      const unkeyed = await call("akaun_change_allocations", {
+        reallocate: reallocate.reallocate,
+      });
+      expect(unkeyed.body.error.code).toBe("NOT_FOUND");
+      expect(unkeyed.body.error.path).toBe("reallocate[0].remove[0]");
+    },
+    SLOW,
+  );
+
+  it(
     "repays a person for an expense they paid personally",
     async () => {
       const { book, call, replies } = await open();

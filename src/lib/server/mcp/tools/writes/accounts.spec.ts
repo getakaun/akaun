@@ -645,9 +645,13 @@ describe("change_accounts", () => {
       });
       expect(stale.isError).toBe(true);
       expect(stale.body.error.code).toBe("CONFLICT");
-      expect(stale.body.error.items[0].error.message).toMatch(
-        /Run this call again with dry_run: true/,
+      const conflict = stale.body.error.items[0].error;
+      expect(conflict.fix).toBe(
+        "Run it again with dry_run to get the current revision.",
       );
+      // The way out is the fix, not a sentence added to the operation's own.
+      expect(conflict.message).not.toMatch(/dry_run/);
+      expect(conflict.current_version).toBeUndefined();
       expect(taxSnapshot(book)).toEqual(snapshot);
 
       // A dry run with the old revision says it is no longer current.
@@ -1001,6 +1005,20 @@ describe("change_accounts", () => {
       expect(second.body.request_id).toBe(first.body.request_id);
       expect(second.body.items[0].id).toBe(first.body.items[0].id);
       expect(count(book, "accounts")).toBe(before + 1);
+
+      // A delete by name replays too, though the name no longer resolves.
+      const { id, v } = first.body.items[0];
+      const remove = {
+        delete: [{ account: "Once Only", expected_version: v }],
+        idempotency_key: "f0-accounts-delete",
+      };
+      const deleted = await call(remove);
+      expect(deleted.body.saved).toBe(true);
+      const retried = await call(remove);
+      expect(retried.isError).toBe(false);
+      expect(retried.body).toEqual({ ...deleted.body, replayed: true });
+      expect(retried.body.items[0].id).toBe(id);
+      expect(count(book, "accounts")).toBe(before);
     },
     SLOW,
   );

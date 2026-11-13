@@ -474,13 +474,15 @@ describe("aggregateRecords", () => {
         group(a.uncategorisedExpense, "Uncategorised expense", 8000, 1),
         group(a.uncategorisedIncome, "Uncategorised income", 4000, 1),
       ],
-      totalMinor: 97500,
+      // Spending and earning, so no grand total.
+      totalMinor: null,
+      mixedNote: expect.stringContaining("These records mix income, spending,"),
       count: 12,
       groupCount: 5,
     });
   });
 
-  it("totals every other account's lines as stored", () => {
+  it("totals every other account's lines as the screens show them", () => {
     const { db, accounts: a } = seed();
     expect(aggregateRecords(db, {}, "account")).toEqual({
       groups: [
@@ -489,8 +491,8 @@ describe("aggregateRecords", () => {
         // The bill and the payment that settled it.
         group(a.payable, "Payable", 0, 2),
       ],
-      // The other half of every record's lines: the category lines, unturned.
-      totalMinor: -(37500 + 18000 + 8000) + (30000 + 4000),
+      totalMinor: null,
+      mixedNote: expect.stringContaining("These records mix income, spending,"),
       count: 12,
       groupCount: 3,
     });
@@ -511,7 +513,12 @@ describe("aggregateRecords", () => {
             (category.get(key) ?? 0) +
               m.amountMinor * displaySignForAccountType(m.accountType),
           );
-        else other.set(key, (other.get(key) ?? 0) + m.amountMinor);
+        else
+          other.set(
+            key,
+            (other.get(key) ?? 0) +
+              m.amountMinor * displaySignForAccountType(m.accountType) || 0,
+          );
       }
     }
     const totals = (groups: RecordGroup[]) =>
@@ -534,7 +541,8 @@ describe("aggregateRecords", () => {
         group(c.beta, "Beta Traders", 27500, 3),
         group(c.acme, "Acme Supplies", 26000, 3),
       ],
-      totalMinor: 149500,
+      totalMinor: null,
+      mixedNote: expect.stringContaining("These records mix income, spending,"),
       count: 12,
       groupCount: 4,
     });
@@ -545,7 +553,8 @@ describe("aggregateRecords", () => {
         group("2026-01", "2026-01", 32500, 2),
         group("2026-04", "2026-04", 15000, 5),
       ],
-      totalMinor: 149500,
+      totalMinor: null,
+      mixedNote: expect.stringContaining("These records mix income, spending,"),
       count: 12,
       groupCount: 4,
     });
@@ -557,7 +566,8 @@ describe("aggregateRecords", () => {
         group("journal", "Journal entry", 10000, 1),
         group("payment", "Payment", 2000, 1),
       ],
-      totalMinor: 149500,
+      totalMinor: null,
+      mixedNote: expect.stringContaining("These records mix income, spending,"),
       count: 12,
       groupCount: 5,
     });
@@ -650,5 +660,95 @@ describe("aggregateRecords", () => {
       group(a.meals, "Meals", 22500 + 4000, 2),
       group(a.expense, "Ordinary expenses", 6000, 1),
     ]);
+  });
+});
+
+describe("grouped totals are one kind of money (review finding 4)", () => {
+  /** May: 1,000.00 earned into the bank, and a 400.00 bill still owed. */
+  function may() {
+    book = releaseBook();
+    const { db, ctx, bank, expense } = book;
+    const sales = resultValue(
+      createAccount(db, 1, { name: "Sales", type: AccountType.Revenue }),
+    ).id;
+    const supplier = db
+      .insert(schema.contacts)
+      .values({ legalName: "Paper Supplier", entityType: 2 })
+      .returning()
+      .get()!.id;
+    const myr = { currency: "MYR", exchangeRate: 1 };
+    resultValue(
+      createRecord(ctx, {
+        ...myr,
+        kind: "income",
+        date: "2026-05-04",
+        amount: 1000,
+        description: "Consulting",
+        categoryAccountId: sales,
+        receivedIntoAccountId: bank,
+      }),
+    );
+    resultValue(
+      createRecord(ctx, {
+        ...myr,
+        kind: "expense",
+        date: "2026-05-06",
+        amount: 400,
+        description: "Paper",
+        categoryAccountId: expense,
+        paidFromAccountId: null,
+        contactId: supplier,
+      }),
+    );
+    const payable = db
+      .select()
+      .from(schema.accountDefaults)
+      .where(eq(schema.accountDefaults.purpose, DefaultAccountPurpose.Payable))
+      .get()!.accountId;
+    return { db, bank, payable };
+  }
+
+  it("gives no grand total for a month that mixes income and spending", () => {
+    const { db } = may();
+    const month = aggregateRecords(db, {}, "month");
+    expect(month.groups).toEqual([
+      { key: "2026-05", label: "2026-05", totalMinor: 140000, count: 2 },
+    ]);
+    expect(month.totalMinor).toBeNull();
+    expect(month.mixedNote).toMatch(/income and spending/);
+  });
+
+  it("totals expenses alone", () => {
+    const { db } = may();
+    const expenses = aggregateRecords(
+      db,
+      { kind: LedgerRecordKind.Expense },
+      "month",
+    );
+    expect(expenses.totalMinor).toBe(40000);
+    expect(expenses.mixedNote).toBeUndefined();
+  });
+
+  it("reads a payable account group as positive, as the screens show it", () => {
+    const { db, payable } = may();
+    const owed = aggregateRecords(
+      db,
+      { kind: LedgerRecordKind.Expense },
+      "account",
+    );
+    expect(owed.groups).toEqual([
+      { key: String(payable), label: "Payable", totalMinor: 40000, count: 1 },
+    ]);
+    expect(owed.totalMinor).toBe(40000);
+  });
+
+  it("gives no grand total over accounts read with opposite signs", () => {
+    const { db } = may();
+    const accounts = aggregateRecords(
+      db,
+      { dateFrom: "2026-05-01", dateTo: "2026-05-31" },
+      "account",
+    );
+    expect(accounts.totalMinor).toBeNull();
   });
 });

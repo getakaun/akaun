@@ -13,6 +13,8 @@ import {
   createRecordFromLines,
   recordFromLinesKinds,
   setMovementMatches,
+  type PaymentDirection,
+  type PaymentDirectionFailure,
 } from "../../../application/reconciliation.js";
 import {
   lineRef,
@@ -47,6 +49,7 @@ import {
   parsePeriod,
   dateInput,
 } from "../../format.js";
+import type { ItemFailure } from "../../batch-result.js";
 import { defineWriteTool, type ToolDefinition } from "../../registry.js";
 import {
   MATCH_BANK_LINES,
@@ -131,6 +134,15 @@ const TAX_CHOICES = TAX_TREATMENTS.filter((t) => t !== "unclassified") as [
   ...Exclude<(typeof TAX_TREATMENTS)[number], "unclassified">[],
 ];
 
+const FROM_LINES_DIRECTIONS = [
+  "we_receive",
+  "we_pay",
+  "refund_received",
+  "refund_paid",
+] as const;
+const toAppDirection = (d: (typeof FROM_LINES_DIRECTIONS)[number]) =>
+  d.replaceAll("_", "-") as PaymentDirection;
+
 const matchBankLinesInput = z.object({
   match: z
     .array(
@@ -210,6 +222,17 @@ const matchBankLinesInput = z.object({
           .max(200)
           .optional()
           .describe("payment only: the contact's open records it settles."),
+        direction: z
+          .enum(FROM_LINES_DIRECTIONS)
+          .optional()
+          .describe(
+            "payment only. Money in: we_receive or refund_received (a supplier returning an overpayment). Money out: we_pay or refund_paid (returning a customer's overpayment). Omitted: worked out from allocate, settlement_account or the contact's open balance.",
+          ),
+        settlement_account: refInput
+          .optional()
+          .describe(
+            "payment only: the receivable, payable or reimbursements payable account it settles. Omitted: the one the direction implies.",
+          ),
       }),
     )
     .max(50, SPLIT_CALL)
@@ -244,7 +267,7 @@ type MatchArgs = z.output<typeof matchBankLinesInput>;
 const MATCH_BANK_LINES_DESCRIPTION = `Clear bank statement lines against the books. Read the reconciliation first: it lists the unmatched lines (L123) and the records each could be.
 
 - match[]: {line, records: [{record, amount?}]} says the line covers these records. It adds to existing matches; an omitted amount takes what both still have unmatched. A line matches only records on its own account, moving money the same way.
-- create_from_lines[]: for lines nothing in the books stands for yet (bank interest, a service charge, a supplier paid straight from the bank, a move between your own accounts): one record from lines of one account, matched to them. kind expense or income needs category; transfer needs other_account; payment needs contact and may allocate to that contact's open records. tax (expense only) sets its category line's treatment.
+- create_from_lines[]: for lines nothing in the books stands for yet (bank interest, a fee, a supplier paid from the bank, a move between your own accounts): one record from lines of one account, matched to them. kind expense or income needs category; transfer needs other_account; payment needs contact, may allocate to their open records, and takes direction / settlement_account (omitted: from the contact's open items or refused). tax (expense only) sets its category line's treatment.
 - auto_match: {account, period?, max_days?}: matches every untouched line to the one untouched record of exactly its amount and direction at most max_days apart (0 to 7, default 3). A line or record with two possible partners is skipped with its reason, never guessed. In a dry run it lists the pairs it would match.
 
 Records are named by id or number. Amounts are decimal strings in the main currency. Matching locks the record's amount and date. Up to 50 items per call (auto_match counts as one), saved together or not at all. dry_run: true saves nothing; idempotency_key makes a retried call return the first result.`;
@@ -264,6 +287,10 @@ type FromLinesPlan = {
   date?: string;
   tax?: Omit<TaxOverride, "accountId" | "occurrence">;
   allocate: { record: RecordBrief; line: ControlLine; amountMinor?: number }[];
+  direction?: PaymentDirection;
+  settlementAccount?: AccountBrief;
+  /** Where in the input, for a refusal's path. */
+  path: string;
 };
 
 type AutoPlan = {
@@ -367,8 +394,21 @@ function runFromLines(
         }
       : {}),
     ...(allocations.length ? { allocations } : {}),
+    ...(plan.direction ? { direction: plan.direction } : {}),
+    ...(plan.settlementAccount
+      ? { settlementAccountId: plan.settlementAccount.id }
+      : {}),
   });
-  if (!created.ok) return created;
+  if (!created.ok) {
+    const choices = (created as PaymentDirectionFailure).paymentDirections;
+    if (!choices) return created;
+    const failure: ItemFailure = {
+      ...created,
+      path: `${plan.path}.direction`,
+      fix: `Send direction (${choices.map((d) => d.replaceAll("-", "_")).join(" or ")}), or settlement_account, then call again.`,
+    };
+    return failure;
+  }
   const { record, version, amountMinor, lineVersions } = created.value;
   const value: BankValue = {
     record: {
@@ -563,6 +603,23 @@ const matchBankLines = defineWriteTool({
           item.tax && item.kind === "expense"
             ? taxOf(refs, item.tax, `${path}.tax`)
             : undefined;
+        if (
+          item.kind !== "payment" &&
+          (item.direction !== undefined ||
+            item.settlement_account !== undefined)
+        )
+          refs.invalid(
+            `${path}.direction`,
+            "Only a payment takes a direction or a settlement_account.",
+            "Leave direction and settlement_account out.",
+          );
+        const settlementAccount =
+          item.settlement_account === undefined
+            ? undefined
+            : refs.account(
+                item.settlement_account,
+                `${path}.settlement_account`,
+              );
         const allocate = (item.allocate ?? []).flatMap((a, j) => {
           const found = refs.openItem(
             a.record,
@@ -577,6 +634,7 @@ const matchBankLines = defineWriteTool({
           (item.other_account !== undefined && !otherAccount) ||
           (item.contact !== undefined && !contact) ||
           (item.tax && !tax) ||
+          (item.settlement_account !== undefined && !settlementAccount) ||
           allocate.length !== (item.allocate ?? []).length
         )
           return [];
@@ -591,6 +649,11 @@ const matchBankLines = defineWriteTool({
             date: item.date,
             tax,
             allocate,
+            ...(item.direction
+              ? { direction: toAppDirection(item.direction) }
+              : {}),
+            settlementAccount,
+            path,
           },
         ];
       },

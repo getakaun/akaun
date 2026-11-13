@@ -50,7 +50,6 @@ import { formatMinor, toMinor } from "../ledger/money.js";
 import type { LedgerDb, OutstandingItem, RecordView } from "../ledger/types.js";
 import { closingReview } from "../application/closing.js";
 import { CONTENT_CHAR_LIMIT } from "../import/duplicate-detector.js";
-import { EPSILON, round2 } from "../reconciliation/types.js";
 import { unmatchedLinesByAccount } from "../services/reconciliation.js";
 import { findDuplicates, normalizeName } from "./contacts.js";
 import {
@@ -639,11 +638,14 @@ const CHECKS: Readonly<Record<Exclude<BooksReviewCheck, "month_end">, Check>> =
     },
 
     unmatched_bank(env, scope, limit, period) {
-      const allocated = new Map<number, number>();
+      // Whole cents per line: decimal amounts are converted one by one and
+      // never added as floats.
+      const allocatedMinor = new Map<number, number>();
       for (const allocation of listAllocations(env.db))
-        allocated.set(
+        allocatedMinor.set(
           allocation.lineId,
-          (allocated.get(allocation.lineId) ?? 0) + allocation.amount,
+          (allocatedMinor.get(allocation.lineId) ?? 0) +
+            toMinor(allocation.amount, 1),
         );
       const statements = new Map(
         listStatements(env.db).map((statement) => [statement.id, statement]),
@@ -655,10 +657,11 @@ const CHECKS: Readonly<Record<Exclude<BooksReviewCheck, "month_end">, Check>> =
         .filter((line) => inScope(line.date, scope))
         .map((line) => ({
           line,
-          remaining: round2(line.amount - (allocated.get(line.id) ?? 0)),
+          leftMinor:
+            toMinor(line.amount, 1) - (allocatedMinor.get(line.id) ?? 0),
           statement: statements.get(line.statementId),
         }))
-        .filter((entry) => Math.abs(entry.remaining) >= EPSILON);
+        .filter((entry) => entry.leftMinor !== 0);
       const perAccount = new Map<string, number>();
       for (const { statement } of open) {
         const name = statement?.accountName ?? "no account";
@@ -675,9 +678,9 @@ const CHECKS: Readonly<Record<Exclude<BooksReviewCheck, "month_end">, Check>> =
           ? "medium"
           : "low",
         count: open.length,
-        items: open.slice(0, limit).map(({ line, remaining, statement }) => {
+        items: open.slice(0, limit).map(({ line, leftMinor, statement }) => {
           const lineMinor = toMinor(line.amount, 1);
-          const remainingMinor = toMinor(remaining, 1);
+          const remainingMinor = leftMinor;
           return {
             ref: { type: "line", id: line.id },
             summary: [

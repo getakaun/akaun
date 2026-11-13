@@ -403,6 +403,59 @@ function isOwedAccount(id: number, ctx: SidesContext): boolean {
   );
 }
 
+/**
+ * How much each payment is reapplied to the corrected record, once its old
+ * allocations are undone. Payments go in payment-date order, then by id.
+ *
+ * 1. Each takes back up to what it had on this record before, while the record
+ *    still owes.
+ * 2. If the record still owes (its amount went up), the rest is spread over
+ *    the payments' free credit, in the same order.
+ *
+ * So a lower amount gives back the later payments' share, and credit a payment
+ * already had free is used only when the record grew. One figure per payment,
+ * so each is reapplied as one allocation.
+ */
+function reapplyPlan(
+  settlements: Inspection["settlements"],
+  owedMinor: number,
+  freeMinor: (payment: PaymentRef) => number,
+): { payment: PaymentRef; previousMinor: number; amountMinor: number }[] {
+  const byPayment = new Map<
+    number,
+    { payment: PaymentRef; previousMinor: number; amountMinor: number }
+  >();
+  for (const { payment, amountMinor } of settlements) {
+    const entry = byPayment.get(payment.movementId);
+    if (entry) entry.previousMinor += amountMinor;
+    else
+      byPayment.set(payment.movementId, {
+        payment,
+        previousMinor: amountMinor,
+        amountMinor: 0,
+      });
+  }
+  const plan = [...byPayment.values()].sort(
+    (a, b) =>
+      a.payment.date.localeCompare(b.payment.date) ||
+      a.payment.recordId - b.payment.recordId ||
+      a.payment.movementId - b.payment.movementId,
+  );
+  let owed = owedMinor;
+  const free = new Map(plan.map((p) => [p, freeMinor(p.payment)]));
+  for (const p of plan) {
+    const take = Math.max(0, Math.min(p.previousMinor, free.get(p)!, owed));
+    p.amountMinor += take;
+    owed -= take;
+  }
+  for (const p of plan) {
+    const take = Math.max(0, Math.min(free.get(p)! - p.amountMinor, owed));
+    p.amountMinor += take;
+    owed -= take;
+  }
+  return plan;
+}
+
 function paymentRef(db: LedgerDb, movementId: number): PaymentRef | null {
   const movement = db
     .select({ recordId: ledgerMovements.recordId })
@@ -597,34 +650,36 @@ function correctOperation(
           movements,
         );
 
-        // 4. Reapply the same payments, oldest first.
-        const payments: PaymentRef[] = [];
-        for (const { payment } of before.settlements)
-          if (!payments.some((p) => p.movementId === payment.movementId))
-            payments.push(payment);
+        // 4. Reapply the same payments, oldest payment first: each takes
+        //    back what it had on this record, up to what is owed now, and
+        //    only then does an increase draw on the payments' free credit.
+        //    Credit a payment had free before stays free, and no payment's
+        //    allocation moves to another.
+        const plan = reapplyPlan(
+          before.settlements,
+          outstandingOf(getSide(ctx.db, moneyRow.id)!),
+          (payment) => outstandingOf(getSide(ctx.db, payment.movementId)!),
+        );
         const reapplied: SettledAmountCorrected["reapplied"] = [];
-        for (const payment of payments) {
-          const paying = getSide(ctx.db, payment.movementId)!;
-          const owed = getSide(ctx.db, moneyRow.id)!;
-          const amountMinor = Math.min(
-            outstandingOf(paying),
-            outstandingOf(owed),
-          );
-          if (amountMinor <= 0) continue;
-          const added = createSettlements(
-            ctx.db,
-            userId,
-            payment.movementId,
-            [{ owedMovementId: moneyRow.id, amountMinor }],
-            emits,
-          );
-          if (!added.ok) throw new Rollback(fail("REFUSED", added.reason));
-          reapplied.push({ payment, amountMinor });
-        }
         const leftoverCredit: SettledAmountCorrected["leftoverCredit"] = [];
-        for (const payment of payments) {
-          const left = outstandingOf(getSide(ctx.db, payment.movementId)!);
-          if (left > 0) leftoverCredit.push({ payment, amountMinor: left });
+        for (const { payment, previousMinor, amountMinor } of plan) {
+          if (amountMinor > 0) {
+            const added = createSettlements(
+              ctx.db,
+              userId,
+              payment.movementId,
+              [{ owedMovementId: moneyRow.id, amountMinor }],
+              emits,
+            );
+            if (!added.ok) throw new Rollback(fail("REFUSED", added.reason));
+            reapplied.push({ payment, amountMinor });
+          }
+          // Only what this correction freed; credit already free is not news.
+          if (previousMinor > amountMinor)
+            leftoverCredit.push({
+              payment,
+              amountMinor: previousMinor - amountMinor,
+            });
         }
 
         // 5. Rematch what was released, up to what each line has free.

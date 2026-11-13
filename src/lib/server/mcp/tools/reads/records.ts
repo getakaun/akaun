@@ -639,12 +639,20 @@ function searchRecordsHandler(
       head: {
         currency: main,
         group_by: args.group_by,
-        grand_total: money(aggregate.totalMinor),
+        // Only for one kind of money: a sum of income and spending, or of
+        // money held and money owed, would read as a figure it is not.
+        ...(aggregate.totalMinor !== null
+          ? { grand_total: money(aggregate.totalMinor) }
+          : {}),
         matching_records: aggregate.count,
         group_count: aggregate.groupCount,
       },
     });
     if (groups.length === 0) result.note = "No records match these filters.";
+    else if (aggregate.mixedNote)
+      result.note = [aggregate.mixedNote, result.note]
+        .filter(Boolean)
+        .join(" ");
     return result;
   }
 

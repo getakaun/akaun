@@ -314,10 +314,11 @@ describe("correctSettledAmount", () => {
     );
     expect(result.reversed.map((r) => r.amountMinor)).toEqual([120_000]);
     expect(result.reapplied.map((r) => r.amountMinor)).toEqual([100_000]);
+    // Only the 200.00 this correction freed; the 85.00 was free already.
     expect(result.leftoverCredit).toEqual([
       {
         payment: expect.objectContaining({ recordId: payment.id }),
-        amountMinor: 28_500,
+        amountMinor: 20_000,
       },
     ]);
     const after = getRecord(db, expense.id)!;
@@ -414,6 +415,64 @@ describe("correctSettledAmount", () => {
       result.leftoverCredit.map((r) => [r.payment.recordId, r.amountMinor]),
     ).toEqual([[second.id, 30_000]]);
     expect(getRecord(db, expense.id)!.outstandingMinor).toBe(0);
+  });
+
+  it("gives each payment back what it had on this record before spreading free credit (review finding 3)", () => {
+    const expense = bill(1200);
+    // P1 is 1,000.00: 700.00 on this record and 300.00 free. P2 is 500.00, all on it.
+    const p1 = pay(1000, [{ owed: expense, minor: 70_000 }]);
+    const p2 = pay(500, [{ owed: expense, minor: 50_000 }]);
+    expect(paySide(p1).amountMinor - paySide(p1).settledMinor).toBe(30_000);
+    const result = value(
+      correctSettledAmount(ctx, {
+        recordId: expense.id,
+        expectedVersion: version(expense.id),
+        amount: 1100,
+        reason,
+      }),
+    );
+    expect(
+      result.reapplied.map((r) => [r.payment.recordId, r.amountMinor]),
+    ).toEqual([
+      [p1.id, 70_000],
+      [p2.id, 40_000],
+    ]);
+    // P1 keeps the 300.00 it already had free; only P2's 100.00 is new.
+    expect(
+      result.leftoverCredit.map((r) => [r.payment.recordId, r.amountMinor]),
+    ).toEqual([[p2.id, 10_000]]);
+    expect(paySide(p1).settledMinor).toBe(70_000);
+    expect(paySide(p2).settledMinor).toBe(40_000);
+    expect(getRecord(db, expense.id)!.outstandingMinor).toBe(0);
+  });
+
+  it("spreads an increase over the payments' free credit, oldest payment first", () => {
+    const expense = bill(1200);
+    const p1 = pay(1000, [{ owed: expense, minor: 70_000 }]);
+    const p2 = pay(600, [{ owed: expense, minor: 50_000 }]);
+    const result = value(
+      correctSettledAmount(ctx, {
+        recordId: expense.id,
+        expectedVersion: version(expense.id),
+        amount: 1450,
+        reason,
+      }),
+    );
+    // Each takes back its 700 and 500, then P1's 300 free and P2's 100 free
+    // cover the 250 increase, P1's first.
+    expect(
+      result.reapplied.map((r) => [r.payment.recordId, r.amountMinor]),
+    ).toEqual([
+      [p1.id, 95_000],
+      [p2.id, 50_000],
+    ]);
+    expect(result.leftoverCredit).toEqual([]);
+    expect(
+      settlementRows()
+        .filter((row) => row.reversedAt === null)
+        .map((row) => row.amountMinor)
+        .sort((a, b) => a - b),
+    ).toEqual([50_000, 95_000]);
   });
 
   it("refuses a split record without lines, and lines that do not add up", () => {

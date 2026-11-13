@@ -4,13 +4,16 @@ import type {
   BatchItemResult,
   BatchResult,
 } from "../application/batch.js";
+import type { AppFailure } from "../application/result.js";
 import {
   fromAppFailure,
   toolError,
   toolResult,
+  type ToolCandidate,
   type ToolErrorBody,
   type ToolErrorCode,
 } from "./envelope.js";
+import { topCandidates } from "./resolve.js";
 
 /**
  * A batch's outcome (`application/batch.ts`) as the v2 tool result.
@@ -25,9 +28,57 @@ import {
  *
  * `n` is the item's 1-based position in the batch. In a failed call each item
  * says how it went: `ok: true` (it would have been saved, but was rolled back
- * with the rest), `error: {code, message, fix?, current_version?, ...}`, or
- * `skipped: true` (never attempted, because another item failed to prepare).
+ * with the rest), `error: {code, message, fix?, path?, candidates?, blocked?,
+ * current_version?, issues?, derived_kind?, ...}`, or `skipped: true` (never
+ * attempted, because another item failed to prepare).
+ *
+ * The call's own `code` is the items' code when they all agree, and
+ * `REFUSED` when they differ.
  */
+
+/** A field a change could not make, why, and what to undo or send first. */
+export type BlockedField = { field: string; why: string; fix: string };
+
+/**
+ * What an item's failure may carry beyond `AppFailure`, all optional, so its
+ * error in the tool result can say how to recover. A `run` returns it as its
+ * failure (it is still an `AppFailure`), the batch hands the same object back,
+ * and `batchFailureBody` keeps every field here in the item's error.
+ *
+ * `current_version`, `issues` and `derived_kind` need nothing here: they come
+ * from the failure's own `currentVersion`, `issues` and `derivedKind`, through
+ * `fromAppFailure`.
+ */
+export type ItemFailureDetails = {
+  /**
+   * The v2 code to report instead of the one `code` maps to, e.g. `AMBIGUOUS`
+   * or `NOT_FOUND` from a resolver (`resolveError`'s code).
+   */
+  toolCode?: ToolErrorCode;
+  /** Where in the input, e.g. `records[2].category`. */
+  path?: string;
+  /** What to send instead. Replaces the code's default fix. */
+  fix?: string;
+  /** Near matches for a reference that did not resolve; at most five are kept. */
+  candidates?: readonly ToolCandidate[];
+  /** The fields a change could not make (a routing block), each with why and what to undo first. */
+  blocked?: readonly BlockedField[];
+  /**
+   * Anything else the agent needs to act on, added to the error as it is,
+   * e.g. what a void with a release would undo. Never replaces a field the
+   * error already has.
+   */
+  details?: Readonly<Record<string, unknown>>;
+};
+
+/** An item's failure with the details its error keeps. */
+export type ItemFailure = AppFailure & ItemFailureDetails;
+
+/** One failed item's error: a v2 error body, plus what the item carried. */
+export type ItemErrorBody = ToolErrorBody & {
+  blocked?: readonly BlockedField[];
+  [detail: string]: unknown;
+};
 
 export type BatchItemMeta = { index: number; action: string; label?: string };
 
@@ -44,8 +95,8 @@ const RETRY_FIX = "Nothing was saved. Retry the same call in a few seconds.";
 const FIX_ITEMS =
   "Fix or remove the failing items and send the whole call again. The other items were rolled back too, so resend them as well.";
 
-/** A batch failure as a v2 error body, keeping the batch's own codes. */
-export function batchFailureBody(failure: BatchFailure): ToolErrorBody {
+/** A failure's own v2 error body: the batch's codes, else `fromAppFailure`. */
+function mappedBody(failure: BatchFailure): ToolErrorBody {
   switch (failure.batchCode) {
     case "BUSY":
       return { code: "BUSY", message: failure.reason, fix: RETRY_FIX };
@@ -64,6 +115,30 @@ export function batchFailureBody(failure: BatchFailure): ToolErrorBody {
     default:
       return fromAppFailure(failure);
   }
+}
+
+/**
+ * A batch failure as a v2 error body, keeping the batch's own codes and every
+ * detail an item's failure carried (`ItemFailureDetails`): its `toolCode`
+ * replaces the mapped code, and its `path`, `fix`, `candidates`, `blocked`
+ * and `details` are kept.
+ */
+export function batchFailureBody(
+  failure: BatchFailure & ItemFailureDetails,
+): ItemErrorBody {
+  const body: ItemErrorBody = {
+    ...mappedBody(failure),
+    ...(failure.toolCode ? { code: failure.toolCode } : {}),
+    ...(failure.path ? { path: failure.path } : {}),
+    ...(failure.fix ? { fix: failure.fix } : {}),
+    ...(failure.candidates?.length
+      ? { candidates: topCandidates(failure.candidates) }
+      : {}),
+    ...(failure.blocked?.length ? { blocked: failure.blocked } : {}),
+  };
+  for (const [key, value] of Object.entries(failure.details ?? {}))
+    if (!(key in body)) body[key] = value;
+  return body;
 }
 
 function meta(item: BatchItemResult<unknown>) {

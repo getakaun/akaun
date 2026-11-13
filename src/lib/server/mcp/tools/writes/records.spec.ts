@@ -25,7 +25,7 @@ import { createRecord } from "../../../application/records.js";
 import { recordVersion } from "../../../application/version.js";
 import { buildEvalBook, type EvalBook } from "../../__fixtures__/eval-book.js";
 import { createServerV2, MAX_DESCRIPTION_CHARS } from "../../registry.js";
-import { recordsWriteTools } from "./records.js";
+import { recordsWriteTools, splitByLargestRemainder } from "./records.js";
 
 /**
  * The records write tools driven end to end: `createServerV2` over an
@@ -410,9 +410,86 @@ describe("akaun_create_records", () => {
     });
   });
 
-  // TODO(C2): the duplicate finder (`queries/duplicate-records.ts`) is not on
-  // this branch yet; `duplicate_suspects` is wired once it is merged.
-  it.todo("lists duplicate suspects: same amount and contact, date ±3 days");
+  it("lists a near-identical expense as a duplicate suspect, in a dry run too", async () => {
+    const s = seed();
+    const earlier = resultValue(
+      createRecord(s.ctx, {
+        kind: "expense",
+        date: "2026-09-02",
+        amount: 45.9,
+        currency: "MYR",
+        exchangeRate: 1,
+        description: "Printer paper",
+        categoryAccountId: s.expense,
+        paidFromAccountId: s.bank,
+        contactId: s.acme,
+      }),
+    ).record;
+    const { call } = await serve(s.db, OWNER());
+    const again = expense({ date: "2026-09-03", contact: "Acme Sdn Bhd" });
+    const suspect = {
+      record: earlier.id,
+      no: earlier.recordNumber,
+      date: "2026-09-02",
+      amount: "45.90",
+      signals: expect.arrayContaining(["amount_date_contact"]),
+    };
+
+    const dry = await call(CREATE, { records: [again], dry_run: true });
+    expect(dry.body.items[0].duplicate_suspects).toEqual([suspect]);
+    expect(s.count("ledger_records")).toBe(1);
+
+    const { body } = await call(CREATE, { records: [again] });
+    expect(body.saved).toBe(true);
+    expect(body.items[0].duplicate_suspects).toEqual([suspect]);
+
+    // Within one call too: the second copy finds the first, not yet saved.
+    const pair = await call(CREATE, {
+      records: [expense({ amount: "77.00" }), expense({ amount: "77.00" })],
+      dry_run: true,
+    });
+    expect(pair.body.items[0].duplicate_suspects).toBeUndefined();
+    expect(pair.body.items[1].duplicate_suspects).toEqual([
+      expect.objectContaining({
+        record: pair.body.items[0].record,
+        amount: "77.00",
+      }),
+    ]);
+  });
+
+  it("lists no suspect for a distinct expense, and at most three for one", async () => {
+    const s = seed();
+    s.bankExpense("Paid from the bank", 40);
+    const { call } = await serve(s.db, OWNER());
+    const distinct = await call(CREATE, {
+      records: [expense({ contact: "Acme Sdn Bhd" })],
+    });
+    expect(distinct.body.saved).toBe(true);
+    expect(distinct.body.items[0].duplicate_suspects).toBeUndefined();
+
+    for (let i = 0; i < 4; i++) s.bankExpense("Printer paper", 45.9);
+    const copied = await call(CREATE, { records: [expense()] });
+    expect(copied.body.items[0].duplicate_suspects).toHaveLength(3);
+  });
+
+  it("creates a new contact whose name shares only its legal form with others", async () => {
+    const s = seed();
+    const { call } = await serve(s.db, OWNER());
+    const { body } = await call(CREATE, {
+      records: [
+        expense({
+          owed: true,
+          paid_from: undefined,
+          new_contact: { name: "Zenith Trading Sdn Bhd" },
+        }),
+      ],
+    });
+    expect(body.saved).toBe(true);
+    expect(body.items[0].contact_created).toEqual({
+      id: expect.any(Number),
+      name: "Zenith Trading Sdn Bhd",
+    });
+  });
 
   it("saves nothing on a dry run, and replays an idempotent call", async () => {
     const s = seed();
@@ -693,6 +770,174 @@ describe("akaun_change_records", () => {
     ]);
   });
 
+  const splitInto = (ordinary: string, freight: string) => [
+    { category: "Ordinary expenses", amount: ordinary },
+    { category: "Freight", amount: freight },
+  ];
+
+  /** 100.00 USD at 4.4567, 445.67 in the main currency, from Acme: paid from the bank, or owed (`null`). */
+  function usdExpense(
+    s: ReturnType<typeof seed>,
+    paidFromAccountId: number | null = s.bank,
+  ) {
+    return resultValue(
+      createRecord(s.ctx, {
+        kind: "expense",
+        date: "2026-09-02",
+        amount: 100,
+        currency: "USD",
+        exchangeRate: 4.4567,
+        description: "Imported goods",
+        categoryAccountId: s.expense,
+        paidFromAccountId,
+        contactId: s.acme,
+      }),
+    ).record;
+  }
+
+  it("keeps a main-currency split as sent", async () => {
+    const s = seed();
+    const record = s.bankExpense("Goods and delivery", 120);
+    const { call } = await serve(s.db, OWNER());
+    const { body } = await call(CHANGE, {
+      update: [
+        {
+          record: record.id,
+          expected_version: s.v(record.id),
+          set: { lines: splitInto("70.00", "50.00") },
+        },
+      ],
+    });
+    expect(body.saved).toBe(true);
+    expect(body.items[0].paths).toEqual(["update"]);
+    expect(byAccount(getRecord(s.db, record.id)!)).toEqual({
+      [s.bank]: -12_000,
+      [s.expense]: 7_000,
+      [s.freight]: 5_000,
+    });
+    expect(
+      body.items[0].changed.lines.after.map((line: Body) => line.amount),
+    ).toEqual(["70.00", "50.00"]);
+  });
+
+  it("reads a foreign-currency record's lines in its own currency", async () => {
+    const s = seed();
+    const usd = usdExpense(s);
+    const { call } = await serve(s.db, OWNER());
+    const { body } = await call(CHANGE, {
+      update: [
+        {
+          record: usd.id,
+          expected_version: s.v(usd.id),
+          set: { lines: [{ category: "Freight", amount: "100.00" }] },
+        },
+      ],
+    });
+    expect(body.saved).toBe(true);
+    expect(body.items[0].paths).toEqual(["update"]);
+    expect(byAccount(getRecord(s.db, usd.id)!)).toEqual({
+      [s.bank]: -44_567,
+      [s.freight]: 44_567,
+    });
+    // A line's own figure is kept in the main currency only, and says so.
+    expect(body.items[0].changed.lines.after).toEqual([
+      { category: expect.stringContaining("Freight"), amount_main: "445.67" },
+    ]);
+  });
+
+  it("corrects a settled foreign-currency bill with a split in its currency, adding up exactly to its total", async () => {
+    const s = seed();
+    const payable = accountDefaultId(s.db, DefaultAccountPurpose.Payable)!;
+    const bill = usdExpense(s, null);
+    resultValue(
+      createRecord(s.ctx, {
+        kind: "payment",
+        date: "2026-09-03",
+        amount: 445.67,
+        currency: "MYR",
+        exchangeRate: 1,
+        description: "Imported goods paid",
+        paidFromAccountId: s.bank,
+        contactId: s.acme,
+        direction: "we-pay",
+        settlements: [
+          {
+            owedMovementId: bill.movements.find((m) => m.accountId === payable)!
+              .id,
+            amountMinor: 44_567,
+          },
+        ],
+      }),
+    );
+    const { call } = await serve(s.db, OWNER());
+    const { body } = await call(CHANGE, {
+      update: [
+        {
+          record: bill.id,
+          expected_version: s.v(bill.id),
+          // 120.00 USD is 534.80, shared 70 to 50: 311.966... and 222.833...
+          set: { amount: "120.00", lines: splitInto("70.00", "50.00") },
+          reason: "The supplier invoice adds freight to the goods.",
+        },
+      ],
+    });
+    expect(body.saved).toBe(true);
+    expect(body.items[0].paths).toEqual(["correct_settled_amount"]);
+    const after = getRecord(s.db, bill.id)!;
+    expect(after.amountMinor).toBe(53_480);
+    expect(byAccount(after)).toEqual({
+      [payable]: -53_480,
+      [s.expense]: 31_197,
+      [s.freight]: 22_283,
+    });
+    expect(
+      body.items[0].changed.lines.after.map((line: Body) => line.amount_main),
+    ).toEqual(["311.97", "222.83"]);
+  });
+
+  it("checks a foreign-currency split against the amount in the record's currency", async () => {
+    const s = seed();
+    const usd = usdExpense(s);
+    const { call } = await serve(s.db, OWNER());
+    const update = (set: Record<string, unknown>) =>
+      call(CHANGE, {
+        update: [{ record: usd.id, expected_version: s.v(usd.id), set }],
+      });
+
+    const short = await update({ lines: splitInto("60.00", "30.00") });
+    expect(short.body.error.code).toBe("REFUSED");
+    expect(short.body.error.items[0].error.blocked).toEqual([
+      {
+        field: "lines",
+        why: "The lines add up to 90.00 USD, but the record's amount is 100.00 USD.",
+        fix: "Send the new amount with the lines, or make the lines add up to the amount.",
+      },
+    ]);
+
+    const unequal = await update({
+      amount: "120.00",
+      lines: splitInto("60.00", "30.00"),
+    });
+    expect(unequal.body.error.code).toBe("INVALID_INPUT");
+    expect(unequal.body.error.issues).toEqual([
+      {
+        path: "update[0].set.lines",
+        message: "The lines add up to 90.00, but the amount is 120.00.",
+      },
+    ]);
+
+    // At 0.0001 the whole 100.00 is one cent: a 0.01 line comes to nothing.
+    const tiny = await update({
+      exchange_rate: 0.0001,
+      lines: splitInto("99.99", "0.01"),
+    });
+    expect(tiny.body.error.code).toBe("INVALID_INPUT");
+    expect(tiny.body.error.items[0].error.path).toBe(
+      "update[0].set.lines[1].amount",
+    );
+    expect(getRecord(s.db, usd.id)!.amountMinor).toBe(44_567);
+  });
+
   it("answers an unknown record with NOT_FOUND, and bad input with INVALID_INPUT", async () => {
     const s = seed();
     const record = s.bankExpense();
@@ -806,6 +1051,41 @@ describe("akaun_attach_file", () => {
     expect(missing.body.error.code).toBe("NOT_FOUND");
     const bad = await call(ATTACH, { recordId: 1, filename: "x.png" });
     expect(bad.body.error.code).toBe("INVALID_INPUT");
+  });
+});
+
+describe("splitByLargestRemainder", () => {
+  it("shares a total out exactly, the cents left over to the largest remainders", () => {
+    // 445.67 over two equal lines: 222.835 each, the odd cent to the first.
+    expect(splitByLargestRemainder(44_567, [5_000, 5_000])).toEqual([
+      22_284, 22_283,
+    ]);
+    expect(splitByLargestRemainder(44_567, [3_333, 6_667])).toEqual([
+      14_854, 29_713,
+    ]);
+    expect(splitByLargestRemainder(100, [1, 1, 1])).toEqual([34, 33, 33]);
+    // A total the weights already add up to: the weights themselves.
+    expect(splitByLargestRemainder(12_000, [7_000, 5_000])).toEqual([
+      7_000, 5_000,
+    ]);
+    // No product loses a digit, however large.
+    expect(splitByLargestRemainder(9_000_000_000_000, [3, 7])).toEqual([
+      2_700_000_000_000, 6_300_000_000_000,
+    ]);
+  });
+
+  it("keeps every part within a cent of its share, and the sum exact", () => {
+    const weights = Array.from({ length: 50 }, (_, i) => 101 + i * 37);
+    const weightSum = weights.reduce((sum, w) => sum + w, 0);
+    for (const total of [1, 987_654, 1_234_567_891]) {
+      const parts = splitByLargestRemainder(total, weights);
+      expect(parts.reduce((sum, part) => sum + part, 0)).toBe(total);
+      parts.forEach((part, i) =>
+        expect(Math.abs(part - (total * weights[i]) / weightSum)).toBeLessThan(
+          1,
+        ),
+      );
+    }
   });
 });
 
@@ -943,3 +1223,7 @@ describe("the evaluation book", () => {
 });
 
 const money = (minor: number) => formatMinor(minor);
+
+/** A record's sides as `{ accountId: amountMinor }`. */
+const byAccount = (record: RecordView) =>
+  Object.fromEntries(record.movements.map((m) => [m.accountId, m.amountMinor]));

@@ -1,12 +1,23 @@
+import { createHash } from "node:crypto";
 import { withClosingRefusal } from "./closing-refusal.js";
 import { z } from "zod";
 import {
   AccountSubTypesByType,
   AccountType,
+  AccountTypeDisplayLabels,
+  DefaultAccountPurposeDisplayLabels,
+  DefaultAccountPurposeTypes,
   type AccountSubTypeCode,
   type AccountTypeCode,
+  type DefaultAccountPurposeCode,
 } from "$lib/enums.js";
 import { getAccount, openingBalanceFor } from "../queries/accounts.js";
+import {
+  ACCOUNT_DEFAULT_PURPOSES,
+  accountDefaultId,
+  getAccountDefaults,
+  replaceAccountDefaults,
+} from "../services/account-defaults.js";
 import {
   createAccount as createAccountService,
   patchAccount,
@@ -14,7 +25,7 @@ import {
   setOpeningBalance as setOpeningBalanceService,
 } from "../services/accounts.js";
 import { emitRecordUpdate } from "../services/ledger.js";
-import { ledgerEvents } from "../ledger/events.js";
+import { accountEvents, ledgerEvents } from "../ledger/events.js";
 import type { AccountView } from "../ledger/types.js";
 import { actor, requirePermissions, type AppContext } from "./context.js";
 import { fail, missing, ok, type AppResult } from "./result.js";
@@ -227,4 +238,127 @@ function setOpeningBalanceOperation(
     recordId: after,
     version: openingBalanceVersion(ctx.db, accountId),
   });
+}
+
+/**
+ * The version `setAccountDefault` is checked against: which account the
+ * purpose names now. Only the account counts: saving the defaults rewrites
+ * every purpose's `updated_at`, so a version that hashed it would go stale
+ * whenever any one default was saved.
+ */
+export function accountDefaultVersion(
+  db: AppContext["db"],
+  purpose: DefaultAccountPurposeCode,
+): string {
+  const accountId = accountDefaultId(db, purpose);
+  return accountId === null
+    ? ABSENT
+    : createHash("sha256")
+        .update(JSON.stringify(["account-default", purpose, accountId]))
+        .digest("hex")
+        .slice(0, 16);
+}
+
+export type AccountDefaultChange = {
+  purpose: DefaultAccountPurposeCode;
+  accountId: number;
+  /** The account the purpose named before; null when it named none. */
+  previousAccountId: number | null;
+  version: string;
+};
+
+function purposeName(purpose: DefaultAccountPurposeCode): string {
+  return DefaultAccountPurposeDisplayLabels[purpose] ?? `purpose ${purpose}`;
+}
+
+/** `"Sales revenue default"`, `"Sales revenue and Uncategorised income defaults"`. */
+function defaultsNamed(purposes: DefaultAccountPurposeCode[]): string {
+  const names = purposes.map(purposeName);
+  return names.length === 1
+    ? `${names[0]} default`
+    : `${names.slice(0, -1).join(", ")} and ${names.at(-1)} defaults`;
+}
+
+/**
+ * Points one default purpose at another account: what Settings › Default
+ * accounts saves, for one row.
+ *
+ * It asks for `accounts.update`, as `PUT /api/settings/account-defaults`
+ * does. `replaceAccountDefaults` saves and checks the whole set, so this
+ * passes every other purpose's saved account unchanged. The new account must
+ * suit the purpose by the rule the Settings screen applies, and the service
+ * audits the change inside its own transaction. `accounts-refresh` then tells
+ * open screens, as the route does.
+ *
+ * Because the set is saved whole, another purpose whose saved account is not
+ * usable now refuses this as well, and the refusal names it. With one such
+ * purpose, setting that one first works; with more, only Settings can choose
+ * them together. Setting the account a purpose already names saves nothing.
+ */
+export function setAccountDefault(
+  ctx: AppContext,
+  input: { purpose: DefaultAccountPurposeCode; accountId: number },
+  expectedVersion?: string,
+): AppResult<AccountDefaultChange> {
+  const refused = requirePermissions(ctx, ["accounts.update"]);
+  if (refused) return refused;
+  const { purpose, accountId } = input;
+  if (!(ACCOUNT_DEFAULT_PURPOSES as readonly number[]).includes(purpose))
+    return fail(
+      "INVALID_INPUT",
+      `Choose one of these default purposes: ${ACCOUNT_DEFAULT_PURPOSES.map(purposeName).join(", ")}.`,
+    );
+  // `getAccount` follows a merge; a merged account is gone for this purpose.
+  const account =
+    Number.isSafeInteger(accountId) && accountId > 0
+      ? getAccount(ctx.db, accountId)
+      : null;
+  if (!account || account.id !== accountId) return missing(NOT_FOUND);
+  const stale = checkVersion(
+    accountDefaultVersion(ctx.db, purpose),
+    expectedVersion,
+  );
+  if (stale) return stale;
+
+  const saved = getAccountDefaults(ctx.db);
+  const current = saved.find((item) => item.purpose === purpose);
+  const previousAccountId = current?.account?.id ?? null;
+  const changed = (): AccountDefaultChange => ({
+    purpose,
+    accountId,
+    previousAccountId,
+    version: accountDefaultVersion(ctx.db, purpose),
+  });
+  if (previousAccountId === accountId && current?.valid) return ok(changed());
+
+  const blocking = saved
+    .filter((item) => item.purpose !== purpose && !item.valid)
+    .map((item) => item.purpose);
+  if (blocking.length)
+    return fail(
+      "REFUSED",
+      `The ${defaultsNamed(blocking)} ${blocking.length === 1 ? "names" : "name"} no usable account, and the defaults are saved together. ${
+        blocking.length === 1 && current?.valid
+          ? `Set the ${defaultsNamed(blocking)} first.`
+          : "Choose all of them in Settings › Default accounts."
+      }`,
+    );
+
+  const replaced = replaceAccountDefaults(
+    ctx.db,
+    actor(ctx),
+    saved.map((item) => ({
+      purpose: item.purpose,
+      accountId: item.purpose === purpose ? accountId : item.account!.id,
+    })),
+  );
+  if (!replaced.ok)
+    return fail(
+      "REFUSED",
+      `Account ${account.code ?? account.id} ${account.name} cannot be the ${purposeName(purpose)} default. It needs an active ${(AccountTypeDisplayLabels[DefaultAccountPurposeTypes[purpose]] ?? "").toLowerCase()} account that suits that purpose.`,
+    );
+  // After the service's transaction, as the route emits it. Inside a unit of
+  // work the emitter holds it until the outermost commit.
+  accountEvents.emit("accounts-refresh", { reason: "defaults" });
+  return ok(changed());
 }

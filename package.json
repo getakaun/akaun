@@ -25,9 +25,12 @@
     "desktop:dmg": "bash scripts/build-desktop-dmg.sh",
     "admin:create": "bun run scripts/create-admin.ts",
     "icons:maskable": "bun run scripts/gen-maskable-icon.ts",
-    "test:oauth": "bun test --preload ./scripts/mcp-test-preload.ts src/lib/server/oauth/oauth.spec.ts"
+    "test:oauth": "bun test --preload ./scripts/mcp-test-preload.ts src/lib/server/oauth/oauth.spec.ts",
+    "eval:mcp": "bun --no-env-file --preload ./scripts/eval/preload.ts scripts/eval/run.ts",
+    "eval:analyze": "bun --no-env-file scripts/eval/analyze.ts"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "1.8.0",
     "@eslint/js": "^10.0.1",
     "@internationalized/date": "^3.12.0",
     "@lucide/svelte": "^1.18.0",

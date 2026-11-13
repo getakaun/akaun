@@ -50,6 +50,7 @@ import type {
   Refusable,
 } from "../ledger/types.js";
 import { createLogger } from "../logger.js";
+import { currentUnitOfWork, runUnitOfWork } from "../unit-of-work.js";
 import { defaultAccountId, getAccount } from "../queries/accounts.js";
 import { resolveOrCreateContact } from "../queries/contacts.js";
 import { addAttachment } from "../queries/ledger.js";
@@ -171,8 +172,12 @@ class Refused extends Error {
   }
 }
 
+/** A file move this confirm made, so a failed savepoint can put it back. */
+type FileMove = { moved: { from: string; to: string } | null };
+
 /**
- * Confirms one reviewed document.
+ * Confirms one reviewed document. Synchronous: everything it needs, an
+ * exchange rate included, is already settled in `fields`.
  *
  * Every write happens in one transaction, and the first write is a claim: the
  * job moves out of review only if it is still in review. So when two confirms
@@ -180,7 +185,11 @@ class Refused extends Error {
  * refused. When a rule refuses the record, the transaction is undone as a
  * whole: no contact is left behind, and the job is still waiting for review.
  *
- * Nothing is announced to open tabs until the transaction has committed.
+ * It runs as a unit of work (`unit-of-work.ts`), so nothing is announced to
+ * open tabs until the outermost transaction has committed, and the file move
+ * is undone if that transaction does not commit. Called alone, the unit is its
+ * own; called inside a batch's unit, it joins it as a savepoint, and in a dry
+ * run nothing moves and nothing is announced.
  */
 export function confirmImportRow(
   db: LedgerDb,
@@ -189,44 +198,47 @@ export function confirmImportRow(
   options: { actingUserId: number; storageRoot?: string },
 ): Refusable<ImportConfirmed> {
   const root = options.storageRoot ?? STORAGE_PATH;
-  const emits: DeferredEmits = [];
-  // The file move is not part of the transaction, so it is undone by hand.
-  // It runs as the last step before the attachment row: after the claim and
-  // after the record was accepted, so a refusal never touches the file. If
-  // the transaction still fails after the move, the file goes back to its temp
-  // path, and the job in review finds its file again. On success the file is
-  // already where the attachment points. The move and the transaction are one
-  // synchronous run, so no other request in this process can come between them.
-  const file: { moved: { from: string; to: string } | null } = { moved: null };
+  // The move is the last step before the attachment row: after the claim and
+  // after the record was accepted, so a refusal never touches the file.
+  const file: FileMove = { moved: null };
+  // A unit that is already open belongs to a caller that may go on after
+  // this savepoint fails (a group's other items), so its own rollback is not
+  // enough to put the file back. A unit this call opens undoes the move itself.
+  const joined = currentUnitOfWork()?.state === "open";
 
-  let confirmed: ImportConfirmed;
   try {
-    confirmed = db.transaction(() => {
-      const written = writeConfirmation(
-        db,
-        { ...job, confirmedBy: options.actingUserId },
-        fields,
-        root,
-        emits,
-        file,
-      );
-      if (!written.ok) throw new Refused(written.reason);
-      return written.value;
+    return runUnitOfWork("write", () => {
+      const emits: DeferredEmits = [];
+      const confirmed = db.transaction(() => {
+        const written = writeConfirmation(
+          db,
+          { ...job, confirmedBy: options.actingUserId },
+          fields,
+          root,
+          emits,
+          file,
+        );
+        if (!written.ok) throw new Refused(written.reason);
+        return written.value;
+      });
+      // Every emitter defers to the unit, so these reach open tabs only once
+      // the outermost transaction has committed.
+      for (const emit of emits) emit();
+      if (job.itemId) {
+        emitItemUpdates(db, job.jobId, [job.itemId], options.actingUserId);
+      }
+      emitJobUpdate(db, job.jobId, options.actingUserId);
+      return { ok: true as const, value: confirmed };
     });
   } catch (err) {
-    if (file.moved) returnToTemp(file.moved.to, file.moved.from, root);
+    if (joined && file.moved) {
+      returnToTemp(file.moved.to, file.moved.from, root);
+    }
     if (err instanceof Refused) return { ok: false, reason: err.reason };
     const reason = closedPeriodReason(err);
     if (reason) return { ok: false, reason };
     throw err;
   }
-
-  for (const emit of emits) emit();
-  if (job.itemId) {
-    emitItemUpdates(db, job.jobId, [job.itemId], options.actingUserId);
-  }
-  emitJobUpdate(db, job.jobId, options.actingUserId);
-  return { ok: true, value: confirmed };
 }
 
 /**
@@ -258,7 +270,7 @@ function writeConfirmation(
   fields: ImportReviewFields,
   root: string,
   emits: DeferredEmits,
-  file: { moved: { from: string; to: string } | null },
+  file: FileMove,
 ): Refusable<ImportConfirmed> {
   if (isTransferType(fields.documentType)) {
     return writeTransferConfirmation(db, job, fields, root, emits, file);
@@ -339,7 +351,7 @@ function finishConfirmation(
   job: ImportJobSource,
   fields: ImportReviewFields,
   root: string,
-  file: { moved: { from: string; to: string } | null },
+  file: FileMove,
   recordId: number,
   docCode: number,
 ) {
@@ -399,7 +411,7 @@ function writeTransferConfirmation(
   fields: ImportReviewFields,
   root: string,
   emits: DeferredEmits,
-  file: { moved: { from: string; to: string } | null },
+  file: FileMove,
 ): Refusable<ImportConfirmed> {
   const docCode = fields.documentType;
   const main = mainCurrencyCode(db);
@@ -558,7 +570,7 @@ function movedReceiptFile(
   job: ImportJobSource,
   recordDate: string,
   root: string,
-  file: { moved: { from: string; to: string } | null },
+  file: FileMove,
 ): string {
   const date = job.fileDate ?? recordDate;
   try {
@@ -591,7 +603,7 @@ function sharedFileForItem(
   db: LedgerDb,
   job: ImportJobSource,
   root: string,
-  file: { moved: { from: string; to: string } | null },
+  file: FileMove,
 ): string {
   const group = db
     .select({

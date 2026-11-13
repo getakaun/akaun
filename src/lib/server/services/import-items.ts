@@ -3,7 +3,7 @@
  * category or an account on many at once, and discarding the document.
  *
  * A group is a queue row read as several items (`ImportState.Grouped`). Each
- * item is confirmed by the same code as a receipt (`confirmReviewed`), so an
+ * item is confirmed by the same code as a receipt (`confirmImportRow`), so an
  * item becomes a record under exactly the rules a receipt does. What this file
  * adds is the group: many items at once, the one shared file, and the group
  * finishing when nothing waits any more (006 FR-016 to FR-020, FR-027, FR-028).
@@ -53,6 +53,7 @@ import type { ImportItemEvent } from "../import/job-event.js";
 import {
   documentTypeOf,
   kindChangeRefusal,
+  settleReviewFields,
   transferAccountsOf,
   transferSidesOf,
   type ReviewOverrides,
@@ -61,7 +62,12 @@ import {
 import type { AccountView, LedgerDb, Refusable } from "../ledger/types.js";
 import { getAccount } from "../queries/accounts.js";
 import { requireAccountDefault } from "./account-defaults.js";
-import { confirmReviewed, type ImportConfirmed } from "./import.js";
+import {
+  confirmImportRow,
+  type ImportConfirmed,
+  type ImportJobSource,
+  type ImportReviewFields,
+} from "./import.js";
 
 type ImportItemRow = typeof importItems.$inferSelect;
 type ImportJobRow = typeof importQueue.$inferSelect;
@@ -282,18 +288,27 @@ function storedOverrides(
 }
 
 /**
- * Confirms one item and makes its record. The whole of it happens in one
- * transaction, or nothing does (FR-044); see `confirmImportRow`. When this is
- * the first item of its group to be confirmed, the document's file moves to
- * the records folder, and every later item attaches that same file (FR-027).
+ * One item of a group made ready to confirm: what its record will say, settled
+ * from its stored fields (an exchange rate included), and where its file is.
+ * Plain data, so it can be kept between the asynchronous prepare and the
+ * synchronous commit.
  */
-export async function confirmGroupItem(
+export type PreparedGroupItem = {
+  job: ImportJobSource;
+  fields: ImportReviewFields;
+};
+
+/**
+ * Everything about confirming one item that waits: the checks, its stored
+ * corrections, and the exchange rate it may need to look up. Writes nothing
+ * to the ledger (a looked-up rate is cached, outside any transaction).
+ */
+export async function prepareGroupItem(
   db: LedgerDb,
   jobId: string,
   itemId: string,
-  options: ServiceOptions,
   look: Lookups = lookups(db),
-): Promise<{ ok: true; value: ImportConfirmed } | SettleRefusal> {
+): Promise<{ ok: true; value: PreparedGroupItem } | SettleRefusal> {
   const group = loadGroup(db, jobId);
   if (!group || group.state !== ImportState.Grouped) {
     return { ok: false, kind: "rule", reason: NOT_A_GROUP };
@@ -306,19 +321,153 @@ export async function confirmGroupItem(
   const overrides = storedOverrides(item, look);
   if (!overrides.ok) return { ...overrides, kind: "rule" };
 
-  return confirmReviewed(
-    db,
-    {
-      jobId,
-      itemId,
-      uploadedBy: group.createdBy,
-      tempFilePath: group.tempFilePath,
-      extractedText: null,
+  const settled = await settleReviewFields(db, item, overrides.value);
+  if (!settled.ok) return settled;
+  return {
+    ok: true,
+    value: {
+      job: {
+        jobId,
+        itemId,
+        uploadedBy: group.createdBy,
+        tempFilePath: group.tempFilePath,
+        extractedText: null,
+      },
+      fields: settled.value,
     },
-    item,
-    overrides.value,
-    options,
+  };
+}
+
+/**
+ * Writes one prepared item: its record, the shared file, and the group
+ * finishing when it was the last. Synchronous, so a batch can call it inside
+ * its own transaction; see `confirmImportRow`, which claims the item again
+ * there, so an item that changed state since it was prepared is not imported.
+ */
+export function commitGroupItem(
+  db: LedgerDb,
+  prepared: PreparedGroupItem,
+  options: ServiceOptions,
+): Refusable<ImportConfirmed> {
+  return confirmImportRow(db, prepared.job, prepared.fields, options);
+}
+
+/**
+ * Confirms one item and makes its record. The whole of it happens in one
+ * transaction, or nothing does (FR-044); see `confirmImportRow`. When this is
+ * the first item of its group to be confirmed, the document's file moves to
+ * the records folder, and every later item attaches that same file (FR-027).
+ */
+export async function confirmGroupItem(
+  db: LedgerDb,
+  jobId: string,
+  itemId: string,
+  options: ServiceOptions,
+  look: Lookups = lookups(db),
+): Promise<{ ok: true; value: ImportConfirmed } | SettleRefusal> {
+  const prepared = await prepareGroupItem(db, jobId, itemId, look);
+  if (!prepared.ok) return prepared;
+  const confirmed = commitGroupItem(db, prepared.value, options);
+  return confirmed.ok ? confirmed : { ...confirmed, kind: "rule" };
+}
+
+/**
+ * One selected item of a confirm, after its prepare: either what happens to it
+ * is already known (it is gone, done, not waiting, needs attention, or could
+ * not be settled), or it is ready to commit.
+ */
+export type PreparedGroupEntry =
+  | { id: string; outcome: ItemOutcome }
+  | {
+      id: string;
+      prepared: PreparedGroupItem;
+      /** The item as prepared, from the caller's `versionOf`. */
+      version?: string;
+    };
+
+/**
+ * Prepares a confirm of many items (FR-019) without writing anything: the
+ * same checks, in the same order, as `confirmGroupItems` makes item by item,
+ * and every exchange rate looked up. The entries can then be committed
+ * synchronously, inside one transaction (`commitGroupEntry`).
+ *
+ * `versionOf` records each ready item's version before its rate is looked up,
+ * so the commit can tell whether it changed meanwhile.
+ */
+export async function prepareGroupItems(
+  db: LedgerDb,
+  jobId: string,
+  selection: ItemSelection,
+  versionOf?: (itemId: string) => string,
+): Promise<Refusable<PreparedGroupEntry[]>> {
+  const group = loadGroup(db, jobId);
+  if (!group || group.state !== ImportState.Grouped) {
+    return { ok: false, reason: NOT_A_GROUP };
+  }
+  const main = mainCurrencyCode(db);
+  const look = lookups(db);
+  const items = selectedItems(db, jobId, selection);
+  const entries: PreparedGroupEntry[] = missingIds(selection, items).map(
+    (id) => ({ id, outcome: { id, ok: false, reason: ITEM_GONE } }),
   );
+  for (const listed of items) {
+    // Read again: another tab may have changed it while an earlier item's
+    // exchange rate was looked up.
+    const item = loadItem(db, jobId, listed.id);
+    const decided = item ? decidedOutcome(item, main) : null;
+    if (!item || decided) {
+      entries.push({
+        id: listed.id,
+        outcome: decided ?? { id: listed.id, ok: false, reason: ITEM_GONE },
+      });
+      continue;
+    }
+    const version = versionOf?.(item.id);
+    const prepared = await prepareGroupItem(db, jobId, item.id, look);
+    entries.push(
+      prepared.ok
+        ? { id: item.id, prepared: prepared.value, version }
+        : {
+            id: item.id,
+            outcome: { id: item.id, ok: false, reason: prepared.reason },
+          },
+    );
+  }
+  return { ok: true, value: entries };
+}
+
+/**
+ * Commits one prepared entry and says what happened to it. Synchronous: a
+ * batch calls it inside its own transaction, and an item the books refuse is
+ * an outcome, not an error, so the other items go on.
+ */
+export function commitGroupEntry(
+  db: LedgerDb,
+  entry: PreparedGroupEntry,
+  options: ServiceOptions,
+): ItemOutcome {
+  if ("outcome" in entry) return entry.outcome;
+  const confirmed = commitGroupItem(db, entry.prepared, options);
+  return confirmed.ok
+    ? { id: entry.id, ok: true, recordId: confirmed.value.record.id }
+    : { id: entry.id, ok: false, reason: confirmed.reason };
+}
+
+/**
+ * What a confirm-many says about an item without trying it, or null when it
+ * should be tried: an item already imported is reported done, with its
+ * record, so a run sent again is safe (SC-011); one not waiting is left; and
+ * one that needs attention is left with the reason.
+ */
+function decidedOutcome(item: ImportItemRow, main: string): ItemOutcome | null {
+  if (item.state === ImportState.Imported) {
+    return { id: item.id, ok: true, recordId: item.resultId ?? undefined };
+  }
+  if (item.state !== ImportState.PendingReview) {
+    return { id: item.id, ok: false, reason: NOT_WAITING };
+  }
+  const attention = itemAttention(item, main);
+  return attention ? { id: item.id, ok: false, reason: attention } : null;
 }
 
 /**
@@ -370,23 +519,13 @@ export async function confirmGroupItems(
       outcomes.push({ id: listed.id, ok: false, reason: ITEM_GONE });
       continue;
     }
-    if (item.state === ImportState.Imported) {
-      outcomes.push({
-        id: item.id,
-        ok: true,
-        recordId: item.resultId ?? undefined,
-      });
+    const decided = decidedOutcome(item, main);
+    if (decided) {
+      outcomes.push(decided);
       continue;
     }
-    if (item.state !== ImportState.PendingReview) {
-      outcomes.push({ id: item.id, ok: false, reason: NOT_WAITING });
-      continue;
-    }
-    const attention = itemAttention(item, main);
-    if (attention) {
-      outcomes.push({ id: item.id, ok: false, reason: attention });
-      continue;
-    }
+    // Each item commits as its own unit of work (`confirmImportRow`), so its
+    // events reach open tabs as soon as it is in the books.
     const confirmed = await confirmGroupItem(db, jobId, item.id, options, look);
     outcomes.push(
       confirmed.ok

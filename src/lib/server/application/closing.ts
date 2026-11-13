@@ -117,8 +117,13 @@ function earliestRecordDate(db: LedgerDb): string | null {
   );
 }
 
-function review(ctx: AppContext, monthEnd: string): ClosingPreview {
-  const db = ctx.db;
+/**
+ * The closing checks for the month ending `monthEnd`, read from `db`: what
+ * `previewClosing` shows, what `closeMonth` re-runs inside its transaction,
+ * and the month-end blockers of the books review (`queries/books-review.ts`).
+ * A pure read, with no permission check of its own: each caller asks first.
+ */
+export function closingReview(db: LedgerDb, monthEnd: string): ClosingPreview {
   const current = closedThrough(db);
   const earliest = earliestRecordDate(db);
   const dateFrom =
@@ -149,12 +154,12 @@ function review(ctx: AppContext, monthEnd: string): ClosingPreview {
     })),
   };
   const warnings: ClosingWarning[] = [];
-  const depreciationDue = ctx.db
+  const depreciationDue = db
     .select({ id: fixedAssets.id, name: fixedAssets.name })
     .from(fixedAssets)
     .all()
     .flatMap((asset) =>
-      assetSchedule(ctx.db, asset.id)
+      assetSchedule(db, asset.id)
         .rows.filter(
           (row) =>
             row.amountMinor > 0 &&
@@ -543,7 +548,9 @@ export function previewClosing(
   const reason = allowedMonth(parsed.data.monthEnd, closedThrough(ctx.db));
   if (reason) return fail("REFUSED", reason);
   // One snapshot, so warnings, report notes and the revision describe the same book.
-  return ctx.db.transaction(() => ok(review(ctx, parsed.data.monthEnd)));
+  return ctx.db.transaction(() =>
+    ok(closingReview(ctx.db, parsed.data.monthEnd)),
+  );
 }
 
 export function closingPage(ctx: AppContext): AppResult<ClosingPageData> {
@@ -618,11 +625,10 @@ export function closeMonth(
   const result: AppResult<ClosingStatus> = withClosingRefusal(() =>
     ctx.db.transaction(
       (tx) => {
-        const transactionCtx = { ...ctx, db: tx };
         const before = closedThrough(tx);
         const reason = allowedMonth(data.monthEnd, before);
         if (reason) return fail("REFUSED", reason);
-        const current = review(transactionCtx, data.monthEnd);
+        const current = closingReview(tx, data.monthEnd);
         if (current.revision !== data.revision)
           return fail(
             "CONFLICT",

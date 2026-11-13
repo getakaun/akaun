@@ -1,12 +1,7 @@
 import { redirect } from "@sveltejs/kit";
 import { db } from "$lib/server/db/client.js";
 import { can } from "$lib/server/permissions.js";
-import {
-  AccountType,
-  ImportState,
-  LedgerRecordKind,
-  LedgerRecordKindDisplayLabels,
-} from "$lib/enums.js";
+import { AccountType, LedgerRecordKindDisplayLabels } from "$lib/enums.js";
 import { localToday } from "$lib/local-date.js";
 import {
   COMPARE_OPTIONS,
@@ -30,10 +25,9 @@ import {
   outstandingAgeing,
 } from "$lib/server/queries/settlements.js";
 import { listRecords } from "$lib/server/queries/ledger.js";
-import { listImportJobs } from "$lib/server/queries/import.js";
 import { invoiceSummary } from "$lib/server/queries/invoices.js";
 import { openQuotationSummary } from "$lib/server/queries/quotations.js";
-import { unmatchedLinesByAccount } from "$lib/server/services/reconciliation.js";
+import { loadAttention } from "$lib/server/queries/books-review.js";
 import { CASH_AND_EQUIVALENT_SUBTYPES } from "$lib/server/ledger/account-type.js";
 import {
   cashBridge,
@@ -44,7 +38,6 @@ import {
   topLinesWithOther,
 } from "$lib/server/queries/dashboard.js";
 import type {
-  AttentionItem,
   CashSection,
   OwedSection,
   OwedSide,
@@ -121,7 +114,7 @@ export function loadDashboardPage(locals: App.Locals, url: URL) {
     position,
     owed,
     pipeline: pipeline.quotations || pipeline.invoices ? pipeline : null,
-    attention: loadAttention(locals, today, position, pipeline),
+    attention: loadAttention(db, locals, today, position, pipeline),
     recent: canRecords ? loadRecent(db) : null,
   };
 }
@@ -246,130 +239,6 @@ function loadOwed(
     weOwe: owedSide(db, "we-owe", today),
     canOpenContacts,
   };
-}
-
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
-}
-
-/**
- * The "needs attention" list (007 FR-011). Each item asks for its own screen's
- * permission and is left out when there is nothing to report.
- */
-function loadAttention(
-  locals: App.Locals,
-  today: string,
-  position: PositionSection | null,
-  pipeline: PipelineSection,
-): AttentionItem[] {
-  const items: AttentionItem[] = [];
-
-  if (position && !position.balances) {
-    items.push({
-      key: "unbalanced",
-      label: "Balance sheet does not balance",
-      detail: "Do a check of the balance sheet before you use these figures",
-      target: { screen: "balance-sheet", asAt: today },
-      tone: "red",
-    });
-  }
-
-  if (can(locals, "import.read")) {
-    const waiting = listImportJobs(db, {
-      states: [ImportState.PendingReview],
-      limit: 1,
-      offset: 0,
-    }).total;
-    if (waiting > 0) {
-      items.push({
-        key: "imports",
-        label: plural(
-          waiting,
-          "imported document to review",
-          "imported documents to review",
-        ),
-        detail: "Auto Import read these documents. Review and confirm them.",
-        target: { screen: "import" },
-        tone: "amber",
-      });
-    }
-  }
-
-  if (pipeline.invoices && pipeline.invoices.overdueCount > 0) {
-    items.push({
-      key: "overdue-invoices",
-      label: plural(
-        pipeline.invoices.overdueCount,
-        "overdue invoice",
-        "overdue invoices",
-      ),
-      detail: "The due date is past and payment is not complete",
-      target: { screen: "invoices" },
-      tone: "red",
-    });
-  }
-
-  if (can(locals, "records.read")) {
-    const unpaid = listRecords(db, {
-      kind: LedgerRecordKind.Expense,
-      paid: false,
-      limit: 1,
-    }).total;
-    if (unpaid > 0) {
-      items.push({
-        key: "unpaid-bills",
-        label: plural(unpaid, "unpaid bill", "unpaid bills"),
-        detail: "Expenses recorded on credit. Payment is not complete.",
-        target: { screen: "unpaid-expenses" },
-        tone: "amber",
-      });
-    }
-  }
-
-  if (can(locals, "reconciliation.read")) {
-    const byAccount = unmatchedLinesByAccount(db);
-    const lines = byAccount.reduce((sum, a) => sum + a.count, 0);
-    if (lines > 0) {
-      items.push({
-        key: "unmatched",
-        label: plural(
-          lines,
-          "unreconciled bank line",
-          "unreconciled bank lines",
-        ),
-        detail:
-          byAccount.length === 1
-            ? "On the bank statements of one account"
-            : `On the bank statements of ${byAccount.length} accounts`,
-        target:
-          byAccount.length === 1
-            ? { screen: "reconcile", accountId: byAccount[0].accountId }
-            : { screen: "accounts" },
-        tone: "neutral",
-      });
-    }
-  }
-
-  if (
-    can(locals, "accounts.read") &&
-    position &&
-    position.needsReviewCount > 0
-  ) {
-    items.push({
-      key: "needs-review",
-      label: plural(
-        position.needsReviewCount,
-        "account without a sub-type",
-        "accounts without a sub-type",
-      ),
-      detail:
-        "Set a sub-type (Bank, Cash, Receivable, Loan) so that the reports classify these accounts",
-      target: { screen: "accounts" },
-      tone: "neutral",
-    });
-  }
-
-  return items;
 }
 
 /** Which way money went, judged by what the record did to cash and equivalents. */

@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { monthEndFor } from "$lib/closing.js";
-import { localToday } from "$lib/local-date.js";
+import { addDaysISO, localToday } from "$lib/local-date.js";
 import * as schema from "../../../db/schema.js";
 import { BOOKS_REVIEW_CHECKS } from "../../../queries/books-review.js";
 import { localsFor } from "../../../permissions/test-locals.js";
@@ -358,16 +358,17 @@ describe("review_books", () => {
       expect(ran).toBeGreaterThan(8);
       expect(parsed).toContain("search_records");
       expect(parsed).toContain("get_record");
-      // Read tools of other tasks, not merged in this branch: only their
-      // names are checked above. Anything else here would be a typo.
-      for (const base of unchecked)
-        expect([
-          "find_contacts",
-          "get_contact",
-          "get_report",
-          "get_bank_reconciliation",
-          "get_sales_documents",
-        ]).toContain(base);
+      // Every read tool a finding can point at is merged, so every `next`
+      // above was parsed and called, not just named.
+      expect([...unchecked]).toEqual([]);
+      for (const base of [
+        "find_contacts",
+        "get_contact",
+        "get_report",
+        "get_bank_reconciliation",
+        "get_sales_documents",
+      ])
+        expect(parsed).toContain(base);
     },
     SLOW,
   );
@@ -523,8 +524,41 @@ describe("review_books", () => {
       });
       expect(isError).toBe(false);
       expect(body.period).toEqual({ to: asAt });
-      for (const item of find(body, "uncategorised")?.items ?? [])
-        expect(item.summary).toBeDefined();
+      // This check leaves the closed months out, so next names the open part.
+      expect(find(body, "uncategorised")!.next!.args).toEqual({
+        category: "uncategorised",
+        period: `${addDaysISO(book.manifest.closedThrough, 1)}..${asAt}`,
+      });
+    },
+    SLOW,
+  );
+
+  it(
+    "names only the account for the bank tool, which takes no as_at",
+    async () => {
+      const book = await shared;
+      const { review } = await connect(book, agentLocals(book));
+      const account = book.manifest.plants.bankStatement.account;
+      const asAt = await review({
+        as_at: TODAY,
+        checks: ["unmatched_bank"],
+        per_check: 1,
+      });
+      expect(find(asAt.body, "unmatched_bank")!.next).toEqual({
+        tool: "akaun_get_bank_reconciliation",
+        args: { account },
+      });
+      // A period is passed on: the bank tool takes it.
+      const month = book.manifest.statementMonth;
+      const period = await review({
+        period: month,
+        checks: ["unmatched_bank"],
+        per_check: 1,
+      });
+      expect(find(period.body, "unmatched_bank")!.next).toEqual({
+        tool: "akaun_get_bank_reconciliation",
+        args: { account, period: `${month}-01..${monthEndFor(month)}` },
+      });
     },
     SLOW,
   );

@@ -1,8 +1,13 @@
-import { StatementDirection, StatementExtractionState } from "$lib/enums.js";
+import {
+  StatementExtractionState,
+  type StatementDirectionCode,
+} from "$lib/enums.js";
 import { diffRecords, recordAudit } from "$lib/server/audit.js";
-import { mainCurrencyCode } from "$lib/server/currency/form.js";
+import { isValidDate } from "$lib/server/date.js";
 import { deleteStatementFile } from "$lib/server/file-storage.js";
 import { can } from "$lib/server/permissions.js";
+import { fromMinor, toMinor } from "$lib/server/ledger/money.js";
+import type { Minor } from "$lib/server/ledger/types.js";
 import { sidesFromAccounts } from "$lib/server/ledger/sides-from-accounts.js";
 import { loadSidesContext } from "$lib/server/services/sides-context.js";
 import type { LeafPermission } from "$lib/permissions/catalog.js";
@@ -15,19 +20,21 @@ import { EPSILON, round2 } from "$lib/server/reconciliation/types.js";
 import { VOIDED_RECORD_REASON } from "$lib/server/queries/void-state.js";
 import type {
   MovementCandidate,
+  ReconciliationAllocation,
+  StatementLineRow,
   StatementSummary,
   StatementWithAccount,
 } from "$lib/server/reconciliation/types.js";
 import {
   deleteLine as deleteLineQuery,
   deleteStatement as deleteStatementQuery,
-  findRecordMovementOnAccount,
   getLine,
   getMovementCandidate,
   getStatement,
   insertAllocation,
   insertStatement,
   listAllocations,
+  listLineAllocations,
   listReconciliableAccounts,
   listLines,
   listMovementAllocations,
@@ -40,7 +47,6 @@ import {
 } from "$lib/server/queries/reconciliation.js";
 import type { ReconciliationDb } from "$lib/server/queries/reconciliation.js";
 import {
-  createRecord,
   emitRecordUpdate,
   type DeferredEmits,
 } from "$lib/server/services/ledger.js";
@@ -149,7 +155,7 @@ export function getStatementDetail(
 }
 
 /** Refuse an account that is not somewhere money actually sits (FR-021). */
-function requirePostingAccount(db: ReconciliationDb, accountId: number) {
+export function requirePostingAccount(db: ReconciliationDb, accountId: number) {
   const account = listReconciliableAccounts(db).find(
     (candidate) => candidate.id === accountId,
   );
@@ -487,13 +493,30 @@ export function autoMatchMovements(
       continue;
     }
     const before = listMovementAllocations(db, movement.movementId);
-    const saved = replaceMovementAllocationsQuery(
-      db,
-      movement.movementId,
-      movement.amount,
-      allocations,
-      userId,
-    );
+    // The match and its audit row commit together, or neither does.
+    db.transaction(() => {
+      const saved = replaceMovementAllocationsQuery(
+        db,
+        movement.movementId,
+        movement.amount,
+        allocations,
+        userId,
+      );
+      recordAudit(db, {
+        // Filed under the ledger record the allocation belongs to (see below).
+        recordType: "record",
+        recordId: movement.recordId,
+        userId,
+        action: "update",
+        changes: [
+          {
+            field: `allocations:movement:${movement.movementId}`,
+            before,
+            after: saved,
+          },
+        ],
+      });
+    });
     for (const allocation of allocations) {
       remainingByLine.set(
         allocation.lineId,
@@ -502,20 +525,6 @@ export function autoMatchMovements(
         ),
       );
     }
-    recordAudit(db, {
-      // Filed under the ledger record the allocation belongs to (see below).
-      recordType: "record",
-      recordId: movement.recordId,
-      userId,
-      action: "update",
-      changes: [
-        {
-          field: `allocations:movement:${movement.movementId}`,
-          before,
-          after: saved,
-        },
-      ],
-    });
     matched += 1;
     matchedMovementIds.push(movement.movementId);
     matchedRecordIds.add(movement.recordId);
@@ -597,23 +606,27 @@ export function replaceMovementAllocations(
       409,
     );
   const before = listMovementAllocations(db, movementId);
-  const saved = replaceMovementAllocationsQuery(
-    db,
-    movementId,
-    movement.amount,
-    inputs.map((i) => ({ ...i, amount: round2(i.amount) })),
-    userId,
-  );
-  recordAudit(db, {
-    // Filed under the ledger record the allocation belongs to, so it shows in
-    // that record's Activity — statement ids live under 'reconciliation'.
-    recordType: "record",
-    recordId: movement.recordId,
-    userId,
-    action: "update",
-    changes: [
-      { field: `allocations:movement:${movementId}`, before, after: saved },
-    ],
+  // The match and its audit row commit together, or neither does.
+  const saved = db.transaction(() => {
+    const rows = replaceMovementAllocationsQuery(
+      db,
+      movementId,
+      movement.amount,
+      inputs.map((i) => ({ ...i, amount: round2(i.amount) })),
+      userId,
+    );
+    recordAudit(db, {
+      // Filed under the ledger record the allocation belongs to, so it shows in
+      // that record's Activity — statement ids live under 'reconciliation'.
+      recordType: "record",
+      recordId: movement.recordId,
+      userId,
+      action: "update",
+      changes: [
+        { field: `allocations:movement:${movementId}`, before, after: rows },
+      ],
+    });
+    return rows;
   });
   reconciliationEvents.emit("allocation-update", {
     movementId,
@@ -662,128 +675,334 @@ export const TRANSFER_NEEDS_ADJUSTMENTS =
   "A transfer from a bank line goes between two places money sits. Any other account needs the Adjustments ability. Ask an administrator for it, or match the line to a record instead.";
 
 /**
- * Turn an unmatched bank line into a transfer between two accounts the user
- * holds, and match it in the same action (FR-023).
- *
- * This is the answer to a line that has no record behind it because no record
- * was ever needed: money moved from one of the user's own pots to another, so
- * nothing was earned or spent. The record, its two sides and the match are
- * written together — a half-written transfer would leave a movement nothing
- * points at, and the line still looking unmatched.
+ * The rules a transfer from a bank line keeps, whichever door it comes through
+ * (FR-023): two different accounts, the other one still open, and — unless the
+ * user may post adjustments — both of them places money sits
+ * (`transferTargetIds`). Throws the refusal.
  */
-export function createTransferForLine(
+export function assertTransferAccounts(
   db: ReconciliationDb,
   locals: App.Locals,
-  lineId: number,
-  input: { otherAccountId: number; description?: string },
-) {
-  const userId = authorize(locals, "reconciliation.create");
-  // It writes a record, so it needs the ability to add one — not only the
-  // reconciliation ability that lets someone match lines.
-  if (!can(locals, "records.create"))
-    throw new ReconciliationError("Forbidden", 403);
-  const line = getLine(db, lineId);
-  if (!line) throw new ReconciliationError("Statement line not found", 404);
-  const statement = getStatement(db, line.statementId);
-  if (!statement)
-    throw new ReconciliationError("Bank statement not found", 404);
-  if (statement.accountId == null)
-    throw new ReconciliationError(
-      "Give this statement an account before recording a transfer from it.",
-      409,
-    );
-  if (statement.accountId === input.otherAccountId)
+  statementAccountId: number,
+  otherAccountId: number,
+): void {
+  if (statementAccountId === otherAccountId)
     throw new ReconciliationError(
       "A transfer needs two different accounts.",
       409,
     );
-  requirePostingAccount(db, input.otherAccountId);
+  requirePostingAccount(db, otherAccountId);
   if (
-    transferTargetIds(db, locals, statement.accountId, [input.otherAccountId])
+    transferTargetIds(db, locals, statementAccountId, [otherAccountId])
       .length === 0
   )
     throw new ReconciliationError(TRANSFER_NEEDS_ADJUSTMENTS, 403);
-  if (listAllocations(db).some((a) => a.lineId === lineId))
-    throw new ReconciliationError(
-      "This transaction is already matched. Undo the match before recording it as a transfer.",
-      409,
-    );
+}
 
-  // Money into the statement's account came out of the other one, and the other
-  // way round for money out — the line's own direction settles both sides.
-  const statementAccountId = statement.accountId;
-  const movesIn = line.direction === StatementDirection.In;
-  const description =
-    input.description?.trim() || line.description || "Transfer";
+/** One bank line a new record will stand for, and what is still unmatched on it. */
+export type LineToRecord = {
+  line: StatementLineRow;
+  /** How many matches the line already has. */
+  matchCount: number;
+  /** What those matches already cover, in whole cents. */
+  matchedMinor: Minor;
+  /** What is left to match, in whole cents. Zero or less: matched in full. */
+  remainingMinor: Minor;
+};
 
-  // Held until the transaction commits, so no tab hears about a transfer that
-  // a failed match then rolls back.
-  const deferredEmits: DeferredEmits = [];
-  const written = db.transaction(() => {
-    const created = createRecord(
-      db,
-      userId,
-      {
-        kind: "transfer",
-        date: line.date,
-        description,
-        amount: line.amount,
-        currency: mainCurrencyCode(db),
-        exchangeRate: 1,
-        fromAccountId: movesIn ? input.otherAccountId : statementAccountId,
-        toAccountId: movesIn ? statementAccountId : input.otherAccountId,
-      },
-      deferredEmits,
-    );
-    if (!created.ok) throw new ReconciliationError(created.reason, 409);
-
-    const movement = findRecordMovementOnAccount(
-      db,
-      created.value.id,
-      statementAccountId,
-    );
-    if (!movement)
+/**
+ * The bank lines one new record will stand for, checked to be money moving one
+ * way through one account: every line on a statement of the same account
+ * (FR-021), and all in the same direction, because one record moves money one
+ * way. Throws the refusal. Whether a line is already matched is left to the
+ * caller, which knows how much of a match it tolerates.
+ *
+ * `recordName` finishes "Give this statement an account before recording …",
+ * e.g. "a transfer". Asks nobody's permission: the operation calling it has.
+ */
+export function linesToRecord(
+  db: ReconciliationDb,
+  lineIds: readonly number[],
+  recordName: string,
+): {
+  accountId: number;
+  direction: StatementDirectionCode;
+  lines: LineToRecord[];
+} {
+  const lines: LineToRecord[] = [];
+  let accountId: number | undefined;
+  let direction: StatementDirectionCode | undefined;
+  for (const id of lineIds) {
+    const line = getLine(db, id);
+    if (!line)
       throw new ReconciliationError(
-        "The transfer was built without a side on this statement's account.",
+        lineIds.length === 1
+          ? "Statement line not found"
+          : `Statement line ${id} not found`,
+        404,
+      );
+    const statement = getStatement(db, line.statementId);
+    if (!statement)
+      throw new ReconciliationError("Bank statement not found", 404);
+    if (statement.accountId == null)
+      throw new ReconciliationError(
+        `Give this statement an account before recording ${recordName} from it.`,
         409,
       );
-
-    const allocation = insertAllocation(db, {
-      lineId,
-      movementId: movement.id,
-      amount: round2(line.amount),
-      itemAmountSnapshot: round2(Math.abs(movement.amountMinor) / 100),
-      createdBy: userId,
+    if (accountId !== undefined && statement.accountId !== accountId)
+      throw new ReconciliationError(
+        "These lines are on different accounts' statements. One record can stand only for lines from one account.",
+        409,
+      );
+    if (direction !== undefined && line.direction !== direction)
+      throw new ReconciliationError(
+        "These lines move money both ways. Record the money in and the money out as separate records.",
+        409,
+      );
+    accountId = statement.accountId;
+    direction = line.direction;
+    const matches = listLineAllocations(db, id);
+    const matchedMinor = matches.reduce(
+      (sum, allocation) => sum + toMinor(allocation.amount, 1),
+      0,
+    );
+    lines.push({
+      line,
+      matchCount: matches.length,
+      matchedMinor,
+      remainingMinor: toMinor(line.amount, 1) - matchedMinor,
     });
-    return { record: created.value, movementId: movement.id, allocation };
-  });
-  for (const emit of deferredEmits) emit();
+  }
+  if (accountId === undefined || direction === undefined)
+    throw new ReconciliationError("Choose at least one statement line.", 400);
+  return { accountId, direction, lines };
+}
 
+/**
+ * Matches bank lines to the side a record just built from them has on their
+ * statement's account, each line for what is still unmatched on it (FR-023).
+ *
+ * Written inside the caller's transaction, audit row included, so a rollback
+ * anywhere — the record refusing, or an outer batch — undoes the match and its
+ * history together. The events wait in `emits` for the caller's commit.
+ *
+ * Asks nobody's permission and checks no amount: the operation that built the
+ * record from these lines has done both.
+ */
+export function matchLinesToNewMovement(
+  db: ReconciliationDb,
+  userId: number,
+  movement: { id: number; recordId: number; amountMinor: Minor },
+  lines: readonly { lineId: number; amountMinor: Minor }[],
+  emits: DeferredEmits,
+): ReconciliationAllocation[] {
+  const snapshot = fromMinor(Math.abs(movement.amountMinor));
+  const saved = lines.map((line) =>
+    insertAllocation(db, {
+      lineId: line.lineId,
+      movementId: movement.id,
+      amount: fromMinor(line.amountMinor),
+      itemAmountSnapshot: snapshot,
+      createdBy: userId,
+    }),
+  );
   recordAudit(db, {
     // Filed under the ledger record the allocation belongs to, so it shows in
     // that record's Activity — statement ids live under 'reconciliation'.
     recordType: "record",
-    recordId: written.record.id,
+    recordId: movement.recordId,
     userId,
     action: "update",
     changes: [
       {
-        field: `allocations:movement:${written.movementId}`,
+        field: `allocations:movement:${movement.id}`,
         before: null,
-        after: [written.allocation],
+        after: saved,
       },
     ],
+    deferredEmits: emits,
   });
-  // Both streams hear about this: `createRecord` emits `record-update` on the
-  // ledger stream for the new transfer, and the reconciliation stream is told
-  // here so every open workspace sees the line stop being unmatched.
-  reconciliationEvents.emit("allocation-update", {
-    movementId: written.movementId,
-    lineIds: [lineId],
-  });
-  return {
-    record: written.record,
-    movement: getMovementCandidate(db, written.movementId),
-    allocation: written.allocation,
-  };
+  const lineIds = lines.map((line) => line.lineId);
+  // Every open workspace sees the lines stop being unmatched. The record is
+  // announced again because the event `createRecord` sent was read before the
+  // match existed, so it still says "not cleared".
+  emits.push(
+    () =>
+      reconciliationEvents.emit("allocation-update", {
+        movementId: movement.id,
+        lineIds,
+      }),
+    () => emitRecordUpdate(db, movement.recordId),
+  );
+  return saved;
+}
+
+// ---------------------------------------------------------------------------
+// Tolerant automatic matching: one line, one movement, the exact amount, a few
+// days apart
+// ---------------------------------------------------------------------------
+
+export type TolerantSkipReason =
+  | "no_candidate"
+  | "ambiguous_line"
+  | "ambiguous_movement";
+
+export type TolerantMatchPlan = {
+  /** Each line in the period that fits one movement, which fits no other line. */
+  pairs: {
+    line: StatementLineRow;
+    movement: MovementCandidate;
+    /** How many days apart the line and the record are. */
+    days: number;
+  }[];
+  /** Every other untouched line in the period, and why it was left alone. */
+  skipped: { lineId: number; reason: TolerantSkipReason }[];
+};
+
+const MILLISECONDS_PER_DAY = 86_400_000;
+
+/** Days since the epoch, or null for anything that is not a real calendar date. */
+function dayNumber(date: string): number | null {
+  return isValidDate(date)
+    ? Date.parse(`${date}T00:00:00Z`) / MILLISECONDS_PER_DAY
+    : null;
+}
+
+/**
+ * Which untouched lines on one account fit exactly one untouched movement on
+ * it: the same amount to the cent, the same direction, and dates at most
+ * `maxDays` apart — where that movement also fits no other line. A choice
+ * between two is a person's to make, never input order's, so a tie either way
+ * is skipped with its reason.
+ *
+ * Untouched means no match at all: a line with no allocation, and a movement
+ * no bank line covers any part of. A voided record and its reversal are never
+ * candidates. Uniqueness is judged against every untouched line on the
+ * account, so a twin just outside `from`..`to` still makes a movement
+ * ambiguous; the period only picks which lines are acted on.
+ *
+ * Not `rankCandidates`: its one-percent band and fixed seven-day window are
+ * the rules for a suggestion a person reviews, and this saves without one.
+ */
+export function planTolerantMatches(
+  db: ReconciliationDb,
+  input: { accountId: number; from?: string; to?: string; maxDays: number },
+): TolerantMatchPlan {
+  const touched = new Set(listAllocations(db).map((a) => a.lineId));
+  const lines = listStatements(db)
+    .filter((statement) => statement.accountId === input.accountId)
+    .flatMap((statement) => listLines(db, statement.id))
+    .filter((line) => !touched.has(line.id))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
+
+  // Untouched movements, filed by direction and exact amount, so each line
+  // looks only at the movements it could possibly be.
+  const byFit = new Map<
+    string,
+    { movement: MovementCandidate; day: number }[]
+  >();
+  for (const movement of listMovementCandidates(db, [input.accountId])) {
+    const day = dayNumber(movement.date);
+    if (
+      day === null ||
+      movement.amountMinor === 0 ||
+      (movement.allocationCount ?? 0) > 0
+    )
+      continue;
+    const key = `${directionFor(movement.amountMinor)}:${Math.abs(movement.amountMinor)}`;
+    const list = byFit.get(key) ?? [];
+    list.push({ movement, day });
+    byFit.set(key, list);
+  }
+
+  const fitsByLine = new Map<
+    number,
+    { movement: MovementCandidate; days: number }[]
+  >();
+  const linesPerMovement = new Map<number, number>();
+  for (const line of lines) {
+    const day = dayNumber(line.date);
+    const fits =
+      day === null
+        ? []
+        : (byFit.get(`${line.direction}:${toMinor(line.amount, 1)}`) ?? [])
+            .map(({ movement, day: movementDay }) => ({
+              movement,
+              days: Math.abs(day - movementDay),
+            }))
+            .filter(({ days }) => days <= input.maxDays);
+    fitsByLine.set(line.id, fits);
+    for (const { movement } of fits)
+      linesPerMovement.set(
+        movement.movementId,
+        (linesPerMovement.get(movement.movementId) ?? 0) + 1,
+      );
+  }
+
+  const plan: TolerantMatchPlan = { pairs: [], skipped: [] };
+  for (const line of lines) {
+    if (input.from && line.date < input.from) continue;
+    if (input.to && line.date > input.to) continue;
+    const fits = fitsByLine.get(line.id) ?? [];
+    if (fits.length === 0)
+      plan.skipped.push({ lineId: line.id, reason: "no_candidate" });
+    else if (fits.length > 1)
+      plan.skipped.push({ lineId: line.id, reason: "ambiguous_line" });
+    else if ((linesPerMovement.get(fits[0].movement.movementId) ?? 0) > 1)
+      plan.skipped.push({ lineId: line.id, reason: "ambiguous_movement" });
+    else plan.pairs.push({ line, ...fits[0] });
+  }
+  return plan;
+}
+
+/**
+ * Saves `planTolerantMatches`' pairs, each line covering its movement in full,
+ * inside the caller's transaction, with each record's audit row beside it —
+ * the row `autoMatchMovements` writes. The events wait in `emits`.
+ *
+ * Asks nobody's permission: the operation calling it has.
+ */
+export function saveTolerantMatches(
+  db: ReconciliationDb,
+  userId: number,
+  pairs: TolerantMatchPlan["pairs"],
+  emits: DeferredEmits,
+): ReconciliationAllocation[] {
+  const saved: ReconciliationAllocation[] = [];
+  const recordIds = new Set<number>();
+  for (const { line, movement } of pairs) {
+    const allocation = insertAllocation(db, {
+      lineId: line.id,
+      movementId: movement.movementId,
+      amount: fromMinor(toMinor(line.amount, 1)),
+      itemAmountSnapshot: fromMinor(Math.abs(movement.amountMinor)),
+      createdBy: userId,
+    });
+    recordAudit(db, {
+      recordType: "record",
+      recordId: movement.recordId,
+      userId,
+      action: "update",
+      changes: [
+        {
+          field: `allocations:movement:${movement.movementId}`,
+          before: [],
+          after: [allocation],
+        },
+      ],
+      deferredEmits: emits,
+    });
+    saved.push(allocation);
+    recordIds.add(movement.recordId);
+  }
+  // One event for the batch, as `autoMatchMovements` sends. Each matched
+  // record now reads as cleared, so the records list hears about it too.
+  const matched = saved.length;
+  if (matched)
+    emits.push(() =>
+      reconciliationEvents.emit("allocations-bulk-update", { matched }),
+    );
+  for (const recordId of recordIds)
+    emits.push(() => emitRecordUpdate(db, recordId));
+  return saved;
 }

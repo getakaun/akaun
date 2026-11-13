@@ -52,7 +52,7 @@ import {
   EVAL_ORIGIN,
   mcpToolExecutor,
   NAMINGS,
-  SURFACES,
+  parseSurface,
   type SurfaceKind,
 } from "./surfaces.ts";
 import { combineExecutors, harnessToolExecutor } from "./harness-tools.ts";
@@ -503,8 +503,11 @@ async function main() {
     );
   if (!(EFFORTS as readonly string[]).includes(effort))
     fail(2, `Unknown effort ${effort}.`);
-  if (!(SURFACES as readonly string[]).includes(surface))
-    fail(2, `Unknown surface ${surface}.`);
+  try {
+    parseSurface(surface);
+  } catch (error) {
+    fail(2, (error as Error).message);
+  }
   if (!(NAMINGS as readonly string[]).includes(naming))
     fail(2, `Unknown naming ${naming}.`);
   const templateDir = process.env[ENV.templateDir];

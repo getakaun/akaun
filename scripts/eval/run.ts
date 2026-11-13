@@ -33,7 +33,7 @@ import {
   createSurfaceHandler,
   EVAL_ORIGIN,
   NAMINGS,
-  SURFACES,
+  parseSurface,
   toAnthropicTool,
   type SurfaceKind,
 } from "./surfaces.ts";
@@ -108,7 +108,7 @@ Choose the agent
   --oracle                  run each task's oracle from scripts/eval/oracles.ts
 
 Choose the tools
-  --surface v1|v2           default v1
+  --surface v2              default v2 (v1 was removed; its baseline runs from the tag mcp-v1-baseline)
   --naming akaun_verb_noun|akaun_noun_verb|plain   v2 only, default akaun_verb_noun
 
 Run
@@ -162,7 +162,7 @@ export function parseArgs(argv: readonly string[]): RunOptions {
     models: [],
     effort: "high",
     mode: "model",
-    surface: "v1",
+    surface: "v2",
     naming: DEFAULT_NAMING,
     reps: 1,
     concurrency: 4,
@@ -237,9 +237,7 @@ export function parseArgs(argv: readonly string[]): RunOptions {
         options.effort = value as Effort;
         break;
       case "surface":
-        if (!(SURFACES as readonly string[]).includes(value))
-          throw new Error("--surface is v1 or v2.");
-        options.surface = value as SurfaceKind;
+        options.surface = parseSurface(value);
         break;
       case "naming":
         if (!(NAMINGS as readonly string[]).includes(value))

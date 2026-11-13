@@ -26,7 +26,9 @@ import { parseChanges } from "../audit.js";
 import { runInAuditScope, scopeFromLocals } from "../audit-context.js";
 import { ledgerEvents } from "../ledger/events.js";
 import type { LedgerDb } from "../ledger/types.js";
-import { createServer } from "../mcp/server.js";
+import { createServerV2 } from "../mcp/registry.js";
+import { READ_TOOLS } from "../mcp/tools/reads/index.js";
+import { WRITE_TOOLS } from "../mcp/tools/writes/index.js";
 import { localsFor } from "../permissions/test-locals.js";
 import {
   getRecord,
@@ -344,10 +346,11 @@ describe("phase 2 tax classification and audited month closing", () => {
     const version = recordVersion(db, row.id);
     const root = mkdtempSync(join(tmpdir(), "akaun-tax-mcp-"));
     roots.push(root);
-    const server = createServer({
+    const server = createServerV2({
       ...ctx(),
       storageRoot: root,
       store: new LocalBlobStore(root),
+      tools: { reads: READ_TOOLS, writes: WRITE_TOOLS },
     });
     const client = new Client({ name: "tax-close-test", version: "1" });
     const [clientTransport, serverTransport] =
@@ -357,23 +360,49 @@ describe("phase 2 tax classification and audited month closing", () => {
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
-      for (const taxOverride of [
-        override(),
-        { ...override(), source: "account_default", percentageBps: 5000 },
+      // v2 sets a line's tax through akaun_change_records. It has no
+      // per-line "adopt the account default" source: that is
+      // akaun_change_accounts apply_tax_default, which leaves closed lines
+      // alone. The second item is the other shape a line can take.
+      for (const tax of [
+        {
+          treatment: "partial",
+          percent: "25",
+          reason: override().reason,
+        },
+        { treatment: "non_deductible", reason: override().reason },
       ]) {
-        const response = (await client.callTool({
-          name: "update_record",
-          arguments: {
-            recordId: row.id,
-            expectedVersion: version,
-            taxOverrides: [taxOverride],
-          },
-        })) as { isError?: boolean; content: { text?: string }[] };
-        expect(response.isError).toBe(true);
-        expect(JSON.parse(response.content[0].text!).error).toMatchObject({
-          code: "REFUSED",
-          message: expect.stringContaining(`closed through ${boundary}`),
-        });
+        for (const dry_run of [true, false]) {
+          const response = (await client.callTool({
+            name: "akaun_change_records",
+            arguments: {
+              update: [
+                {
+                  record: row.id,
+                  expected_version: version,
+                  set: { tax: [{ line: 0, ...tax }] },
+                  reason: "Verified business use against receipt",
+                },
+              ],
+              dry_run,
+            },
+          })) as { isError?: boolean; content: { text?: string }[] };
+          expect(response.isError).toBe(true);
+          const error = JSON.parse(response.content[0].text!).error;
+          // Refused before anything runs, naming the blocked field and
+          // that a person must reopen the month.
+          expect(error.code).toBe("REFUSED");
+          expect(error.items[0].error).toMatchObject({
+            code: "REFUSED",
+            message: expect.stringContaining(`closed through ${boundary}`),
+            blocked: [
+              expect.objectContaining({
+                field: "tax",
+                fix: expect.stringMatching(/reopen that month in Akaun/),
+              }),
+            ],
+          });
+        }
       }
       expect(snapshot()).toEqual(before);
     } finally {

@@ -58,7 +58,7 @@ function rows(dir: string): Record<string, unknown>[] {
 
 describe("bun run eval:mcp", () => {
   it(
-    "runs a scripted model against v1: a results row with metrics, a trace, the verifier's notes, and the real book untouched",
+    "runs a scripted model against v2: a results row with metrics, a trace, the verifier's notes, and the real book untouched",
     async () => {
       const out = join(scratch(), "out");
       try {
@@ -69,13 +69,15 @@ describe("bun run eval:mcp", () => {
           "--model",
           "fake:list_accounts",
           "--surface",
-          "v1",
+          "v2",
           "--out",
           out,
           "--yes",
         ]);
         expect(result.code, result.stderr).toBe(0);
-        expect(result.stdout).toContain("Surface v1: 68 tools");
+        expect(result.stdout).toContain(
+          "Surface v2 (akaun_verb_noun): 28 tools",
+        );
         const state = JSON.parse(
           readFileSync(join(out, "_state.json"), "utf8"),
         );
@@ -106,7 +108,7 @@ describe("bun run eval:mcp", () => {
         expect([row.tool_calls, row.tool_errors]).toEqual([1, 0]);
         expect(row.usage.input_tokens).toBeGreaterThan(0);
         expect(row.meta.calls[0]).toMatchObject({
-          tool: "list_accounts",
+          tool: "akaun_list_accounts",
           isError: false,
         });
         expect(row.meta.calls[0].outputBytes).toBeGreaterThan(100);
@@ -133,10 +135,10 @@ describe("bun run eval:mcp", () => {
           "tool_result",
           "assistant",
         ]);
-        expect(trace[2].name).toBe("list_accounts");
+        expect(trace[2].name).toBe("akaun_list_accounts");
         expect(
           JSON.parse(readFileSync(join(out, "v1", "tools.json"), "utf8")).tools,
-        ).toHaveLength(68);
+        ).toHaveLength(28);
         expect(existsSync(join(out, "v1", "errors.jsonl"))).toBe(false);
         for (const file of [
           "results.jsonl",
@@ -323,7 +325,7 @@ console.log(JSON.stringify(out));
         "null",
         "high",
         "0",
-        "v1",
+        "v2",
         "akaun_verb_noun",
       ]);
       expect(result.code).not.toBe(0);
@@ -387,7 +389,15 @@ describe("the command line", () => {
       mode: "null",
       split: "all",
       models: [],
+      surface: "v2",
     });
+    // v1 was deleted with its server; its baseline runs from the tag.
+    expect(() =>
+      parseArgs(["--model", "claude-sonnet-5-5", "--surface", "v1"]),
+    ).toThrow("v1 was removed; check out the tag mcp-v1-baseline to run it");
+    expect(() =>
+      parseArgs(["--model", "claude-sonnet-5-5", "--surface", "v3"]),
+    ).toThrow(/Unknown surface v3/);
     expect(parseArgs(["--serve", "--book", "B"])).toMatchObject({
       serve: true,
       book: "B",

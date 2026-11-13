@@ -25,6 +25,7 @@ import {
   hashInput,
   MAX_BATCH_ITEMS,
   runBatch,
+  storedReplay,
   type BatchItem,
   type BatchResult,
 } from "./batch.js";
@@ -651,6 +652,75 @@ describe("runBatch", () => {
           }[]
         ).map((r) => r.key),
       ).toEqual(["expired", "fresh"]);
+    });
+
+    it("storedReplay answers before any work exactly as runBatch's own lookup does", async () => {
+      const b = book();
+      const runs = { n: 0 };
+      const idempotency = { key: "k-5", inputHash: hashInput({ z: 1 }) };
+      const lookup = { tool: "change_contacts", idempotency };
+      const batch = (call: typeof lookup) =>
+        runBatch(b.ctx, {
+          ...call,
+          dryRun: false,
+          items: [counted(b, runs, 71)],
+        });
+      // Nothing stored yet: no answer, and the call goes on.
+      expect(storedReplay(b.ctx, lookup)).toBeNull();
+      const firstScope = scopeFromLocals({}, "spec");
+      const first = value(
+        await runInAuditScope(firstScope, () => batch(lookup)),
+      );
+      expect(runs.n).toBe(1);
+      const before = snapshot(b);
+
+      // The same key and input: the stored outcome, the one runBatch replays.
+      const stored = storedReplay<RecordWritten>(b.ctx, lookup);
+      expect(value(stored!)).toEqual({
+        saved: true,
+        dryRun: false,
+        replayed: true,
+        requestId: firstScope.requestId,
+        items: JSON.parse(JSON.stringify(first.items)),
+      });
+      expect(stored).toEqual(await batch(lookup));
+
+      // The key with other input, or for another tool: the same refusal.
+      for (const other of [
+        { ...lookup, idempotency: { ...idempotency, inputHash: "other" } },
+        { ...lookup, tool: "change_accounts" },
+      ]) {
+        const refused = storedReplay(b.ctx, other);
+        expect(refused).toMatchObject({
+          ok: false,
+          batchCode: "IDEMPOTENCY_MISMATCH",
+        });
+        expect(refused).toEqual(await batch(other));
+      }
+      expect(runs.n).toBe(1);
+      expect(snapshot(b)).toEqual(before);
+
+      // Never a replay: a dry run, no key, another key, another credential
+      // or nobody signed in.
+      const viaToken: AppContext = {
+        ...b.ctx,
+        locals: { ...b.ctx.locals, credential: { kind: "pat", tokenId: 7 } },
+      };
+      const anonymous: AppContext = {
+        ...b.ctx,
+        locals: { ...b.ctx.locals, user: null },
+      };
+      expect(storedReplay(b.ctx, { ...lookup, dryRun: true })).toBeNull();
+      expect(storedReplay(b.ctx, { tool: lookup.tool })).toBeNull();
+      expect(
+        storedReplay(b.ctx, {
+          ...lookup,
+          idempotency: { ...idempotency, key: "k-other" },
+        }),
+      ).toBeNull();
+      expect(storedReplay(viaToken, lookup)).toBeNull();
+      expect(storedReplay(anonymous, lookup)).toBeNull();
+      expect(snapshot(b)).toEqual(before);
     });
 
     it("neither stores nor looks up a key on a dry run", async () => {

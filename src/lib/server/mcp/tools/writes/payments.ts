@@ -3,7 +3,13 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { DefaultAccountPurpose } from "$lib/enums.js";
 import type { LeafPermission } from "$lib/permissions/catalog.js";
 import { can } from "../../../permissions.js";
-import { hashInput, runBatch } from "../../../application/batch.js";
+import {
+  hashInput,
+  runBatch,
+  storedReplay,
+  type BatchResult,
+  type ReplayLookup,
+} from "../../../application/batch.js";
 import { createRecord, settlePayment } from "../../../application/records.js";
 import { createReimbursement } from "../../../application/reimbursements.js";
 import {
@@ -60,7 +66,9 @@ import {
  * An agent names records by id or number and never sees a movement or a
  * settlement id. Every reference is resolved before the batch opens (A4's
  * `refs.ts`), so a miss comes back as `NOT_FOUND` / `AMBIGUOUS` with
- * candidates and nothing runs. Each item then calls exactly one operation in
+ * candidates and nothing runs. A retry with the same idempotency_key is
+ * answered before that (`storedReplay`), because what it changed may no
+ * longer resolve. Each item then calls exactly one operation in
  * `application/`, which keeps every rule: a payment is in the main currency, a
  * refund must use up the overpayment in full, a correction keeps its reversed
  * allocation rows.
@@ -738,6 +746,14 @@ const recordPayments = defineWriteTool({
   handler: async (ctx, args, meta) => {
     const refused = refuseActions(ctx, meta, "record_payments", args);
     if (refused) return refused;
+    const call = batchCall(meta, args, {
+      pay: args.pay,
+      allocate: args.allocate,
+      reimburse: args.reimburse,
+    });
+    // Before any reference is resolved: a retry replays the first answer.
+    const replay = storedReplay<PaymentValue>(ctx, call);
+    if (replay) return batchReply(replay, meta);
     if (!args.pay?.length && !args.allocate?.length && !args.reimburse?.length)
       return nothingToDo("pay, allocate or reimburse");
 
@@ -751,8 +767,7 @@ const recordPayments = defineWriteTool({
     if (missed) return missed;
 
     const result = await runBatch<PaymentValue>(ctx, {
-      tool: meta.name,
-      dryRun: args.dry_run ?? false,
+      ...call,
       items: [
         ...pays.map((plan, i) => ({
           action: "pay",
@@ -770,16 +785,8 @@ const recordPayments = defineWriteTool({
           run: (c: AppContext) => runReimburse(c, plan),
         })),
       ],
-      idempotency: idempotencyOf(args, {
-        pay: args.pay,
-        allocate: args.allocate,
-        reimburse: args.reimburse,
-      }),
     });
-    return batchToolResult(result, {
-      requestId: meta.requestId,
-      formatValue: (value) => value,
-    });
+    return batchReply(result, meta);
   },
 });
 
@@ -925,6 +932,11 @@ const changeAllocations = defineWriteTool({
   handler: async (ctx, args, meta) => {
     const refused = refuseActions(ctx, meta, "change_allocations", args);
     if (refused) return refused;
+    const call = batchCall(meta, args, { reallocate: args.reallocate });
+    // Before any reference is resolved: the allocation a retry removes is
+    // already reversed, so it would no longer resolve.
+    const replay = storedReplay<PaymentValue>(ctx, call);
+    if (replay) return batchReply(replay, meta);
 
     const refs = new Refs(ctx, meta);
     const plans: ReallocatePlan[] = [];
@@ -975,19 +987,14 @@ const changeAllocations = defineWriteTool({
     if (missed) return missed;
 
     const result = await runBatch<PaymentValue>(ctx, {
-      tool: meta.name,
-      dryRun: args.dry_run ?? false,
+      ...call,
       items: plans.map((plan, i) => ({
         action: "reallocate",
         label: `reallocate[${i}] ${recordNo(plan.payment)}`,
         run: (c: AppContext) => runReallocate(c, plan),
       })),
-      idempotency: idempotencyOf(args, { reallocate: args.reallocate }),
     });
-    return batchToolResult(result, {
-      requestId: meta.requestId,
-      formatValue: (value) => value,
-    });
+    return batchReply(result, meta);
   },
 });
 
@@ -1033,6 +1040,42 @@ export function idempotencyOf(
   return args.idempotency_key
     ? { key: args.idempotency_key, inputHash: hashInput(actions) }
     : undefined;
+}
+
+/** What a write call's replay lookup and its batch share. */
+export type BatchCall = ReplayLookup & { dryRun: boolean };
+
+/**
+ * This call's tool name, `dry_run` and the idempotency slot of these action
+ * arrays. Build it once, right after the action check, and hand the same
+ * object to `storedReplay` (before resolving any reference) and to `runBatch`,
+ * so the two can never use a different key, input hash or tool name.
+ */
+export function batchCall(
+  meta: ToolCallMeta,
+  args: { dry_run?: boolean; idempotency_key?: string },
+  actions: Record<string, unknown>,
+): BatchCall {
+  return {
+    tool: meta.name,
+    dryRun: args.dry_run ?? false,
+    idempotency: idempotencyOf(args, actions),
+  };
+}
+
+/**
+ * A batch's outcome as the tool's answer, each item's value as it is. A replay
+ * from `storedReplay` goes through here too, so it reads exactly as the first
+ * call's answer did.
+ */
+export function batchReply<T extends Record<string, unknown>>(
+  result: BatchResult<T>,
+  meta: ToolCallMeta,
+): CallToolResult {
+  return batchToolResult(result, {
+    requestId: meta.requestId,
+    formatValue: (value) => value,
+  });
 }
 
 type Ref = number | string;

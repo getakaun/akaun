@@ -77,9 +77,10 @@ import {
   type Resolved,
 } from "../../../application/refs.js";
 import {
-  hashInput,
   runBatch,
+  storedReplay,
   type BatchItem,
+  type BatchResult,
 } from "../../../application/batch.js";
 import {
   batchToolResult,
@@ -107,6 +108,7 @@ import {
   type ToolCallMeta,
   type ToolDefinition,
 } from "../../registry.js";
+import { batchCall } from "./payments.js";
 
 /**
  * The records write tools: `create_records`, `change_records` and
@@ -117,6 +119,9 @@ import {
  * `changeRecord` (which picks the edit or correction path), `voidRecord`,
  * `reverseReimbursement`, `deleteRecord` — and each item runs inside
  * `runBatch`, so a call is saved whole or not at all.
+ *
+ * A retry with the same idempotency_key is answered first (`storedReplay`),
+ * before any input check or reference, with the first call's result.
  *
  * References are resolved inside each item's `run`, so they see what earlier
  * items in the same call wrote (a contact `new_contact` just created) and
@@ -1156,6 +1161,23 @@ export const createRecordsTool = defineWriteTool({
     if (shortfalls.length)
       return toolError(actionRefusal(meta.name, shortfalls));
 
+    const full = args.detail === "full";
+    const reply = (result: BatchResult<Created>) =>
+      withMainCurrency(
+        ctx.db,
+        batchToolResult(result, {
+          requestId: meta.requestId,
+          formatValue: (value) => {
+            const { sides, ...rest } = value;
+            return full ? { ...rest, sides } : rest;
+          },
+        }),
+      );
+    const call = batchCall(meta, args, { records: args.records });
+    // Before anything else: the first call's answer, not a second record.
+    const replay = storedReplay<Created>(ctx, call);
+    if (replay) return reply(replay);
+
     const issues = args.records.flatMap((item, i) =>
       createItemProblems(item, `records[${i}]`),
     );
@@ -1212,28 +1234,7 @@ export const createRecordsTool = defineWriteTool({
       };
     });
 
-    const result = await runBatch(ctx, {
-      tool: meta.name,
-      dryRun: args.dry_run ?? false,
-      items,
-      idempotency: args.idempotency_key
-        ? {
-            key: args.idempotency_key,
-            inputHash: hashInput({ records: args.records }),
-          }
-        : undefined,
-    });
-    const full = args.detail === "full";
-    return withMainCurrency(
-      ctx.db,
-      batchToolResult(result, {
-        requestId: meta.requestId,
-        formatValue: (value) => {
-          const { sides, ...rest } = value;
-          return full ? { ...rest, sides } : rest;
-        },
-      }),
-    );
+    return reply(await runBatch(ctx, { ...call, items }));
   },
 });
 
@@ -1884,6 +1885,24 @@ export const changeRecordsTool = defineWriteTool({
     if (shortfalls.length)
       return toolError(actionRefusal(meta.name, shortfalls));
 
+    const reply = (result: BatchResult<Changed>) =>
+      withMainCurrency(
+        ctx.db,
+        batchToolResult(result, {
+          requestId: meta.requestId,
+          formatValue: (value) => value,
+        }),
+      );
+    const call = batchCall(meta, args, {
+      update: args.update,
+      void: args.void,
+      delete: args.delete,
+    });
+    // Before anything else: a retried delete or void must replay, not meet
+    // the record it already removed or voided.
+    const replay = storedReplay<Changed>(ctx, call);
+    if (replay) return reply(replay);
+
     const total =
       (args.update?.length ?? 0) +
       (args.void?.length ?? 0) +
@@ -1911,28 +1930,7 @@ export const changeRecordsTool = defineWriteTool({
         deleteItem(item, `delete[${i}]`, meta),
       ),
     ];
-    const result = await runBatch(ctx, {
-      tool: meta.name,
-      dryRun: args.dry_run ?? false,
-      items,
-      idempotency: args.idempotency_key
-        ? {
-            key: args.idempotency_key,
-            inputHash: hashInput({
-              update: args.update,
-              void: args.void,
-              delete: args.delete,
-            }),
-          }
-        : undefined,
-    });
-    return withMainCurrency(
-      ctx.db,
-      batchToolResult(result, {
-        requestId: meta.requestId,
-        formatValue: (value) => value,
-      }),
-    );
+    return reply(await runBatch(ctx, { ...call, items }));
   },
 });
 

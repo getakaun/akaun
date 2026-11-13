@@ -154,16 +154,22 @@ describe("change_contacts", () => {
         phone: "03-1234 5678",
       });
 
-      // The same name again is refused, naming the existing contact.
+      // The same name again is AMBIGUOUS, with the existing contact as a candidate.
       const again = await call({
         create: [{ ...input, name: "fresh supplies sdn. bhd." }],
       });
       expect(again.isError).toBe(true);
-      expect(again.body.error.code).toBe("REFUSED");
-      expect(again.body.error.items[0].error.message).toContain(
-        `Fresh Supplies Sdn Bhd (id ${made.id}, supplier)`,
-      );
-      expect(again.body.error.items[0].error.message).toMatch(/force_new/);
+      expect(again.body.error.code).toBe("AMBIGUOUS");
+      const refusal = again.body.error.items[0].error;
+      expect(refusal).toEqual({
+        code: "AMBIGUOUS",
+        message: 'A contact named "fresh supplies sdn. bhd." already exists.',
+        path: "create[0].name",
+        candidates: [
+          { id: made.id, name: "Fresh Supplies Sdn Bhd", detail: "supplier" },
+        ],
+        fix: "Use the existing contact, or resend with force_new: true.",
+      });
       expect(count(book, "contacts")).toBe(before + 1);
       const forced = await call({
         create: [{ ...input, name: "Fresh Supplies Sdn Bhd", force_new: true }],
@@ -574,6 +580,60 @@ describe("change_contacts", () => {
       expect(reply.body.error.candidates).toBeUndefined();
       expect(reply.text).not.toContain("Spotify");
       expect(exists(book, book.manifest.contacts.spotify)).toBe(true);
+
+      // A create is not told that the name is taken, so it lists no one.
+      const { book: other, call: create } = await open(["contacts.create"]);
+      const before = count(other, "contacts");
+      const made = await create({
+        create: [{ name: "Spotify", entity: "business", roles: ["supplier"] }],
+      });
+      expect(made.isError).toBe(false);
+      expect(made.body.items[0].name).toBe("Spotify");
+      expect(made.body.items[0].id).not.toBe(other.manifest.contacts.spotify);
+      expect(count(other, "contacts")).toBe(before + 1);
+    },
+    SLOW,
+  );
+
+  it(
+    "replays a retried delete by name instead of answering NOT_FOUND",
+    async () => {
+      const { book, call } = await open();
+      const made = await call({
+        create: [
+          {
+            name: "Short Lived Trading",
+            entity: "business",
+            roles: ["supplier"],
+          },
+        ],
+      });
+      const { id, v } = made.body.items[0];
+      const input = {
+        delete: [{ contact: "Short Lived Trading", expected_version: v }],
+        idempotency_key: "f0-delete-by-name",
+      };
+      const first = await call(input);
+      expect(first.isError).toBe(false);
+      expect(first.body.saved).toBe(true);
+      expect(exists(book, id)).toBe(false);
+      const before = count(book, "contacts");
+
+      const again = await call(input);
+      expect(again.isError).toBe(false);
+      expect(again.body).toEqual({ ...first.body, replayed: true });
+      expect(count(book, "contacts")).toBe(before);
+
+      // What the replay spares the agent: unkeyed, the name no longer resolves.
+      const unkeyed = await call({ delete: input.delete });
+      expect(unkeyed.body.error.code).toBe("NOT_FOUND");
+
+      // The key with other input is refused before any name is looked up.
+      const other = await call({
+        ...input,
+        delete: [{ contact: "No Such Trading", expected_version: v }],
+      });
+      expect(other.body.error.code).toBe("IDEMPOTENCY_MISMATCH");
     },
     SLOW,
   );

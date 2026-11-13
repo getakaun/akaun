@@ -6,7 +6,7 @@ import {
   type TaxOverride,
 } from "$lib/expense-tax.js";
 import { ledgerMovements } from "../../../db/schema.js";
-import { runBatch } from "../../../application/batch.js";
+import { runBatch, storedReplay } from "../../../application/batch.js";
 import type { AppContext } from "../../../application/context.js";
 import {
   autoMatchTolerant,
@@ -40,7 +40,6 @@ import {
   listLineAllocations,
   listMovementAllocations,
 } from "../../../queries/reconciliation.js";
-import { batchToolResult } from "../../batch-result.js";
 import {
   mainCurrency,
   money,
@@ -54,8 +53,9 @@ import {
   UNMATCH_BANK_LINES,
 } from "../../requirements/index.js";
 import {
+  batchCall,
   batchControls,
-  idempotencyOf,
+  batchReply,
   lineAccountInput,
   nothingToDo,
   outstandingNow,
@@ -499,6 +499,14 @@ const matchBankLines = defineWriteTool({
   handler: async (ctx, args, meta) => {
     const refused = refuseActions(ctx, meta, "match_bank_lines", args);
     if (refused) return refused;
+    const call = batchCall(meta, args, {
+      match: args.match,
+      create_from_lines: args.create_from_lines,
+      auto_match: args.auto_match,
+    });
+    // Before any reference is resolved: a retry replays the first answer.
+    const replay = storedReplay<BankValue>(ctx, call);
+    if (replay) return batchReply(replay, meta);
     if (
       !args.match?.length &&
       !args.create_from_lines?.length &&
@@ -613,8 +621,7 @@ const matchBankLines = defineWriteTool({
     if (missed) return missed;
 
     const result = await runBatch<BankValue>(ctx, {
-      tool: meta.name,
-      dryRun: args.dry_run ?? false,
+      ...call,
       items: [
         ...matches.map((plan, i) => ({
           action: "match",
@@ -636,16 +643,8 @@ const matchBankLines = defineWriteTool({
             ]
           : []),
       ],
-      idempotency: idempotencyOf(args, {
-        match: args.match,
-        create_from_lines: args.create_from_lines,
-        auto_match: args.auto_match,
-      }),
     });
-    return batchToolResult(result, {
-      requestId: meta.requestId,
-      formatValue: (value) => value,
-    });
+    return batchReply(result, meta);
   },
 });
 
@@ -756,6 +755,10 @@ const unmatchBankLines = defineWriteTool({
   handler: async (ctx, args, meta) => {
     const refused = refuseActions(ctx, meta, "unmatch_bank_lines", args);
     if (refused) return refused;
+    const call = batchCall(meta, args, { unmatch: args.unmatch });
+    // Before any reference is resolved: a retry replays the first answer.
+    const replay = storedReplay<BankValue>(ctx, call);
+    if (replay) return batchReply(replay, meta);
 
     const refs = new Refs(ctx, meta);
     const plans: UnmatchPlan[] = args.unmatch.flatMap((item, i) => {
@@ -772,19 +775,14 @@ const unmatchBankLines = defineWriteTool({
     if (missed) return missed;
 
     const result = await runBatch<BankValue>(ctx, {
-      tool: meta.name,
-      dryRun: args.dry_run ?? false,
+      ...call,
       items: plans.map((plan, i) => ({
         action: "unmatch",
         label: `unmatch[${i}] ${lineRef(plan.line.id)}`,
         run: (c: AppContext) => runUnmatch(c, plan),
       })),
-      idempotency: idempotencyOf(args, { unmatch: args.unmatch }),
     });
-    return batchToolResult(result, {
-      requestId: meta.requestId,
-      formatValue: (value) => value,
-    });
+    return batchReply(result, meta);
   },
 });
 

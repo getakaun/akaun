@@ -7,7 +7,11 @@ import {
 } from "$lib/enums.js";
 import { importItems, importQueue, ledgerRecords } from "../../../db/schema.js";
 import { can } from "../../../permissions.js";
-import { runBatch, type BatchItem } from "../../../application/batch.js";
+import {
+  runBatch,
+  storedReplay,
+  type BatchItem,
+} from "../../../application/batch.js";
 import type { AppContext } from "../../../application/context.js";
 import {
   commitImportConfirm,
@@ -27,15 +31,15 @@ import {
 } from "../../../ledger/account-type.js";
 import { formatMinor, parseMinor, toMinor } from "../../../ledger/money.js";
 import type { LedgerDb } from "../../../ledger/types.js";
-import { batchToolResult } from "../../batch-result.js";
 import type { ToolCandidate } from "../../envelope.js";
 import { dateInput, enumInput, enumLabel, money } from "../../format.js";
 import { resolveError } from "../../resolve.js";
 import { defineWriteTool, type ToolDefinition } from "../../registry.js";
 import { REVIEW_IMPORTS } from "../../requirements/index.js";
 import {
+  batchCall,
   batchControls,
-  idempotencyOf,
+  batchReply,
   nothingToDo,
   refInput,
   refuseActions,
@@ -57,6 +61,10 @@ import {
  * item's `prepare` and runs before the batch's transaction opens; the
  * synchronous half writes. In a dry run the write is rolled back with the
  * file move, so the staged file stays where it was.
+ *
+ * A retry with the same idempotency_key is answered before any job is
+ * resolved (`storedReplay`): a discarded or confirmed job is gone from the
+ * queue.
  */
 
 // --- input ---------------------------------------------------------------------
@@ -620,6 +628,16 @@ const reviewImports = defineWriteTool({
   handler: async (ctx, args: ReviewArgs, meta) => {
     const refused = refuseActions(ctx, meta, "review_imports", args);
     if (refused) return refused;
+    const call = batchCall(meta, args, {
+      update_item: args.update_item,
+      confirm: args.confirm,
+      skip: args.skip,
+      discard: args.discard,
+    });
+    // Before any reference is resolved: a discarded or confirmed job no
+    // longer resolves, so its retry must replay, not miss.
+    const replay = storedReplay<Value>(ctx, call);
+    if (replay) return batchReply(replay, meta);
     if (
       !args.update_item?.length &&
       !args.confirm?.length &&
@@ -712,25 +730,15 @@ const reviewImports = defineWriteTool({
     if (missed) return missed;
 
     const result = await runBatch<Value>(ctx, {
-      tool: meta.name,
-      dryRun: args.dry_run ?? false,
+      ...call,
       items: [
         ...updates.map(updateItem),
         ...confirms.map(confirmItem),
         ...skips.map(skipItem),
         ...discards.map(discardItem),
       ],
-      idempotency: idempotencyOf(args, {
-        update_item: args.update_item,
-        confirm: args.confirm,
-        skip: args.skip,
-        discard: args.discard,
-      }),
     });
-    return batchToolResult(result, {
-      requestId: meta.requestId,
-      formatValue: (value) => value,
-    });
+    return batchReply(result, meta);
   },
 });
 

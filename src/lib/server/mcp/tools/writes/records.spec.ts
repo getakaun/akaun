@@ -377,6 +377,72 @@ describe("akaun_create_records", () => {
     expect(s.count("contacts")).toBe(contacts + 1);
   });
 
+  it("tells a caller who cannot read contacts nothing about existing names on a new_contact", async () => {
+    const s = seed();
+    const item = (name: string) =>
+      expense({
+        owed: true,
+        paid_from: undefined,
+        new_contact: { name },
+      });
+
+    // May create contacts but not read them: the near-name check is skipped,
+    // as change_contacts create does, and the reply names no other contact.
+    const { call } = await serve(
+      s.db,
+      token(["records.create", "contacts.create"]),
+    );
+    const before = s.count("contacts");
+    const near = await call(CREATE, { records: [item("Acme Sdn Bhd (KL)")] });
+    expect(near.isError).toBe(false);
+    expect(near.body.saved).toBe(true);
+    expect(near.body.items[0].contact_created).toEqual({
+      id: expect.any(Number),
+      name: "Acme Sdn Bhd (KL)",
+    });
+    expect(near.body.items[0].contact_created.id).not.toBe(s.acme);
+    expect(s.count("contacts")).toBe(before + 1);
+
+    // An exact name is not reported as taken either: it makes a second contact.
+    const exact = await call(CREATE, { records: [item("Acme Sdn Bhd")] });
+    expect(exact.body.saved).toBe(true);
+    expect(exact.body.items[0].contact_created.id).not.toBe(s.acme);
+    expect(s.count("contacts")).toBe(before + 2);
+    for (const reply of [near, exact]) {
+      const text = JSON.stringify(reply.body);
+      expect(text).not.toContain("candidates");
+      expect(text).not.toContain("AMBIGUOUS");
+      expect(text).not.toContain("Other Sdn Bhd");
+    }
+
+    // Not allowed to create either: refused, still without any name.
+    const { call: bare } = await serve(s.db, token(["records.create"]));
+    const refused = await bare(CREATE, {
+      records: [item("Acme Sdn Bhd (HQ)")],
+    });
+    expect(refused.isError).toBe(true);
+    const text = JSON.stringify(refused.body);
+    expect(text).not.toContain("candidates");
+    expect(text).not.toContain("AMBIGUOUS");
+    expect(text).not.toContain("Other Sdn Bhd");
+    expect(s.count("contacts")).toBe(before + 2);
+
+    // A reader of contacts is still warned, with the candidates.
+    const { call: reader } = await serve(
+      s.db,
+      token(["records.create", "contacts.create", "contacts.read"]),
+    );
+    const warned = await reader(CREATE, {
+      records: [item("Acme Sdn Bhd (HQ)")],
+    });
+    expect(warned.body.error.items[0].error).toMatchObject({
+      code: "AMBIGUOUS",
+      candidates: expect.arrayContaining([
+        expect.objectContaining({ id: s.acme }),
+      ]),
+    });
+  });
+
   it("looks up and freezes the day's rate for a foreign currency", async () => {
     const s = seed();
     // The cached daily rate stands in for the provider: no network.

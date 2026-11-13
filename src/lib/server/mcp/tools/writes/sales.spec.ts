@@ -673,4 +673,119 @@ describe("change_sales_documents", () => {
     },
     SLOW,
   );
+
+  it(
+    "replays a retried invoice delete by number instead of answering NOT_FOUND",
+    async () => {
+      const { book, create, change } = await open();
+      const made = await create({ invoices: [draftInvoice(book)] });
+      const draft = made.body.items[0].invoice;
+      const before = count(book, "invoices");
+      const input = {
+        invoice_delete: [{ invoice: draft.no, expected_version: draft.v }],
+        idempotency_key: "e4b-delete-1",
+      };
+
+      const first = await change(input);
+      expect(first.isError).toBe(false);
+      expect(first.body.saved).toBe(true);
+      expect(first.body.items[0].deleted).toEqual({
+        id: draft.id,
+        no: draft.no,
+      });
+      expect(count(book, "invoices")).toBe(before - 1);
+
+      const again = await change(input);
+      expect(again.isError).toBe(false);
+      expect(again.body).toEqual({ ...first.body, replayed: true });
+      expect(count(book, "invoices")).toBe(before - 1);
+
+      // What the replay spares the agent: unkeyed, the number no longer resolves.
+      const unkeyed = await change({ invoice_delete: input.invoice_delete });
+      expect(unkeyed.isError).toBe(true);
+      expect(unkeyed.body.error.code).toBe("NOT_FOUND");
+
+      // The key with other input is refused before any number is looked up.
+      const other = await change({
+        ...input,
+        invoice_delete: [
+          { invoice: "INV-2026-9999", expected_version: draft.v },
+        ],
+      });
+      expect(other.isError).toBe(true);
+      expect(other.body.error.code).toBe("IDEMPOTENCY_MISMATCH");
+      expect(count(book, "invoices")).toBe(before - 1);
+    },
+    SLOW,
+  );
+});
+
+describe("near-name customers", () => {
+  /** What the book's contacts are called, and the first word of the one a draft is for. */
+  function names(book: EvalBook) {
+    const all = book.db
+      .select({ id: contacts.id, name: contacts.legalName })
+      .from(contacts)
+      .all();
+    const acme = all.find(
+      (row) => row.id === book.manifest.contacts.acme,
+    )!.name;
+    return {
+      all: all.map((row) => row.name),
+      acme,
+      close: acme.split(/\s+/)[0],
+    };
+  }
+
+  it(
+    "tells a caller who cannot read contacts nothing about existing names",
+    async () => {
+      // May create invoices and contacts but not read contacts: the close-name
+      // check is skipped, as change_contacts create does, and the customer is made.
+      const { book, create } = await open([
+        "invoices.create",
+        "contacts.create",
+      ]);
+      const { all, acme, close } = names(book);
+      const leaks = (text: string) =>
+        all.filter((name) => name !== close && text.includes(name));
+      const before = count(book, "contacts");
+      const made = await create({
+        invoices: [
+          draftInvoice(book, { contact: undefined, new_contact: close }),
+        ],
+      });
+      expect(made.isError).toBe(false);
+      expect(made.body.items[0].invoice.contact).toBe(close);
+      expect(made.text).not.toContain("candidates");
+      expect(made.text).not.toContain("AMBIGUOUS");
+      expect(made.text).not.toContain(acme);
+      expect(leaks(made.text)).toEqual([]);
+      expect(count(book, "contacts")).toBe(before + 1);
+    },
+    SLOW,
+  );
+
+  it(
+    "refuses a caller who can neither read nor create contacts, naming no one",
+    async () => {
+      const { book, create } = await open(["invoices.create"]);
+      const { all, acme, close } = names(book);
+      const before = count(book, "contacts");
+      const refused = await create({
+        invoices: [
+          draftInvoice(book, { contact: undefined, new_contact: close }),
+        ],
+      });
+      expect(refused.isError).toBe(true);
+      expect(refused.body.error.code).toBe("FORBIDDEN");
+      expect(refused.text).not.toContain("candidates");
+      expect(refused.text).not.toContain(acme);
+      expect(
+        all.filter((name) => name !== close && refused.text.includes(name)),
+      ).toEqual([]);
+      expect(count(book, "contacts")).toBe(before);
+    },
+    SLOW,
+  );
 });

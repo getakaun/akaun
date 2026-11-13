@@ -686,4 +686,51 @@ describe("manage_fixed_assets", () => {
     },
     SLOW,
   );
+
+  it(
+    "replays a retried capitalise instead of failing on the record it already moved",
+    async () => {
+      const { book, call } = await open();
+      const { record, item } = capitaliseArgs(book);
+      const input = { capitalise: [item], idempotency_key: "e4b-capitalise-1" };
+
+      // A dry run with the key is not stored: the real call is not a replay.
+      const dry = await call({ ...input, dry_run: true });
+      expect(dry.body).toMatchObject({ saved: false, dry_run: true });
+      expect(dry.body.replayed).toBeUndefined();
+
+      const first = await call(input);
+      expect(first.isError).toBe(false);
+      expect(first.body.saved).toBe(true);
+      expect(first.body.replayed).toBeUndefined();
+      expect(first.body.currency).toBe("MYR");
+      const assets = count(book, "fixed_assets");
+      const version = recordVersion(book.db, record.id);
+      expect(assets).toBe(1);
+
+      // The retry is the first answer again, formatted the same way (the
+      // book's currency included), and saves nothing.
+      const again = await call(input);
+      expect(again.isError).toBe(false);
+      expect(again.body).toEqual({ ...first.body, replayed: true });
+      expect(count(book, "fixed_assets")).toBe(assets);
+      expect(recordVersion(book.db, record.id)).toBe(version);
+
+      // What the replay spares the agent: unkeyed, the old version is stale.
+      const unkeyed = await call({ capitalise: [item] });
+      expect(unkeyed.isError).toBe(true);
+      expect(unkeyed.body.saved).toBeUndefined();
+      expect(count(book, "fixed_assets")).toBe(assets);
+
+      // The key with other input is refused, and saves nothing either.
+      const other = await call({
+        ...input,
+        capitalise: [{ ...item, asset: { ...item.asset, life_months: 60 } }],
+      });
+      expect(other.isError).toBe(true);
+      expect(other.body.error.code).toBe("IDEMPOTENCY_MISMATCH");
+      expect(count(book, "fixed_assets")).toBe(assets);
+    },
+    SLOW,
+  );
 });

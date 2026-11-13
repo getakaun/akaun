@@ -440,6 +440,35 @@ export type RecordListFilters = {
   voided?: "exclude" | "include" | "only";
   limit?: number;
   offset?: number;
+  // Added for MCP search. Each is optional and, when absent, adds no
+  // condition, so a caller that does not name them gets the list it got
+  // before. A list field matches any of its values, so an empty list matches
+  // nothing, as `kind: []` does.
+  /** true: at least one attachment. false: none. */
+  hasAttachment?: boolean;
+  /**
+   * Bounds, inclusive, on the record's own figure in main-currency cents,
+   * read from its sides: the sum of its positive movements, which the
+   * balance rule makes equal to what flows out. Comparable across
+   * currencies, unlike `amountMin`/`amountMax`, which bound the typed decimal.
+   */
+  minMainMinor?: Minor;
+  maxMainMinor?: Minor;
+  /**
+   * At least one Expense line with one of these treatments. A line that
+   * `needsTaxReview` flags is `requires_review` when it says so and
+   * `unclassified` otherwise, a line with no saved classification included.
+   */
+  taxTreatment?: TaxTreatment[];
+  /**
+   * true: at least one line on the Uncategorised Expense or Uncategorised
+   * Income default account. false: no such line.
+   */
+  uncategorised?: boolean;
+  /** Touches any of these accounts, as `accountId` touches one. */
+  accountIds?: number[];
+  /** Belongs to any of these contacts, by the rule `contactId` uses. */
+  contactIds?: number[];
 };
 
 export type RecordListResult = { records: RecordView[]; total: number };

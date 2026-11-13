@@ -14,6 +14,12 @@ export const MAX_CANDIDATES = 5;
 /** What a resolver reports when a reference did not resolve to exactly one item. */
 export type ResolveMiss = {
   kind: "not_found" | "ambiguous";
+  /**
+   * The resolver's own explanation, when it has a more specific one than "no
+   * match" (an archived account, a code and a name of two different accounts,
+   * an id sent as a string). Used as the error message when present.
+   */
+  message?: string;
   /** Best first. Each `{ id, name, ...details }`; details such as `code` or `date` are kept. */
   candidates?: readonly ToolCandidate[];
 };
@@ -55,11 +61,13 @@ export function resolveError(
   const quoted =
     typeof options.ref === "number" ? String(options.ref) : `"${options.ref}"`;
   const where = options.path ? `${options.path}: ` : "";
+  const own = miss.message?.trim() ? `${where}${miss.message.trim()}` : null;
   if (miss.kind === "ambiguous")
     return {
       code: "AMBIGUOUS",
       path: options.path,
-      message: `${where}${quoted} matches more than one ${options.what}.`,
+      message:
+        own ?? `${where}${quoted} matches more than one ${options.what}.`,
       fix:
         options.fix ??
         `Send the id of the ${options.what} you mean${candidates.length ? " from candidates" : ""}.`,
@@ -69,7 +77,7 @@ export function resolveError(
   return {
     code: "NOT_FOUND",
     path: options.path,
-    message: `${where}No ${options.what} matches ${quoted}.`,
+    message: own ?? `${where}No ${options.what} matches ${quoted}.`,
     fix:
       options.fix ??
       (candidates.length

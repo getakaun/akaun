@@ -252,4 +252,25 @@ describe("resolveError", () => {
     expect(near.fix).toMatch(/send its id/);
     expect(near.message).toBe("No account matches 42.");
   });
+
+  it("keeps the resolver's own explanation as the message", () => {
+    const body = resolveError(
+      {
+        kind: "not_found",
+        message:
+          '"5100 Travel": the code 5100 and the name Travel belong to different accounts.',
+        candidates,
+      },
+      { what: "account", ref: "5100 Travel", path: "records[0].category" },
+    );
+    expect(body.message).toBe(
+      'records[0].category: "5100 Travel": the code 5100 and the name Travel belong to different accounts.',
+    );
+    expect(body.candidates).toHaveLength(5);
+    const ambiguous = resolveError(
+      { kind: "ambiguous", message: "  ", candidates },
+      { what: "contact", ref: "Grab" },
+    );
+    expect(ambiguous.message).toBe('"Grab" matches more than one contact.');
+  });
 });

@@ -389,11 +389,11 @@ describe("phase 2 tax classification and audited month closing", () => {
           })) as { isError?: boolean; content: { text?: string }[] };
           expect(response.isError).toBe(true);
           const error = JSON.parse(response.content[0].text!).error;
-          // Refused before anything runs, naming the blocked field and
-          // that a person must reopen the month.
-          expect(error.code).toBe("REFUSED");
+          // A closed period, refused before anything runs, naming the
+          // blocked field and that a person must reopen the month.
+          expect(error.code).toBe("CLOSED_PERIOD");
           expect(error.items[0].error).toMatchObject({
-            code: "REFUSED",
+            code: "CLOSED_PERIOD",
             message: expect.stringContaining(`closed through ${boundary}`),
             blocked: [
               expect.objectContaining({

@@ -4,16 +4,25 @@ import { assetRecordDeletionReason } from "../queries/fixed-assets.js";
 import { closedPeriodReason } from "../closing/policy.js";
 import { isMoneyPotAccount } from "../ledger/account-type.js";
 import {
+  activeAllocation,
   allocationHistoryDeletionReason,
   ALLOCATION_HISTORY_EDIT_REASON,
 } from "../queries/allocation-state.js";
-import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
 import {
   contacts,
+  ledgerMovements,
+  reconciliationAllocations,
   reimbursementEntries,
   reimbursementItems,
   reimbursements,
+  settlements,
 } from "../db/schema.js";
+import {
+  listMovementAllocations,
+  replaceMovementAllocations as replaceMovementAllocationsQuery,
+} from "../queries/reconciliation.js";
+import { reconciliationEvents } from "../reconciliation/events.js";
 import { VOIDED_RECORD_REASON } from "../queries/void-state.js";
 import { DefaultAccountPurpose, LedgerRecordKind } from "$lib/enums.js";
 import { diffRecords, recordAudit } from "../audit.js";
@@ -1083,7 +1092,11 @@ function removeRecordInTransaction(
  * The month-close boundary is checked by `insertRecord` when the reversal is
  * written, because the reversal carries the original's date.
  */
-export function voidRefusal(db: LedgerDb, id: number): string | null {
+export function voidRefusal(
+  db: LedgerDb,
+  id: number,
+  release: VoidRelease = "none",
+): string | null {
   const depreciationReason = depreciationRecordReason(db, id);
   if (depreciationReason) return depreciationReason;
   const existing = getRecord(db, id);
@@ -1104,7 +1117,191 @@ export function voidRefusal(db: LedgerDb, id: number): string | null {
     return "This record was created by issuing an invoice. Void the invoice instead.";
   if (existing.kind === LedgerRecordKind.OpeningBalance)
     return "Change the opening balance from its account instead.";
-  const movementIds = existing.movements.map((m) => m.id);
+  if (inActiveReimbursementGroup(db, id))
+    return "This record is part of a reimbursement. Take it out with Correct allocation, or reverse the reimbursement, before you void it.";
+  const lock = lockStateFor(db, id);
+  if (release === "none") {
+    if (lock.settled && lock.reconciled)
+      return "This record is settled by a payment and reconciled to a bank statement line. Reverse the allocation and unmatch the bank statement line before you void it.";
+    if (lock.settled)
+      return "This record is settled by a payment. Reverse the allocation (Correct allocation) before you void it.";
+    if (lock.reconciled)
+      return "This record is reconciled to a bank statement line. Unmatch it from that line before you void it.";
+    return null;
+  }
+  // Releasing the allocations reverses each one on its own. A payment that
+  // names nobody must stay fully allocated, so reversing one of its rows
+  // reverses all of them — including the ones on other records. That is a
+  // correction of the payment, never a side effect of voiding this record.
+  for (const allocation of voidReleasePlan(db, id).allocations) {
+    const other = getRecordRow(db, allocation.otherRecordId);
+    if (
+      db
+        .select({ id: reimbursementEntries.recordId })
+        .from(reimbursementEntries)
+        .where(eq(reimbursementEntries.recordId, allocation.otherRecordId))
+        .get()
+    )
+      return "This record is settled through a reimbursement transfer. Correct the reimbursement first, then void the record.";
+    if (allocation.side === "owed" && other && other.contactId === null)
+      return `This record is settled by ${other.recordNumber ?? "a payment"}, which covers several contacts. Correct that payment's allocations first, then void the record.`;
+  }
+  if (lock.reconciled && release !== "all")
+    return "This record is reconciled to a bank statement line. Unmatch it from that line, or release its bank matches as well, before you void it.";
+  return null;
+}
+
+/**
+ * What releasing a record before its void would undo, or nothing.
+ *
+ * `"allocations"` reverses every active allocation in which this record is the
+ * owed side or the paying side; the reversed rows stay as history, exactly as
+ * Correct allocation leaves them. `"all"` also removes the bank lines matched
+ * to its movements. Every other reason a record cannot be voided still holds.
+ */
+export type VoidRelease = "none" | "allocations" | "all";
+
+export type VoidReleasePlan = {
+  allocations: {
+    settlementId: number;
+    /** Which side of the allocation this record is. */
+    side: "owed" | "payment";
+    paymentMovementId: number;
+    owedMovementId: number;
+    /** The record on the other side of it. */
+    otherRecordId: number;
+    amountMinor: number;
+  }[];
+  bankMatches: {
+    movementId: number;
+    lineId: number;
+    /** Decimal, as the statement line stores it. */
+    amount: number;
+  }[];
+};
+
+/** Every active allocation and bank match on this record's movements, oldest first. */
+export function voidReleasePlan(db: LedgerDb, id: number): VoidReleasePlan {
+  const movementIds = db
+    .select({ id: ledgerMovements.id })
+    .from(ledgerMovements)
+    .where(eq(ledgerMovements.recordId, id))
+    .all()
+    .map((m) => m.id);
+  if (!movementIds.length) return { allocations: [], bankMatches: [] };
+  const own = new Set(movementIds);
+  const rows = db
+    .select()
+    .from(settlements)
+    .where(
+      and(
+        activeAllocation(),
+        or(
+          inArray(settlements.owedMovementId, movementIds),
+          inArray(settlements.paymentMovementId, movementIds),
+        ),
+      ),
+    )
+    .orderBy(asc(settlements.id))
+    .all();
+  const otherIds = rows.map((r) =>
+    own.has(r.owedMovementId) ? r.paymentMovementId : r.owedMovementId,
+  );
+  const owner = new Map(
+    (otherIds.length
+      ? db
+          .select({
+            id: ledgerMovements.id,
+            recordId: ledgerMovements.recordId,
+          })
+          .from(ledgerMovements)
+          .where(inArray(ledgerMovements.id, otherIds))
+          .all()
+      : []
+    ).map((m) => [m.id, m.recordId]),
+  );
+  return {
+    allocations: rows.map((row, i) => ({
+      settlementId: row.id,
+      side: own.has(row.owedMovementId) ? "owed" : "payment",
+      paymentMovementId: row.paymentMovementId,
+      owedMovementId: row.owedMovementId,
+      otherRecordId: owner.get(otherIds[i]) ?? id,
+      amountMinor: row.amountMinor,
+    })),
+    bankMatches: db
+      .select({
+        movementId: reconciliationAllocations.movementId,
+        lineId: reconciliationAllocations.lineId,
+        amount: reconciliationAllocations.amount,
+      })
+      .from(reconciliationAllocations)
+      .where(inArray(reconciliationAllocations.movementId, movementIds))
+      .orderBy(asc(reconciliationAllocations.id))
+      .all()
+      .map((m) => ({ ...m, movementId: m.movementId! })),
+  };
+}
+
+/**
+ * Removes every bank line matched to this record's movements, inside the
+ * caller's transaction. Audited per movement the way a manual unmatch is;
+ * the live update waits for the caller's commit. Returns what was removed.
+ */
+export function releaseBankMatchesInTransaction(
+  db: LedgerDb,
+  recordId: number,
+  actingUserId: number,
+  deferredEmits: DeferredEmits,
+): VoidReleasePlan["bankMatches"] {
+  const released: VoidReleasePlan["bankMatches"] = [];
+  const movementIds = db
+    .select({ id: ledgerMovements.id })
+    .from(ledgerMovements)
+    .where(eq(ledgerMovements.recordId, recordId))
+    .orderBy(asc(ledgerMovements.sortOrder))
+    .all()
+    .map((m) => m.id);
+  for (const movementId of movementIds) {
+    const before = listMovementAllocations(db, movementId);
+    if (!before.length) continue;
+    replaceMovementAllocationsQuery(db, movementId, 0, [], actingUserId);
+    recordAudit(db, {
+      recordType: "record",
+      recordId,
+      userId: actingUserId,
+      action: "update",
+      changes: [
+        { field: `allocations:movement:${movementId}`, before, after: [] },
+      ],
+      deferredEmits,
+    });
+    const lineIds = [...new Set(before.map((a) => a.lineId))];
+    deferredEmits.push(() =>
+      reconciliationEvents.emit("allocation-update", { movementId, lineIds }),
+    );
+    released.push(
+      ...before.map((a) => ({
+        movementId,
+        lineId: a.lineId,
+        amount: a.amount,
+      })),
+    );
+  }
+  return released;
+}
+
+/**
+ * Whether this record is still part of an active reimbursement group: as its
+ * payable or payment record, or through an expense movement the group covers.
+ */
+export function inActiveReimbursementGroup(db: LedgerDb, id: number): boolean {
+  const movementIds = db
+    .select({ id: ledgerMovements.id })
+    .from(ledgerMovements)
+    .where(eq(ledgerMovements.recordId, id))
+    .all()
+    .map((m) => m.id);
   const inGroup = db
     .select({ id: reimbursements.id })
     .from(reimbursements)
@@ -1133,16 +1330,7 @@ export function voidRefusal(db: LedgerDb, id: number): string | null {
       ),
     )
     .get();
-  if (inGroup)
-    return "This record is part of a reimbursement. Take it out with Correct allocation, or reverse the reimbursement, before you void it.";
-  const lock = lockStateFor(db, id);
-  if (lock.settled && lock.reconciled)
-    return "This record is settled by a payment and reconciled to a bank statement line. Reverse the allocation and unmatch the bank statement line before you void it.";
-  if (lock.settled)
-    return "This record is settled by a payment. Reverse the allocation (Correct allocation) before you void it.";
-  if (lock.reconciled)
-    return "This record is reconciled to a bank statement line. Unmatch it from that line before you void it.";
-  return null;
+  return inGroup !== undefined;
 }
 
 /**
@@ -1151,8 +1339,12 @@ export function voidRefusal(db: LedgerDb, id: number): string | null {
  * settlement refresh, the void dialog, MCP's preview). The write itself is
  * still refused by `insertRecord` if the month closes in between.
  */
-export function voidBlockedReason(db: LedgerDb, id: number): string | null {
-  const refused = voidRefusal(db, id);
+export function voidBlockedReason(
+  db: LedgerDb,
+  id: number,
+  release: VoidRelease = "none",
+): string | null {
+  const refused = voidRefusal(db, id, release);
   if (refused) return refused;
   const record = getRecord(db, id);
   return record?.periodClosedThrough
@@ -1174,6 +1366,8 @@ export function voidRecordInTransaction(
   actingUserId: number,
   reason: string,
   deferredEmits: DeferredEmits,
+  /** What the caller released just before, in this transaction, for the audit. */
+  released?: VoidReleasePlan,
 ): Refusable<{ original: RecordView; reversal: RecordView }> {
   const refused = voidRefusal(db, id);
   if (refused) return { ok: false, reason: refused };
@@ -1219,6 +1413,24 @@ export function voidRecordInTransaction(
     changes: [
       { field: "voidedByRecordId", before: null, after: row.id },
       { field: "voidReason", before: null, after: reason },
+      ...(released?.allocations.length
+        ? [
+            {
+              field: "releasedAllocations",
+              before: released.allocations,
+              after: null,
+            },
+          ]
+        : []),
+      ...(released?.bankMatches.length
+        ? [
+            {
+              field: "releasedBankMatches",
+              before: released.bankMatches,
+              after: null,
+            },
+          ]
+        : []),
     ],
   });
 

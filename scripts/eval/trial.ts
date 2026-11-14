@@ -8,14 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-} from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import * as schema from "../../src/lib/server/db/schema.js";
@@ -24,6 +17,12 @@ import { LocalBlobStore } from "../../src/lib/server/storage/blob-store.js";
 import { localsFor } from "../../src/lib/server/permissions/test-locals.js";
 import { patLocals } from "../../src/lib/server/tokens/pat.js";
 import type { AppContext } from "../../src/lib/server/application/context.js";
+import {
+  checkInsideTemp,
+  checkTempRoot,
+  EVAL_PATH_RULES,
+  type TempDirs,
+} from "./safe-paths.ts";
 import type {
   NamingScheme,
   ToolSet,
@@ -101,6 +100,13 @@ export type EvalSandbox = {
   dir: string;
   /** True in a trial (given `AKAUN_EVAL_TRIAL_DIR`), false in the orchestrator. */
   isTrial: boolean;
+  /**
+   * The checked temp root and the folders this process made in it: every
+   * folder is made with `temp.make` and deleted with `temp.remove`, which
+   * refuses anything it did not make. A trial's own `dir` is the parent's, so
+   * a trial deletes nothing.
+   */
+  temp: TempDirs;
   envStoragePath: string;
   envDatabasePath: string;
   realDataBefore: RealDataStat[];
@@ -124,22 +130,17 @@ export const ENV = {
 } as const;
 
 /**
- * Whether `path` is strictly inside the OS temp directory, judged on real
- * paths: the nearest existing ancestor is resolved through any symlink, so a
- * link cannot carry a folder that does not exist yet somewhere else.
+ * `path` on its real path when it is a safe folder strictly inside the OS
+ * temp directory (`safe-paths.ts`: never in or around a checkout or a data
+ * folder, and no symlink out), else a thrown `UnsafePathError`. Under the
+ * preload its checked temp root is used; a spec without it checks
+ * `os.tmpdir()` the same way.
  */
-export function insideTmp(path: string): boolean {
-  let existing = resolve(path);
-  const rest: string[] = [];
-  while (!existsSync(existing)) {
-    const parent = dirname(existing);
-    if (parent === existing) return false;
-    rest.unshift(basename(existing));
-    existing = parent;
-  }
-  const real = join(realpathSync(existing), ...rest);
-  const rel = relative(realpathSync(tmpdir()), real);
-  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+export function sandboxPath(path: string, what: string): string {
+  const sandbox = evalSandbox();
+  if (sandbox) return sandbox.temp.check(path, what);
+  const root = checkTempRoot(tmpdir(), EVAL_PATH_RULES);
+  return checkInsideTemp(path, root, EVAL_PATH_RULES, what);
 }
 
 // -- Templates ----------------------------------------------------------------
@@ -155,12 +156,11 @@ export type TemplateInfo = {
 
 /** Builds one variant of the test book in `dir/book` (under the OS temp directory) and records it in `dir/template.json`. */
 export async function buildTemplate(
-  dir: string,
+  given: string,
   variant: EvalVariant,
   today: string,
 ): Promise<TemplateInfo> {
-  if (!insideTmp(dir))
-    throw new Error(`Templates live under the OS temp directory, not ${dir}.`);
+  const dir = sandboxPath(given, "A template");
   mkdirSync(dir, { recursive: true });
   const book = await buildEvalBook({ dir: join(dir, "book"), variant, today });
   const info: TemplateInfo = {
@@ -185,13 +185,10 @@ export function readTemplate(dir: string): TemplateInfo {
 /** A copy of the template's book in `target` (under the OS temp directory), opened. */
 export function openBookCopy(
   templateDir: string,
-  target: string,
+  given: string,
   manifest: EvalManifest,
 ): SetupBook {
-  if (!insideTmp(target))
-    throw new Error(
-      `A trial's book lives under the OS temp directory, not ${target}.`,
-    );
+  const target = sandboxPath(given, "A trial's book");
   if (existsSync(join(target, "akaun-eval.db")))
     throw new Error(`${target} already holds a book.`);
   mkdirSync(target, { recursive: true });
@@ -511,11 +508,16 @@ async function main() {
   if (!(NAMINGS as readonly string[]).includes(naming))
     fail(2, `Unknown naming ${naming}.`);
   const templateDir = process.env[ENV.templateDir];
-  if (!templateDir || !insideTmp(templateDir))
+  if (!templateDir)
     fail(
       2,
       `${ENV.templateDir} must name a template under the OS temp directory.`,
     );
+  try {
+    sandboxPath(templateDir, ENV.templateDir);
+  } catch (error) {
+    fail(2, (error as Error).message);
+  }
   const budget = process.env[ENV.budgetUsd];
 
   let changed = sandbox.checkRealData();

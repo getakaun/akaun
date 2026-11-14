@@ -213,23 +213,24 @@ const recordPaymentsInput = z.object({
 });
 type RecordPaymentsArgs = z.output<typeof recordPaymentsInput>;
 
-const RECORD_PAYMENTS_DESCRIPTION = `Record money paid or received against what is owed, and apply payments or credits that already exist. Use it, not a plain record, whenever a bill, invoice or claim is paid: name records by id or number (e.g. "EXP-2026-0042") and the server finds the line each one owes.
+const RECORD_PAYMENTS_DESCRIPTION = `Record money paid or received against what is owed, and apply payments or credits that already exist. Use it, not a plain record, when a bill, invoice or claim is paid: name records by id or number (e.g. "EXP-2026-0042") and the server finds the line each one owes.
 
 - pay[]: a new payment or receipt in the main currency, out of or into a money account (bank, cash, card). allocate lists what it settles. use_credit first applies an earlier payment or credit of the same contact (to = the record it settles). direction is worked out from the records when omitted. A refund must use up the overpayment in full. amount "0" with use_credit applies credit only.
 - allocate[]: apply an existing payment or credit to open records of the same contact.
 - reimburse[]: repay one person for expenses they paid personally: items are the expense records; cash with paid_from is paid now; credits are their earlier credit.
 
-Amounts are decimal strings in the main currency ("1285.50"); an omitted allocation amount takes what is outstanding. A record with two owed lines answers AMBIGUOUS: resend with line_account from the candidates.
+Amounts are decimal strings in the main currency ("1285.50"); an omitted allocation amount takes what is outstanding (without records.read, send every amount). A record with two owed lines answers AMBIGUOUS: resend with line_account from the candidates.
 
-The result gives each record's outstanding before and after, credit left unapplied, and each payment's v and allocations_v (needed to change its allocations later). Up to 50 items per call, saved together or not at all. dry_run: true saves nothing; idempotency_key makes a retried call return the first result. Bookkeeping only: no money is sent.`;
+The result gives each record's outstanding before and after (with records.read), and each payment's v and allocations_v (to change its allocations later). Up to 50 items per call, saved all or nothing. dry_run: true saves nothing; idempotency_key makes a retried call return the first result. Bookkeeping only: no money is sent.`;
 
 /** Readable figures for one owed record, before and after the item ran. */
 type Settled = {
   id: number;
   no: string;
-  amount: string;
-  outstanding_before: string;
-  outstanding_after: string;
+  amount?: string;
+  /** Only for a caller who may read records (`showsBalances`). */
+  outstanding_before?: string;
+  outstanding_after?: string;
 };
 
 type PaymentValue = Record<string, unknown>;
@@ -243,6 +244,26 @@ export function recordNo(record: Pick<RecordBrief, "id" | "recordNumber">) {
 export function outstandingNow(db: LedgerDb, movementId: number): number {
   const side = getSide(db, movementId);
   return side ? outstandingOf(side) : 0;
+}
+
+/**
+ * Whether the caller may see balances: what is still outstanding on a record,
+ * unapplied on a payment, or left on a credit. Each is a fact about records
+ * the caller names, so it needs `records.read`; a create-only caller (the
+ * seeded Data Entry group) gets only the figures it sent, and must send every
+ * allocation amount, since filling one in from the balance would show it.
+ */
+export function showsBalances(ctx: { locals: App.Locals }): boolean {
+  return can(ctx.locals, "records.read");
+}
+
+/** A path's refusal for an omitted amount that would be filled in from a balance. */
+function needAmount(refs: Refs, path: string): void {
+  refs.invalid(
+    path,
+    "Without permission to read records, an allocation amount is not filled in from what is outstanding.",
+    "Send amount for this record: the sum this payment settles on it.",
+  );
 }
 
 /** The saved receivable / payable / reimbursements-payable accounts, by role. */
@@ -341,6 +362,8 @@ function planPay(
     });
     const allocate = (item.allocate ?? []).flatMap((a, j) => {
       const at = `${path}.allocate[${j}]`;
+      if (a.amount === undefined && !showsBalances(refs.ctx))
+        needAmount(refs, `${at}.amount`);
       const found = refs.openItem(a.record, at, a.line_account);
       return found ? [{ ...found, amountMinor: a.amount }] : [];
     });
@@ -432,6 +455,8 @@ function planAllocate(
     const payment = refs.record(item.payment, `${path}.payment`);
     const paymentLine = payment && refs.paymentLine(payment, `${path}.payment`);
     const to = item.to.flatMap((a, j) => {
+      if (a.amount === undefined && !showsBalances(refs.ctx))
+        needAmount(refs, `${path}.to[${j}].amount`);
       const found = refs.openItem(a.record, `${path}.to[${j}]`, a.line_account);
       return found ? [{ ...found, amountMinor: a.amount }] : [];
     });
@@ -502,16 +527,21 @@ function snapshot(db: LedgerDb, movementIds: number[]) {
 }
 
 function settledRows(
-  db: LedgerDb,
+  ctx: AppContext,
   rows: { record: RecordBrief; line: ControlLine; amountMinor: number }[],
   before: Map<number, number>,
 ): Settled[] {
+  const shown = showsBalances(ctx);
   return rows.map(({ record, line, amountMinor }) => ({
     id: record.id,
     no: recordNo(record),
     amount: money(amountMinor),
-    outstanding_before: money(before.get(line.movementId) ?? 0),
-    outstanding_after: money(outstandingNow(db, line.movementId)),
+    ...(shown
+      ? {
+          outstanding_before: money(before.get(line.movementId) ?? 0),
+          outstanding_after: money(outstandingNow(ctx.db, line.movementId)),
+        }
+      : {}),
   }));
 }
 
@@ -605,15 +635,20 @@ function runPay(ctx: AppContext, plan: PayPlan): AppResult<PaymentValue> {
       amount: money(record.amountMinor),
       ...versionsOf(ctx, record.id, own?.id),
     };
-    if (own) value.unapplied = money(outstandingNow(ctx.db, own.id));
+    if (own && showsBalances(ctx))
+      value.unapplied = money(outstandingNow(ctx.db, own.id));
   }
   value.currency = mainCurrency(ctx.db);
-  value.allocated = settledRows(ctx.db, allocations.value, before);
+  value.allocated = settledRows(ctx, allocations.value, before);
   if (plan.credits.length)
     value.credit_used = plan.credits.map((c) => ({
       credit: recordNo(c.credit),
-      credit_left: money(outstandingNow(ctx.db, c.creditLine.movementId)),
-      ...settledRows(ctx.db, [c], before)[0],
+      ...(showsBalances(ctx)
+        ? {
+            credit_left: money(outstandingNow(ctx.db, c.creditLine.movementId)),
+          }
+        : {}),
+      ...settledRows(ctx, [c], before)[0],
     }));
   return ok(value);
 }
@@ -661,9 +696,13 @@ function runAllocate(
       ...versionsOf(ctx, plan.payment.id, paymentMovementId),
     },
     currency: mainCurrency(ctx.db),
-    allocated: settledRows(ctx.db, rows, before),
-    unapplied_before: money(before.get(paymentMovementId) ?? 0),
-    unapplied: money(outstandingNow(ctx.db, paymentMovementId)),
+    allocated: settledRows(ctx, rows, before),
+    ...(showsBalances(ctx)
+      ? {
+          unapplied_before: money(before.get(paymentMovementId) ?? 0),
+          unapplied: money(outstandingNow(ctx.db, paymentMovementId)),
+        }
+      : {}),
   });
 }
 
@@ -719,14 +758,24 @@ function runReimburse(
     };
   }
   value.currency = mainCurrency(ctx.db);
-  value.total = money(result.value.totalMinor);
-  value.not_yet_repaid = money(result.value.remainingMinor);
-  value.items = settledRows(ctx.db, items, before);
+  // Each item is repaid in full, so its amount and the total are balances too.
+  const shown = showsBalances(ctx);
+  if (shown) {
+    value.total = money(result.value.totalMinor);
+    value.not_yet_repaid = money(result.value.remainingMinor);
+  }
+  value.items = shown
+    ? settledRows(ctx, items, before)
+    : items.map((i) => ({ id: i.record.id, no: recordNo(i.record) }));
   if (plan.credits.length)
     value.credit_used = plan.credits.map((c) => ({
       credit: recordNo(c.credit),
       amount: money(c.amountMinor),
-      credit_left: money(outstandingNow(ctx.db, c.creditLine.movementId)),
+      ...(shown
+        ? {
+            credit_left: money(outstandingNow(ctx.db, c.creditLine.movementId)),
+          }
+        : {}),
     }));
   return ok(value);
 }
@@ -888,6 +937,7 @@ function runReallocate(
       movementId: a.line.movementId,
     })),
   ].filter((r) => !seen.has(r.movementId) && seen.add(r.movementId));
+  const shown = showsBalances(ctx);
   return ok({
     payment: {
       id: plan.payment.id,
@@ -896,24 +946,30 @@ function runReallocate(
       allocations_v: corrected.value.version,
     },
     currency: mainCurrency(ctx.db),
+    // A reversed allocation's amount was saved before; without records.read
+    // it is left out with the balances.
     reversed: plan.remove.map((r) => ({
       id: r.record.id,
       no: recordNo(r.record),
-      amount: money(r.settlement.amountMinor),
+      ...(shown ? { amount: money(r.settlement.amountMinor) } : {}),
     })),
     added: add.value.map((a) => ({
       id: a.record.id,
       no: recordNo(a.record),
       amount: money(a.amountMinor),
     })),
-    records: records.map((r) => ({
-      id: r.record.id,
-      no: recordNo(r.record),
-      outstanding_before: money(before.get(r.movementId) ?? 0),
-      outstanding_after: money(outstandingNow(ctx.db, r.movementId)),
-    })),
-    unapplied_before: money(before.get(plan.paymentLine.movementId) ?? 0),
-    unapplied: money(outstandingNow(ctx.db, plan.paymentLine.movementId)),
+    ...(shown
+      ? {
+          records: records.map((r) => ({
+            id: r.record.id,
+            no: recordNo(r.record),
+            outstanding_before: money(before.get(r.movementId) ?? 0),
+            outstanding_after: money(outstandingNow(ctx.db, r.movementId)),
+          })),
+          unapplied_before: money(before.get(plan.paymentLine.movementId) ?? 0),
+          unapplied: money(outstandingNow(ctx.db, plan.paymentLine.movementId)),
+        }
+      : {}),
   });
 }
 
@@ -961,6 +1017,8 @@ const changeAllocations = defineWriteTool({
         return owed && settlement ? [{ record: owed, settlement }] : [];
       });
       const add = (item.add ?? []).flatMap((a, j) => {
+        if (a.amount === undefined && !showsBalances(ctx))
+          needAmount(refs, `${path}.add[${j}].amount`);
         const found = refs.openItem(
           a.record,
           `${path}.add[${j}]`,

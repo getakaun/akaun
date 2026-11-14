@@ -46,6 +46,7 @@ import {
   GET_REPORT,
   LIST_ACCOUNTS,
   MANAGE_FIXED_ASSETS,
+  MATCH_BANK_LINES,
   missingForActions,
   requirementEntry,
   TOOL_REQUIREMENTS_V2,
@@ -328,8 +329,13 @@ describe("the v2 requirement tables", () => {
     ]);
     // correctSettledAmount: update and create, plus Correct allocations or delete
     expect(leaves(CHANGE_RECORDS.checks!.correct_settled_amount)).toEqual([
-      ["records.update", "records.create", "records.correctAllocations"],
-      ["records.update", "records.create", "records.delete"],
+      [
+        "records.read",
+        "records.update",
+        "records.create",
+        "records.correctAllocations",
+      ],
+      ["records.read", "records.update", "records.create", "records.delete"],
     ]);
   });
 
@@ -345,6 +351,56 @@ describe("the v2 requirement tables", () => {
     for (const path of VOID_PATHS)
       for (const option of CHANGE_RECORDS.checks![path])
         expect(includes(option, voids), path).toBe(true);
+  });
+
+  it("ask for records.read with every change_records update, as changeRecord does (review L4)", () => {
+    expect(plain(CHANGE_RECORDS.actions!.update)).toEqual([
+      {
+        scopes: ["records:write", "records:read"],
+        permissions: ["records.update", "records.read"],
+      },
+    ]);
+    // An update-only token is not shown a tool that would always refuse it.
+    expect(
+      requirementsMet(token(["records.update"]), CHANGE_RECORDS.requirements),
+    ).toBe(false);
+    expect(
+      missingForActions(token(["records.update"]), "change_records", [
+        "update",
+      ]),
+    ).toEqual([
+      {
+        action: "update",
+        missingScopes: [],
+        missingPermissions: ["records.read"],
+      },
+    ]);
+  });
+
+  it("ask for reconciliation.match with create_from_lines, as createRecordFromLines does (review L2)", () => {
+    expect(plain(MATCH_BANK_LINES.actions!.create_from_lines)).toEqual([
+      {
+        scopes: ["reconciliation:write", "records:write"],
+        permissions: [
+          "reconciliation.create",
+          "reconciliation.match",
+          "records.create",
+        ],
+      },
+    ]);
+    expect(
+      missingForActions(
+        token(["reconciliation.create", "records.create"]),
+        "match_bank_lines",
+        ["create_from_lines"],
+      ),
+    ).toEqual([
+      {
+        action: "create_from_lines",
+        missingScopes: [],
+        missingPermissions: ["reconciliation.match"],
+      },
+    ]);
   });
 
   it("list a write tool when any one action is allowed, with no route another covers", () => {
@@ -625,7 +681,11 @@ describe("any-of listing through the registry", () => {
   it("does not list it to an app holding records:void alone, which voidRecord would refuse", () => {
     // voidRecord asks for records.read with records.void (v1 void_record).
     expect(listed(app(["records:void"]))).toEqual([]);
-    expect(listed(app(["records:write"]))).toEqual(["akaun_change_records"]);
+    // Nor records:write alone: changeRecord asks for records.read too (L4).
+    expect(listed(app(["records:write"]))).toEqual([]);
+    expect(listed(app(["records:read", "records:write"]))).toEqual([
+      "akaun_change_records",
+    ]);
   });
 });
 

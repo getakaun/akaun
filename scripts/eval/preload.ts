@@ -1,8 +1,14 @@
 import { plugin } from "bun";
 import { mock } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, statSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
+import {
+  EVAL_PATH_RULES,
+  LIVE_CHECKOUT,
+  TempDirs,
+  UnsafePathError,
+} from "./safe-paths.ts";
 import type { EvalSandbox, RealDataStat } from "./trial.ts";
 
 /**
@@ -16,7 +22,11 @@ import type { EvalSandbox, RealDataStat } from "./trial.ts";
  *
  * 1. The sandbox is `AKAUN_EVAL_TRIAL_DIR`, refused unless it is inside
  *    `os.tmpdir()`; a process given none (the orchestrator) makes a fresh one
- *    there. SvelteKit's `$env/dynamic/private` points `STORAGE_PATH` and
+ *    there. The temp root and every folder are checked on their real paths
+ *    by `safe-paths.ts` (never in or around a checkout or a data folder), the
+ *    orchestrator refuses a trial directory from its environment, and only a
+ *    folder this process made with `mkdtemp` can be deleted
+ *    (`sandbox.temp.remove`). SvelteKit's `$env/dynamic/private` points `STORAGE_PATH` and
  *    `DATABASE_PATH` inside it, so even a default path lands in a temporary
  *    folder — never the real `data/` that `.env` names (CLAUDE.md,
  *    Verification Policy).
@@ -36,48 +46,47 @@ process.env.LOG_LEVEL = "warn";
 
 // -- The sandbox --------------------------------------------------------------
 
-function within(root: string, path: string): boolean {
-  const rel = relative(root, path);
-  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
-}
-
 /**
- * `dir`, made if missing and resolved through any symlink, or a thrown error
- * when it is not strictly inside the OS temp directory. Checked before the
- * folder is made and again on its real path, so neither `..` nor a symlink can
- * point a trial at another folder.
+ * Refuses, before anything is made or loaded, a process this preload must not
+ * run: the orchestrator (`run.ts`) never takes a trial directory from its
+ * environment — only the child `trial.ts` gets one, from the parent — and no
+ * process starts when the temp root or the trial directory is unsafe
+ * (`safe-paths.ts`: not in or around a checkout, never a data folder).
  */
-function assertTrialDirectory(dir: string): string {
-  const temp = realpathSync(tmpdir());
-  const absolute = resolve(dir);
-  if (
-    !isAbsolute(dir) ||
-    !(within(resolve(tmpdir()), absolute) || within(temp, absolute))
-  )
-    throw new Error(
-      `AKAUN_EVAL_TRIAL_DIR must be an absolute path inside os.tmpdir() (${tmpdir()}), not ${dir}.`,
+function openSandbox(): { temp: TempDirs; dir: string; isTrial: boolean } {
+  const given = process.env.AKAUN_EVAL_TRIAL_DIR;
+  if (given !== undefined && basename(Bun.main) === "run.ts")
+    throw new UnsafePathError(
+      `AKAUN_EVAL_TRIAL_DIR is set (${given}). The evaluation runner never takes a trial directory from its environment: unset it and run again.`,
     );
-  mkdirSync(absolute, { recursive: true });
-  const real = realpathSync(absolute);
-  if (!within(temp, real))
-    throw new Error(
-      `AKAUN_EVAL_TRIAL_DIR must be inside os.tmpdir() (${temp}); ${dir} resolves to ${real}.`,
-    );
-  return real;
+  const temp = new TempDirs(tmpdir(), EVAL_PATH_RULES);
+  if (given === undefined)
+    return {
+      temp,
+      dir: temp.make(temp.root, "akaun-eval-process-"),
+      isTrial: false,
+    };
+  // Checked before the folder is made and again on its real path, so neither
+  // `..` nor a symlink can point a trial at another folder.
+  temp.check(given, "AKAUN_EVAL_TRIAL_DIR");
+  mkdirSync(given, { recursive: true });
+  return {
+    temp,
+    dir: temp.check(given, "AKAUN_EVAL_TRIAL_DIR"),
+    isTrial: true,
+  };
 }
 
-const given = process.env.AKAUN_EVAL_TRIAL_DIR;
-let sandboxDir: string;
+let opened: ReturnType<typeof openSandbox>;
 try {
-  sandboxDir = given
-    ? assertTrialDirectory(given)
-    : realpathSync(mkdtempSync(join(tmpdir(), "akaun-eval-process-")));
+  opened = openSandbox();
 } catch (error) {
   console.error(
     `[eval preload] ${error instanceof Error ? error.message : String(error)}`,
   );
   process.exit(78);
 }
+const sandboxDir = opened.dir;
 /** Where a default `STORAGE_PATH` / `DATABASE_PATH` would land. Nothing should. */
 const envStoragePath = join(sandboxDir, "env-default-storage");
 const envDatabasePath = join(sandboxDir, "env-default-never-opened.db");
@@ -171,13 +180,13 @@ globalThis.fetch = Object.assign(guardedFetch, {
 // -- The real book ------------------------------------------------------------
 
 /**
- * The maintainer's live book, named here and nowhere else in the evaluation,
- * and only ever passed to `statSync`. The checkout this file sits in is
- * watched too, in case the book lives there.
+ * The maintainer's live book (its checkout is named in `safe-paths.ts` and
+ * nowhere else), only ever passed to `statSync`. The checkout this file sits
+ * in is watched too, in case the book lives there.
  */
 const REAL_DATA_DIRS = [
   ...new Set([
-    "/Users/tanghaoquan/Code/akaun/data",
+    join(LIVE_CHECKOUT, "data"),
     resolve(import.meta.dir, "../../data"),
   ]),
 ];
@@ -216,7 +225,8 @@ function checkRealData(): string[] {
 
 const sandbox: EvalSandbox = {
   dir: sandboxDir,
-  isTrial: Boolean(given),
+  isTrial: opened.isTrial,
+  temp: opened.temp,
   envStoragePath,
   envDatabasePath,
   realDataBefore,

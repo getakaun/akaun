@@ -46,8 +46,13 @@ export const CREATE_RECORDS = writeTool(
 export const CHANGE_RECORDS = writeTool(
   {
     // v1 `update_record`. Every path an update can take needs this; the
-    // correction paths below add their own abilities.
-    update: write(["records:write"], ["records.update"]),
+    // correction paths below add their own abilities. `changeRecord` asks for
+    // `records.read` as well as `records.update`, so an update-only caller is
+    // not listed a tool that always refuses it, and step-up asks for the read.
+    update: write(
+      ["records:write", "records:read"],
+      ["records.update", "records.read"],
+    ),
     // v1 `void_record`: `voidRecord` also asks for `records.read`.
     void: write(
       ["records:read", "records:void"],
@@ -75,14 +80,21 @@ export const CHANGE_RECORDS = writeTool(
       ["records.read", "records.update", "records.correctContact"],
     ),
     // v1 `correct_payment_recipient`.
+    // Each update path below also carries the `update` action's own
+    // `records:read` / `records.read`, so it is a complete route.
     correct_payment_recipient: either(
       write(
-        ["records:write", "records:correction"],
-        ["records.create", "records.update", "records.correctPaymentRecipient"],
+        ["records:read", "records:write", "records:correction"],
+        [
+          "records.read",
+          "records.create",
+          "records.update",
+          "records.correctPaymentRecipient",
+        ],
       ),
       write(
-        ["records:write", "records:delete"],
-        ["records.create", "records.update", "records.delete"],
+        ["records:read", "records:write", "records:delete"],
+        ["records.read", "records.create", "records.update", "records.delete"],
       ),
     ),
     // v1 `correct_reimbursement_amount`.
@@ -113,23 +125,28 @@ export const CHANGE_RECORDS = writeTool(
     // route it grew from — v1 `correct_payment_allocations`' alternatives.
     correct_settled_amount: either(
       write(
-        ["records:write", "records:correction"],
-        ["records.update", "records.create", "records.correctAllocations"],
+        ["records:read", "records:write", "records:correction"],
+        [
+          "records.read",
+          "records.update",
+          "records.create",
+          "records.correctAllocations",
+        ],
       ),
       write(
-        ["records:write", "records:delete"],
-        ["records.update", "records.create", "records.delete"],
+        ["records:read", "records:write", "records:delete"],
+        ["records.read", "records.update", "records.create", "records.delete"],
       ),
     ),
     // An update that unmatches and rematches bank lines on the way.
     release_bank_matches: write(
-      ["records:write", "reconciliation:write"],
-      ["records.update", "reconciliation.match"],
+      ["records:read", "records:write", "reconciliation:write"],
+      ["records.read", "records.update", "reconciliation.match"],
     ),
     // An update whose sides re-derive to an adjustment.
     records_adjust: write(
-      ["records:write", "records:adjust"],
-      ["records.update", "records.adjust"],
+      ["records:read", "records:write", "records:adjust"],
+      ["records.read", "records.update", "records.adjust"],
     ),
     // --- the paths `void[]` routes to ---
     // `release: "allocations"`: `voidRecord` reverses them first.

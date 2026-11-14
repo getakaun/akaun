@@ -1,0 +1,19 @@
+-- `contacts.merge` is now sensitive (`src/lib/permissions/catalog.ts`): a merge
+-- moves every record of the merged contacts to the one kept and deletes the
+-- others, and it cannot be undone. A sensitive leaf is left out of a group's
+-- delegation ceiling unless an administrator adds it on purpose.
+--
+-- Ceilings written before this change still hold it: migration 0033 copied
+-- `contacts.merge` into the ceiling of every group whose old grid allowed
+-- contacts delete. This removes it from every stored ceiling, so personal
+-- access tokens and OAuth apps stop carrying it on their next request (the
+-- ceiling is intersected on every request; no token or grant row is changed).
+--
+-- Only `group_delegations` rows that name exactly `contacts.merge` are
+-- deleted. Group grants are untouched, so members keep merging in the app.
+-- A superuser group has no ceiling at all, so nothing here affects it.
+-- Running it again deletes nothing.
+--
+-- To allow it again: Users & Groups → the group → "Members may hand on to
+-- tokens & apps" → Contacts → Merge.
+DELETE FROM `group_delegations` WHERE `permission` = 'contacts.merge';

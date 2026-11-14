@@ -284,16 +284,23 @@ export type RecordFromLines = {
 };
 
 /**
- * A record made from statement lines, matched to them: the catalog files
- * this under `reconciliation.create` ("bank statements, and transfers from
- * their lines"), as v1 and the one-line transfer route always have; the
- * record itself is `records.create`. The MCP requirements table asks the same.
+ * A record of any kind but a transfer made from statement lines and matched
+ * to them: `reconciliation.create` to record from a statement,
+ * `reconciliation.match` because every line is matched to the new record (as
+ * matching a line to an existing record needs), and `records.create` for the
+ * record itself. The MCP requirements table (`create_from_lines`) asks the
+ * same.
  */
 const FROM_LINES_PERMISSIONS: readonly LeafPermission[] = [
   "reconciliation.create",
+  "reconciliation.match",
   "records.create",
 ];
-/** What the one-line transfer route has always asked. */
+/**
+ * What the one-line transfer route has always asked, and so what a transfer
+ * from lines asks: the catalog files it under `reconciliation.create` ("bank
+ * statements, and transfers from their lines"), as v1 and REST always have.
+ */
 const TRANSFER_FROM_LINE_PERMISSIONS: readonly LeafPermission[] = [
   "reconciliation.create",
   "records.create",
@@ -752,7 +759,11 @@ function overpaymentsFor(
  * The matches and their audit row are written in the same transaction; a
  * refusal anywhere leaves nothing behind, and no tab hears of it.
  *
- * Needs `reconciliation.match` and `records.create`. `dryRun` does all of it,
+ * Needs `reconciliation.create`, `reconciliation.match` and `records.create`;
+ * a `transfer` needs only `reconciliation.create` and `records.create`, as the
+ * one-line transfer route always has. The kind is read from the raw input, so
+ * the permission is asked before anything is parsed or looked up; a kind that
+ * is not a transfer, valid or not, asks the full set. `dryRun` does all of it,
  * then rolls back and answers what a save would have stored.
  */
 export function createRecordFromLines(
@@ -760,10 +771,14 @@ export function createRecordFromLines(
   input: RecordFromLinesInput,
   opts: { dryRun?: boolean } = {},
 ): AppResult<RecordFromLines> {
+  const transfer =
+    (input as { kind?: unknown } | null | undefined)?.kind === "transfer";
   return withClosingRefusal(() =>
     recordFromLines(ctx, input, {
       dryRun: opts.dryRun,
-      permissions: FROM_LINES_PERMISSIONS,
+      permissions: transfer
+        ? TRANSFER_FROM_LINE_PERMISSIONS
+        : FROM_LINES_PERMISSIONS,
     }),
   );
 }

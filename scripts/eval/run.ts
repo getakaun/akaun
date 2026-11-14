@@ -1,11 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { localToday } from "../../src/lib/local-date.js";
@@ -49,7 +42,6 @@ import {
   appendError,
   appendResult,
   chooseVariantDir,
-  DEFAULT_OUT_DIR,
   finishedTrials,
   formatSummary,
   readResults,
@@ -61,6 +53,7 @@ import {
   type RunConfig,
 } from "./results.ts";
 import { leakCheck } from "./analyze.ts";
+import { checkOutDir, EVAL_PATH_RULES } from "./safe-paths.ts";
 import {
   buildTemplate,
   ENV,
@@ -83,13 +76,18 @@ import {
  * temp directory, then runs every (task, model, repetition) as its own child
  * process (`trial.ts`) with an allow-listed environment and no `.env`, up to
  * `--concurrency` at a time. Results land in `--out` (default
- * `work/eval-mcp`, which git ignores). Before any paid call it prints an
+ * `<os temp dir>/akaun-eval-mcp`), which is refused in any checkout or data
+ * folder (`safe-paths.ts`). The runner refuses an `AKAUN_EVAL_TRIAL_DIR` in
+ * its own environment, and deletes only folders it made with `mkdtemp`
+ * (`sandbox.temp`). Before any paid call it prints an
  * estimate and asks to go on (unless `--yes`), and it stops starting trials
  * when `--max-usd` would be passed. `--serve` instead serves a temporary book
  * to real clients. Nothing here reads `.env` or touches the real `data/`.
  */
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+/** The results folder's name in the OS temp directory when --out is not given. */
+const DEFAULT_OUT_NAME = "akaun-eval-mcp";
 /** A trial that runs this long is stopped. */
 const TRIAL_TIMEOUT_MS = 45 * 60 * 1000;
 
@@ -116,7 +114,8 @@ Run
   --concurrency N           default 4
   --max-usd X               spending cap, default 10
   --yes                     do not ask before spending
-  --out <dir>               default ${DEFAULT_OUT_DIR}
+  --out <dir>               default ${DEFAULT_OUT_NAME} in the OS temp directory,
+                            which the OS clears; never in the repo or a data folder
   --round baseline|vN       name the result directory (default: the next vN)
   --resume                  add to the latest directory with the same configuration
   --keep                    keep each trial's temporary book
@@ -168,7 +167,7 @@ export function parseArgs(argv: readonly string[]): RunOptions {
     concurrency: 4,
     maxUsd: 10,
     yes: false,
-    outDir: DEFAULT_OUT_DIR,
+    outDir: "",
     resume: false,
     keep: false,
     serve: false,
@@ -297,7 +296,28 @@ function requireSandbox(): EvalSandbox {
     throw new Error(
       "run.ts must be started through `bun run eval:mcp` (it needs scripts/eval/preload.ts).",
     );
+  if (sandbox.isTrial || !sandbox.temp.owns(sandbox.dir))
+    throw new Error(
+      "run.ts is the orchestrator: its sandbox must be one the preload made, never a trial directory.",
+    );
   return sandbox;
+}
+
+/**
+ * The checked results folder: `--out`, or the default in the OS temp
+ * directory. Refused in any checkout or data folder, and inside this
+ * process's sandbox (deleted at the end).
+ */
+function resultsDir(options: RunOptions, sandbox: EvalSandbox): string {
+  const out = checkOutDir(
+    options.outDir || join(sandbox.temp.root, DEFAULT_OUT_NAME),
+    EVAL_PATH_RULES,
+  );
+  if (out === sandbox.dir || out.startsWith(`${sandbox.dir}/`))
+    throw new Error(
+      `--out ${options.outDir} is refused: it is inside this run's temporary sandbox, which is deleted at the end.`,
+    );
+  return out;
 }
 
 function assertRealDataUnchanged(sandbox: EvalSandbox): void {
@@ -339,7 +359,7 @@ async function listSurface(
   naming: NamingScheme,
 ): Promise<Listing> {
   const template = readTemplate(templateDir);
-  const scratch = mkdtempSync(join(sandbox.dir, "listing-"));
+  const scratch = sandbox.temp.make(sandbox.dir, "listing-");
   const book = openBookCopy(
     templateDir,
     join(scratch, "book"),
@@ -377,7 +397,7 @@ async function listSurface(
     }
   } finally {
     book.raw.close();
-    rmSync(scratch, { recursive: true, force: true });
+    sandbox.temp.remove(scratch);
   }
 }
 
@@ -471,8 +491,9 @@ async function spawnTrial(
   budgetUsd: number | undefined,
   running: Set<{ kill(): void }>,
 ): Promise<TrialReport> {
-  const trialDir = mkdtempSync(
-    join(sandbox.dir, `trial-${job.task.id}-${job.rep}-`),
+  const trialDir = sandbox.temp.make(
+    sandbox.dir,
+    `trial-${job.task.id}-${job.rep}-`,
   );
   const env = childEnv({
     [ENV.trialDir]: trialDir,
@@ -590,7 +611,7 @@ async function serve(options: RunOptions, sandbox: EvalSandbox): Promise<void> {
   const templates = await buildTemplates(sandbox, [options.book]);
   const templateDir = templates.get(options.book)!;
   const template = readTemplate(templateDir);
-  const serveDir = mkdtempSync(join(sandbox.dir, "serve-"));
+  const serveDir = sandbox.temp.make(sandbox.dir, "serve-");
   const book = openBookCopy(
     templateDir,
     join(serveDir, "book"),
@@ -646,16 +667,23 @@ Nothing here touches the real data/. Press Ctrl-C to stop${options.keep ? "" : "
   await server.stop(true);
   book.raw.close();
   assertRealDataUnchanged(sandbox);
-  if (!options.keep) rmSync(sandbox.dir, { recursive: true, force: true });
+  if (!options.keep) sandbox.temp.remove(sandbox.dir);
   else console.log(`Kept ${serveDir}.`);
 }
 
 // -- Running trials ------------------------------------------------------------------
 
 export async function runEval(
-  options: RunOptions,
+  given: RunOptions,
   sandbox: EvalSandbox,
 ): Promise<number> {
+  let options: RunOptions;
+  try {
+    options = { ...given, outDir: resultsDir(given, sandbox) };
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 2;
+  }
   const tasks = selectTasks({
     ids: options.ids,
     tags: options.tags,
@@ -920,8 +948,7 @@ export async function runEval(
           `[${finished}/${jobs.length}] ${job.task.id} rep ${job.rep} ${job.model}: ${outcome.skipped ? "SKIPPED" : verdict.pass ? "pass" : "FAIL"}${verdict.critical.length ? ` CRITICAL(${verdict.critical.length})` : ""}${!verdict.approvalOk ? " approval-broken" : ""}  calls ${row.tool_calls}  $${row.cost_usd.toFixed(3)}  spent $${spent.toFixed(2)}`,
         );
       }
-      if (!options.keep)
-        rmSync(report.trialDir, { recursive: true, force: true });
+      if (!options.keep) sandbox.temp.remove(report.trialDir);
       else console.log(`  kept ${report.trialDir}`);
       const changed = sandbox.checkRealData();
       if (changed.length) {
@@ -975,6 +1002,14 @@ export async function runEval(
 }
 
 async function main() {
+  // A leftover trial directory in the environment would make the preload
+  // treat this process as a trial; the preload refuses it too.
+  if (process.env[ENV.trialDir] !== undefined) {
+    console.error(
+      `${ENV.trialDir} is set (${process.env[ENV.trialDir]}). The evaluation runner never takes a trial directory from its environment: unset it and run again.`,
+    );
+    process.exit(2);
+  }
   let options: RunOptions;
   try {
     if (process.argv.includes("--help") || process.argv.includes("-h")) {
@@ -988,7 +1023,13 @@ async function main() {
     );
     process.exit(2);
   }
-  const sandbox = requireSandbox();
+  let sandbox: EvalSandbox;
+  try {
+    sandbox = requireSandbox();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(2);
+  }
   assertRealDataUnchanged(sandbox);
   if (options.serve) {
     await serve(options, sandbox);
@@ -997,7 +1038,7 @@ async function main() {
   const code = await runEval(options, sandbox);
   const changed = sandbox.checkRealData();
   if (changed.length) console.error(changed.join("\n"));
-  rmSync(sandbox.dir, { recursive: true, force: true });
+  sandbox.temp.remove(sandbox.dir);
   process.exit(changed.length ? 3 : code);
 }
 

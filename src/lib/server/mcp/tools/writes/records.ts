@@ -552,8 +552,17 @@ type Created = {
   contact_created?: { id: number; name: string };
   v: string;
   sides: { account: string; amount: string; label?: string | null }[];
-  /** Records that look like this one entered before. Empty is dropped. */
-  duplicate_suspects: DuplicateSuspect[];
+  /**
+   * Records that look like this one entered before, for a caller who may read
+   * records. Empty is dropped.
+   */
+  duplicate_suspects?: DuplicateSuspect[];
+  /**
+   * For a caller who may not read records (`records.read`): only whether a
+   * suspect exists. Their ids, numbers, dates and amounts would let a
+   * create-only token probe the books with dry runs.
+   */
+  possible_duplicate?: boolean;
 };
 
 /** A record that may be the one just created, entered before. `amount` is in the main currency. */
@@ -1095,6 +1104,8 @@ function createdValue(
     lookedUp?: CreatePrepared;
     contactCreated?: { id: number; name: string };
     suspects: DuplicateSuspect[];
+    /** Whether the caller may read records, and so see the suspects themselves. */
+    readable: boolean;
   },
 ): Created {
   const foreign = record.currency !== main;
@@ -1127,22 +1138,24 @@ function createdValue(
       amount: money(m.amountMinor),
       ...(m.label ? { label: m.label } : {}),
     })),
-    duplicate_suspects: extra.suspects,
+    ...(extra.readable
+      ? { duplicate_suspects: extra.suspects }
+      : { possible_duplicate: extra.suspects.length > 0 }),
   };
 }
 
-const CREATE_DESCRIPTION = `Records new expenses, income, transfers between the business's own money accounts, and journals. Change, void or delete records with akaun_change_records; pay bills with akaun_record_payments; attach receipts afterwards with akaun_attach_file.
+const CREATE_DESCRIPTION = `Records new expenses, income, transfers between its own money accounts, and journals. Change, void or delete records with akaun_change_records; pay bills with akaun_record_payments; attach receipts afterwards with akaun_attach_file.
 
 Each item in records[] is one record:
 - expense: paid_from (a bank, cash or card account), owed: true (an unpaid bill; needs contact) or personally_paid_by (who paid it themselves); plus category, or lines to split it.
 - income: received_into or owed: true, plus category or lines.
 - transfer: paid_from and received_into.
-- journal: lines with signed amounts (+ into the account, - out of it) adding up to zero. Needs the Adjustments ability.
-Accounts are an id, code ("5100"), name or "5100 Name"; contacts an id or exact name. Anything else returns NOT_FOUND or AMBIGUOUS with candidates: pick one or ask, never guess. new_contact also creates the contact; with contacts.read, a similar name is AMBIGUOUS unless force_new.
+- journal: lines with signed amounts (+ into an account, - out) adding up to zero. Needs the Adjustments ability.
+Accounts are an id, code ("5100"), name or "5100 Name"; contacts an id or exact name. Anything else answers NOT_FOUND or AMBIGUOUS with candidates: pick one or ask, never guess. new_contact also creates the contact; with contacts.read, a similar name is AMBIGUOUS unless force_new.
 
 Amounts and lines are decimal strings ("1285.50") in the record's currency (default: main); lines add up to amount. For another currency send exchange_rate or main_amount, or the day's rate is looked up, frozen and reported.
 
-A call saves at once, all or nothing (at most 50 items); dry_run: true saves nothing. Send an idempotency_key if you may retry. Each result gives the record id, number, derived kind and v; detail: "full" adds its sides. duplicate_suspects: records that look entered before; check them with the user.`;
+A call saves all or nothing (at most 50 items); dry_run: true saves nothing; send an idempotency_key to retry safely. Each result gives the record id, number, kind and v; detail: "full" adds its sides. duplicate_suspects: records that look entered before (without records.read: possible_duplicate); check with the user.`;
 
 export const createRecordsTool = defineWriteTool({
   base: "create_records",
@@ -1234,6 +1247,7 @@ export const createRecordsTool = defineWriteTool({
               lookedUp: prepared as CreatePrepared,
               contactCreated: built.contactCreated,
               suspects: duplicateSuspects(c.db, record.id),
+              readable: can(c.locals, "records.read"),
             }),
           );
         },

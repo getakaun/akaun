@@ -795,11 +795,61 @@ describe("createRecordFromLines refuses, and leaves nothing behind", () => {
       });
     }
     resultValue(
-      createRecordFromLines(as(["reconciliation.create", "records.create"]), {
-        ...input,
-        lineIds: [lineId],
+      createRecordFromLines(
+        as(["reconciliation.create", "reconciliation.match", "records.create"]),
+        { ...input, lineIds: [lineId] },
+      ),
+    );
+  });
+
+  it("asks for reconciliation.match too, except for a transfer (review L2)", () => {
+    const s = seed();
+    const out = s.line("2026-09-15", 5, OUT, "SERVICE CHARGE");
+    const into = s.line("2026-09-30", 1.37, IN, "INTEREST CREDIT");
+    const toCash = s.line("2026-09-16", 20, OUT, "TO CASH");
+    const bill = unpaidBill(s, 5);
+    // May record from a statement, but not match lines to records.
+    const clerk: AppContext = {
+      db: s.db,
+      locals: localsFor([
+        "reconciliation.read",
+        "reconciliation.create",
+        "records",
+      ]),
+    };
+    const before = snapshot(s);
+    for (const input of [
+      {
+        lineIds: [out],
+        kind: "expense" as const,
+        categoryAccountId: s.charges,
+      },
+      {
+        lineIds: [into],
+        kind: "income" as const,
+        categoryAccountId: s.interest,
+      },
+      {
+        lineIds: [out],
+        kind: "payment" as const,
+        contactId: bill.contactId!,
+      },
+    ])
+      expect(createRecordFromLines(clerk, input), input.kind).toMatchObject({
+        ok: false,
+        code: "FORBIDDEN",
+      });
+    expect(snapshot(s)).toEqual(before);
+
+    // A transfer from a line keeps what v1 and REST always asked.
+    const made = resultValue(
+      createRecordFromLines(clerk, {
+        lineIds: [toCash],
+        kind: "transfer",
+        otherAccountId: s.cash,
       }),
     );
+    expect(made.record.kind).toBe(LedgerRecordKind.Transfer);
   });
 
   it("rolls the record back when its settlements refuse", () => {

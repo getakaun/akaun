@@ -1,8 +1,12 @@
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -239,6 +243,179 @@ describe("bun run eval:mcp", () => {
   );
 });
 
+// A FAKE checkout under a fresh temp folder: a `.git`, a `package.json` and a
+// `data/` holding a sentinel book. Nothing here names the real checkout.
+function fakeCheckout(): { root: string; repo: string; data: string } {
+  const root = realpathSync(scratch());
+  const repo = join(root, "checkout");
+  const data = join(repo, "data");
+  mkdirSync(join(repo, ".git"), { recursive: true });
+  mkdirSync(data, { recursive: true });
+  writeFileSync(join(repo, "package.json"), "{}");
+  writeFileSync(join(data, "akaun.db"), "the real book");
+  writeFileSync(join(data, "akaun.db-wal"), "its log");
+  return { root, repo, data };
+}
+
+/** Every file under `dir` with its contents, to show nothing changed. */
+function contents(dir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const entry of readdirSync(dir, { recursive: true }) as string[]) {
+    const path = join(dir, entry);
+    out[entry] = statSync(path).isDirectory()
+      ? "<dir>"
+      : readFileSync(path, "utf8");
+  }
+  return out;
+}
+
+describe("the harness writes and deletes only its own temp folders (review M2)", () => {
+  it(
+    "TMPDIR at a checkout with a leftover AKAUN_EVAL_TRIAL_DIR at its data/: refused, nothing deleted",
+    async () => {
+      const fake = fakeCheckout();
+      const before = contents(fake.repo);
+      try {
+        const result = await run(
+          [
+            ...CLI,
+            "--null",
+            "--task",
+            "D01",
+            "--out",
+            join(fake.root, "out"),
+            "--yes",
+          ],
+          { TMPDIR: fake.repo, AKAUN_EVAL_TRIAL_DIR: fake.data },
+        );
+        expect(result.code).not.toBe(0);
+        expect(contents(fake.repo)).toEqual(before);
+        expect(existsSync(join(fake.root, "out"))).toBe(false);
+      } finally {
+        rmSync(fake.root, { recursive: true, force: true });
+      }
+    },
+    SLOW,
+  );
+
+  it(
+    "TMPDIR at a checkout or inside its data/: refused before anything is made there",
+    async () => {
+      const fake = fakeCheckout();
+      const before = contents(fake.repo);
+      try {
+        for (const tmp of [fake.repo, fake.data]) {
+          const result = await run(
+            [
+              ...CLI,
+              "--null",
+              "--task",
+              "D01",
+              "--out",
+              join(fake.root, "out"),
+              "--yes",
+            ],
+            { TMPDIR: tmp },
+          );
+          expect({ tmp, code: result.code }).toEqual({ tmp, code: 78 });
+          expect(result.stderr).toContain("temp");
+        }
+        expect(contents(fake.repo)).toEqual(before);
+        expect(existsSync(join(fake.root, "out"))).toBe(false);
+      } finally {
+        rmSync(fake.root, { recursive: true, force: true });
+      }
+    },
+    SLOW,
+  );
+
+  it(
+    "run.ts refuses an inherited AKAUN_EVAL_TRIAL_DIR, even a safe one, and leaves it alone",
+    async () => {
+      const dir = realpathSync(scratch());
+      const trial = join(dir, "leftover-trial");
+      mkdirSync(trial);
+      writeFileSync(join(trial, "keep.txt"), "keep");
+      try {
+        const result = await run(
+          [
+            ...CLI,
+            "--null",
+            "--task",
+            "D01",
+            "--out",
+            join(dir, "out"),
+            "--yes",
+          ],
+          { AKAUN_EVAL_TRIAL_DIR: trial },
+        );
+        expect(result.code).not.toBe(0);
+        expect(result.stderr).toContain("AKAUN_EVAL_TRIAL_DIR");
+        expect(contents(trial)).toEqual({ "keep.txt": "keep" });
+        expect(existsSync(join(dir, "out"))).toBe(false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    SLOW,
+  );
+
+  it(
+    "--out into a checkout's data/ or anywhere in a checkout is refused, and nothing is written",
+    async () => {
+      const fake = fakeCheckout();
+      const before = contents(fake.repo);
+      try {
+        for (const out of [
+          fake.data,
+          join(fake.data, "eval"),
+          join(fake.repo, "work", "eval-mcp"),
+          fake.repo,
+        ]) {
+          const result = await run([
+            ...CLI,
+            "--null",
+            "--task",
+            "D01",
+            "--out",
+            out,
+            "--yes",
+          ]);
+          expect({ out, code: result.code }).toEqual({ out, code: 2 });
+          expect(result.stderr).toContain("--out");
+        }
+        expect(contents(fake.repo)).toEqual(before);
+      } finally {
+        rmSync(fake.root, { recursive: true, force: true });
+      }
+    },
+    SLOW,
+  );
+
+  it(
+    "a normal run under a clean TMPDIR works and leaves only its results behind",
+    async () => {
+      const tmp = realpathSync(scratch());
+      const out = join(tmp, "results");
+      try {
+        const result = await run(
+          [...CLI, "--null", "--task", "D01", "--out", out, "--yes"],
+          { TMPDIR: tmp },
+        );
+        expect(result.code, result.stderr).toBe(0);
+        expect(rows(join(out, "v1"))).toHaveLength(1);
+        // The process sandbox, its templates and the trial folder are gone.
+        expect(
+          readdirSync(tmp).filter((name) => name.startsWith("akaun-eval")),
+        ).toEqual([]);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+    SLOW,
+  );
+});
+
 describe("the safety preload", () => {
   it(
     "refuses a trial directory outside os.tmpdir()",
@@ -256,7 +433,7 @@ describe("the safety preload", () => {
         );
         expect({ dir, code: result.code }).toEqual({ dir, code: 78 });
         expect(result.stdout).not.toContain("ran");
-        expect(result.stderr).toContain("os.tmpdir()");
+        expect(result.stderr).toContain("temp directory");
       }
     },
     SLOW,

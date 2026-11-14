@@ -523,6 +523,46 @@ describe("akaun_create_records", () => {
     ]);
   });
 
+  it("tells a create-only token only whether a duplicate is likely, never which records (review M1)", async () => {
+    const s = seed();
+    const earlier = resultValue(
+      createRecord(s.ctx, {
+        kind: "expense",
+        date: "2026-09-02",
+        amount: 45.9,
+        currency: "MYR",
+        exchangeRate: 1,
+        description: "Printer paper",
+        categoryAccountId: s.expense,
+        paidFromAccountId: s.bank,
+        contactId: s.acme,
+      }),
+    ).record;
+    // The seeded Data Entry shape: may create records, may not read them.
+    const { call } = await serve(s.db, token(["records.create"]));
+    const again = expense({ date: "2026-09-03", contact: "Acme Sdn Bhd" });
+
+    for (const dryRun of [true, false]) {
+      const result = await call(CREATE, { records: [again], dry_run: dryRun });
+      expect(result.isError, JSON.stringify(result.body)).toBe(false);
+      const [item] = result.body.items;
+      expect(item.duplicate_suspects).toBeUndefined();
+      expect(item.possible_duplicate).toBe(true);
+      const text = JSON.stringify(result.body);
+      expect(text).not.toContain(earlier.recordNumber!);
+      expect(text).not.toContain(`"record":${earlier.id},`);
+      expect(text).not.toContain("2026-09-02");
+      expect(text).not.toContain("amount_date_contact");
+    }
+
+    const distinct = await call(CREATE, {
+      records: [expense({ amount: "12.34" })],
+      dry_run: true,
+    });
+    expect(distinct.body.items[0].possible_duplicate).toBe(false);
+    expect(distinct.body.items[0].duplicate_suspects).toBeUndefined();
+  });
+
   it("lists no suspect for a distinct expense, and at most three for one", async () => {
     const s = seed();
     s.bankExpense("Paid from the bank", 40);

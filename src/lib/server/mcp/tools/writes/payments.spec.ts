@@ -549,6 +549,148 @@ describe("record_payments and change_allocations", () => {
   );
 
   it(
+    "shows a create-only token no balances, and makes it name every amount (review L1)",
+    async () => {
+      // The seeded Data Entry shape: may create records, may not read them.
+      const { book, call, owner } = await open(["records.create"]);
+      const m = book.manifest;
+      const bill = getRecord(book.db, m.records.spotify)!;
+      const credit = m.plants.freightLeftOut;
+      const claim = getRecord(book.db, m.plants.doubleClaims.unpaidCopy)!;
+      const packing = createRecord(owner, {
+        kind: "expense",
+        date: "2026-10-02",
+        description: "Packing materials",
+        amount: 50,
+        currency: "MYR",
+        exchangeRate: 1,
+        categoryAccountId: m.accounts.packaging,
+        paidFromAccountId: null,
+        contactId: credit.supplier,
+      });
+      if (!packing.ok) throw new Error(packing.reason);
+      const packingNo = packing.value.record.recordNumber!;
+      const pay = (amount?: string) => ({
+        contact: bill.contactId,
+        account: m.accounts.bank,
+        date: "2026-10-01",
+        amount: "10.00",
+        allocate: [
+          { record: bill.recordNumber, ...(amount ? { amount } : {}) },
+        ],
+      });
+      const allocate = (amount?: string) => ({
+        payment: no(book, credit.payment),
+        to: [{ record: packingNo, ...(amount ? { amount } : {}) }],
+      });
+      const HIDDEN = /outstanding|unapplied|credit_left|not_yet_repaid|"total"/;
+
+      // Each action with explicit amounts: it runs, and no balance is shown.
+      for (const args of [
+        { pay: [pay("10.00")] },
+        { allocate: [allocate("20.00")] },
+        {
+          pay: [
+            {
+              contact: credit.supplier,
+              account: m.accounts.bank,
+              date: "2026-10-01",
+              amount: "0",
+              use_credit: [
+                {
+                  record: no(book, credit.payment),
+                  to: packingNo,
+                  amount: "5.00",
+                },
+              ],
+            },
+          ],
+        },
+        {
+          reimburse: [
+            {
+              contact: claim.contactId,
+              date: "2026-10-03",
+              description: "Repay team lunch",
+              items: [claim.recordNumber],
+              cash: "86.40",
+              paid_from: m.accounts.bank,
+            },
+          ],
+        },
+      ]) {
+        const reply = await call("akaun_record_payments", {
+          ...args,
+          dry_run: true,
+        });
+        expect(reply.isError, reply.text).toBe(false);
+        expect(reply.body.dry_run).toBe(true);
+        expect(reply.text).not.toMatch(HIDDEN);
+        // Its own figures are still there.
+        expect(reply.text).toMatch(/"amount":"\d+\.\d\d"/);
+      }
+
+      // An omitted amount would be filled in from the balance: refused, with a fix.
+      for (const [args, path] of [
+        [{ pay: [pay()] }, "pay[0].allocate[0].amount"],
+        [{ allocate: [allocate()] }, "allocate[0].to[0].amount"],
+      ] as const) {
+        const reply = await call("akaun_record_payments", {
+          ...args,
+          dry_run: true,
+        });
+        expect(reply.isError).toBe(true);
+        expect(reply.body.error.code).toBe("INVALID_INPUT");
+        expect(reply.body.error.path).toBe(path);
+        expect(reply.body.error.fix).toMatch(/amount/);
+        expect(reply.text).not.toMatch(/17\.90|85\.00|50\.00/);
+      }
+    },
+    SLOW,
+  );
+
+  it(
+    "change_allocations shows a token that may not read records no balances either",
+    async () => {
+      const { book, call, owner } = await open([
+        "records.correctAllocations",
+        "records.create",
+      ]);
+      const plant = book.manifest.plants.misallocatedPayment;
+      const base = {
+        payment: no(book, plant.payment),
+        expected_version: allocationsVersion(owner, plant.payment),
+        remove: [no(book, plant.allocatedBill)],
+        reason: `The payment reference names ${plant.reference}.`,
+      };
+      const named = await call("akaun_change_allocations", {
+        reallocate: [
+          {
+            ...base,
+            add: [{ record: no(book, plant.intendedBill), amount: "640.00" }],
+          },
+        ],
+        dry_run: true,
+      });
+      expect(named.isError, named.text).toBe(false);
+      expect(named.text).not.toMatch(/outstanding|unapplied/);
+      expect(named.body.items[0].reversed).toEqual([
+        { id: plant.allocatedBill, no: no(book, plant.allocatedBill) },
+      ]);
+
+      const omitted = await call("akaun_change_allocations", {
+        reallocate: [
+          { ...base, add: [{ record: no(book, plant.intendedBill) }] },
+        ],
+        dry_run: true,
+      });
+      expect(omitted.body.error.code).toBe("INVALID_INPUT");
+      expect(omitted.body.error.path).toBe("reallocate[0].add[0].amount");
+    },
+    SLOW,
+  );
+
+  it(
     "hides the tools from a token without the abilities",
     async () => {
       const { client, call } = await open(["records.read", "records.create"]);

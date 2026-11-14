@@ -34,6 +34,11 @@ import {
   type SettlementBrief,
 } from "../../../application/refs.js";
 import type { AppContext } from "../../../application/context.js";
+import {
+  inferPaymentDirection,
+  type PaymentDirection,
+  type PaymentDirectionFailure,
+} from "../../../application/payment-direction.js";
 import { fail, ok, type AppResult } from "../../../application/result.js";
 import { recordVersion } from "../../../application/version.js";
 import { accountDefaultId } from "../../../services/account-defaults.js";
@@ -118,7 +123,7 @@ const DIRECTIONS = [
   "refund_paid",
 ] as const;
 type Direction = (typeof DIRECTIONS)[number];
-type AppDirection = "we-pay" | "we-receive" | "refund-received" | "refund-paid";
+type AppDirection = PaymentDirection;
 const toApp = (d: Direction) => d.replaceAll("_", "-") as AppDirection;
 const fromApp = (d: AppDirection) => d.replaceAll("-", "_") as Direction;
 
@@ -257,6 +262,76 @@ export function showsBalances(ctx: { locals: App.Locals }): boolean {
   return can(ctx.locals, "records.read");
 }
 
+/**
+ * The settlement refusals that state a balance, each with what it says
+ * instead to a caller who may not read records (`showsBalances`). The domain
+ * sentences (`ledger/settlement-rules.ts` `checkAllocations`,
+ * `services/settlements.ts` `createSettlements`) name the figure on purpose,
+ * for the people REST and the app show them to; without this a create-only
+ * caller could learn what a record still owes by over-allocating it in a dry
+ * run. A figure is `settlement-rules.ts`'s `money`: digits and a point.
+ */
+const BALANCE_REFUSALS: readonly [RegExp, string][] = [
+  [
+    /The amount is more than the outstanding balance of that item\. Outstanding: [\d.,]+\./g,
+    "The amount is more than is owed on that item.",
+  ],
+  [
+    /That item is already fully paid\./g,
+    "The amount is more than is owed on that item.",
+  ],
+  [
+    /The allocations total [\d.,]+, which is more than the payment amount of [\d.,]+\./g,
+    "The allocations total more than the payment amount.",
+  ],
+  [
+    /Only [\d.,]+ of this payment is left to put against anything — the rest already covers other items\./g,
+    "This payment does not have that much left to put against anything — the rest already covers other items.",
+  ],
+  [
+    /This payment is already fully put against other items\./g,
+    "This payment does not have that much left to put against anything — the rest already covers other items.",
+  ],
+];
+
+/** A refusal's sentence with every balance figure taken out. */
+export function withoutBalances(reason: string): string {
+  return BALANCE_REFUSALS.reduce(
+    (text, [pattern, instead]) => text.replace(pattern, instead),
+    reason,
+  );
+}
+
+/**
+ * A payment batch's outcome as this caller may see it: unchanged for one who
+ * may read records, else every failure's sentence `withoutBalances`. The saved
+ * values already leave balances out (`showsBalances` at each figure).
+ */
+export function redactBalances<T>(
+  ctx: { locals: App.Locals },
+  result: BatchResult<T>,
+): BatchResult<T> {
+  if (showsBalances(ctx)) return result;
+  if (!result.ok) return { ...result, reason: withoutBalances(result.reason) };
+  return {
+    ...result,
+    value: {
+      ...result.value,
+      items: result.value.items.map((item) =>
+        item.ok
+          ? item
+          : {
+              ...item,
+              failure: {
+                ...item.failure,
+                reason: withoutBalances(item.failure.reason),
+              },
+            },
+      ),
+    },
+  };
+}
+
 /** A path's refusal for an omitted amount that would be filled in from a balance. */
 function needAmount(refs: Refs, path: string): void {
   refs.invalid(
@@ -274,16 +349,6 @@ function controlAccounts(db: LedgerDb) {
   ].filter((id): id is number => id !== null);
   const receivable = accountDefaultId(db, DefaultAccountPurpose.Receivable);
   return { payable, receivable };
-}
-
-/** The direction a payment settling this owed line takes. */
-function directionFor(db: LedgerDb, line: ControlLine): AppDirection | null {
-  const { payable, receivable } = controlAccounts(db);
-  if (payable.includes(line.accountId))
-    return line.amountMinor < 0 ? "we-pay" : "refund-received";
-  if (line.accountId === receivable)
-    return line.amountMinor > 0 ? "we-receive" : "refund-paid";
-  return null;
 }
 
 /** The new payment's version and its allocation version, for a later change. */
@@ -392,40 +457,29 @@ function planPay(
     )
       return;
 
-    let direction = item.direction ? toApp(item.direction) : undefined;
-    const lines = [...allocate, ...credits].map((a) => a.line);
-    if (!direction) {
-      const found = new Set(
-        lines.map((line) => directionFor(refs.ctx.db, line)),
+    // Which way it settles is `application/`'s rule: the direction sent, else
+    // the one every record settled points (a payment here does not say
+    // whether its money came in or went out).
+    const routed = inferPaymentDirection(refs.ctx, {
+      contactId: contact.id,
+      ...(item.direction ? { direction: toApp(item.direction) } : {}),
+      allocateTo: [...allocate, ...credits].map((a) => ({
+        owedMovementId: a.line.movementId,
+      })),
+    });
+    if (!routed.ok) {
+      const settlesNothing =
+        (routed as PaymentDirectionFailure).undecided === "settles-nothing";
+      refs.invalid(
+        `${path}.direction`,
+        routed.reason,
+        settlesNothing
+          ? "Send direction: we_pay, we_receive, refund_received or refund_paid."
+          : "Split them into separate payments, or send direction.",
       );
-      if (found.size === 1 && !found.has(null)) direction = [...found][0]!;
-      else {
-        refs.invalid(
-          `${path}.direction`,
-          found.size === 0
-            ? "The direction cannot be worked out: this payment settles no record."
-            : "The records it settles are owed in different directions.",
-          found.size === 0
-            ? "Send direction: we_pay, we_receive, refund_received or refund_paid."
-            : "Split them into separate payments, or send direction.",
-        );
-        return;
-      }
+      return;
     }
-    // A payable line on another saved payable account (a reimbursement
-    // claim) is settled from that account, as the screen does.
-    const accounts = new Set(lines.map((line) => line.accountId));
-    const payableId = accountDefaultId(
-      refs.ctx.db,
-      DefaultAccountPurpose.Payable,
-    );
-    const shared = accounts.size === 1 ? [...accounts][0] : undefined;
-    const settlementAccountId =
-      (direction === "we-pay" || direction === "refund-received") &&
-      shared !== undefined &&
-      shared !== payableId
-        ? shared
-        : undefined;
+    const { direction, settlementAccountId } = routed.value;
     const numbers = [...allocate, ...credits].map((a) => recordNo(a.record));
     plans.push({
       path,
@@ -802,7 +856,7 @@ const recordPayments = defineWriteTool({
     });
     // Before any reference is resolved: a retry replays the first answer.
     const replay = storedReplay<PaymentValue>(ctx, call);
-    if (replay) return batchReply(replay, meta);
+    if (replay) return batchReply(redactBalances(ctx, replay), meta);
     if (!args.pay?.length && !args.allocate?.length && !args.reimburse?.length)
       return nothingToDo("pay, allocate or reimburse");
 
@@ -835,7 +889,7 @@ const recordPayments = defineWriteTool({
         })),
       ],
     });
-    return batchReply(result, meta);
+    return batchReply(redactBalances(ctx, result), meta);
   },
 });
 
@@ -992,7 +1046,7 @@ const changeAllocations = defineWriteTool({
     // Before any reference is resolved: the allocation a retry removes is
     // already reversed, so it would no longer resolve.
     const replay = storedReplay<PaymentValue>(ctx, call);
-    if (replay) return batchReply(replay, meta);
+    if (replay) return batchReply(redactBalances(ctx, replay), meta);
 
     const refs = new Refs(ctx, meta);
     const plans: ReallocatePlan[] = [];
@@ -1052,7 +1106,7 @@ const changeAllocations = defineWriteTool({
         run: (c: AppContext) => runReallocate(c, plan),
       })),
     });
-    return batchReply(result, meta);
+    return batchReply(redactBalances(ctx, result), meta);
   },
 });
 

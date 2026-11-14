@@ -333,7 +333,7 @@ export function redactBalances<T>(
 }
 
 /** A path's refusal for an omitted amount that would be filled in from a balance. */
-function needAmount(refs: Refs, path: string): void {
+export function needAmount(refs: Refs, path: string): void {
   refs.invalid(
     path,
     "Without permission to read records, an allocation amount is not filled in from what is outstanding.",

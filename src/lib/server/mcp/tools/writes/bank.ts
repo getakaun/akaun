@@ -60,12 +60,15 @@ import {
   batchControls,
   batchReply,
   lineAccountInput,
+  needAmount,
   nothingToDo,
   outstandingNow,
   recordNo,
+  redactBalances,
   refInput,
   refuseActions,
   Refs,
+  showsBalances,
   SPLIT_CALL,
 } from "./payments.js";
 
@@ -221,7 +224,9 @@ const matchBankLinesInput = z.object({
           )
           .max(200)
           .optional()
-          .describe("payment only: the contact's open records it settles."),
+          .describe(
+            "payment only: the contact's open records it settles. An omitted amount takes what is outstanding (without records.read, send every amount).",
+          ),
         direction: z
           .enum(FROM_LINES_DIRECTIONS)
           .optional()
@@ -370,7 +375,9 @@ function runFromLines(
     if (amountMinor <= 0)
       return fail(
         "REFUSED",
-        `${recordNo(a.record)} has nothing outstanding. Leave it out.`,
+        a.amountMinor !== undefined
+          ? "Allocation amounts must be above zero."
+          : `${recordNo(a.record)} has nothing outstanding. Leave it out.`,
       );
     used.set(
       a.line.movementId,
@@ -426,13 +433,20 @@ function runFromLines(
       v: lineVersions[line.id],
     })),
   };
+  // What a record still owes is shown only to a caller who may read records
+  // (`showsBalances`), as in record_payments.
+  const shown = showsBalances(ctx);
   if (plan.allocate.length)
     value.allocated = plan.allocate.map((a, i) => ({
       id: a.record.id,
       no: recordNo(a.record),
       amount: money(allocations[i].amountMinor),
-      outstanding_before: money(before.get(a.line.movementId) ?? 0),
-      outstanding_after: money(outstandingNow(ctx.db, a.line.movementId)),
+      ...(shown
+        ? {
+            outstanding_before: money(before.get(a.line.movementId) ?? 0),
+            outstanding_after: money(outstandingNow(ctx.db, a.line.movementId)),
+          }
+        : {}),
     }));
   return ok(value);
 }
@@ -546,7 +560,7 @@ const matchBankLines = defineWriteTool({
     });
     // Before any reference is resolved: a retry replays the first answer.
     const replay = storedReplay<BankValue>(ctx, call);
-    if (replay) return batchReply(replay, meta);
+    if (replay) return batchReply(redactBalances(ctx, replay), meta);
     if (
       !args.match?.length &&
       !args.create_from_lines?.length &&
@@ -621,11 +635,10 @@ const matchBankLines = defineWriteTool({
                 `${path}.settlement_account`,
               );
         const allocate = (item.allocate ?? []).flatMap((a, j) => {
-          const found = refs.openItem(
-            a.record,
-            `${path}.allocate[${j}]`,
-            a.line_account,
-          );
+          const at = `${path}.allocate[${j}]`;
+          if (a.amount === undefined && !showsBalances(refs.ctx))
+            needAmount(refs, `${at}.amount`);
+          const found = refs.openItem(a.record, at, a.line_account);
           return found ? [{ ...found, amountMinor: a.amount }] : [];
         });
         if (
@@ -707,7 +720,7 @@ const matchBankLines = defineWriteTool({
           : []),
       ],
     });
-    return batchReply(result, meta);
+    return batchReply(redactBalances(ctx, result), meta);
   },
 });
 

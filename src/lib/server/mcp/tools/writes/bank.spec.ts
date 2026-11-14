@@ -490,3 +490,135 @@ describe("create_from_lines payments (review finding 2)", () => {
     SLOW,
   );
 });
+
+describe("create_from_lines allocations and balances (G1 follow-up)", () => {
+  /** A new supplier's unpaid 300.00 bill, and a 500.00 bank payment to them. */
+  function unpaidSupplier(book: EvalBook) {
+    const m = book.manifest;
+    const owner = {
+      db: book.db,
+      locals: localsFor([], { superuser: true, userId: m.users.owner }),
+    };
+    const supplier = book.db
+      .insert(schema.contacts)
+      .values({ legalName: "Unpaid Supplier Sdn Bhd", entityType: 2 })
+      .returning()
+      .get()!.id;
+    const bill = createRecord(owner, {
+      kind: "expense",
+      date: `${m.statementMonth}-05`,
+      description: "Packing tape",
+      amount: 300,
+      currency: "MYR",
+      exchangeRate: 1,
+      categoryAccountId: m.accounts.packaging,
+      paidFromAccountId: null,
+      contactId: supplier,
+    });
+    if (!bill.ok) throw new Error(bill.reason);
+    const line = book.db
+      .insert(schema.bankStatementLines)
+      .values({
+        statementId: m.statements.bank,
+        date: `${m.statementMonth}-25`,
+        amount: 500,
+        direction: StatementDirection.Out,
+        description: "IBG UNPAID SUPPLIER",
+      })
+      .returning()
+      .get()!.id;
+    return { supplier, bill: bill.value.record.recordNumber!, line };
+  }
+  type Fixture = ReturnType<typeof unpaidSupplier>;
+
+  // What create_from_lines asks for, and no more: no records.read.
+  const CREATE_ONLY = [
+    "reconciliation.create",
+    "reconciliation.match",
+    "records.create",
+  ];
+  const payFromLine = (f: Fixture, amount?: string, dryRun = true) => ({
+    create_from_lines: [
+      {
+        lines: [`L${f.line}`],
+        kind: "payment",
+        contact: f.supplier,
+        allocate: [{ record: f.bill, ...(amount ? { amount } : {}) }],
+      },
+    ],
+    ...(dryRun ? { dry_run: true } : {}),
+  });
+
+  it(
+    "shows a caller who may not read records no balance, and makes it name every amount",
+    async () => {
+      const { book, call } = await open(CREATE_ONLY);
+      const f = unpaidSupplier(book);
+
+      // An omitted amount would be filled in from what the bill owes.
+      const omitted = await call("akaun_match_bank_lines", payFromLine(f));
+      expect(omitted.isError).toBe(true);
+      expect(omitted.body.error.code).toBe("INVALID_INPUT");
+      expect(omitted.text).toContain("create_from_lines[0].allocate[0].amount");
+      expect(omitted.text).not.toContain("300.00");
+
+      // Over-allocating in a dry run: refused, without the figure.
+      const over = await call(
+        "akaun_match_bank_lines",
+        payFromLine(f, "500.00"),
+      );
+      expect(over.isError).toBe(true);
+      expect(over.text).toContain(
+        "The amount is more than is owed on that item.",
+      );
+      expect(over.text).not.toContain("300.00");
+      expect(over.text).not.toMatch(/Outstanding/);
+
+      // A zero amount is the caller's mistake, not a fact about the bill.
+      const zero = await call("akaun_match_bank_lines", payFromLine(f, "0"));
+      expect(zero.isError).toBe(true);
+      expect(zero.text).toContain("Allocation amounts must be above zero.");
+
+      // A named amount saves; the answer holds only the figures sent.
+      const saved = await call(
+        "akaun_match_bank_lines",
+        payFromLine(f, "120.00", false),
+      );
+      expect(saved.isError).toBe(false);
+      const [allocated] = saved.body.items[0].allocated;
+      expect(Object.keys(allocated).sort()).toEqual(["amount", "id", "no"]);
+      expect(allocated).toMatchObject({ no: f.bill, amount: "120.00" });
+    },
+    SLOW,
+  );
+
+  it(
+    "still shows the figures to a caller who may read records",
+    async () => {
+      const { book, call } = await open([...CREATE_ONLY, "records.read"]);
+      const f = unpaidSupplier(book);
+
+      const over = await call(
+        "akaun_match_bank_lines",
+        payFromLine(f, "500.00"),
+      );
+      expect(over.isError).toBe(true);
+      expect(over.text).toContain(
+        "The amount is more than the outstanding balance of that item. Outstanding: 300.00.",
+      );
+
+      const saved = await call(
+        "akaun_match_bank_lines",
+        payFromLine(f, undefined, false),
+      );
+      expect(saved.isError).toBe(false);
+      expect(saved.body.items[0].allocated[0]).toMatchObject({
+        no: f.bill,
+        amount: "300.00",
+        outstanding_before: "300.00",
+        outstanding_after: "0.00",
+      });
+    },
+    SLOW,
+  );
+});

@@ -94,7 +94,7 @@ own.
   add the decimal `amount` into a report total**. `ledger/money.ts` is the only converter.
 - **A movement is positive when value goes INTO the account and negative when value leaves
   it. The movements of one record always add up to zero.** Money you owe, income and owner
-  capital therefore have negative balances. `displaySign` in `ledger/account-type.ts`
+  capital therefore have negative balances. `displaySignForAccountType` in `ledger/account-type.ts`
   changes the sign for display, in **one** place. Do not change a sign anywhere else. A CSV
   export must show the same signs as the screen it comes from.
 - **Build movements only in `ledger/entry-builder.ts`.** Screens describe the event in

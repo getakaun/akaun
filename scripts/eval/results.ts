@@ -25,9 +25,6 @@ import { PRICES, type UsageTotals } from "./agent.ts";
  * keys first.
  */
 
-/** Under `/work/`, which git ignores. */
-export const DEFAULT_OUT_DIR = "work/eval-mcp";
-
 const SECRETS: [RegExp, string][] = [
   [/akp_[A-Za-z0-9]{6,}/g, "akp_[REDACTED]"],
   [/sk-ant-[A-Za-z0-9_-]{6,}/g, "sk-ant-[REDACTED]"],

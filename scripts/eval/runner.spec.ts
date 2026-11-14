@@ -535,10 +535,15 @@ describe("the command line", () => {
     expect(() =>
       parseArgs(["--model", "claude-sonnet-5-5", "--surprise"]),
     ).toThrow(/Unknown option/);
+    // A paid run must name a folder that is kept; --null and --oracle need not.
+    expect(() => parseArgs(["--model", "claude-sonnet-5-5"])).toThrow(/--out/);
+    expect(() => parseArgs(["--null"])).not.toThrow();
     const options = parseArgs([
       "--",
       "--task",
       "D05,D08",
+      "--out",
+      "/tmp/akaun-eval-spec-out",
       "--model=claude-sonnet-5-5",
       "--reps",
       "3",

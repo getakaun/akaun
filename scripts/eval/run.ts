@@ -114,8 +114,10 @@ Run
   --concurrency N           default 4
   --max-usd X               spending cap, default 10
   --yes                     do not ask before spending
-  --out <dir>               default ${DEFAULT_OUT_NAME} in the OS temp directory,
-                            which the OS clears; never in the repo or a data folder
+  --out <dir>               results folder, never in a checkout or a data folder;
+                            required for a model run (for example ~/akaun-eval);
+                            --null and --oracle default to ${DEFAULT_OUT_NAME} in
+                            the OS temp directory, which the OS clears
   --round baseline|vN       name the result directory (default: the next vN)
   --resume                  add to the latest directory with the same configuration
   --keep                    keep each trial's temporary book
@@ -284,6 +286,17 @@ export function parseArgs(argv: readonly string[]): RunOptions {
   if (options.round && options.models.length > 1)
     throw new Error(
       "--round names one directory; run one model at a time with it.",
+    );
+  // A paid run's results must outlive the OS temp directory, which the OS
+  // clears: ask for a folder (checked by safe-paths: never a checkout or data).
+  if (
+    !options.serve &&
+    options.mode === "model" &&
+    !options.outDir &&
+    options.models.some((model) => !isFakeModel(model))
+  )
+    throw new Error(
+      "A model run costs money, so its results need a folder that is kept: pass --out <folder outside any checkout>, for example --out ~/akaun-eval.",
     );
   return options;
 }

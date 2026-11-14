@@ -452,9 +452,9 @@ The harness measures the tools with a model, and drives changes to their descrip
 **Running it.**
 
 ```sh
-bun run eval:mcp -- --split dev --model claude-sonnet-5-5 --reps 3 --max-usd 20 --surface v2
-bun run eval:mcp -- --split heldout --model claude-opus-5-5 --surface v2
-bun run eval:analyze -- work/eval-mcp/v3          # what the transcripts say about the tools
+bun run eval:mcp -- --split dev --model claude-sonnet-5-5 --reps 3 --max-usd 20 --out ~/akaun-eval
+bun run eval:mcp -- --split heldout --model claude-opus-5-5 --out ~/akaun-eval
+bun run eval:analyze -- ~/akaun-eval/v3            # what the transcripts say about the tools
 ```
 
 Always start it through `bun run eval:mcp`: the script adds `--no-env-file` and the safety preload, and `run.ts` refuses to start without it. The flags (`--help` prints them):
@@ -470,7 +470,7 @@ Always start it through `bun run eval:mcp`: the script adds `--no-env-file` and 
 | `--reps N`, `--concurrency N`                                      | Default 1 and 4. Each trial is its own process                                                                                                                                                     |
 | `--max-usd X`                                                      | Spending cap, default 10. No trial starts that could pass it                                                                                                                                       |
 | `--yes`                                                            | Do not ask before spending                                                                                                                                                                         |
-| `--out <dir>`, `--round baseline\|vN`, `--resume`, `--keep`        | Results directory (default `work/eval-mcp`, which git ignores); name the round; add to the latest run with the same configuration; keep each trial's book                                          |
+| `--out <dir>`, `--round baseline\|vN`, `--resume`, `--keep`        | Results directory, never in a checkout or a data folder; required for a model run (e.g. `~/akaun-eval`); `--null`/`--oracle` default to a folder in the OS temp directory; name the round; add to the latest run with the same configuration; keep each trial's book                                          |
 | `--serve [--book A\|B] [--port N]`                                 | No trials: serve a temporary book on `127.0.0.1` so a real client (Claude Code, Cowork, or ChatGPT or Grok through a tunnel) can run the same tasks. Prints the URL, a token and the owner's rules |
 
 Results use the layout `_state.json`, `vN/results.jsonl`, `vN/tools.json`, `vN/traces/`.

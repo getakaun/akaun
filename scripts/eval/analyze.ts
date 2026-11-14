@@ -9,7 +9,7 @@ import type { TraceTurn } from "./agent.ts";
  * results were. Plus the leak check: a tool description that names something
  * in the test book has been tuned to the test.
  *
- *   bun run eval:analyze -- work/eval-mcp/v3 [work/eval-mcp/v4 …] [--split dev|heldout|all] [--json]
+ *   bun run eval:analyze -- ~/akaun-eval/v3 [~/akaun-eval/v4 …] [--split dev|heldout|all] [--json]
  *
  * Only the development tasks' transcripts are read unless `--split` says
  * otherwise: the held-out transcripts exist for the final check, not for

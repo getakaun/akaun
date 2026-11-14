@@ -6,34 +6,67 @@ sidebar_position: 5
 
 Akaun can give data to an AI assistant that supports MCP (Model Context Protocol). Then you can ask
 the assistant questions about your books, for example "What did we spend on shipping in
-September?". If you allow it, the assistant can also do work in your books, for example "Record
-this receipt as a software expense paid from the bank account".
+September?". If you allow it, the assistant can also do work in your books, for example "Categorise
+the expenses that have no category, with my rules".
 
 By default the assistant can only read. It can change data only when you give it change access.
 
+## What an assistant can do
+
+Akaun gives the assistant 28 tools. The name of each tool starts with `akaun_`, for example
+`akaun_search_records`. You see these names when the assistant asks for your approval. If you
+write a permission rule for one tool in Claude Code, use the new name, for example
+`mcp__akaun__akaun_search_records`. A rule for the whole server, `mcp__akaun`, still works.
+
+The first thing that an assistant does is read a short summary of your books: the main currency,
+today's date, the date through which the books are closed, the work that waits, and what the
+assistant may do. Then it uses the other tools for your request.
+
+| What you ask for | What the assistant does | Access that it needs |
+|---|---|---|
+| Answer a question, or total something | Finds records, or totals them by category, account, contact or month. It reads a report: **Profit & Loss**, **Balance Sheet**, **Cash Flow Statement**, **Partners' Equity**, a trial balance, an expense tax report, receivables, payables or the asset register. | **View** |
+| Find what needs attention | Lists records with no category, expenses with no receipt, records that look entered twice, contacts that look the same, unmatched bank lines, bills that are not paid, overdue invoices and expense lines with no tax treatment. | **View** |
+| Categorise records with your rules | Reads which categories the contact or the description used before, applies your rules, and changes the category. Akaun stores no rules. The rules stay with you and the assistant. | **Change** on **Records** |
+| Match bank lines to records | Shows each unmatched bank line with the records that it could be, matches the clear ones and leaves the others to you. | **Match** on **Reconciliation** |
+| Record a bank line that has no record yet, for example interest or a bank charge | Makes the record from the bank line and matches it. | **Add** on **Reconciliation** and **Add** on **Records** |
+| Check the receipts of a month | Finds records with no file, and records that have the same file or the same amount, date and contact. It reads the receipt and tells you what it finds. | **View**. To attach a file, **Change** on **Records**. |
+| Clean up your contacts | Finds contacts that look the same, renames them, and merges them. | **Change** on **Contacts**. To merge, see [Merge contacts](#merge-contacts). |
+| Correct the date or the amount of a record that is paid or matched | Chooses the correction that fits, tells you what it would reverse and apply again, and then does it. | **Change** on **Records** and a correction choice. See [Corrections](#corrections). |
+| Move a payment to the right bill | Reverses the wrong allocation and applies the payment to the right bills, in one step. | **Correct allocations** |
+| Cancel a record that is not valid | Voids the record. The books read as if it never happened. | **Void records** |
+| Record a payment, or repay a person | Records the payment and applies it to the bills or the invoices. | **Add** on **Records** |
+| Keep equipment as an asset | Moves an expense to an asset account and registers the asset. It posts depreciation when you ask. | **Change** on **Accounts** and on **Records**. Depreciation needs **Adjustments**. |
+| Prepare an invoice or a quotation | Makes a draft. It does not send it. | **Add** on **Invoices** or **Quotations** |
+| Prepare a month-end review | Lists what blocks the next close and what to check, and goes through it with you. | **View** |
+| Add a receipt that came by email | The assistant gets the file with its own email tools. Then it attaches the file to the record. | **Change** on **Records** |
+
+Some assistants show three ready-made requests. In Claude Code they are the commands
+`/mcp__akaun__month-end-review`, `/mcp__akaun__categorise-expenses` and
+`/mcp__akaun__reconcile-account`. Other assistants, for example ChatGPT, do not use them. They are
+only a faster way to ask. Akaun applies the same rules to a request that you type yourself.
+
 ## What the assistant can read
 
-The assistant can read these items. It reads only the areas where the user has the **View**
-permission, and where the token or the connection gives read access.
+The assistant reads only the areas where the user has the **View** permission, and where the token
+or the connection gives read access.
 
 | What the assistant can read | Permission that the user needs |
 |---|---|
-| The list of records, with filters for dates, kinds, accounts, categories, contacts, text, amounts, paid and reconciled | **View** on **Records** |
-| One record, with its lines. It can also read the settlements and the stored text of the documents. | **View** on **Records** |
-| A file attached to a record: a receipt or bill as an image or a PDF, or a spreadsheet as text | **View** on **Records** |
-| The statement of one account | **View** on **Records** |
-| The outstanding amounts: receivables (what customers owe the business) and payables (what the business owes) | **View** on **Records** |
-| The list of accounts, with their balances | **View** on **Accounts** |
-| The list of contacts | **View** on **Contacts** |
-| The balance of one contact | **View** on **Contacts** and **Records** |
-| A report: **Profit & Loss**, **Balance Sheet**, **Cash Flow Statement** or **Partners' Equity** | **View** on **Reports** |
+| Records, with filters, totals and an account statement. One record, with its lines, files, settlements, bank matches and the stored text of its documents. | **View** on **Records** |
+| A file attached to a record: a receipt or bill as an image or a PDF | **View** on **Records** |
+| Accounts, with their balances and tax defaults | **View** on **Accounts** |
+| Contacts | **View** on **Contacts** |
+| The balance and the open items of one contact | **View** on **Contacts** and **Records** |
+| A report: **Profit & Loss**, **Balance Sheet**, **Cash Flow Statement**, **Partners' Equity**, a trial balance and the expense tax report | **View** on **Reports** |
+| Receivables and payables by age, and the asset register | **View** on **Reports** and **Records**. For the asset register also **View** on **Accounts**. |
 | The list of files on **Auto Import**, and the items of one file | **View** on **Auto Import** |
 | Invoices and quotations, with their lines | **View** on **Invoices** or **Quotations** |
 | Bank statements, their lines, and the records that can match them | **View** on **Reconciliation** and **Records** |
-| The history of changes to one item | **View** on the area of the item |
+| The history of changes to one item, and everything that one request changed | **View** on the area of the item |
 
-Akaun also gives the assistant guidance for record descriptions. The assistant can use it to
-suggest better descriptions in a table. It changes a description only after you approve it.
+The list of what needs attention shows only the parts that the user may read. A part that the
+user may not read shows as skipped. It never shows as "no problems". The history of users, groups,
+tokens, apps and settings is never shown to an assistant.
 
 ## What the assistant can change
 
@@ -58,6 +91,8 @@ as an extra permission is never handed on to an assistant.
 | Record a payment, and apply it to bills or invoices | **Add** on **Records** |
 | Attach a receipt to a record (PDF, JPEG or PNG, 15 MB or smaller) | **Change** on **Records** |
 | Add, rename or archive an account or a category. Set an opening balance. | **Add** or **Change** on **Accounts** |
+| Set the tax default of an account | **Change** on **Accounts** |
+| Apply the tax default to the entries that have no tax treatment | **Change** on **Accounts** and **Change** on **Records** |
 | Add or change a contact | **Add** or **Change** on **Contacts** |
 | Make and change an invoice | **Add** or **Change** on **Invoices** |
 | Send an invoice | **Send** on **Invoices** and **Add** on **Records** |
@@ -66,130 +101,153 @@ as an extra permission is never handed on to an assistant.
 | Revise a quotation | **Revise** and **Add** on **Quotations** |
 | Convert a quotation into an invoice | **Convert** on **Quotations** and **Add** on **Invoices** |
 | Match bank lines to records | **Match** on **Reconciliation** |
-| Record a bank line as a transfer between two of your bank or cash accounts | **Add** on **Reconciliation** and **Add** on **Records** |
+| Record a bank line as a record of any kind | **Add** on **Reconciliation** and **Add** on **Records** |
 | Correct a file on **Auto Import** | **Change** on **Auto Import** |
 | Confirm or skip a file on **Auto Import** | **Confirm** on **Auto Import** |
 
 To delete something, the assistant needs delete access as well. With the sign-in, this is a
 separate choice when you connect. With a token, select **Full** for the area, or select **Custom**
-and switch on **Delete**. Then the assistant can delete records, settlements, accounts, contacts,
-draft invoices, quotations and import files, where the user has **Delete**. Setting an opening
-balance to zero deletes it, so that also needs **Delete** on **Records**.
+and switch on **Delete**. Then the assistant can delete records, accounts, contacts, draft
+invoices, quotations and import files, where the user has **Delete**. Setting an opening balance
+to zero deletes it, so that also needs **Delete** on **Records**.
 
 Skipping a file on **Auto Import** deletes the uploaded file, so the assistant asks you first.
 
-Some changes are only for you to make in Akaun, never for an assistant:
-
-- Merge two contacts.
-- Remove an attachment from a record.
-- Correct or delete a line of a bank statement.
-
-These cannot be undone, or they change the evidence that the books are checked against.
-
-### Adjustments
-
-A journal entry, or a record between any two accounts, needs **Adjustments** on **Records**. With
-the sign-in, the assistant also needs the separate **Adjust** choice when you connect. Change
-access to records does not include it. Give it only to an assistant that you trust with your
-books: an adjustment can change any balance and keep the ledger in balance. A bank line recorded as a transfer
-to anything other than a bank or cash account is an adjustment too.
-
-### Historical corrections
-
-**Correct expense contacts** is a separate opt-in scope (`records:correct-contact`).
-Select it together with **Read records** and **Change records** when connecting
-or reconnecting your agent. Your role and delegation ceiling must explicitly allow
-**Correct expense contacts**. It is unchecked by default and is not included in
-**Grouped record corrections**, so existing connections gain no access automatically.
-
-The agent can preview an expense, search existing contacts and correct the supplier
-or personal payer. It must show the old/new contacts and effects on who is owed
-and obtain reviewed confirmation with a reason before saving. Existing allocation,
-reimbursement, audit and stale-record safeguards still apply.
-
-
-The opt-in **Grouped record corrections** scope (`records:correction`) covers
-payment allocation reversals and replacements, outgoing-payment payee corrections,
-settled expense/income dates, and reimbursement payment amounts. It grants no
-permanent record deletion or general adjustments. It also excludes legacy
-reimbursement-group reversals, opening-balance removal, invoice voids and bank-match
-removal. Some corrections change historical reports and balances.
-
-Each operation still needs its own **Records** permission and must fit your
-group's **Members may hand on to tokens & apps** permissions. **Correct allocations**
-allows a reversal without **Delete**; adding replacement allocations also needs
-**Add**. **Correct payment payees** also needs **Add** and **Change**. The grouped
-scope does not supply ordinary read/write access: select the corresponding access
-when needed. Personal access tokens select the individual permissions directly.
-
-An administrator who grants the grouped scope lets the app perform every listed
-correction that their account may delegate. The existing narrow
-`records:correct-date` and `records:correct-reimbursement-amount` scopes remain
-available for apps that need only one of those corrections.
-
-Existing grants are not upgraded. Reconnect with explicit consent for grouped
-corrections, and grant the individual role/delegation permissions as needed.
-Existing **Delete**-based allocation and payee correction access continues to work
-for compatibility; it does not grant the new correction permissions or broaden
-date/amount correction access. Prefer grouped correction access when permanent
-deletion is unnecessary.
-
-**Correct settled dates** and **Correct reimbursement amounts** on **Records** are separate
-abilities, like **Adjustments**. Each also needs **View** and **Change** on **Records**. They are
-excluded from ordinary record access and must be granted by name, including in the group's
-**Members may hand on to tokens & apps** permissions and in a personal access token.
-
-With the sign-in, select the corresponding permission under **Corrections** when connecting.
-These choices start unchecked. Existing connections need a new consent grant; ordinary change
-access does not include either correction.
-
-For an incorrect expense that has already been reimbursed: inspect and reverse its
-active allocations, read the reopened expense again and edit its amount, inspect
-and correct the original payment's payee, then reapply that payment's available
-credit. Use a fresh version for each correction. Preserve the actual payment
-amount unless the recorded cash payment itself is wrong. A smaller expense leaves
-available payment credit; a larger one leaves an outstanding expense balance.
-
-The assistant reads a fresh correction snapshot, presents the proposed change and its effects,
-and asks you to confirm before submitting a reason and version. Settled-date corrections keep
-allocations and payment dates; a change of accounting period needs your acknowledgement.
-Reimbursement-amount corrections update the payment and its covered expense allocations together,
-retaining reversed allocations in history. Both refuse bank-matched records and retain the same
-eligibility rules as Akaun's correction dialogs.
-
 Akaun applies all its normal rules to the assistant. For example:
 
-- Ordinary edits keep a paid or bank-matched record's amount and date locked. The dedicated
-  correction tools allow only the eligible corrections described above.
+- An ordinary edit keeps the amount and the date of a paid or matched record. The assistant must
+  use a correction, which needs a reason and its own access.
 - A sent invoice keeps its amounts. The assistant must void it and make a new one.
 - An account with records cannot be deleted. The assistant can archive it.
 - If someone else changed an item after the assistant read it, Akaun refuses the change. The
   assistant must read the item again.
 
-### When the assistant asks for confirmation
+### Access that you must choose by name
 
-A specific request authorizes routine actions, such as creating a draft, editing a description,
-matching a new bank line, or recording an invoice's status. The assistant is instructed to
-present the affected items and material effects and obtain your confirmation before corrections,
-deletions, voids, reversals, skipping or discarding imports, adjustment postings, replacing or
-removing opening balances, or removing or reducing existing bank matches.
+These choices are never part of ordinary change access. With the sign-in, they start unchecked.
+With a token, you switch them on by name.
 
-Approval of an exact reviewed change remains valid, including a table of description edits.
-The assistant need not ask again for every approved row. If the targets, amounts, allocations
-or effects change, it must present the new proposal for review. A permission grant gives access;
-it does not ask the assistant to make a particular change.
+#### Adjustments
 
-Akaun sends behavior hints with each MCP tool, including whether it reads, overwrites data,
-can safely repeat a business operation, or contacts an external service. An overwrite hint
-also applies to routine edits. These hints and instructions guide the assistant; the client
-controls its approval prompts and may require more confirmation. Akaun enforces permissions and
-accounting rules, but these hints do not prove that a human approved an individual call.
+A journal entry, or a record between any two accounts, needs **Adjustments** on **Records**. With
+the sign-in, the assistant also needs the separate **Adjust** choice when you connect. Give it only
+to an assistant that you trust with your books. An adjustment can change any balance and keep the
+ledger in balance. Posting depreciation is an adjustment too.
 
-Each change is saved at once and appears in the item's history under the user's name. Payment
-tools record bookkeeping entries without sending money. Issuing an invoice posts it to the
-ledger without emailing it. Import confirmation may look up a missing exchange rate with an
-external provider using the currency pair and date. After an uncertain write result, the
-assistant should read current state before retrying to avoid duplicate entries.
+#### Merge contacts
+
+:::caution
+
+A merge cannot be undone. Akaun moves the records, quotations and invoices of the merged contacts
+to the contact that you keep, and then deletes the merged contacts.
+
+:::
+
+Merging needs the choice that starts with **Merge duplicate contacts**. With the sign-in, it
+shows in the **Delete** group. It is not part of change access or of delete access, so an
+assistant that you connected before this choice existed does not get it. The user also needs
+**Merge**, **Change** and **Delete** on **Contacts**. With a token, select **Full** on
+**Contacts**, or select **Custom** and switch on these three abilities.
+
+The assistant is told to show you the records that would move before it merges. Check this list,
+and tell the assistant to continue only if it is correct.
+
+#### Corrections
+
+A correction changes a record that other records depend on: a paid expense, a matched record, a
+payment that you applied to a bill. You do not ask the assistant to choose a method. You tell it
+what the record must say. Akaun chooses the steps, and it needs a reason.
+
+- **Correct settled dates**: change the date of a paid expense or income. A change to another
+  month needs your agreement. It also needs **View** and **Change** on **Records**.
+- **Correct expense contacts**: change the supplier of an expense, or the person who paid it. This
+  can move amounts that you owe between contacts. It also needs **View** and **Change** on
+  **Records**.
+- **Correct allocations**: reverse a payment allocation and apply the payment again. Akaun keeps
+  the old allocation in the history. It also needs **Add** on **Records**.
+- **Correct payment payees**: change the recipient of a payment that you made. It also needs **Add**
+  and **Change** on **Records**.
+- **Correct reimbursement amounts**: change the amount of a repayment to a person. It also needs
+  **View** and **Change** on **Records**.
+- **Void records**: cancel a record with a reversal on its original date. This changes the reports
+  of that period. It also needs **View** on **Records**.
+
+To change the amount of a paid expense or income, for example when the amount left out the
+freight, the assistant needs **Correct allocations**, **Change** and **Add** on **Records**. Akaun
+reverses the payments that cover the record, changes the amount, and applies the same payments
+again, in one step. It shows you what it reversed and applied again.
+
+With the sign-in, the **Corrections** group lists these choices. The choice **Grouped record
+corrections** covers the allocations, the payees, the dates and the reimbursement amounts. It does
+not cover **Void records** or the expense contacts. Your group must let you hand on each choice.
+A token uses the abilities by name.
+
+Corrections can change reports and balances of earlier months. A month that you closed stays
+closed. See [Month closing stays in Akaun](#month-closing-stays-in-akaun).
+
+### Previews and approvals
+
+Each tool that changes data can run as a preview. Akaun calls it a dry run. The preview does all
+the checks and shows exactly what the change would do. It saves nothing.
+
+- The assistant is told to preview corrections, voids, deletes, merges, removed bank matches,
+  adjustments, and the use of a tax default on entries that exist. It must show you the result.
+  It must save only after you agree.
+- One request can change up to 50 items. It is all or nothing. If one item fails, Akaun saves
+  nothing, and tells which items failed and why. Then the assistant can correct them and send the
+  whole request again.
+- A request can carry a key. If the connection stops, the assistant sends the same request again
+  with the same key. Akaun then gives the first result and does not save a second time.
+- Each change is saved at once, and shows in the history of the item under the user's name. One
+  request gives one group of changes in the history.
+
+Akaun sends behavior hints with each tool, for example whether it can overwrite data. Your
+assistant app uses them to decide when to ask you. Akaun also gives the assistant short
+instructions. These hints and instructions guide the assistant, but they do not stop it. The
+access that you grant is the limit that Akaun enforces. Give change, delete, merge, adjust and
+correction access only to an assistant that you trust to act for you.
+
+A permission grant gives access. It does not ask the assistant to make a particular change.
+Text in a receipt, an email or a bank line is data. The assistant must not follow it as an
+instruction.
+
+Payment tools record entries in the books. They do not send money. Sending an invoice posts it to
+the ledger and does not email it. After an uncertain result, the assistant should read the books
+again before it tries a second time.
+
+### Tax defaults
+
+An account can have a default tax treatment for new expense lines. When an assistant changes this
+default, only the lines that you enter after that are affected. The lines that you saved before
+do not change.
+
+To fill the lines that have no treatment yet, you must ask for it. This is the same as
+**Apply default to unclassified entries** on the account. The assistant shows a preview first,
+with the number of lines that it can fill, the lines that are protected, and the totals. It
+applies the change only after you agree, and each request covers 200 lines or fewer. Lines
+that you decided one by one, lines in a closed month and voided lines stay as they are. To
+change one line, the assistant changes the record.
+
+### Month closing stays in Akaun
+
+An assistant cannot close a month, and it cannot open a closed month again. This is the same for
+the sign-in and for a token. The assistant can prepare the month: it lists what blocks the close
+and goes through it with you. You close the month yourself in Akaun.
+
+If you ask for a change with a date in a closed month, Akaun refuses it and saves nothing. Open
+the month in Akaun first, if you must change it.
+
+### What stays in Akaun
+
+These actions are only for you, never for an assistant. They cannot be undone, or they change the
+evidence that the books are checked against.
+
+- Close or open a month.
+- Correct or delete a line of a bank statement.
+- Remove an attachment from a record.
+- Upload a new file to **Auto Import**, or a new bank statement.
+- Reconcile the payouts of a sales platform. The assistant can read the balance of the clearing
+  account.
 
 :::caution
 
@@ -233,6 +291,23 @@ reverse proxy, it must send the paths `/mcp`, `/oauth/` and `/.well-known/` to A
 For the assistant to attach the largest files, `BODY_SIZE_LIMIT` must be `21M` or more. The Docker
 image already sets it.
 
+## Connect Claude Code, Cowork, ChatGPT and other assistants
+
+The menus of each assistant are different, and they change. Use the function of the assistant that
+adds an MCP server. Its name can be "connector", "integration" or "custom connector". Akaun needs
+three things from you:
+
+| Assistant | What to do |
+|---|---|
+| Claude Code | Run `claude mcp add --transport http akaun https://books.example.com/mcp`. For the sign-in, start `/mcp` in Claude Code and select the server. For a token, add `--header "Authorization: Bearer akp_…"` to the command. |
+| Cowork | Add the server address as a custom connector in the settings, and choose the sign-in or a token as the type of authentication. |
+| ChatGPT | Add the server address as a custom connector, and choose the sign-in. ChatGPT connects from the internet, so the address must be a public HTTPS address. It does not use the ready-made requests. |
+| Other assistants | Add a server of the type "Streamable HTTP" with the server address. Use the sign-in if the assistant supports it. If not, add the header `Authorization` with the value `Bearer` and the token. |
+
+In all of them, the server address is the address of Akaun with `/mcp` at the end. After you
+update Akaun, connect the assistant again. The assistant keeps the list of tools that it read
+last, and the names of the tools changed.
+
 ## Connect with the sign-in
 
 :::caution
@@ -256,14 +331,15 @@ The app shows on your profile, on the **Connected apps** tab.
 The page shows all supported permissions. Select the ones you want to allow;
 permissions blocked by your account or administrator are disabled. The groups include:
 
-- **Read** — Akaun selects each read permission that you can give.
-- **Change** — Akaun never selects these for you. Select each area that the assistant may add to
+- **Read**: Akaun selects each read permission that you can give.
+- **Change**: Akaun never selects these for you. Select each area that the assistant may add to
   and change, for example **Record and change records, payments and settlements, and attach
   files**.
-- **Delete** — Akaun never selects these for you. Select them only if the assistant must delete
-  things.
-- **Adjust** — Allow journal and adjustment postings only if needed. These start unchecked.
-- **Corrections** — Choose the corrections the assistant may make. These start unchecked.
+- **Delete**: Akaun never selects these for you. Select them only if the assistant must delete
+  things. This group also has **Merge duplicate contacts**.
+- **Adjust**: Allow journal and adjustment postings only if needed. These start unchecked.
+- **Corrections**: Choose the corrections the assistant may make, and **Void records**. These
+  start unchecked.
 
 Under each choice, **Includes** lists the abilities that the choice gives, for example
 **Invoices: Add, Invoices: Change, Invoices: Send, Invoices: Void**.
@@ -280,7 +356,9 @@ Click **Cancel** to refuse the connection.
 
 You can choose read and change access during the first connection, even if the app initially
 asks only for read access. Only the permissions you select are granted. Connect the app again
-to change the permissions you give it.
+to change the permissions you give it. If you connect again, select the choices that you want to
+keep as well. A new choice, for example **Merge duplicate contacts**, is not added to a
+connection that exists.
 
 A connection stays valid for 30 days or less. Then connect the assistant again.
 
@@ -305,7 +383,9 @@ areas. If you are a superuser, do not give the token more than the assistant nee
    `Bearer akp_1234…`.
 
 The assistant sees only the tools that the permissions of the token allow. For example, a token
-with only the **View** level gives the assistant no tools that change data.
+with only the **View** level gives the assistant no tools that change data. A tool that has
+several actions shows when the token allows one of them. If the assistant uses an action that
+the token does not allow, Akaun refuses the whole request and names the action.
 
 A token stops working at the end of the day in **Expires** (UTC). Then the assistant cannot connect. Make a new
 token, and put it in the settings of the assistant.
@@ -337,11 +417,15 @@ tokens of the user. **Sign out** does not disconnect them.
 - The API tokens of older versions do not work any more. See
   [API tokens were replaced by personal access tokens](../10-help/troubleshooting.md#api-tokens-were-replaced-by-personal-access-tokens).
 - The assistant reads the data at the time of its question. It does not get live updates.
-- A list gives 50 rows at a time by default, and 200 rows at the most. A statement gives 500 lines or
-  fewer. For a long period, ask about a shorter period.
+- A list gives 50 rows at a time by default, and 200 rows at the most. A statement of one account
+  has no closing balance when it has more than 5,000 lines. For a long period, ask about a
+  shorter period.
 - The assistant can read an attached file of 5 MB or less. One user can read 60 files in 10
   minutes. After that, the assistant must wait.
 - The assistant can attach a file of 15 MB or less. One user can attach 30 files in 10 minutes.
+  The assistant attaches one file in each request.
+- Akaun does not read your email and does not fetch receipts. If the assistant can read your
+  email, it gets the file itself and attaches it to the record.
 - The assistant cannot upload a new file to **Auto Import** or a new bank statement. Upload these in
   Akaun.
 - Use HTTPS for a connection over the internet. A token sent over plain HTTP is not safe.

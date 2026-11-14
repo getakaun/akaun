@@ -1,4 +1,4 @@
-import { EventEmitter } from "node:events";
+import { DeferrableEmitter } from "../unit-of-work.js";
 import { eq } from "drizzle-orm";
 import { FirstYearAllowanceError } from "$lib/first-year-allowance.js";
 import { AssetTaxSchemeError } from "$lib/asset-tax-scheme.js";
@@ -21,7 +21,7 @@ import {
   type AppResult,
   type AppFailure,
 } from "./result.js";
-export const taxWorksheetEvents = new EventEmitter();
+export const taxWorksheetEvents = new DeferrableEmitter();
 taxWorksheetEvents.setMaxListeners(200);
 export function refuse(
   reason: string,

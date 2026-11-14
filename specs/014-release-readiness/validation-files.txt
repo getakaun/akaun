@@ -128,3 +128,8 @@ src/lib/vitest-examples/greet.spec.ts
 src/routes/api/permission-coverage.spec.ts
 src/routes/api/reports/stream/reports-stream.spec.ts
 src/routes/api/tax/stream/tax-stream.spec.ts
+scripts/eval/agent.spec.ts
+scripts/eval/analyze.spec.ts
+scripts/eval/eval-scenarios.spec.ts
+scripts/eval/runner.spec.ts
+scripts/eval/tasks.spec.ts

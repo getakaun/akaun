@@ -12,7 +12,11 @@ const files = readFileSync(
   .filter(Boolean);
 if (
   !files.length ||
-  files.some((file) => !/^\.?\/?src\/[\w/.-]+\.spec\.ts$/.test(file))
+  // Specs under src/, plus the eval harness's own (they spawn Bun children,
+  // so they run here under bun test rather than in the Vitest server project).
+  files.some(
+    (file) => !/^\.?\/?(?:src|scripts\/eval)\/[\w/.-]+\.spec\.ts$/.test(file),
+  )
 )
   throw Error("Invalid release test manifest");
 const child = Bun.spawn(

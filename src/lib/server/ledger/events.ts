@@ -1,4 +1,4 @@
-import { EventEmitter } from "events";
+import { DeferrableEmitter } from "../unit-of-work.js";
 
 /**
  * One write, one emit.
@@ -17,10 +17,10 @@ import { EventEmitter } from "events";
  *   account-update     { account }
  *   account-deleted    { id }
  */
-export const ledgerEvents = new EventEmitter();
+export const ledgerEvents = new DeferrableEmitter();
 
 /** Any write to an account, including archiving and an opening balance. */
-export const accountEvents = new EventEmitter();
+export const accountEvents = new DeferrableEmitter();
 
 // Each open SSE connection registers a small fixed number of listeners and
 // removes them all on disconnect, so the cap guards against a genuine leak

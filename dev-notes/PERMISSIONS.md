@@ -128,6 +128,37 @@ would silently widen every app already granted the grouped scope. The operation 
 needs `records.read`. No data migration: nothing could void before, and a superuser
 holds every leaf.
 
+`contacts:merge` independently grants only `contacts.merge` and is the opt-in scope that lets
+an MCP agent merge contacts (`akaun_change_contacts`, `merge[]`). A merge moves every record,
+quotation and invoice of the merged contacts to the one kept and deletes the others, and it
+cannot be undone. v1 left merging out of MCP for that reason; v2 brings it back behind this
+scope, because cleaning up duplicate suppliers needs it. The merge still needs `contacts.update`
+and `contacts.delete`, so the MCP action asks for `contacts:merge` + `contacts:write` +
+`contacts:delete`, and granting the new scope adds no update or delete. It is deliberately
+**not** part of `contacts:write` or `contacts:delete`: adding it there would silently widen
+every app already granted them. The consent page shows the scope beside the deletes
+(`scopeTier`), unchecked, with its own warning that a merge cannot be undone.
+
+The leaf `contacts.merge` is **sensitive** (tier Full, delegable, not explicit). Not explicit,
+so grants are unchanged: a group holding `contacts` or the leaf still merges in the app, and the
+REST route and the Contacts screen behave as before. Sensitive, so it is left out of default
+ceilings, and migration `0052_contacts_merge_sensitive.sql` deletes every stored
+`group_delegations` row that names exactly `contacts.merge` (0033 had copied it into the
+ceiling of every group whose grid allowed contacts delete; no seeded group grants it). Nothing
+else is touched, and a second run deletes nothing. Its effect, through the per-request
+intersection, with no credential row rewritten:
+- a member's personal access token that lists it stops carrying it on its next request; the
+  member's own session keeps it, and a new token asking for it is refused;
+- an OAuth app granted `contacts:merge` stops carrying it the same way; the consent page shows
+  the scope as "Your administrator does not allow apps to do this" and connects without it;
+- a superuser is unaffected: a superuser group has no ceiling, so a superuser's token or app
+  keeps merge if the token or app itself was granted it;
+- a user's own grant of it was never delegable, so it reaches no token either way.
+
+To allow it again: Users & Groups → the group → "Members may hand on to tokens & apps" →
+Contacts → Merge (`saveGroupAccess`). Tokens and grants that listed it before the migration
+then carry it again at once, without being re-issued.
+
 Allocation and payee operations accept the new explicit leaves or their original
 delete-based permission route. This preserves existing session, PAT and OAuth
 behavior without rewriting any grants or running a data migration. MCP requirements

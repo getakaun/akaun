@@ -1,6 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { recordAudit } from "../audit.js";
+import { recordAttachments } from "../db/schema.js";
 import {
   displayName,
   recordAttachmentPath,
@@ -45,6 +47,9 @@ export const attachFileShape = {
  * `change` ability, 15 MB, and a type told from the bytes themselves, never
  * from the name. Allowed on a settled or reconciled record — a receipt is
  * supporting evidence, not accounting data (FR-017a).
+ *
+ * The file's sha256 is saved on its row (`record_attachments.sha256`) in the
+ * same transaction, for the duplicate-record finder; the result is unchanged.
  *
  * The file is written straight to its final key through the store, and taken
  * back if the row cannot be written, so nothing is left behind for a later
@@ -96,6 +101,7 @@ async function attachFileOperation(
       "Only PDF, JPEG and PNG files can be attached.",
     );
 
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
   const key = recordAttachmentPath(
     `${randomUUID()}_${storedNamePart(input.filename)}`,
     record.date,
@@ -106,6 +112,12 @@ async function attachFileOperation(
     attachment = ctx.db.transaction(
       (tx) => {
         const added = addAttachmentRow(tx, record.id, key, displayName(key));
+        // The digest of the stored bytes, for the duplicate-record finder.
+        // Written in the same transaction, so a row never exists half-hashed.
+        tx.update(recordAttachments)
+          .set({ sha256 })
+          .where(eq(recordAttachments.id, added.id))
+          .run();
         recordAudit(tx, {
           recordType: "record",
           recordId: record.id,

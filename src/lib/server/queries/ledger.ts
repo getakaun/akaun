@@ -23,7 +23,7 @@ import {
   sql,
   type SQL,
 } from "drizzle-orm";
-import { alias } from "drizzle-orm/sqlite-core";
+import { alias, type SQLiteColumn } from "drizzle-orm/sqlite-core";
 import {
   accounts,
   accountDefaults,
@@ -38,12 +38,19 @@ import {
   settlements,
 } from "../db/schema.js";
 import {
+  AccountType,
   DefaultAccountPurpose,
   LedgerRecordKind,
+  LedgerRecordKindDisplayLabels,
+  LedgerRecordKindLabels,
   type AccountSubTypeCode,
   type AccountTypeCode,
   type LedgerRecordKindCode,
 } from "$lib/enums.js";
+import {
+  displaySignForAccountType,
+  isCategoryAccount,
+} from "../ledger/account-type.js";
 import { lockStateOf } from "../ledger/locking.js";
 import { toMinor } from "../ledger/money.js";
 import { coverageFor } from "../ledger/coverage.js";
@@ -76,7 +83,7 @@ import type { SequenceDocumentType } from "../db/schema.js";
 import { assertDatesOpen, closedThrough } from "../closing/policy.js";
 
 import { classifiedMovements, type TaxMovementDraft } from "./expense-tax.js";
-import type { TaxOverride } from "$lib/expense-tax.js";
+import type { TaxOverride, TaxTreatment } from "$lib/expense-tax.js";
 
 /**
  * Every read and write of the one record store.
@@ -628,6 +635,59 @@ const owedMovementsForContact = alias(
 );
 const owedRecordsForContact = alias(ledgerRecords, "owed_records_for_contact");
 
+/**
+ * A contact's own records, plus a batch payment that settled one of their
+ * bills without naming them as its own single contact (FR-008's exception for
+ * a payment covering several contacts at once) — that attribution lives in
+ * `settlements`, not on the payment's own row.
+ *
+ * `matches` says which contact ids count: one for `contactId`, any of a list
+ * for `contactIds`.
+ */
+function belongsToContact(matches: (column: SQLiteColumn) => SQL): SQL {
+  return sql`(${matches(ledgerRecords.contactId)} OR ${matches(ledgerRecords.supplierContactId)} OR EXISTS (
+        SELECT 1 FROM ${ledgerMovements} AS "payment_movements_for_contact"
+        INNER JOIN ${settlements} ON ${settlements.paymentMovementId} = ${paymentMovementsForContact.id} AND ${activeAllocation()}
+        INNER JOIN ${ledgerMovements} AS "owed_movements_for_contact" ON ${owedMovementsForContact.id} = ${settlements.owedMovementId}
+        INNER JOIN ${ledgerRecords} AS "owed_records_for_contact" ON ${owedRecordsForContact.id} = ${owedMovementsForContact.recordId}
+        WHERE ${paymentMovementsForContact.recordId} = ${ledgerRecords.id}
+          AND ${matches(owedRecordsForContact.contactId)}
+      ))`;
+}
+
+// Aliased so a record's own sides can be summed inside a query that already
+// reads `ledger_movements` under its own name (`aggregateRecords`).
+const recordSides = alias(ledgerMovements, "record_sides");
+
+/**
+ * A record's own figure in main-currency cents, read from its sides: what
+ * flows in, which the balance rule makes equal to what flows out.
+ *
+ * Invariant 6 (`ledger/integrity.ts`) holds this equal to the typed amount at
+ * its stored rate for every kind but a journal, which has no single typed
+ * figure, and a reversal, which copies the figure of what it voids. Unlike
+ * the typed decimal, it compares and adds up across currencies (D-02).
+ */
+function mainAmountMinor(recordId: SQLiteColumn): SQL<number> {
+  return sql<number>`(SELECT coalesce(sum(CASE WHEN ${recordSides.amountMinor} > 0 THEN ${recordSides.amountMinor} ELSE 0 END), 0) FROM ${ledgerMovements} AS "record_sides" WHERE ${recordSides.recordId} = ${recordId})`;
+}
+
+/**
+ * A movement's tax treatment, for the `taxTreatment` filter: the saved one,
+ * except on a line `needsTaxReview` (`$lib/expense-tax.ts`) flags, which is
+ * `requires_review` when marked so and `unclassified` otherwise. A line with
+ * no saved classification is historical and unreviewed (`schema.ts`), never
+ * read from the account's current default. Asking for both review values
+ * therefore selects exactly the lines the expense tax report counts as
+ * unresolved.
+ */
+const movementTaxTreatment = sql<TaxTreatment>`CASE
+  WHEN ${ledgerMovements.taxClassification} IS NULL THEN 'unclassified'
+  WHEN json_extract(${ledgerMovements.taxClassification}, '$.treatment') = 'requires_review' THEN 'requires_review'
+  WHEN json_extract(${ledgerMovements.taxClassification}, '$.percentageBps') IS NULL THEN 'unclassified'
+  ELSE json_extract(${ledgerMovements.taxClassification}, '$.treatment')
+END`;
+
 function recordConditions(filters: RecordListFilters): SQL[] {
   const conditions: SQL[] = [
     sql`not exists (select 1 from reimbursement_entries re where re.record_id = ${ledgerRecords.id})`,
@@ -645,21 +705,12 @@ function recordConditions(filters: RecordListFilters): SQL[] {
         : eq(ledgerRecords.kind, filters.kind),
     );
   }
-  if (filters.contactId !== undefined) {
-    // A contact's own records, plus a batch payment that settled one of their
-    // bills without naming them as its own single contact (FR-008's
-    // exception for a payment covering several contacts at once) — that
-    // attribution lives in `settlements`, not on the payment's own row.
-    conditions.push(
-      sql`(${eq(ledgerRecords.contactId, filters.contactId)} OR ${eq(ledgerRecords.supplierContactId, filters.contactId)} OR EXISTS (
-        SELECT 1 FROM ${ledgerMovements} AS "payment_movements_for_contact"
-        INNER JOIN ${settlements} ON ${settlements.paymentMovementId} = ${paymentMovementsForContact.id} AND ${activeAllocation()}
-        INNER JOIN ${ledgerMovements} AS "owed_movements_for_contact" ON ${owedMovementsForContact.id} = ${settlements.owedMovementId}
-        INNER JOIN ${ledgerRecords} AS "owed_records_for_contact" ON ${owedRecordsForContact.id} = ${owedMovementsForContact.recordId}
-        WHERE ${paymentMovementsForContact.recordId} = ${ledgerRecords.id}
-          AND ${owedRecordsForContact.contactId} = ${filters.contactId}
-      ))`,
-    );
+  const { contactId, contactIds } = filters;
+  if (contactId !== undefined) {
+    conditions.push(belongsToContact((column) => eq(column, contactId)));
+  }
+  if (contactIds !== undefined) {
+    conditions.push(belongsToContact((column) => inArray(column, contactIds)));
   }
   if (filters.dateFrom)
     conditions.push(gte(ledgerRecords.date, filters.dateFrom));
@@ -670,6 +721,17 @@ function recordConditions(filters: RecordListFilters): SQL[] {
   if (filters.amountMax !== undefined) {
     conditions.push(lte(ledgerRecords.amount, filters.amountMax));
   }
+  // The same bounds on the figure the ledger holds, in main-currency cents.
+  if (filters.minMainMinor !== undefined) {
+    conditions.push(
+      gte(mainAmountMinor(ledgerRecords.id), filters.minMainMinor),
+    );
+  }
+  if (filters.maxMainMinor !== undefined) {
+    conditions.push(
+      lte(mainAmountMinor(ledgerRecords.id), filters.maxMainMinor),
+    );
+  }
 
   // "Records touching this account" and "records in this category" are the same
   // question asked of the movements table, so both are one EXISTS.
@@ -678,6 +740,50 @@ function recordConditions(filters: RecordListFilters): SQL[] {
     conditions.push(
       sql`EXISTS (SELECT 1 FROM ${ledgerMovements} WHERE ${ledgerMovements.recordId} = ${ledgerRecords.id} AND ${ledgerMovements.accountId} = ${accountId})`,
     );
+  }
+  if (filters.accountIds !== undefined) {
+    conditions.push(
+      sql`EXISTS (SELECT 1 FROM ${ledgerMovements} WHERE ${ledgerMovements.recordId} = ${ledgerRecords.id} AND ${inArray(ledgerMovements.accountId, filters.accountIds)})`,
+    );
+  }
+
+  if (filters.uncategorised !== undefined) {
+    // A line on either "not yet categorised" default account. Read from the
+    // saved defaults, as `getAccountDefaults` reads them, so pointing a default
+    // at another account changes what this finds with no other edit.
+    const uncategorised = sql`EXISTS (
+      SELECT 1 FROM ${ledgerMovements}
+      WHERE ${ledgerMovements.recordId} = ${ledgerRecords.id}
+        AND ${ledgerMovements.accountId} IN (
+          SELECT ${accountDefaults.accountId} FROM ${accountDefaults}
+          WHERE ${accountDefaults.purpose} IN (
+            ${DefaultAccountPurpose.UncategorisedExpense},
+            ${DefaultAccountPurpose.UncategorisedIncome}
+          )
+        )
+    )`;
+    conditions.push(
+      filters.uncategorised ? uncategorised : sql`NOT ${uncategorised}`,
+    );
+  }
+
+  if (filters.taxTreatment !== undefined) {
+    // Only an Expense line carries a tax classification (`classifiedMovements`
+    // in `expense-tax.ts`), so no other line counts as unclassified.
+    conditions.push(
+      sql`EXISTS (
+        SELECT 1 FROM ${ledgerMovements}
+        INNER JOIN ${accounts} ON ${accounts.id} = ${ledgerMovements.accountId}
+        WHERE ${ledgerMovements.recordId} = ${ledgerRecords.id}
+          AND ${accounts.type} = ${AccountType.Expense}
+          AND ${inArray(movementTaxTreatment, filters.taxTreatment)}
+      )`,
+    );
+  }
+
+  if (filters.hasAttachment !== undefined) {
+    const attached = sql`EXISTS (SELECT 1 FROM ${recordAttachments} WHERE ${recordAttachments.recordId} = ${ledgerRecords.id})`;
+    conditions.push(filters.hasAttachment ? attached : sql`NOT ${attached}`);
   }
 
   if (filters.search) {
@@ -732,7 +838,7 @@ function recordConditions(filters: RecordListFilters): SQL[] {
              OR ${settlements.paymentMovementId} = ${ledgerMovements.id})
         ), 0)
     )`;
-    conditions.push(filters.paid ? sql`NOT ${stillOwed}` : stillOwed);
+    conditions.push(filters.paid ? sql`NOT (${stillOwed})` : stillOwed);
   }
 
   return conditions;
@@ -786,6 +892,322 @@ export function listRecords(
     ),
     total,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Aggregates — the same selection as `listRecords`, totalled by group
+// ---------------------------------------------------------------------------
+
+export type RecordGroupBy =
+  | "category"
+  | "account"
+  | "contact"
+  | "month"
+  | "kind";
+
+/** The `key` of the contact group for records that name no contact. */
+export const NO_CONTACT_KEY = "none";
+
+export type RecordGroup = {
+  /**
+   * The account or contact id as a string (`NO_CONTACT_KEY` for no contact),
+   * the month as `YYYY-MM`, or the kind's wire label (`LedgerRecordKindLabels`).
+   */
+  key: string;
+  /** The account, contact or kind name. For a month, the month. */
+  label: string;
+  totalMinor: Minor;
+  /** How many of the matching records are in this group. */
+  count: number;
+};
+
+export type RecordAggregate = {
+  /** Largest `|totalMinor|` first, cut to `limit`. */
+  groups: RecordGroup[];
+  /**
+   * Every group's total added up, those `limit` cut included. Null when the
+   * groups are not one kind of money — income with spending, money in with
+   * money out, or accounts read with opposite signs — so that their sum would
+   * net unlike figures against each other; `mixedNote` says why.
+   */
+  totalMinor: Minor | null;
+  /** Why `totalMinor` is null. */
+  mixedNote?: string;
+  /** How many records matched. */
+  count: number;
+  /** How many groups there were before `limit` cut them. */
+  groupCount: number;
+};
+
+/**
+ * The records `filters` selects, totalled by group, for MCP search's
+ * `group_by`.
+ *
+ * Every total comes from movements, in main-currency cents, and never from
+ * the typed decimal `amount`:
+ * - `category`: each category's own lines (`isCategoryAccount`), turned with
+ *   `displaySignForAccountType` the way the P&L turns them, so that spending
+ *   and earning both read positive. A record split across two categories is
+ *   in both groups.
+ * - `account`: the lines on every other account, turned the same way, so
+ *   each reads as the screens show it: money into a bank account positive,
+ *   and a payable owed positive too. The two groupings are a partition of
+ *   each record's lines, so neither repeats the other, and a record is in
+ *   each group whose account it touches.
+ * - `contact`, `month`, `kind`: each record's own figure
+ *   (`mainAmountMinor`), so a record is in exactly one group. The contact is
+ *   the one the Records list names first: the supplier when the record has
+ *   one, otherwise its contact.
+ *
+ * Void pairs are left out of counts and totals both, whatever `voided` says.
+ * On each account a pair nets to zero, but a record's own figure is positive
+ * on both halves, so keeping them would add a voided record twice to the
+ * contact, month and kind totals. `voided: "only"` therefore has no groups.
+ *
+ * The grand total is given only for one kind of money (`mixedTotalNote`).
+ *
+ * `limit`, `offset` and `sort` in `filters` page the list and are not read
+ * here. `opts.limit` cuts the sorted groups after the totals are taken.
+ */
+export function aggregateRecords(
+  db: LedgerDb,
+  filters: RecordListFilters,
+  groupBy: RecordGroupBy,
+  opts: { limit?: number } = {},
+): RecordAggregate {
+  const where = and(...recordConditions(filters), notVoided(ledgerRecords.id));
+
+  const count =
+    db
+      .select({ n: sql<number>`count(*)` })
+      .from(ledgerRecords)
+      .where(where)
+      .get()?.n ?? 0;
+
+  const signed: (RecordGroup & { displaySign?: 1 | -1 })[] =
+    groupBy === "category" || groupBy === "account"
+      ? accountGroups(db, where, groupBy)
+      : recordGroups(db, where, groupBy);
+  const mixedNote = mixedTotalNote(db, where, groupBy, signed);
+  const groups: RecordGroup[] = signed.map(
+    ({ key, label, totalMinor, count }) => ({ key, label, totalMinor, count }),
+  );
+  groups.sort(
+    (a, b) =>
+      Math.abs(b.totalMinor) - Math.abs(a.totalMinor) ||
+      compareText(a.label, b.label) ||
+      compareText(a.key, b.key),
+  );
+
+  return {
+    groups:
+      opts.limit === undefined
+        ? groups
+        : groups.slice(0, Math.max(0, Math.trunc(opts.limit))),
+    totalMinor: mixedNote
+      ? null
+      : groups.reduce((sum, group) => sum + group.totalMinor, 0),
+    ...(mixedNote ? { mixedNote } : {}),
+    count,
+    groupCount: groups.length,
+  };
+}
+
+/**
+ * Why the groups' total would mean nothing, or null when it means something.
+ *
+ * A total is one kind of money: spending, income, money in, money out, or
+ * one other kind of record (transfers, journals, opening balances). Contact,
+ * month and kind groups read every record's figure as positive, so a
+ * selection holding two of these would add income to spending. Account and
+ * category groups are read through `displaySignForAccountType`, so a group of
+ * money held and a group of money owed carry opposite meanings even when
+ * both read positive; those keep a total only when every group's account is
+ * read with the same sign.
+ */
+function mixedTotalNote(
+  db: LedgerDb,
+  where: SQL | undefined,
+  groupBy: RecordGroupBy,
+  groups: (RecordGroup & { displaySign?: 1 | -1 })[],
+): string | null {
+  const kinds = moneyKinds(db, where);
+  if (kinds.length > 1)
+    return `These records mix ${kinds.slice(0, -1).join(", ")} and ${kinds.at(-1)}, so adding the groups would net them against each other. No grand total is given; filter to one kind of money to total it.`;
+  if (
+    (groupBy === "category" || groupBy === "account") &&
+    new Set(groups.map((g) => g.displaySign)).size > 1
+  )
+    return groupBy === "category"
+      ? "These categories mix spending and earnings, so adding them would mean nothing. No grand total is given; read each group on its own."
+      : "These accounts mix what is held with what is owed, so adding them would mean nothing. No grand total is given; read each group on its own.";
+  return null;
+}
+
+/** The kinds of money the records `where` selects: see `mixedTotalNote`. */
+function moneyKinds(db: LedgerDb, where: SQL | undefined): string[] {
+  const controls = db
+    .select({ id: accountDefaults.accountId })
+    .from(accountDefaults)
+    .where(
+      inArray(accountDefaults.purpose, [
+        DefaultAccountPurpose.Receivable,
+        DefaultAccountPurpose.Payable,
+        DefaultAccountPurpose.ReimbursementsPayable,
+      ]),
+    )
+    .all()
+    .map((row) => row.id);
+  // A payment's way: value leaving the control account is money in.
+  const way = sql<number>`(SELECT sign(coalesce(sum(${recordSides.amountMinor}), 0)) FROM ${ledgerMovements} AS "record_sides" WHERE ${recordSides.recordId} = ${ledgerRecords.id} AND ${inArray(recordSides.accountId, controls.length ? controls : [-1])})`;
+  const rows = db
+    .selectDistinct({ kind: ledgerRecords.kind, way })
+    .from(ledgerRecords)
+    .where(where)
+    .all();
+  const names = new Set<string>();
+  for (const row of rows)
+    names.add(
+      row.kind === LedgerRecordKind.Payment
+        ? row.way < 0
+          ? "money in"
+          : "money out"
+        : (MONEY_KIND[row.kind as LedgerRecordKindCode] ?? "other records"),
+    );
+  return MONEY_KIND_ORDER.filter((name) => names.has(name));
+}
+
+/** What kind of money each record kind is, for `moneyKinds`. Payments split by way. */
+const MONEY_KIND: Partial<Record<LedgerRecordKindCode, string>> = {
+  [LedgerRecordKind.Expense]: "spending",
+  [LedgerRecordKind.Income]: "income",
+  [LedgerRecordKind.InvoiceIssue]: "income",
+  [LedgerRecordKind.Transfer]: "transfers",
+  [LedgerRecordKind.Journal]: "journal entries",
+  [LedgerRecordKind.OpeningBalance]: "opening balances",
+};
+const MONEY_KIND_ORDER = [
+  "income",
+  "spending",
+  "money in",
+  "money out",
+  "transfers",
+  "journal entries",
+  "opening balances",
+  "other records",
+];
+
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Per account, the lines of the matching records: `category` or `account`. */
+function accountGroups(
+  db: LedgerDb,
+  where: SQL | undefined,
+  groupBy: "category" | "account",
+): RecordGroup[] {
+  const matching = db
+    .select({ id: ledgerRecords.id })
+    .from(ledgerRecords)
+    .where(where);
+  const rows = db
+    .select({
+      accountId: ledgerMovements.accountId,
+      name: accounts.name,
+      type: accounts.type,
+      subType: accounts.subType,
+      totalMinor: sql<number>`sum(${ledgerMovements.amountMinor})`,
+      count: sql<number>`count(DISTINCT ${ledgerMovements.recordId})`,
+    })
+    .from(ledgerMovements)
+    .innerJoin(accounts, eq(accounts.id, ledgerMovements.accountId))
+    .where(inArray(ledgerMovements.recordId, matching))
+    .groupBy(ledgerMovements.accountId)
+    .all();
+
+  const groups: (RecordGroup & { displaySign: 1 | -1 })[] = [];
+  for (const row of rows) {
+    const account = {
+      type: row.type as AccountTypeCode,
+      subType: row.subType as AccountSubTypeCode | null,
+    };
+    const isCategory = isCategoryAccount(account);
+    if (isCategory !== (groupBy === "category")) continue;
+    // Read the way the screens read it: spending and earning both positive,
+    // and a payable owed reads positive too.
+    const displaySign = displaySignForAccountType(account.type);
+    groups.push({
+      key: String(row.accountId),
+      label: row.name,
+      // `|| 0`: a zero total turned by -1 would otherwise read -0.
+      totalMinor: row.totalMinor * displaySign || 0,
+      count: row.count,
+      displaySign,
+    });
+  }
+  return groups;
+}
+
+/** Per contact, month or kind, each matching record's own figure. */
+function recordGroups(
+  db: LedgerDb,
+  where: SQL | undefined,
+  groupBy: "contact" | "month" | "kind",
+): RecordGroup[] {
+  const totalMinor = sql<number>`coalesce(sum(${mainAmountMinor(ledgerRecords.id)}), 0)`;
+  const count = sql<number>`count(*)`;
+
+  if (groupBy === "contact") {
+    const contactId = sql<
+      number | null
+    >`coalesce(${ledgerRecords.supplierContactId}, ${ledgerRecords.contactId})`;
+    return db
+      .select({ contactId, name: contacts.legalName, totalMinor, count })
+      .from(ledgerRecords)
+      .leftJoin(contacts, eq(contacts.id, contactId))
+      .where(where)
+      .groupBy(contactId)
+      .all()
+      .map((row) => ({
+        key: row.contactId === null ? NO_CONTACT_KEY : String(row.contactId),
+        label:
+          row.contactId === null
+            ? "No contact"
+            : (row.name ?? String(row.contactId)),
+        totalMinor: row.totalMinor,
+        count: row.count,
+      }));
+  }
+
+  if (groupBy === "month") {
+    const month = sql<string>`substr(${ledgerRecords.date}, 1, 7)`;
+    return db
+      .select({ month, totalMinor, count })
+      .from(ledgerRecords)
+      .where(where)
+      .groupBy(month)
+      .all()
+      .map((row) => ({
+        key: row.month,
+        label: row.month,
+        totalMinor: row.totalMinor,
+        count: row.count,
+      }));
+  }
+
+  return db
+    .select({ kind: ledgerRecords.kind, totalMinor, count })
+    .from(ledgerRecords)
+    .where(where)
+    .groupBy(ledgerRecords.kind)
+    .all()
+    .map((row) => ({
+      key: LedgerRecordKindLabels[row.kind] ?? String(row.kind),
+      label: LedgerRecordKindDisplayLabels[row.kind] ?? String(row.kind),
+      totalMinor: row.totalMinor,
+      count: row.count,
+    }));
 }
 
 /** Selection metadata for statement rows, including records outside the list's initial batch. */

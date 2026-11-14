@@ -1,4 +1,4 @@
-import { EventEmitter } from "node:events";
+import { DeferrableEmitter } from "../unit-of-work.js";
 
 // Bank reconciliation live-update bus: every mutating function in
 // services/reconciliation.ts emits on this after its DB write, and the
@@ -9,7 +9,7 @@ import { EventEmitter } from "node:events";
 //
 // A new transfer created from a statement line also lands on the ledger stream,
 // because `createRecord` emits `record-update` for the record it wrote.
-export const reconciliationEvents = new EventEmitter();
+export const reconciliationEvents = new DeferrableEmitter();
 // Each open SSE connection registers one listener per event type above (7) and
 // removes them all on disconnect — cap at ~100 concurrent streams. See the
 // matching note in $lib/server/finance/events.ts.

@@ -4,7 +4,7 @@
  *
  * A withdrawal from a marketplace wallet to the bank is often recorded before
  * the wallet report is imported: in Reconciliation, when the bank statement
- * shows the money arriving (`createTransferForLine`), or by hand. The receipt
+ * shows the money arriving (`createRecordFromLines`), or by hand. The receipt
  * duplicate check (`duplicate-detector.ts`) compares a document with expenses
  * and incomes by their wording and other party, and a transfer has neither, so
  * a transfer is compared on what it is instead: the same amount, between the

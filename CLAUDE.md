@@ -94,7 +94,7 @@ own.
   add the decimal `amount` into a report total**. `ledger/money.ts` is the only converter.
 - **A movement is positive when value goes INTO the account and negative when value leaves
   it. The movements of one record always add up to zero.** Money you owe, income and owner
-  capital therefore have negative balances. `displaySign` in `ledger/account-type.ts`
+  capital therefore have negative balances. `displaySignForAccountType` in `ledger/account-type.ts`
   changes the sign for display, in **one** place. Do not change a sign anywhere else. A CSV
   export must show the same signs as the screen it comes from.
 - **Build movements only in `ledger/entry-builder.ts`.** Screens describe the event in
@@ -243,9 +243,10 @@ A write that both a REST route and an MCP tool can make is **one function** in
 `application/<domain>.ts`, taking `(ctx: AppContext, input)` and returning an `AppResult`. It asks
 for every permission itself (`requirePermissions`) and enforces every rule a route used to hold —
 the adjustments gate, sealed sent documents, a payment and its settlements in one transaction. The
-route parses and calls `toResponse`; the MCP tool calls `registerWrite`. A rule written in the
-route alone is a hole the MCP tool walks through. That is how the explicit-journal and
-invoice-issue gaps existed.
+route parses and calls `toResponse`; the MCP write tool calls it inside `runBatch`
+(`application/batch.ts`), and `runTool` (`mcp/registry.ts`) opens one audit scope per call. A
+rule written in the route alone is a hole the MCP tool walks through. That is how the
+explicit-journal and invoice-issue gaps existed.
 
 - **Nothing under `application/` imports `db/client.ts` or opens storage by default.** The database,
   `locals`, `store` and `storageRoot` arrive in the context. A file helper is always called with
@@ -254,11 +255,69 @@ invoice-issue gaps existed.
   instead of touching `data/`.
 - **Every update/delete takes an optional `expectedVersion`** (`application/version.ts`: a hash
   of the row and its children, never `updatedAt`). MCP tools require it; REST may omit it.
-- **Each MCP tool has one entry in `mcp/tool-requirements.ts`** (OAuth scopes + RBAC). Discovery,
-  the call-time check and the `insufficient_scope` challenge all read that table, and a spec fails
-  when a registered tool is missing from it.
+- **Each MCP tool, and each action array of a write tool, has one entry in `mcp/requirements/`**
+  (OAuth scopes + RBAC). Discovery (any-of), the call-time check and the `insufficient_scope`
+  challenge all read those tables, and `requirements.spec.ts` fails when an entry is missing.
 - **Deliberate exception:** import confirm needs only `import.confirm`, not `records.create`
   (006 FR-045). Do not "fix" it.
+
+### MCP tools (v2) (`src/lib/server/mcp/`)
+
+28 tools (15 reads, 13 writes), each named `akaun_<verb>_<noun>`. The tool table, the
+conventions and the evaluation harness are in `dev-notes/MCP.md`. A change to MCP keeps these
+rules:
+
+- **One write path.** Every MCP write goes through `runBatch` (`application/batch.ts`): up to 50
+  items, one `IMMEDIATE` transaction, one savepoint per item, all or nothing. `dry_run` runs every
+  rule and rolls back, so a dry run and a save are the same code. `akaun_attach_file` is the one
+  exception: one file, no batch, the v1 contract.
+- **Unit of work.** `runUnitOfWork` wraps the transaction, never the reverse. **No `await` inside
+  a write transaction**: bun:sqlite is synchronous and the connection is shared, so an `await`
+  lets another request's statements into it. Async work (an exchange rate) goes in the item's
+  `prepare`, which runs before the transaction and never writes. Events use `DeferrableEmitter`:
+  dropped in a dry run, queued until the outermost commit in a write, unchanged outside both, so
+  REST behaves as before. A new emitter is a `DeferrableEmitter`. File deletes run after commit.
+- **Requirements.** Every tool, and every action array of a write tool, has an entry in
+  `mcp/requirements/` (OAuth scopes + RBAC leaves). Listing is any-of, each item is checked when
+  called, and the `insufficient_scope` step-up reads the same table. `requirements.spec.ts` fails
+  when an entry is missing. The operation in `application/` still asks for every permission itself:
+  the table can only hide or refuse more.
+- **Response conventions.** Text JSON only: no `structuredContent` (the three file tools keep it).
+  Money is a decimal string and every response names `currency`. An agent never sees a movement
+  or settlement id: a record is its id or number, a bank line is `L123`. Enums are snake_case
+  labels. Null and empty fields are dropped. Lists use a cursor (50 rows, 200 at most) and end
+  with a steering note. Over 48 KiB a list is cut; over 512 KiB the answer is `OUTPUT_TOO_LARGE`,
+  **never for a write that has saved**, because that invites a retry and a duplicate. One error
+  shape, `{error: {code, message, fix, candidates?, issues?}}`: a new refusal carries a `fix` the
+  agent can act on. A fuzzy name match never links. Descriptions are static, at most 1,500
+  characters, and name nothing from a test book.
+- **Rules live on the server.** A rule that lives only in a description, the instructions or a
+  prompt is a hole: ChatGPT ignores prompts and some clients ignore annotations. The instructions
+  (`serverInstructions` in `mcp/registry.ts`) and the prompts (`mcp/prompts.ts`) order calls and ask
+  for a dry run; they hold no rule of their own. The protection of a sensitive change is the
+  opt-in scopes (corrections, void, delete, merge, adjust), the destructive annotations and the
+  audit, not a confirmation step.
+- **Versions and retries.** An item that changes data passes `expected_version`, a hash
+  (`application/version.ts`). `idempotency_key` (24 hours, bound to the credential) makes a retried
+  call return the first result.
+- **Frozen interface.** `RecordListFilters` in `ledger/types.ts` gained the optional
+  `hasAttachment`, `minMainMinor`, `maxMainMinor`, `taxTreatment`, `uncategorised`, `accountIds`
+  and `contactIds`, for the `akaun_search_records` filters and `group_by`. The change is additive,
+  and no existing caller changes.
+- **Tax defaults.** An account's tax default affects **new lines only**. `change_accounts` with
+  `tax_default` changes no saved line. Existing lines change only through `apply_tax_default`, the
+  app's "Apply default to unclassified entries" (a dry run, then the apply with its `revision`, at
+  most 200 lines per call), or one record at a time through `change_records`. Do not add a way to
+  change saved classifications from a default.
+- **Month close is human-only.** No MCP tool closes or reopens a month. A write dated in a closed
+  month is `CLOSED_PERIOD`.
+- **Evaluation safety.** The harness (`bun run eval:mcp`, `scripts/eval/`) never touches `data/`.
+  It starts with `--no-env-file` and a preload (`scripts/eval/preload.ts`) that refuses a trial
+  directory outside `os.tmpdir()`, makes `db/client.ts` throw, allows `fetch` only to
+  `api.anthropic.com`, and checks the size and mtime of `data/akaun.db*` before and after without
+  opening them. Start it only through `bun run eval:mcp`. A model run costs money: it prints an
+  estimate and asks, and `--max-usd` caps it. `--serve` serves a temporary copy of a test book,
+  never the real one.
 
 ### Audit Log
 
@@ -272,7 +331,7 @@ writer, and the log is append-only: nothing deletes an entry.
   - The channel comes from the **audit scope** (`audit-context.ts`, an AsyncLocalStorage). No
     caller passes it. The channel is `session`, `pat`, `oauth` (a connected app) or `system`.
   - Scopes are opened in two places. `request-hook.ts` opens one for every authenticated
-    request, and `registerWrite` opens one per MCP tool call, so each call gets its own
+    request, and `runTool` (`mcp/registry.ts`) opens one per MCP write call, so each call gets its own
     `request_id`.
   - Work that runs with no scope is recorded as `system`.
   - **Detached work** (started with `void` after the response) must be wrapped in

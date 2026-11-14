@@ -195,7 +195,10 @@ export default defineConfig({
 					pool: 'forks',
 					environment: 'node',
 					include: ['src/**/*.{test,spec}.{js,ts}', 'scripts/**/*.{test,spec}.{js,ts}'],
-					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}']
+					// The eval harness spawns Bun child processes per trial; under Vitest's
+					// forks they run minutes instead of seconds and time out in a full run.
+					// They run under `bun test` instead: `test:eval`, and the release manifest.
+					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}', 'scripts/eval/**']
 				}
 			}
 		]

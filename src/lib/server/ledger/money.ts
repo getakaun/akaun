@@ -83,3 +83,96 @@ export function allocateMinor(total: Minor, weights: Minor[]): Minor[] {
 
   return parts;
 }
+
+/**
+ * Whole minor units as an exact decimal string: `128500` → `"1285.00"`,
+ * `-50` → `"-0.50"`, `7` → `"0.07"`. String arithmetic only, so no float ever
+ * touches the figure. `scale` is the number of decimal places (2 for cents; 0
+ * gives a plain integer string).
+ *
+ * This and `parseMinor` are the MCP layer's only money converters: an agent
+ * reads and writes amounts as these strings, never as JSON numbers.
+ *
+ * Throws on a non-integer or unsafe `minor` — that is a programming error,
+ * not something a user typed.
+ */
+export function formatMinor(minor: number, scale = 2): string {
+  if (!Number.isSafeInteger(minor))
+    throw new RangeError(`formatMinor needs a safe integer, got ${minor}.`);
+  if (!Number.isInteger(scale) || scale < 0)
+    throw new RangeError(`formatMinor needs a whole scale, got ${scale}.`);
+  const sign = minor < 0 ? "-" : "";
+  const digits = String(Math.abs(minor)).padStart(scale + 1, "0");
+  if (scale === 0) return `${sign}${digits}`;
+  const cut = digits.length - scale;
+  return `${sign}${digits.slice(0, cut)}.${digits.slice(cut)}`;
+}
+
+export type ParsedMinor =
+  | { ok: true; minor: number }
+  | { ok: false; message: string };
+
+const PLAIN_DECIMAL = /^(-?)(\d+)(?:\.(\d+))?$/;
+const GROUPED = /^-?\d{1,3}([,_ '’]\d{3})+(\.\d+)?$/;
+
+/**
+ * A decimal amount, as a user or an agent wrote it, to whole minor units —
+ * exactly, by string, with no float arithmetic.
+ *
+ * Accepts `"1285"`, `"1285.5"`, `"1285.50"`, `"-12.30"` (surrounding spaces
+ * are ignored). A number is first turned into its shortest string form
+ * (`String(12.5)` → `"12.5"`), so `0.1 + 0.2` is refused for its seventeen
+ * decimals rather than silently rounded.
+ *
+ * Refuses, each with a sentence that says what to send instead: an empty
+ * value, thousands separators (`"1,285.00"`), more decimals than `scale`,
+ * exponent or other non-plain forms, and a result outside the safe-integer
+ * range. `-0` comes back as `0`.
+ */
+export function parseMinor(value: string | number, scale = 2): ParsedMinor {
+  let text: string;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value))
+      return { ok: false, message: "The amount must be a finite number." };
+    text = String(value);
+  } else if (typeof value === "string") {
+    text = value.trim();
+  } else {
+    return {
+      ok: false,
+      message: 'Send the amount as a decimal string, e.g. "1285.50".',
+    };
+  }
+  if (text === "")
+    return {
+      ok: false,
+      message: 'The amount is empty. Send a decimal such as "1285.50".',
+    };
+  if (GROUPED.test(text))
+    return {
+      ok: false,
+      message: `Remove the thousands separators from "${text}": write ${text.replace(/[,_ '’]/g, "")}.`,
+    };
+  const match = PLAIN_DECIMAL.exec(text);
+  if (!match)
+    return {
+      ok: false,
+      message: `"${text}" is not a plain decimal amount. Use digits, an optional leading "-" and at most one ".", with no currency symbol, e.g. "1285.50".`,
+    };
+  const [, sign, whole, fraction = ""] = match;
+  if (fraction.length > scale)
+    return {
+      ok: false,
+      message:
+        scale === 0
+          ? `"${text}" has decimals, but this amount takes whole units only.`
+          : `"${text}" has ${fraction.length} decimal places; at most ${scale} are allowed.`,
+    };
+  const magnitude =
+    BigInt(whole) * 10n ** BigInt(scale) +
+    BigInt(fraction.padEnd(scale, "0") || "0");
+  if (magnitude > BigInt(Number.MAX_SAFE_INTEGER))
+    return { ok: false, message: `"${text}" is too large an amount.` };
+  const minor = Number(magnitude);
+  return { ok: true, minor: sign === "-" && minor !== 0 ? -minor : minor };
+}

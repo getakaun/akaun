@@ -4,7 +4,11 @@ import { DefaultAccountPurpose } from "$lib/enums.js";
 import { can } from "../permissions.js";
 import { isValidDate } from "../date.js";
 import { getRecord } from "../queries/ledger.js";
-import { getSide, recordIdsForSettlement } from "../queries/settlements.js";
+import {
+  getSettlement,
+  getSide,
+  recordIdsForSettlement,
+} from "../queries/settlements.js";
 import {
   needsAdjustments,
   sidesFromAccounts,
@@ -16,12 +20,17 @@ import { isReadOnlyKind } from "../ledger/record-permissions.js";
 import {
   createRecord as createRecordService,
   patchRecord,
+  releaseBankMatchesInTransaction,
   removeRecord,
   voidBlockedReason,
   voidRecordInTransaction,
+  voidRefusal,
+  voidReleasePlan,
   type DeferredEmits,
+  type VoidRelease,
+  type VoidReleasePlan,
 } from "../services/ledger.js";
-import { createSettlements } from "../services/settlements.js";
+import { createSettlements, undoSettlement } from "../services/settlements.js";
 import { requireAccountDefault } from "../services/account-defaults.js";
 import { loadSidesContext } from "../services/sides-context.js";
 import { mainCurrencyCode } from "../currency/form.js";
@@ -33,7 +42,12 @@ import type {
   RecordPatch,
   RecordView,
 } from "../ledger/types.js";
-import { actor, requirePermissions, type AppContext } from "./context.js";
+import {
+  actor,
+  requireAnyPermissions,
+  requirePermissions,
+  type AppContext,
+} from "./context.js";
 import {
   fail,
   fromRefusable,
@@ -709,26 +723,89 @@ export const voidShape = {
   expectedVersion: z.string().min(1),
 };
 
+/**
+ * What a void may undo first, in the same transaction. Kept out of
+ * `voidShape`, so the REST route's strict schema still refuses it and REST
+ * behaves exactly as before; a caller that offers it adds this field itself.
+ */
+export const voidReleaseSchema = z.enum(["none", "allocations", "all"]);
+
+export type VoidInput = z.output<z.ZodObject<typeof voidShape>> & {
+  /** Absent or `"none"`: today's behaviour, refused while anything relies on it. */
+  release?: VoidRelease;
+};
+
+export type { VoidRelease, VoidReleasePlan };
+
 export type VoidPreview = {
   record: RecordView;
   version: string;
   /** Why it cannot be voided now, or null. */
   blockedReason: string | null;
+  /** Only when a release was asked about: what it would undo first. */
+  release?: { mode: VoidRelease } & VoidReleasePlan;
 };
 
-/** What voiding this record would do, and whether it can be done now. */
+/**
+ * The extra abilities a release needs on top of `records.void`. Reversing an
+ * allocation is Correct allocation's ability (or the delete route it grew
+ * from); removing a bank match is `reconciliation.match`.
+ */
+function releasePermissions(
+  ctx: AppContext,
+  release: VoidRelease,
+): AppFailure | null {
+  if (release === "none") return null;
+  return (
+    requireAnyPermissions(ctx, [
+      ["records.correctAllocations"],
+      ["records.delete"],
+    ]) ??
+    (release === "all"
+      ? requirePermissions(ctx, ["reconciliation.match"])
+      : null)
+  );
+}
+
+/** What releasing would undo, in the preview's shape. */
+function releasePreview(
+  db: LedgerDb,
+  id: number,
+  release: VoidRelease,
+): { mode: VoidRelease } & VoidReleasePlan {
+  const plan = voidReleasePlan(db, id);
+  return {
+    mode: release,
+    allocations: release === "none" ? [] : plan.allocations,
+    bankMatches: release === "all" ? plan.bankMatches : [],
+  };
+}
+
+/**
+ * What voiding this record would do, and whether it can be done now. With
+ * `release`, the answer is for a void that first undoes what that release
+ * covers, and the preview lists it.
+ */
 export function prepareVoidRecord(
   ctx: AppContext,
   id: number,
+  opts: { release?: VoidRelease } = {},
 ): AppResult<VoidPreview> {
   const refused = requirePermissions(ctx, ["records.read"]);
   if (refused) return refused;
   const record = getRecord(ctx.db, id);
   if (!record) return missing(NOT_FOUND);
+  if (opts.release === undefined)
+    return ok({
+      record,
+      version: recordVersion(ctx.db, id),
+      blockedReason: voidBlockedReason(ctx.db, id),
+    });
   return ok({
     record,
     version: recordVersion(ctx.db, id),
-    blockedReason: voidBlockedReason(ctx.db, id),
+    blockedReason: voidBlockedReason(ctx.db, id, opts.release),
+    release: releasePreview(ctx.db, id, opts.release),
   });
 }
 
@@ -738,21 +815,42 @@ export function prepareVoidRecord(
  * Writes a Reversal record that negates it on the same date (see
  * `voidRecordInTransaction`). Needs `records.void`, an explicit, sensitive
  * leaf: a void changes a period's reported figures, like a date correction.
+ *
+ * `release` undoes, inside the same transaction and before the void, what
+ * would otherwise refuse it: `"allocations"` reverses every active allocation
+ * on either side of this record (the rows stay as history, and a payment's
+ * freed amount becomes its credit); `"all"` also removes its bank matches.
+ * Every other refusal still applies.
  */
 export function voidRecord(
   ctx: AppContext,
   id: number,
-  input: z.output<z.ZodObject<typeof voidShape>>,
-): AppResult<{ record: RecordView; reversal: RecordView; version: string }> {
+  input: VoidInput,
+): AppResult<{
+  record: RecordView;
+  reversal: RecordView;
+  version: string;
+  released?: VoidReleasePlan;
+}> {
   return withClosingRefusal(() => voidRecordOperation(ctx, id, input));
 }
 
 function voidRecordOperation(
   ctx: AppContext,
   id: number,
-  input: z.output<z.ZodObject<typeof voidShape>>,
-): AppResult<{ record: RecordView; reversal: RecordView; version: string }> {
-  const refused = requirePermissions(ctx, ["records.read", "records.void"]);
+  input: VoidInput,
+): AppResult<{
+  record: RecordView;
+  reversal: RecordView;
+  version: string;
+  released?: VoidReleasePlan;
+}> {
+  const release = input.release ?? "none";
+  if (!voidReleaseSchema.safeParse(release).success)
+    return fail("INVALID_INPUT", "Choose none, allocations or all to release.");
+  const refused =
+    requirePermissions(ctx, ["records.read", "records.void"]) ??
+    releasePermissions(ctx, release);
   if (refused) return refused;
   const reason = input.reason.trim();
   if (reason.length < 10 || reason.length > 2000)
@@ -769,15 +867,42 @@ function voidRecordOperation(
           input.expectedVersion,
         );
         if (stale) throw new Rollback(stale);
+        let released: VoidReleasePlan | undefined;
+        if (release !== "none") {
+          // Every other reason to refuse is asked before anything is undone.
+          const refusal = voidRefusal(ctx.db, id, release);
+          if (refusal) throw new Rollback(fail("REFUSED", refusal));
+          const plan = voidReleasePlan(ctx.db, id);
+          for (const allocation of plan.allocations) {
+            // A payment naming nobody reverses all its rows at once.
+            if (!getSettlement(ctx.db, allocation.settlementId)) continue;
+            const undone = undoSettlement(
+              ctx.db,
+              allocation.settlementId,
+              actor(ctx),
+              emits,
+              reason,
+            );
+            if (!undone.ok) throw new Rollback(fail("REFUSED", undone.reason));
+          }
+          released = {
+            allocations: plan.allocations,
+            bankMatches:
+              release === "all"
+                ? releaseBankMatchesInTransaction(ctx.db, id, actor(ctx), emits)
+                : [],
+          };
+        }
         const done = voidRecordInTransaction(
           ctx.db,
           id,
           actor(ctx),
           reason,
           emits,
+          released,
         );
         if (!done.ok) throw new Rollback(fail("REFUSED", done.reason));
-        return done.value;
+        return { ...done.value, released };
       },
       { behavior: "immediate" },
     );
@@ -786,6 +911,7 @@ function voidRecordOperation(
       record: result.original,
       reversal: result.reversal,
       version: recordVersion(ctx.db, id),
+      ...(result.released ? { released: result.released } : {}),
     });
   } catch (error) {
     if (error instanceof Rollback) return error.failure;

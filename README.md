@@ -194,7 +194,11 @@ For the curious: Akaun is built with [SvelteKit](https://kit.svelte.dev/) (Svelt
 
 ## MCP access
 
-Akaun exposes read-only bookkeeping tools at `/mcp`. Agents can query records, accounts, contacts, outstanding amounts, financial reports and Auto Import jobs, and suggest standardized descriptions for manual review.
+Akaun serves MCP at `/mcp` (Streamable HTTP), so an AI assistant such as Claude Code, Cowork or ChatGPT can work in your books. It offers 28 tools, 15 reads and 13 writes, each named `akaun_…` (for example `akaun_search_records`). An assistant can look up records, accounts, contacts, reports and bank lines, and find what needs attention: missing receipts, duplicate records, uncategorised expenses, unmatched bank lines. If you allow it, it can also categorise records, match bank lines, record payments, correct records, merge duplicate contacts and manage accounts.
+
+- **Read-only by default.** An assistant changes data only with change access that you choose when you connect. Akaun also checks the signed-in user's permissions on every request, so an assistant never does more than the person it acts for. Corrections, voids, deletes, merges and adjustments are separate opt-in choices.
+- **Writes save at once, in batches.** One call carries up to 50 items and is all or nothing. Any call can run with `dry_run` to show what it would change without saving. The assistant is told to preview sensitive changes and to save only after you agree.
+- **Closing a month stays in the app.** No assistant can close or reopen a month.
 
 ### Connect using OAuth
 
@@ -207,29 +211,31 @@ OAUTH_ENABLED=true
 
 Use your own public HTTPS address. `PUBLIC_BASE_URL` defaults to `ORIGIN`; if set separately, it must match. Database migrations apply automatically on startup. A tunnel or reverse proxy must forward OAuth/discovery endpoints and `/mcp` without an additional access-login barrier.
 
-Add `https://books.example.com/mcp` to your client's MCP settings and select OAuth. Clients supporting dynamic registration obtain their client ID automatically; Akaun supports public clients and clients using Basic or form-based client-secret authentication. Sign in with your Akaun account, then choose the read permissions to approve. OAuth scopes always limit access, including for superusers, and current group permissions still apply. These OAuth credentials work only on MCP.
+Add `https://books.example.com/mcp` to your client's MCP settings and select OAuth. Clients supporting dynamic registration obtain their client ID automatically; Akaun supports public clients and clients using Basic or form-based client-secret authentication. Sign in with your Akaun account, then choose the access to approve: read access is ticked for you, and change, delete, merge, adjust and correction access never is. OAuth scopes always limit access, including for superusers, and current group permissions still apply. These OAuth credentials work only on MCP.
 
 Manage or revoke a connection under **Profile → Connected apps**. See [OAuth setup and verification](dev-notes/OAUTH.md) for configuration, client registration and deployment checks.
 
-### Connect using an API token
+### Connect using a personal access token
 
-1. Open **Users & Groups** in Akaun and create a dedicated integration user. Assign it a group with **View** permissions for Records, Accounts, Contacts, Reports and Auto Import, or just the features the agent needs. Keep it out of superuser groups and leave Add/Change/Delete permissions disabled.
-2. **Issue an API token** for that user and copy the one-time reveal into your client's secret configuration. This token inherits the user's REST permissions too, so a restricted integration user matters even though MCP itself is read-only.
-3. Add an MCP server to your client using these connection settings:
+1. Open **Profile → Access tokens** and make a token with only the permissions the assistant needs, and an expiry. For an assistant that does not act for one person, a superuser can add a separate user with just those permissions and make the token on that user's profile. Copy the token (it starts with `akp_`); it is shown once.
+2. Add an MCP server to your client with these settings:
 
    | Setting        | Value                                                                   |
    | -------------- | ----------------------------------------------------------------------- |
    | Transport      | Streamable HTTP                                                         |
    | Server URL     | Your Akaun URL followed by `/mcp`, e.g. `https://books.example.com/mcp` |
-   | Authentication | HTTP header `Authorization: Bearer <your-api-token>`                    |
+   | Authentication | HTTP header `Authorization: Bearer <your-token>`                        |
 
-MCP Inspector supports this endpoint with Protocol Era **Modern** (2026-07-28), **Auto**, or **Legacy**. Select **Modern** or **Auto** to verify modern support; the same URL and bearer token work in both eras.
+   For Claude Code:
 
-For the default local Docker setup, the URL is `http://localhost:6969/mcp`. Use HTTPS for remote connections. The client must be able to reach the Akaun server; a client running on another machine needs that server's reachable address instead of `localhost`.
+   ```sh
+   claude mcp add --transport http akaun https://books.example.com/mcp \
+     --header "Authorization: Bearer $AKAUN_MCP_TOKEN"
+   ```
 
-### Codex example
+The client sees only the tools that the token's permissions allow. For the default local Docker setup, the URL is `http://localhost:6969/mcp`. Use HTTPS for remote connections.
 
-Add the following to your Codex MCP configuration, replacing the URL with your Akaun address:
+For Codex, add this to your MCP configuration, and set `AKAUN_MCP_TOKEN` in the environment of the Codex process:
 
 ```toml
 [mcp_servers.akaun]
@@ -237,18 +243,17 @@ url = "https://books.example.com/mcp"
 bearer_token_env_var = "AKAUN_MCP_TOKEN"
 ```
 
-Set `AKAUN_MCP_TOKEN` to the issued token in the environment of the Codex process, then restart or reconnect the client so it loads the configuration. Keep the token out of committed configuration files.
-
-Once connected, try asking: **“Show my expenses for September 2026 by category”** or **“Which suppliers still have unpaid records?”** The client discovers only tools allowed by the integration user's permissions.
+Once connected, try asking: **“Show my expenses for September 2026 by category”** or **“Which suppliers still have unpaid bills?”**
 
 ### Connection troubleshooting
 
 - **401 Unauthorized:** check the bearer token and whether it has been revoked or regenerated. Browser login cookies do not authenticate MCP.
-- **403 Forbidden:** check the integration user's View permissions. If your client sends an `Origin` header, it must exactly match Akaun's public origin, including scheme and port; configure `ORIGIN` correctly behind a reverse proxy.
+- **403 Forbidden:** check the token's permissions. If your client sends an `Origin` header, it must exactly match Akaun's public origin, including scheme and port; configure `ORIGIN` correctly behind a reverse proxy.
 - **Client asks for OAuth login:** enable `OAUTH_ENABLED=true` with the correct public HTTPS `ORIGIN`, restart, then reconnect. Discovery endpoints must be publicly reachable.
 - **GET returns 405:** the endpoint uses stateless Streamable HTTP with POST requests. Select Streamable HTTP in your client rather than a legacy SSE transport.
+- **A tool name from an older version is not found:** the tools were renamed and now start with `akaun_`. Reconnect the client, and update any permission rule that names a single tool.
 
-See [MCP setup and tool reference](dev-notes/MCP.md) for connection details, permissions, financial semantics and limits.
+See [Connect AI assistants](docs/docs/09-administration/connect-ai-assistants.md) for what an assistant can do, the access you can grant, and how previews and approvals work, and [MCP setup and tool reference](dev-notes/MCP.md) for the contract.
 
 ## Development
 

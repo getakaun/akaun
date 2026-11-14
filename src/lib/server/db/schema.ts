@@ -1543,6 +1543,11 @@ export const recordAttachments = sqliteTable(
     groupDocument: integer("group_document", { mode: "boolean" })
       .notNull()
       .default(false),
+    // Lowercase hex sha256 of the stored bytes, for the duplicate-record
+    // finder. Written when a file is attached through MCP; NULL on older rows,
+    // which are hashed the first time a duplicate check needs them (never
+    // backfilled by a migration).
+    sha256: text("sha256"),
   },
   (t) => [
     index("record_attachments_record_idx").on(t.recordId),
@@ -1792,3 +1797,39 @@ export const assetTaxSchemes = sqliteTable(
     check("asset_tax_scheme_definition", sql`json_valid("definition")`),
   ],
 );
+
+/**
+ * What an MCP write returned the first time it ran under an `idempotency_key`,
+ * so a retried call hands back that result instead of saving twice. Scoped by
+ * user and credential binding (`"pat:<tokenId>"` or `"oauth:<clientId>"`): the
+ * same key from two credentials is two different keys. `input_hash` tells a
+ * replay from a reuse of the key with different input. Rows older than 24
+ * hours are dead and are swept by `created_at`; a dry run is never stored.
+ */
+export const mcpIdempotency = sqliteTable(
+  "mcp_idempotency",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    binding: text("binding").notNull(),
+    key: text("key").notNull(),
+    tool: text("tool").notNull(),
+    inputHash: text("input_hash").notNull(),
+    /** The stored result envelope, as JSON text. */
+    result: text("result").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (t) => [
+    uniqueIndex("mcp_idempotency_key_idx").on(t.userId, t.binding, t.key),
+    index("mcp_idempotency_created_at_idx").on(t.createdAt),
+  ],
+);
+
+export type McpIdempotencyRow = typeof mcpIdempotency.$inferSelect;
+export type NewMcpIdempotencyRow = typeof mcpIdempotency.$inferInsert;
+export type RecordAttachmentRecord = typeof recordAttachments.$inferSelect;
+export type NewRecordAttachmentRecord = typeof recordAttachments.$inferInsert;

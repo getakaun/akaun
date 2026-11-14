@@ -73,6 +73,18 @@ describe("permission catalog", () => {
     expect(leafMeta("settings.manage").sensitive).toBe(true);
   });
 
+  it("keeps contact merge out of default ceilings, yet delegable and implied by the root", () => {
+    const merge = leafMeta("contacts.merge");
+    expect(merge.sensitive).toBe(true);
+    // Sensitive is about tokens and apps only: an administrator can still
+    // add it to a ceiling, and a group holding `contacts` still merges.
+    expect(isDelegable("contacts.merge")).toBe(true);
+    expect(merge.explicit).toBeUndefined();
+    expect(expandPermission("contacts")).toContain("contacts.merge");
+    expect(merge.tier).toBe("full");
+    expect(merge.description).toMatch(/cannot be undone/);
+  });
+
   it("sorts leaves into catalog order", () => {
     expect(
       sortLeaves(["invoices.read", "records.delete", "records.read"]),

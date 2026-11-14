@@ -191,9 +191,15 @@ export const PERMISSION_CATALOG = {
       delete: remove("contacts"),
       merge: {
         label: "Merge",
-        description: "Merge duplicate contacts into one.",
+        description:
+          "Merge duplicate contacts into one. Every record of the merged contacts moves to the one kept and the others are deleted. A merge cannot be undone.",
         verb: "merge",
         tier: "full",
+        // A merge cannot be undone, so tokens and apps carry it only when an
+        // administrator adds it to a group's ceiling on purpose (migration
+        // 0052 took it out of every stored ceiling). Not explicit: holding
+        // the root still grants it in the app, as before.
+        sensitive: true,
       },
     },
   },

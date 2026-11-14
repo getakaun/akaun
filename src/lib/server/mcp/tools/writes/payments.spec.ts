@@ -10,10 +10,14 @@ import { patLocals } from "../../../tokens/pat.js";
 import { issueTestToken, localsFor } from "../../../permissions/test-locals.js";
 import { createRecord } from "../../../application/records.js";
 import { preparePaymentCorrection } from "../../../application/payment-corrections.js";
-import { resolvePaymentMovement } from "../../../application/refs.js";
+import {
+  resolveOpenItem,
+  resolvePaymentMovement,
+} from "../../../application/refs.js";
+import { formatMinor } from "../../../ledger/money.js";
 import type { AppContext } from "../../../application/context.js";
 import { getRecord } from "../../../queries/ledger.js";
-import { paymentsWriteTools } from "./payments.js";
+import { paymentsWriteTools, withoutBalances } from "./payments.js";
 import { bankWriteTools } from "./bank.js";
 
 // Each test builds its own evaluation book in a folder under os.tmpdir() and
@@ -716,4 +720,89 @@ describe("record_payments and change_allocations", () => {
     },
     SLOW,
   );
+
+  it(
+    "keeps a record's balance out of a refusal for a token that may not read records (G1)",
+    async () => {
+      const overAllocate = (book: EvalBook) => {
+        const bill = getRecord(book.db, book.manifest.records.spotify)!;
+        return {
+          pay: [
+            {
+              contact: bill.contactId,
+              account: book.manifest.accounts.bank,
+              date: "2026-10-01",
+              amount: "999.00",
+              allocate: [{ record: bill.recordNumber, amount: "999.00" }],
+            },
+          ],
+          dry_run: true,
+        };
+      };
+      const owedOn = (book: EvalBook, ctx: AppContext) => {
+        const line = resolveOpenItem(ctx, book.manifest.records.spotify);
+        if (!line.ok) throw new Error(line.message);
+        return formatMinor(line.value.outstandingMinor);
+      };
+
+      // Create-only: refused, with no figure the caller did not send.
+      const createOnly = await open(["records.create"]);
+      const owed = owedOn(createOnly.book, createOnly.owner);
+      const hidden = await createOnly.call(
+        "akaun_record_payments",
+        overAllocate(createOnly.book),
+      );
+      expect(hidden.isError).toBe(true);
+      expect(hidden.body.error.code).toBe("REFUSED");
+      const message = hidden.body.error.items[0].error.message;
+      expect(message).toBe("The amount is more than is owed on that item.");
+      expect(hidden.text).not.toContain(owed);
+      expect(hidden.text).not.toMatch(/Outstanding/);
+
+      // records.read: the domain sentence, figure and all.
+      const reader = await open(["records.read", "records.create"]);
+      const shown = await reader.call(
+        "akaun_record_payments",
+        overAllocate(reader.book),
+      );
+      expect(shown.isError).toBe(true);
+      expect(shown.body.error.items[0].error.message).toBe(
+        `The amount is more than the outstanding balance of that item. Outstanding: ${owedOn(reader.book, reader.owner)}.`,
+      );
+    },
+    SLOW,
+  );
+
+  it("takes every balance figure out of the settlement refusals' sentences (G1)", () => {
+    const cases: [string, string][] = [
+      [
+        "The amount is more than the outstanding balance of that item. Outstanding: 17.90.",
+        "The amount is more than is owed on that item.",
+      ],
+      [
+        "That item is already fully paid.",
+        "The amount is more than is owed on that item.",
+      ],
+      [
+        "The allocations total 120.00, which is more than the payment amount of 100.00.",
+        "The allocations total more than the payment amount.",
+      ],
+      [
+        "Only 12.34 of this payment is left to put against anything — the rest already covers other items.",
+        "This payment does not have that much left to put against anything — the rest already covers other items.",
+      ],
+      [
+        "This payment is already fully put against other items.",
+        "This payment does not have that much left to put against anything — the rest already covers other items.",
+      ],
+    ];
+    for (const [domain, redacted] of cases) {
+      expect(withoutBalances(domain)).toBe(redacted);
+      expect(withoutBalances(domain)).not.toMatch(/\d/);
+    }
+    // A refusal with no balance in it is left as it is.
+    const plain =
+      "This payment and that item belong to different people. A payment can only cover what the same person is owed.";
+    expect(withoutBalances(plain)).toBe(plain);
+  });
 });

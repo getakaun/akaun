@@ -37,7 +37,12 @@
 						<Button {...props} variant="outline" size="sm">{cancelLabel}</Button>
 					{/snippet}
 				</AlertDialog.Cancel>
-				<AlertDialog.Action onclick={onConfirm}>
+				<AlertDialog.Action
+					onclick={() => {
+						open = false;
+						onConfirm();
+					}}
+				>
 					{#snippet child({ props })}
 						<Button {...props} variant={danger ? 'destructive' : 'default'} size="sm">
 							{confirmLabel}

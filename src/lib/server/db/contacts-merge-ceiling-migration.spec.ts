@@ -109,16 +109,12 @@ function existingBook() {
   applyMigrationRange(raw, 0, BEFORE_0052);
   raw.exec("PRAGMA foreign_keys = ON");
   const db = bookOver(raw);
-  db.insert(schema.users)
-    .values(
-      [1, 2, 3, 4].map((id) => ({
-        id,
-        username: `user${id}`,
-        email: `u${id}@test`,
-        passwordHash: "unused",
-      })),
-    )
-    .run();
+  for (const id of [1, 2, 3, 4]) {
+    raw.run(
+      "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)",
+      [id, `user${id}`, `u${id}@test`, "unused"],
+    );
+  }
   const admins = grantGroup(db, {
     name: "Administrators",
     userIds: [1],
@@ -225,7 +221,7 @@ describe("migration 0052: contacts.merge leaves stored ceilings", () => {
       { group_id: groups.keepers, permission: "contacts.merge" },
     ]);
 
-    migrateBook(raw);
+    applyMigrationRange(raw, INDEX_0052, INDEX_0052);
 
     const after = digests(raw);
     for (const table of Object.keys(before)) {

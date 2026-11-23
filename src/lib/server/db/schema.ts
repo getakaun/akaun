@@ -4,6 +4,7 @@ import {
   integer,
   real,
   primaryKey,
+  foreignKey,
   uniqueIndex,
   index,
   check,
@@ -20,6 +21,8 @@ export const users = sqliteTable("users", {
   email: text("email").notNull().unique(),
   username: text("username").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
+  oidcManagedBy: text("oidc_managed_by"),
+  disabled: integer("disabled", { mode: "boolean" }).notNull().default(false),
   role: text("role").notNull().default("owner"),
   name: text("name"),
   /** @deprecated Revoked by migration 0033; see `personal_access_tokens`. */
@@ -276,7 +279,55 @@ export const sessions = sqliteTable("sessions", {
     .notNull()
     .default(sql`(datetime('now'))`),
   expiresAt: text("expires_at").notNull(),
+  oidcConfiguration: text("oidc_configuration"),
+  oidcSubject: text("oidc_subject"),
+  oidcSid: text("oidc_sid"),
 });
+
+export const authenticationSettings = sqliteTable("authentication_settings", {
+  id: integer("id").primaryKey(),
+  revision: text("revision").notNull(),
+  configuration: text("configuration", { mode: "json" }).notNull().$type<import("../oidc/settings.js").AuthenticationSettings>(),
+  encryptedSecret: text("encrypted_secret"),
+});
+
+export const oidcIdentities = sqliteTable("oidc_identities", {
+  issuer: text("issuer").notNull(),
+  subject: text("subject").notNull(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+}, (t) => [
+  primaryKey({ columns: [t.issuer, t.subject] }),
+  uniqueIndex("oidc_identity_user_issuer").on(t.userId, t.issuer),
+]);
+
+export const oidcGroupMemberships = sqliteTable("oidc_group_memberships", {
+  userId: integer("user_id").notNull(),
+  groupId: integer("group_id").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.userId, t.groupId] }),
+  foreignKey({ columns: [t.userId, t.groupId], foreignColumns: [userGroups.userId, userGroups.groupId] }).onDelete("cascade"),
+]);
+
+export const oidcAttempts = sqliteTable("oidc_attempts", {
+  state: text("state").primaryKey(),
+  browserHash: text("browser_hash").notNull(),
+  verifier: text("verifier").notNull(),
+  nonce: text("nonce").notNull(),
+  revision: text("revision").notNull(),
+  startedAt: integer("started_at").notNull(),
+  expiresAt: integer("expires_at").notNull(),
+  returnTo: text("return_to").notNull(),
+  linkSessionId: text("link_session_id").references(() => sessions.id, { onDelete: "cascade" }),
+}, (t) => [index("oidc_attempt_expiry").on(t.expiresAt), index("oidc_attempt_link").on(t.linkSessionId)]);
+
+export const oidcLogoutReceipts = sqliteTable("oidc_logout_receipts", {
+  id: text("id").primaryKey(),
+  configuration: text("configuration").notNull(),
+  subject: text("subject"),
+  sid: text("sid"),
+  receivedAt: integer("received_at").notNull(),
+  expiresAt: integer("expires_at").notNull(),
+}, (t) => [index("oidc_logout_configuration").on(t.configuration)]);
 
 // ---------------------------------------------------------------------------
 // Contacts — shared directory of parties the ledger transacts with (Phase 2.6).

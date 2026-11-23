@@ -22,6 +22,7 @@
     canSeeSettings,
     canSeeBooks = false,
     canManageSettings = false,
+    canManageUsers = false,
     jurisdiction = null,
   }: {
     schemes: AssetTaxSchemeVersion[];
@@ -29,6 +30,7 @@
     canSeeSettings: boolean;
     canSeeBooks?: boolean;
     canManageSettings?: boolean;
+    canManageUsers?: boolean;
     jurisdiction?: string | null;
   } = $props();
   const latest = $derived([
@@ -104,6 +106,7 @@
       {canSeeSettings}
       {canSeeBooks}
       {canManageSettings}
+      {canManageUsers}
       canReadTax={true}
     />
     <div class="set-content">

@@ -42,6 +42,9 @@
 		isSuperuser: boolean;
 		extraGrants: LeafPermission[];
 		createdAt: string;
+		disabled: boolean;
+		managed: boolean;
+		passwordAllowed: boolean;
 	};
 	type GroupRow = {
 		id: number;
@@ -204,18 +207,26 @@
 				toast.success('User created');
 			} else {
 				const patch: Record<string, unknown> = {};
-				if (editingUser.name !== undefined) patch.name = editingUser.name;
-				if (editingUser.email) patch.email = editingUser.email;
-				if (editingUser.username) patch.username = editingUser.username;
-				if (editingUser.password) patch.password = editingUser.password;
-
-				if (Object.keys(patch).length > 0) {
-					await fetch(`/api/users/${editingUser.id}`, {
-						method: 'PATCH',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify(patch)
-					});
-				}
+        if (!editingUser.managed) {
+          if (editingUser.name !== undefined) patch.name = editingUser.name;
+          if (editingUser.email) patch.email = editingUser.email;
+          if (editingUser.username) patch.username = editingUser.username;
+          if (editingUser.password) patch.password = editingUser.password;
+        }
+        const original = userList.find((user) => user.id === editingUser?.id);
+        if (editingUser.disabled !== original?.disabled) patch.disabled = editingUser.disabled;
+        if (Object.keys(patch).length > 0) {
+          const response = await fetch(`/api/users/${editingUser.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch)
+          });
+          if (!response.ok) {
+            const error = await response.json().catch(() => null);
+            toast.error(error?.error ?? 'Could not save the user');
+            return;
+          }
+        }
 				const groupsRes = await fetch(`/api/users/${editingUser.id}/groups`, {
 					method: 'PATCH',
 					headers: { 'Content-Type': 'application/json' },
@@ -542,7 +553,8 @@
 									class="form-input"
 									type="text"
 									placeholder="e.g. Mei Ling Tan"
-									value={editingUser.name ?? ''}
+									readonly={editingUser.managed}
+                  value={editingUser.name ?? ''}
 									oninput={(e) => (editingUser = { ...editingUser!, name: (e.target as HTMLInputElement).value })}
 								/>
 							</div>
@@ -552,7 +564,8 @@
 									class="form-input"
 									type="email"
 									placeholder="name@example.com"
-									value={editingUser.email ?? ''}
+									readonly={editingUser.managed}
+                  value={editingUser.email ?? ''}
 									oninput={(e) => (editingUser = { ...editingUser!, email: (e.target as HTMLInputElement).value })}
 								/>
 							</div>
@@ -562,10 +575,16 @@
 									class="form-input"
 									type="text"
 									placeholder="username"
-									value={editingUser.username ?? ''}
+									readonly={editingUser.managed}
+                  value={editingUser.username ?? ''}
 									oninput={(e) => (editingUser = { ...editingUser!, username: (e.target as HTMLInputElement).value })}
 								/>
 							</div>
+              {#if editingUser.managed}
+                <p class="field-hint">The sign-in provider manages this account’s name, email, and username.</p>
+              {/if}
+              {#if !editingUser.id || editingUser.passwordAllowed}
+
 							<div class="field">
 								<div class="field-label">{editingUser.id ? 'Reset password' : 'Temporary password'}</div>
 								<input
@@ -581,6 +600,18 @@
 									<p class="field-hint">The user can change this after first sign-in.</p>
 								{/if}
 							</div>
+
+              {/if}
+              {#if editingUser.id}
+                <label class="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={!editingUser.disabled}
+                    onchange={(event) => (editingUser = { ...editingUser!, disabled: !event.currentTarget.checked })} />
+                  Account enabled
+                </label>
+                {#if editingUser.disabled}
+                  <p class="field-hint">Saving a disabled account revokes its sessions, access tokens, and connected apps.</p>
+                {/if}
+              {/if}
 
 							<div class="detail-section-label">Group membership</div>
 							{#if (editingUser.groupIds ?? []).length === 0}

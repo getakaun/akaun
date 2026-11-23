@@ -122,6 +122,8 @@ const SECRET_FIELDS = new Set([
   "passwordHash",
   "tokenHash",
   "secretHash",
+  "clientSecret",
+  "encryptedSecret",
   "apiKey",
   "oauthCredentials",
   "bearerToken",
@@ -170,6 +172,7 @@ export function redactChanges(changes: FieldChange[]): FieldChange[] {
 }
 
 const SETTINGS_SECTION_LABELS: Record<string, string> = {
+  authentication: "Authentication",
   tax: "Tax settings",
   general: "General settings",
   closing: "Month closing",

@@ -372,6 +372,13 @@
       "when": 1794624360421,
       "tag": "0052_contacts_merge_sensitive",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "6",
+      "when": 1795414910830,
+      "tag": "0053_oidc_authentication",
+      "breakpoints": true
     }
   ]
 }

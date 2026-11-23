@@ -11,6 +11,7 @@ import {
 	readUserGrants,
 	userAuditSnapshot
 } from '$lib/server/admin/access.js';
+import { allowsPassword, readAuthentication } from '$lib/server/oidc/settings.js';
 import { listTokens } from '$lib/server/tokens/manage.js';
 
 export const GET: RequestHandler = async ({ locals }) => {
@@ -18,7 +19,8 @@ export const GET: RequestHandler = async ({ locals }) => {
 
 	const allUsers = db.select().from(users).all();
 
-	const result = allUsers.map((u) => {
+  const settings = readAuthentication(db);
+  const result = allUsers.map((u) => {
 		const groupsOf = memberships(db, u.id);
 		return {
 			id: u.id,
@@ -29,7 +31,10 @@ export const GET: RequestHandler = async ({ locals }) => {
 			groups: groupsOf.map((m) => ({ id: m.id, name: m.name })),
 			isSuperuser: groupsOf.some((m) => m.isSuperuser),
 			extraGrants: readUserGrants(db, u.id),
-			createdAt: u.createdAt
+      disabled: u.disabled,
+      managed: !!u.oidcManagedBy,
+      passwordAllowed: !u.oidcManagedBy && allowsPassword(settings, u.id),
+      createdAt: u.createdAt
 		};
 	});
 

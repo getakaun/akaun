@@ -12,4 +12,5 @@
   canSeeSettings={data.canSeeSettings}
   canSeeBooks={data.canSeeBooks}
   canManageSettings={data.canManageSettings}
+      canManageUsers={data.canManageUsers}
 />

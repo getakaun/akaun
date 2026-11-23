@@ -186,9 +186,8 @@ export async function downloadMcpFile(
       outcome("rate-limited");
       return refused(403);
     }
-    // There is no disabled/active column: only existing users can authenticate.
     const user = db.select().from(users).where(eq(users.id, userId)).get();
-    if (!user) {
+    if (!user || user.disabled) {
       outcome("forbidden");
       return refused(403);
     }

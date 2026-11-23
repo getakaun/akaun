@@ -1278,6 +1278,7 @@
 			canReadTax={data.canReadTax}
 			canSeeBooks={data.canSeeBooks}
 			canManageSettings={data.canManageSettings}
+      canManageUsers={data.canManageUsers}
 			onselect={requestTabChange}
 		/>
 

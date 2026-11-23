@@ -27,7 +27,7 @@ import type {
 import * as schema from "../db/schema.js";
 import type { LedgerDb } from "../ledger/types.js";
 import { EntityType } from "$lib/enums.js";
-import { createSession } from "../auth.js";
+import { createSession, getSessionUser } from "../auth.js";
 import { isLegacyToken, patLocals } from "../tokens/pat.js";
 import { can, resolveAccess } from "../permissions.js";
 import { grantGroup, issueTestToken } from "../permissions/test-locals.js";
@@ -264,16 +264,14 @@ describe("OAuth authorization and persistence", () => {
         );
       const oldDb = drizzle(oldRaw, { schema });
       migrate(oldDb, { migrationsFolder: folder });
-      oldDb
-        .insert(schema.users)
-        .values({
-          id: 99,
-          username: "preserved",
-          email: "preserved@test",
-          passwordHash: "unused",
-          bearerToken: "akn_preserved",
-        })
-        .run();
+      oldRaw.run(
+        "INSERT INTO users (id, username, email, password_hash, bearer_token) VALUES (?, ?, ?, ?, ?)",
+        [99, "preserved", "preserved@test", "unused", "akn_preserved"],
+      );
+      oldRaw.run(
+        "INSERT INTO sessions (id, user_id, expires_at) VALUES (?, 99, ?)",
+        ["existing-session", new Date(Date.now() + 86_400_000).toISOString()],
+      );
       oldDb
         .insert(schema.contacts)
         .values({
@@ -283,16 +281,27 @@ describe("OAuth authorization and persistence", () => {
           createdBy: 99,
         })
         .run();
-      const before = oldDb.select().from(schema.users).all();
+      const before = oldRaw
+        .query(
+          `SELECT id, username, email, role, name,
+        password_hash AS passwordHash, created_at AS createdAt FROM users`,
+        )
+        .all();
       migrate(oldDb, { migrationsFolder: "drizzle" });
       // Everything but the raw API token, which migration 0033 revokes: they
       // are replaced by hashed, fine-grained personal access tokens.
       expect(oldDb.select().from(schema.users).all()).toEqual(
-        before.map((user) => ({ ...user, bearerToken: null })),
+        before.map((user) => ({
+          ...(user as object),
+          bearerToken: null,
+          oidcManagedBy: null,
+          disabled: false,
+        })),
       );
       expect(oldDb.select().from(schema.contacts).all()[0].legalName).toBe(
         "Preserved supplier",
       );
+      expect(getSessionUser(oldDb, "existing-session")?.id).toBe(99);
       expect(isLegacyToken("Bearer akn_preserved")).toBe(false);
       expect(patLocals(oldDb, "Bearer akn_preserved")).toBeNull();
       expect(oldDb.select().from(schema.oauthTokens).all()).toHaveLength(0);

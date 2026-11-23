@@ -114,6 +114,7 @@ export function patLocals(
     .where(
       and(
         eq(personalAccessTokens.tokenHash, hashToken(token)),
+        eq(users.disabled, false),
         isNull(personalAccessTokens.revokedAt),
         or(
           isNull(personalAccessTokens.expiresAt),

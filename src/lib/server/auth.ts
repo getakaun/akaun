@@ -1,45 +1,89 @@
-import { randomBytes } from 'crypto';
-import { eq, lt } from 'drizzle-orm';
-import type { BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
-import * as schema from './db/schema.js';
-import { sessions, users } from './db/schema.js';
+import { randomBytes } from "node:crypto";
+import { and, eq, lt } from "drizzle-orm";
+import type { Cookies } from "@sveltejs/kit";
+import { sessions, users } from "./db/schema.js";
+import type { LedgerDb } from "./ledger/types.js";
+import { allowsPassword, readAuthentication } from "./oidc/settings.js";
 
-type Db = BunSQLiteDatabase<typeof schema>;
+const DAY = 24 * 60 * 60 * 1000;
+export const SESSION_MAX_AGE = 14 * DAY;
+const OIDC_IDLE_AGE = 3 * DAY;
+export const RECENT_PASSWORD_AGE = 10 * 60 * 1000;
 
-export function getSessionUser(
-	db: Db,
-	sessionId: string
-): { id: number; email: string; username: string; name: string | null; role: string } | null {
-	const now = new Date().toISOString();
+export function getSessionUser(db: LedgerDb, sessionId: string) {
+  const now = Date.now();
+  const row = db
+    .select({
+      user: {
+        id: users.id,
+        email: users.email,
+        username: users.username,
+        name: users.name,
+        role: users.role,
+      },
+      session: sessions,
+    })
+    .from(sessions)
+    .innerJoin(users, eq(sessions.userId, users.id))
+    .where(and(eq(sessions.id, sessionId), eq(users.disabled, false)))
+    .get();
+  if (!row || row.session.expiresAt <= new Date(now).toISOString()) return null;
 
-	// Sweep expired sessions
-	db.delete(sessions).where(lt(sessions.expiresAt, now)).run();
-
-	const row = db
-		.select({
-			id: users.id,
-			email: users.email,
-			username: users.username,
-			name: users.name,
-			role: users.role,
-			expiresAt: sessions.expiresAt
-		})
-		.from(sessions)
-		.innerJoin(users, eq(sessions.userId, users.id))
-		.where(eq(sessions.id, sessionId))
-		.get();
-
-	if (!row || row.expiresAt < now) return null;
-	return { id: row.id, email: row.email, username: row.username, name: row.name, role: row.role };
+  const policy = readAuthentication(db);
+  if (row.session.oidcConfiguration) {
+    if (!policy.enabled || row.session.oidcConfiguration !== policy.identity)
+      return null;
+    const deadline = Date.parse(row.session.createdAt) + SESSION_MAX_AGE;
+    if (deadline <= now) return null;
+    const expiresAt = new Date(
+      Math.min(now + OIDC_IDLE_AGE, deadline),
+    ).toISOString();
+    db.update(sessions)
+      .set({ expiresAt })
+      .where(and(eq(sessions.id, sessionId), lt(sessions.expiresAt, expiresAt)))
+      .run();
+  } else if (!allowsPassword(policy, row.user.id)) {
+    return null;
+  }
+  return row.user;
 }
 
-export function createSession(db: Db, userId: number): string {
-	const id = randomBytes(32).toString('hex');
-	const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-	db.insert(sessions).values({ id, userId, expiresAt }).run();
-	return id;
+export function createSession(
+  db: LedgerDb,
+  userId: number,
+  oidc?: {
+    oidcConfiguration: string;
+    oidcSubject: string;
+    oidcSid: string | null;
+  },
+): string {
+  const id = randomBytes(32).toString("hex");
+  const now = Date.now();
+  const createdAt = new Date(now).toISOString();
+  const expiresAt = new Date(
+    now + (oidc ? OIDC_IDLE_AGE : SESSION_MAX_AGE),
+  ).toISOString();
+  db.delete(sessions).where(lt(sessions.expiresAt, createdAt)).run();
+  db.insert(sessions)
+    .values({ id, userId, createdAt, expiresAt, ...oidc })
+    .run();
+  return id;
 }
 
-export function deleteSession(db: Db, sessionId: string): void {
-	db.delete(sessions).where(eq(sessions.id, sessionId)).run();
+export function setSessionCookie(
+  cookies: Cookies,
+  sessionId: string,
+  secure = process.env.NODE_ENV === "production",
+) {
+  cookies.set("session", sessionId, {
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax",
+    secure,
+    maxAge: SESSION_MAX_AGE / 1000,
+  });
+}
+
+export function deleteSession(db: LedgerDb, sessionId: string): void {
+  db.delete(sessions).where(eq(sessions.id, sessionId)).run();
 }

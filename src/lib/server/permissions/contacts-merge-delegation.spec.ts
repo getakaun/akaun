@@ -51,16 +51,12 @@ function bookAt0051() {
   applyMigrationRange(raw, 0, BEFORE_0052);
   raw.exec("PRAGMA foreign_keys = ON");
   const db = drizzle(raw, { schema }) as LedgerDb;
-  db.insert(schema.users)
-    .values(
-      [ADMIN, MEMBER].map((id) => ({
-        id,
-        username: `user${id}`,
-        email: `u${id}@test`,
-        passwordHash: "unused",
-      })),
-    )
-    .run();
+  for (const id of [ADMIN, MEMBER]) {
+    raw.run(
+      "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)",
+      [id, `user${id}`, `u${id}@test`, "unused"],
+    );
+  }
   grantGroup(db, {
     name: "Administrators",
     userIds: [ADMIN],
@@ -84,7 +80,9 @@ describe("contacts.merge for tokens after migration 0052", () => {
   it("drops from a member's existing token, but not from their session", () => {
     const { raw, db } = bookAt0051();
     const token = issueTestToken(db, MEMBER, CONTACTS, "cleanup");
-    expect(viaToken(db, token).has("contacts.merge")).toBe(true);
+    expect(resolveAccess(db, MEMBER).role.delegable.has("contacts.merge")).toBe(
+      true,
+    );
 
     migrateBook(raw);
 
@@ -289,13 +287,47 @@ describe("the consent screen once the ceiling lacks contacts.merge", () => {
 
   it("stops an app connected before the migration from merging, without an error", async () => {
     const { raw, db } = bookAt0051();
-    const { begin, accessToken, appPermissions } = flow(db);
-    const id = begin("contacts:read contacts:merge");
-    const token = await accessToken(id, ["contacts:read", "contacts:merge"]);
-    expect((await appPermissions(token)).has("contacts.merge")).toBe(true);
+    const token = `akno_${opaque()}`;
+    const scopes = "contacts:read contacts:merge";
+    const now = Date.now();
+    const expiresAt = now + 60_000;
+    db.insert(schema.oauthClients)
+      .values({
+        id: "old-client",
+        name: "Existing MCP client",
+        redirectUris: JSON.stringify([redirectUri]),
+        createdAt: now,
+      })
+      .run();
+    db.insert(schema.oauthGrants)
+      .values({
+        id: "old-grant",
+        userId: MEMBER,
+        clientId: "old-client",
+        issuer: config.issuer,
+        resource: config.resource,
+        scopes,
+        createdAt: now,
+        expiresAt,
+      })
+      .run();
+    db.insert(schema.oauthTokens)
+      .values({
+        accessHash: digest(token),
+        refreshHash: digest(opaque()),
+        grantId: "old-grant",
+        scopes,
+        accessExpiresAt: expiresAt,
+        refreshExpiresAt: expiresAt,
+      })
+      .run();
+    expect(allowedScopes(resolveAccess(db, MEMBER).role)).toContain(
+      "contacts:merge",
+    );
 
     migrateBook(raw);
 
+    const { appPermissions } = flow(db);
     const after = await appPermissions(token);
     expect(after.has("contacts.merge")).toBe(false);
     expect(after.has("contacts.read")).toBe(true);

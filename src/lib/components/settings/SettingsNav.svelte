@@ -6,7 +6,8 @@
     | "intelligence"
     | "templates"
     | "advanced"
-    | "tax";
+    | "tax"
+    | "authentication";
 </script>
 
 <script lang="ts">
@@ -17,6 +18,7 @@
     canSeeBooks = false,
     canManageSettings = false,
     canReadTax = false,
+    canManageUsers = false,
     onselect,
   }: {
     active: SettingsTab;
@@ -24,6 +26,7 @@
     canSeeBooks?: boolean;
     canManageSettings?: boolean;
     canReadTax?: boolean;
+    canManageUsers?: boolean;
     onselect?: (tab: SettingsTab) => void;
   } = $props();
   const tabs: { id: SettingsTab; label: string }[] = $derived([
@@ -37,6 +40,7 @@
     ...(canSeeSettings && (canSeeBooks || canManageSettings)
       ? [{ id: "books" as const, label: "Ledger" }]
       : []),
+    ...(canManageUsers ? [{ id: "authentication" as const, label: "Authentication" }] : []),
     ...(canSeeSettings
       ? [
           { id: "intelligence" as const, label: "Intelligence" },
@@ -49,7 +53,7 @@
 
 <nav class="set-nav" aria-label="Settings">
   {#each tabs as tab (tab.id)}
-    {#if onselect && tab.id !== "tax"}
+    {#if onselect && tab.id !== "tax" && tab.id !== "authentication"}
       <button
         type="button"
         class="set-nav-item"
@@ -65,7 +69,9 @@
         href={resolve(
           tab.id === "tax"
             ? "/(app)/settings/tax"
-            : `/(app)/settings?tab=${tab.id}`,
+            : tab.id === "authentication"
+              ? "/(app)/settings/authentication"
+              : `/(app)/settings?tab=${tab.id}`,
         )}>{tab.label}</a
       >
     {/if}

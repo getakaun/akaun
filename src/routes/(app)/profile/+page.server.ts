@@ -1,12 +1,17 @@
 import type { PageServerLoad, Actions } from './$types.js';
-import { fail } from '@sveltejs/kit';
+import { fail, redirect } from '@sveltejs/kit';
 import { hash, verify } from 'argon2';
-import { eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import { db } from '$lib/server/db/client.js';
-import { users } from '$lib/server/db/schema.js';
+import { oidcAttempts, sessions, users } from '$lib/server/db/schema.js';
 import { getUserNavOrder, setUserNavOrder } from '$lib/server/navPreferences.js';
 import { oauth } from '$lib/server/oauth/runtime.js';
+import { revokeUserGrants } from '$lib/server/oauth/service.js';
 import { auditUser, userAuditSnapshot } from '$lib/server/admin/access.js';
+import { allowsPassword, readAuthentication } from '$lib/server/oidc/settings.js';
+import { findIdentity } from '$lib/server/oidc/accounts.js';
+import { beginBrowserFlow } from '$lib/server/oidc/browser.js';
+import { hit } from '$lib/server/rate-limit.js';
 import { MAX_MOBILE_NAV_ITEMS } from '$lib/nav-config.js';
 import { canAll } from '$lib/server/permissions.js';
 import {
@@ -16,15 +21,30 @@ import {
 	revokeToken
 } from '$lib/server/tokens/manage.js';
 
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	const userId = locals.user!.id;
 
 	const navItems = getUserNavOrder(db, userId)
 		.filter((item) => canAll(locals, [item.permission, ...(item.requires ?? [])]))
 		.map((item) => ({ id: item.id, label: item.label, showOnMobile: item.showOnMobile }));
 
+  const account = db.select({ managed: users.oidcManagedBy }).from(users).where(eq(users.id, userId)).get();
+  const settings = readAuthentication(db);
+  const sessionId = cookies.get('session');
+  const session = sessionId ? db.select().from(sessions).where(eq(sessions.id, sessionId)).get() : null;
+  const managed = !!account?.managed;
+
 	return {
-		name: locals.user!.name,
+    managed,
+    passwordAllowed: !managed && allowsPassword(settings, userId),
+    sso: {
+      enabled: settings.enabled,
+      displayName: settings.displayName,
+      linked: settings.enabled && !!findIdentity(db, settings.stored.authority, userId),
+      canLink: settings.enabled && settings.internalEnabled && !managed && !!session && !session.oidcConfiguration,
+      result: url.searchParams.get('sso'),
+    },
+    name: locals.user!.name,
 		email: locals.user!.email,
 		username: locals.user!.username,
 		tokens: listTokens(db, userId),
@@ -34,6 +54,22 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 export const actions: Actions = {
+  linkSso: async ({ locals, cookies, request, getClientAddress }) => {
+    const sessionId = cookies.get('session');
+    if (!sessionId || !locals.user) return fail(401, { action: 'link', error: 'Sign in again.' });
+    if (hit(`oidc-link:${getClientAddress()}`, 5, 60_000).limited)
+      return fail(429, { action: 'link', error: 'Too many attempts. Try again in a minute.' });
+    const data = await request.formData();
+    const password = String(data.get('password') ?? '');
+    let target: string | null;
+    try {
+      target = await beginBrowserFlow(db, cookies, null, { sessionId, userId: locals.user.id, password });
+    } catch {
+      return fail(400, { action: 'link', error: 'Could not confirm this account. Check your password or sign in again.' });
+    }
+    if (!target) return { action: 'link', passwordRequired: true };
+    redirect(303, target);
+  },
 	revokeApp: async ({ locals, request }) => {
 		const data = await request.formData();
 		oauth?.revokeGrant(String(data.get('grantId') ?? ''), locals.user!.id);
@@ -53,11 +89,15 @@ export const actions: Actions = {
 			return fail(400, { action: 'profile', error: 'Enter a valid email address.' });
 
 		try {
-			db.transaction((tx) => {
+			const updated = db.transaction((tx) => {
+        const account = tx.select().from(users).where(eq(users.id, userId)).get();
+        if (!account || account.disabled || account.oidcManagedBy) return false;
 				const before = userAuditSnapshot(tx, userId);
 				tx.update(users).set({ name, email, username }).where(eq(users.id, userId)).run();
 				auditUser(tx, userId, userId, before, userAuditSnapshot(tx, userId));
-			});
+        return true;
+			}, { behavior: 'immediate' });
+      if (!updated) return fail(403, { action: 'profile', error: 'Account details are managed by your sign-in provider.' });
 		} catch {
 			return fail(400, { action: 'profile', error: 'Email or username is already taken.' });
 		}
@@ -65,7 +105,7 @@ export const actions: Actions = {
 		return { action: 'profile', success: true };
 	},
 
-	changePassword: async ({ locals, request }) => {
+	changePassword: async ({ locals, request, cookies }) => {
 		const userId = locals.user!.id;
 		const data = await request.formData();
 
@@ -81,29 +121,37 @@ export const actions: Actions = {
 			return fail(400, { action: 'security', error: 'Passwords do not match.' });
 
 		const row = db
-			.select({ passwordHash: users.passwordHash })
+			.select()
 			.from(users)
 			.where(eq(users.id, userId))
 			.get();
 
-		if (!row) return fail(400, { action: 'security', error: 'User not found.' });
+		if (!row || row.disabled || row.oidcManagedBy || !allowsPassword(readAuthentication(db), userId))
+      return fail(403, { action: 'security', error: 'Password changes are unavailable for this account.' });
 
 		const valid = await verify(row.passwordHash, currentPassword);
 		if (!valid)
 			return fail(400, { action: 'security', error: 'Current password is incorrect.' });
 
 		const passwordHash = await hash(newPassword);
-		db.transaction((tx) => {
+    const currentSession = cookies.get('session');
+    const updated = db.transaction((tx) => {
+      const account = tx.select().from(users).where(eq(users.id, userId)).get();
+      if (!account || account.disabled || account.oidcManagedBy || account.passwordHash !== row.passwordHash ||
+          !allowsPassword(readAuthentication(tx), userId)) return false;
 			tx.update(users).set({ passwordHash }).where(eq(users.id, userId)).run();
 			// The log keeps only that the password changed, never the value.
 			const snapshot = userAuditSnapshot(tx, userId);
 			auditUser(tx, userId, userId, snapshot, snapshot, [
 				{ field: 'password', before: null, after: 'changed' }
 			]);
-		});
-		// A new password ends every way in the old one could have set up.
-		oauth?.revokeUser(userId);
-		revokeAllTokens(db, userId);
+      tx.delete(sessions).where(and(eq(sessions.userId, userId), currentSession ? ne(sessions.id, currentSession) : undefined)).run();
+      if (currentSession) tx.delete(oidcAttempts).where(eq(oidcAttempts.linkSessionId, currentSession)).run();
+      revokeUserGrants(tx, userId);
+      revokeAllTokens(tx, userId);
+      return true;
+		}, { behavior: 'immediate' });
+    if (!updated) return fail(400, { action: 'security', error: 'Authentication changed. Sign in again.' });
 
 		return { action: 'security', success: true };
 	},

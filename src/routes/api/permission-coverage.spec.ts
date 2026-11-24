@@ -11,6 +11,14 @@ import { describe, expect, it } from "vitest";
  * mcp/file-links, which reloads the token owner and checks can/permissionForKind.
  */
 const ALLOWED_WITHOUT_A_CHECK = new Set([
+  // OIDC callbacks are public protocol endpoints. Correlation or provider signatures
+  // authenticate their requests. Account linking and identity lookup are browser-only.
+  "src/routes/api/v1/auth/providers/+server.ts",
+  "src/routes/api/v1/auth/sso/login/+server.ts",
+  "src/routes/api/v1/auth/sso/callback/+server.ts",
+  "src/routes/api/v1/auth/sso/backchannel-logout/+server.ts",
+  "src/routes/api/v1/auth/sso/identity/+server.ts",
+  "src/routes/api/v1/auth/sso/link/+server.ts",
   // Public facts any signed-in user needs to fill a form.
   "src/routes/api/exchange-rate/+server.ts",
   // The company logo and letterhead, shown on every document.

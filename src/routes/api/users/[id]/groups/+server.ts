@@ -1,8 +1,9 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types.js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db } from '$lib/server/db/client.js';
 import { users, userGroups, groups } from '$lib/server/db/schema.js';
+import { keepsRecoveryAdministrator } from '$lib/server/oidc/settings.js';
 import { can } from '$lib/server/permissions.js';
 import {
 	auditUser,
@@ -33,21 +34,24 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 	if (!user) return new Response('Not Found', { status: 404 });
 
 	const body = await request.json();
-	const groupIds: number[] = body.groupIds ?? [];
-	if (!keepsASuperuser(db, { userId, groupIds }))
-		return json({ error: LAST_SUPERUSER_MESSAGE }, { status: 400 });
-
-	// Replace all memberships atomically
-	db.transaction((tx) => {
-		const before = userAuditSnapshot(tx, userId);
-		tx.delete(userGroups).where(eq(userGroups.userId, userId)).run();
-		if (groupIds.length > 0) {
-			tx.insert(userGroups)
-				.values(groupIds.map((gid) => ({ userId, groupId: gid })))
-				.run();
-		}
-		auditUser(tx, locals.user!.id, userId, before, userAuditSnapshot(tx, userId));
-	});
-
-	return json({ success: true });
+  const selection = body.groupIds ?? [];
+  if (!Array.isArray(selection) || !selection.every((id: unknown) => Number.isSafeInteger(id) && Number(id) > 0))
+    return json({ error: 'Select existing groups.' }, { status: 400 });
+  const groupIds = [...new Set<number>(selection)];
+  const problem = db.transaction((tx) => {
+    const change = { userId, groupIds };
+    if (!keepsASuperuser(tx, change)) return LAST_SUPERUSER_MESSAGE;
+    if (!keepsRecoveryAdministrator(tx, change)) return 'Keep at least one enabled recovery administrator.';
+    const before = userAuditSnapshot(tx, userId);
+    const current = tx.select().from(userGroups).where(eq(userGroups.userId, userId)).all();
+    for (const { groupId } of current) {
+      if (!groupIds.includes(groupId))
+        tx.delete(userGroups).where(and(eq(userGroups.userId, userId), eq(userGroups.groupId, groupId))).run();
+    }
+    const additions = groupIds.filter((groupId) => !current.some((row) => row.groupId === groupId));
+    if (additions.length) tx.insert(userGroups).values(additions.map((groupId) => ({ userId, groupId }))).run();
+    auditUser(tx, locals.user!.id, userId, before, userAuditSnapshot(tx, userId));
+    return null;
+  }, { behavior: 'immediate' });
+  return problem ? json({ error: problem }, { status: 400 }) : json({ success: true });
 };

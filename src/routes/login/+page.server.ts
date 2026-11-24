@@ -3,11 +3,13 @@ import * as argon2 from 'argon2';
 import { eq } from 'drizzle-orm';
 import { db } from '$lib/server/db/client.js';
 import { users } from '$lib/server/db/schema.js';
-import { createSession } from '$lib/server/auth.js';
+import { createSession, setSessionCookie } from '$lib/server/auth.js';
 import { oauth } from '$lib/server/oauth/runtime.js';
 import { BROWSER_COOKIE } from '$lib/server/oauth/service.js';
 import { authorizationPath } from '$lib/server/oauth/http.js';
 import { hit, reset } from '$lib/server/rate-limit.js';
+import { allowsPassword, readAuthentication } from '$lib/server/oidc/settings.js';
+import { localReturnTo } from '$lib/server/oidc/protocol.js';
 import type { Actions, PageServerLoad } from './$types.js';
 
 const LOGIN_MAX_ATTEMPTS = 5;
@@ -15,7 +17,8 @@ const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
 function resume(url: URL, browser: string | undefined) {
 	const id = url.searchParams.get('oauth');
-	if (!id || !browser || !oauth) return '/';
+	if (!id) return localReturnTo(url.searchParams.get('returnTo'));
+	if (!browser || !oauth) return '/';
 	try {
 		oauth.pending(id, browser);
 		return authorizationPath(id);
@@ -25,6 +28,25 @@ function resume(url: URL, browser: string | undefined) {
 }
 export const load: PageServerLoad = ({ locals, url, cookies }) => {
 	if (locals.user) redirect(302, resume(url, cookies.get(BROWSER_COOKIE)));
+  const settings = readAuthentication(db);
+  const query = new URLSearchParams({ returnTo: resume(url, cookies.get(BROWSER_COOKIE)) });
+  const pending = url.searchParams.get('oauth');
+  if (pending) query.set('oauth', pending);
+  const local = new URLSearchParams(url.searchParams);
+  const ssoError = url.searchParams.get('ssoError');
+  const preference = local.get('local');
+  const showPassword = !settings.enabled || preference === '1' || (preference !== '0' &&
+    (ssoError === 'provider_configuration' || (!!ssoError && settings.internalEnabled)));
+  local.set('local', showPassword ? '0' : '1');
+  return {
+    enabled: settings.enabled,
+    internalEnabled: settings.internalEnabled,
+    displayName: settings.displayName,
+    showPassword,
+    ssoError,
+    signInQuery: query.toString(),
+    localQuery: local.toString(),
+  };
 };
 
 export const actions: Actions = {
@@ -50,19 +72,24 @@ export const actions: Actions = {
 			.from(users)
 			.where(eq(users.username, username))
 			.get();
-		if (!user || !(await argon2.verify(user.passwordHash, password))) {
+		if (!user || user.disabled || user.oidcManagedBy || !allowsPassword(readAuthentication(db), user.id) ||
+      !(await argon2.verify(user.passwordHash, password))) {
 			return fail(400, { error: 'Invalid username or password' });
 		}
 
-		reset(rateKey);
-		const sessionId = createSession(db, user.id);
-		cookies.set('session', sessionId, {
-			path: '/',
-			httpOnly: true,
-			sameSite: 'lax',
-			secure: process.env.NODE_ENV === 'production',
-			maxAge: 60 * 60 * 24 * 30
-		});
+    const session = db.transaction((tx) => {
+      const settings = readAuthentication(tx);
+      const current = tx.select().from(users).where(eq(users.id, user.id)).get();
+      if (!current || current.disabled || current.oidcManagedBy || current.passwordHash !== user.passwordHash ||
+          !allowsPassword(settings, current.id)) return null;
+      return {
+        id: createSession(tx, current.id),
+        secure: url.protocol === 'https:' || process.env.NODE_ENV === 'production',
+      };
+    }, { behavior: 'immediate' });
+    if (!session) return fail(400, { error: 'Invalid username or password' });
+    reset(rateKey);
+    setSessionCookie(cookies, session.id, session.secure);
 
 		redirect(302, resume(url, cookies.get(BROWSER_COOKIE)));
 	}

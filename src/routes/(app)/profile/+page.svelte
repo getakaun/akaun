@@ -212,7 +212,7 @@
 				<div class="set-section">
 					<div class="set-section-head">
 						<h2 class="set-section-title">Profile</h2>
-						<p class="set-section-sub">Update your display name, email, and username</p>
+						<p class="set-section-sub">{data.managed ? 'Your sign-in provider manages these account details.' : 'Update your display name, email, and username'}</p>
 					</div>
 					<form
 						method="POST"
@@ -227,7 +227,8 @@
 									type="text"
 									name="name"
 									placeholder="Your full name"
-									bind:value={profileName}
+									readonly={data.managed}
+                  bind:value={profileName}
 								/>
 							</div>
 							<div class="set-row">
@@ -237,7 +238,8 @@
 									type="email"
 									name="email"
 									required
-									bind:value={profileEmail}
+									readonly={data.managed}
+                  bind:value={profileEmail}
 								/>
 							</div>
 							<div class="set-row">
@@ -247,18 +249,46 @@
 									type="text"
 									name="username"
 									required
-									bind:value={profileUsername}
+									readonly={data.managed}
+                  bind:value={profileUsername}
 								/>
 							</div>
 						</div>
 						{#if form?.action === 'profile' && form?.error}
 							<p class="form-error">{form.error}</p>
 						{/if}
-						<Button type="submit" class="mt-4">Save changes</Button>
+						{#if !data.managed}<Button type="submit" class="mt-4">Save changes</Button>{/if}
 					</form>
 				</div>
 
 			{:else if activeTab === 'security'}
+        {#if data.sso.enabled}
+          <div class="set-section mb-6">
+            <div class="set-section-head">
+              <h2 class="set-section-title">Single sign-on</h2>
+              <p class="set-section-sub">
+                {data.sso.linked ? `This account is linked to ${data.sso.displayName}.` : `Link your account to ${data.sso.displayName} to use it for sign-in.`}
+              </p>
+            </div>
+            {#if data.sso.result === 'linked'}
+              <p role="status" class="text-sm">Your account was linked.</p>
+            {:else if data.sso.result}
+              <p role="alert" class="form-error">{data.sso.result === 'identity_conflict' ? 'This provider identity is already linked to an account.' : 'Could not link your account. Sign in again and retry.'}</p>
+            {/if}
+            {#if data.sso.canLink && !data.sso.linked}
+              <form method="POST" action="?/linkSso&tab=security">
+                {#if form?.action === 'link' && (form.passwordRequired || form.error)}
+                  <label class="grid gap-2 text-sm">Current password
+                    <Input type="password" name="password" autocomplete="current-password" maxlength={1024} required />
+                  </label>
+                {/if}
+                {#if form?.action === 'link' && form.error}<p role="alert" class="form-error">{form.error}</p>{/if}
+                <Button type="submit" class="mt-3">Link {data.sso.displayName}</Button>
+              </form>
+            {/if}
+          </div>
+        {/if}
+        {#if data.passwordAllowed}
 				<div class="set-section">
 					<div class="set-section-head">
 						<h2 class="set-section-title">Change Password</h2>
@@ -318,6 +348,7 @@
 					</form>
 				</div>
 
+        {/if}
 			{:else if activeTab === 'token'}
 				<div class="set-section">
 					<div class="set-section-head">

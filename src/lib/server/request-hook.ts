@@ -1,6 +1,8 @@
 import { redirect, type Handle } from "@sveltejs/kit";
 import type { LedgerDb } from "./ledger/types.js";
 import { getSessionUser } from "./auth.js";
+import { localReturnTo } from "./oidc/protocol.js";
+import { readAuthentication } from "./oidc/settings.js";
 import { resolveAccess } from "./permissions.js";
 import {
   isLegacyToken,
@@ -12,6 +14,17 @@ import { mcpChallenge, type OAuthConfig } from "./oauth/config.js";
 import { BROWSER_COOKIE, type AkaunOAuth } from "./oauth/service.js";
 import { handleOAuthProtocol, isOAuthPublicPath } from "./oauth/http.js";
 import { runInAuditScope, scopeFromLocals } from "./audit-context.js";
+
+const OIDC_PUBLIC_ROUTES = new Map([
+  ["/api/v1/auth/providers", "GET"],
+  ["/api/v1/auth/sso/login", "GET"],
+  ["/api/v1/auth/sso/callback", "GET"],
+  ["/api/v1/auth/sso/backchannel-logout", "POST"],
+]);
+
+const isOidcAdminOrAccountRoute = (path: string) =>
+  path.startsWith("/api/v1/auth/") ||
+  path === "/api/v1/admin/settings/authentication";
 
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
@@ -112,9 +125,19 @@ export function createRequestHandle(
     if (/^\/api\/mcp-files\/[^/]+\/?$/.test(pathname))
       return withSecurityHeaders(await resolve(event));
 
+    if (OIDC_PUBLIC_ROUTES.get(pathname) === event.request.method) {
+      const response = await resolve(event);
+      response.headers.set("Cache-Control", "no-store");
+      response.headers.set("Referrer-Policy", "no-referrer");
+      return withSecurityHeaders(response);
+    }
+
     if (pathname.startsWith("/api/")) {
       const header = event.request.headers.get("Authorization");
       if (header && /^Bearer(?:\s|$)/i.test(header)) {
+        if (isOidcAdminOrAccountRoute(pathname)) {
+          return new Response("Browser session required", { status: 401 });
+        }
         // Only a personal access token reaches the REST API. An OAuth token's
         // audience is /mcp alone (RFC 8707), and the old raw API tokens were
         // revoked by migration 0033.
@@ -135,6 +158,15 @@ export function createRequestHandle(
         // CSRF defence-in-depth for cookie-authenticated state-changing requests:
         // require the Origin (or Referer) host to match this site. Bearer-token clients
         // are exempt (they authenticate without ambient cookies and send no Origin).
+        if (
+          isOidcAdminOrAccountRoute(pathname) &&
+          MUTATING_METHODS.has(event.request.method) &&
+          !isSameOriginRequest(event.request, event.url.origin)
+        ) {
+          return new Response("Forbidden (CSRF origin check failed)", {
+            status: 403,
+          });
+        }
         if (MUTATING_METHODS.has(event.request.method)) {
           const origin = event.request.headers.get("origin");
           const referer = event.request.headers.get("referer");
@@ -156,7 +188,12 @@ export function createRequestHandle(
         event.locals.user = sessionUser;
         Object.assign(event.locals, resolveAccess(db, sessionUser.id));
       }
-      return withSecurityHeaders(await resolveAudited(event, resolve));
+      const response = await resolveAudited(event, resolve);
+      if (isOidcAdminOrAccountRoute(pathname)) {
+        response.headers.set("Cache-Control", "no-store");
+        response.headers.set("Referrer-Policy", "no-referrer");
+      }
+      return withSecurityHeaders(response);
     }
 
     // SvelteKit trustedOrigins is '*' for bearer/form API interoperability.
@@ -173,11 +210,20 @@ export function createRequestHandle(
 
     if (!sessionUser) {
       if (pathname !== "/login") {
-        const target =
-          pathname === "/oauth/authorize"
-            ? `/login?oauth=${encodeURIComponent(event.url.searchParams.get("transaction")!)}`
+        if (pathname === "/oauth/authorize") {
+          throw redirect(
+            302,
+            `/login?oauth=${encodeURIComponent(event.url.searchParams.get("transaction")!)}`,
+          );
+        }
+        const returnTo = localReturnTo(pathname + event.url.search);
+        const login =
+          event.request.method === "GET" &&
+          returnTo !== "/" &&
+          readAuthentication(db).enabled
+            ? `/login?${new URLSearchParams({ returnTo })}`
             : "/login";
-        throw redirect(302, target);
+        throw redirect(302, login);
       }
       event.locals.permissions = null;
       event.locals.role = null;

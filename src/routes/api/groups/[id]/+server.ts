@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types.js';
 import { eq } from 'drizzle-orm';
 import { db } from '$lib/server/db/client.js';
 import { groups, userGroups } from '$lib/server/db/schema.js';
+import { keepsRecoveryAdministrator } from '$lib/server/oidc/settings.js';
 import { can } from '$lib/server/permissions.js';
 import {
 	auditGroup,
@@ -42,22 +43,19 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 	}
 	if (body.description !== undefined) patch.description = body.description;
 	if (body.isSuperuser !== undefined) patch.isSuperuser = Boolean(body.isSuperuser);
-	if (
-		group.isSuperuser &&
-		patch.isSuperuser === false &&
-		!keepsASuperuser(db, { demoteGroupId: groupId })
-	)
-		return json({ error: LAST_SUPERUSER_MESSAGE }, { status: 400 });
-
-	if (Object.keys(patch).length > 0) {
-		db.transaction((tx) => {
-			const before = groupAuditSnapshot(tx, groupId);
-			tx.update(groups).set(patch).where(eq(groups.id, groupId)).run();
-			auditGroup(tx, locals.user!.id, groupId, before, groupAuditSnapshot(tx, groupId));
-		});
-	}
-
-	return json({ success: true });
+  if (!Object.keys(patch).length) return json({ success: true });
+  const problem = db.transaction((tx) => {
+    if (patch.isSuperuser === false) {
+      const change = { demoteGroupId: groupId };
+      if (!keepsASuperuser(tx, change)) return LAST_SUPERUSER_MESSAGE;
+      if (!keepsRecoveryAdministrator(tx, change)) return 'Keep at least one enabled recovery administrator.';
+    }
+    const before = groupAuditSnapshot(tx, groupId);
+    tx.update(groups).set(patch).where(eq(groups.id, groupId)).run();
+    auditGroup(tx, locals.user!.id, groupId, before, groupAuditSnapshot(tx, groupId));
+    return null;
+  }, { behavior: 'immediate' });
+  return problem ? json({ error: problem }, { status: 400 }) : json({ success: true });
 };
 
 export const DELETE: RequestHandler = async ({ locals, params }) => {

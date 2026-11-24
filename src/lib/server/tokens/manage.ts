@@ -6,7 +6,7 @@ import {
   sortLeaves,
   type LeafPermission,
 } from "$lib/permissions/catalog.js";
-import { personalAccessTokens } from "../db/schema.js";
+import { personalAccessTokens, users } from "../db/schema.js";
 import type { LedgerDb } from "../ledger/types.js";
 import type { RoleAccess } from "../permissions.js";
 import { fail, missing, ok, type AppResult } from "../application/result.js";
@@ -183,24 +183,35 @@ export function createToken(
   if (listTokens(db, args.ownerId).some((t) => t.name === args.input.name))
     return fail("REFUSED", "There is already a token with that name.");
   const token = mintPat();
-  const row = db.transaction((tx) => {
-    const inserted = tx
-      .insert(personalAccessTokens)
-      .values({
-        userId: args.ownerId,
-        name: args.input.name,
-        tokenHash: hashToken(token),
-        lastFour: token.slice(-4),
-        permissions: JSON.stringify(permissions.value),
-        expiresAt: expiresAt.value,
-        createdAt: now,
-        createdBy: args.createdBy,
-      })
-      .returning()
-      .get();
-    auditToken(tx, args.createdBy, "create", null, inserted);
-    return inserted;
-  });
+  const row = db.transaction(
+    (tx) => {
+      const owner = tx
+        .select({ disabled: users.disabled })
+        .from(users)
+        .where(eq(users.id, args.ownerId))
+        .get();
+      if (!owner || owner.disabled) return null;
+      const inserted = tx
+        .insert(personalAccessTokens)
+        .values({
+          userId: args.ownerId,
+          name: args.input.name,
+          tokenHash: hashToken(token),
+          lastFour: token.slice(-4),
+          permissions: JSON.stringify(permissions.value),
+          expiresAt: expiresAt.value,
+          createdAt: now,
+          createdBy: args.createdBy,
+        })
+        .returning()
+        .get();
+      auditToken(tx, args.createdBy, "create", null, inserted);
+      return inserted;
+    },
+    { behavior: "immediate" },
+  );
+  if (!row)
+    return fail("FORBIDDEN", "This account cannot create access tokens.");
   return ok({ token, view: view(row) });
 }
 

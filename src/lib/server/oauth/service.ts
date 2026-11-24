@@ -46,6 +46,35 @@ function grantAuditFields(row: typeof oauthGrants.$inferSelect) {
   };
 }
 
+function auditRevoked(
+  db: LedgerDb,
+  rows: (typeof oauthGrants.$inferSelect)[],
+  actorId: number | undefined,
+) {
+  for (const row of rows)
+    recordAudit(db, {
+      recordType: "oauth_grant",
+      recordId: row.id,
+      userId: actorId ?? row.userId,
+      action: "delete",
+      changes: diffRecords(grantAuditFields(row), null),
+    });
+}
+
+export function revokeUserGrants(
+  db: LedgerDb,
+  userId: number,
+  actorId = userId,
+) {
+  const rows = db
+    .update(oauthGrants)
+    .set({ revokedAt: Date.now() })
+    .where(and(eq(oauthGrants.userId, userId), isNull(oauthGrants.revokedAt)))
+    .returning()
+    .all();
+  auditRevoked(db, rows, actorId);
+}
+
 export function oauthJson(
   body: unknown,
   status = 200,
@@ -133,7 +162,7 @@ export function createOAuth(db: LedgerDb, config: OAuthConfig) {
         role: users.role,
       })
       .from(users)
-      .where(eq(users.id, id))
+      .where(and(eq(users.id, id), eq(users.disabled, false)))
       .get();
 
   function validClient(
@@ -205,19 +234,6 @@ export function createOAuth(db: LedgerDb, config: OAuthConfig) {
    * its own token), to the grant's owner, with the channel saying 'system'.
    * Expiry is not a revoke and is never logged.
    */
-  function auditRevoked(
-    rows: (typeof oauthGrants.$inferSelect)[],
-    actorId: number | undefined,
-  ) {
-    for (const row of rows)
-      recordAudit(db, {
-        recordType: "oauth_grant",
-        recordId: row.id,
-        userId: actorId ?? row.userId,
-        action: "delete",
-        changes: diffRecords(grantAuditFields(row), null),
-      });
-  }
   function revokeGrant(id: string, userId?: number, actorId = userId) {
     const rows = db
       .update(oauthGrants)
@@ -231,16 +247,7 @@ export function createOAuth(db: LedgerDb, config: OAuthConfig) {
       )
       .returning()
       .all();
-    auditRevoked(rows, actorId);
-  }
-  function revokeUser(userId: number, actorId = userId) {
-    const rows = db
-      .update(oauthGrants)
-      .set({ revokedAt: Date.now() })
-      .where(and(eq(oauthGrants.userId, userId), isNull(oauthGrants.revokedAt)))
-      .returning()
-      .all();
-    auditRevoked(rows, actorId);
+    auditRevoked(db, rows, actorId);
   }
   function listGrants(userId: number) {
     return db
@@ -678,29 +685,34 @@ export function createOAuth(db: LedgerDb, config: OAuthConfig) {
       return redirect.href;
     }
     const grantId = opaque();
-    db.transaction((tx) => {
-      const row = tx
-        .insert(oauthGrants)
-        .values({
-          id: grantId,
+    db.transaction(
+      (tx) => {
+        if (!user(locals.user!.id))
+          throw new OAuthFailure("access_denied", 403);
+        const row = tx
+          .insert(oauthGrants)
+          .values({
+            id: grantId,
+            userId: locals.user!.id,
+            clientId: p.client.id,
+            issuer: config.issuer,
+            resource: config.resource,
+            scopes: [...new Set(selected)].join(" "),
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 30 * DAY,
+          })
+          .returning()
+          .get();
+        recordAudit(tx, {
+          recordType: "oauth_grant",
+          recordId: grantId,
           userId: locals.user!.id,
-          clientId: p.client.id,
-          issuer: config.issuer,
-          resource: config.resource,
-          scopes: [...new Set(selected)].join(" "),
-          createdAt: Date.now(),
-          expiresAt: Date.now() + 30 * DAY,
-        })
-        .returning()
-        .get();
-      recordAudit(tx, {
-        recordType: "oauth_grant",
-        recordId: grantId,
-        userId: locals.user!.id,
-        action: "create",
-        changes: diffRecords(null, grantAuditFields(row)),
-      });
-    });
+          action: "create",
+          changes: diffRecords(null, grantAuditFields(row)),
+        });
+      },
+      { behavior: "immediate" },
+    );
     const response = new OAuth2Server.Response();
     try {
       await protocol(config.resource).authorize(
@@ -842,7 +854,8 @@ export function createOAuth(db: LedgerDb, config: OAuthConfig) {
     authenticate,
     revokeToken,
     revokeGrant,
-    revokeUser,
+    revokeUser: (userId: number, actorId = userId) =>
+      revokeUserGrants(db, userId, actorId),
     listGrants,
     cleanup,
   };

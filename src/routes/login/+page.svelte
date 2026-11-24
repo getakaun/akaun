@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import type { ActionData } from './$types.js';
+	import { resolve } from '$app/paths';
+	import type { ActionData, PageData } from './$types.js';
 
-	let { form }: { form: ActionData } = $props();
+	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let showPassword = $state(false);
 	let remember = $state(true);
@@ -27,6 +28,27 @@
 			<h1 class="form-title">Welcome back</h1>
 			<p class="form-sub">Sign in to your Akaun workspace to continue.</p>
 		</div>
+
+		{#if data.ssoError}
+			<p class="field-err" role="alert">
+				{data.ssoError === 'provider_configuration'
+					? 'SSO is unavailable. Ask an administrator to check the issuer URL and provider connection.'
+					: data.ssoError === 'unavailable'
+						? 'This sign-in cannot access Akaun. Contact your administrator.'
+						: 'SSO sign-in failed. Try again or contact your administrator.'}
+			</p>
+		{/if}
+		{#if data.enabled}
+			<p><a class="btn-primary" data-sveltekit-reload href={resolve(`/api/v1/auth/sso/login?${data.signInQuery}`)}>Continue with {data.displayName}</a></p>
+			<p class="form-foot">
+				<a href={resolve(`/login?${data.localQuery}`)}>
+					{data.showPassword || form?.error
+						? (data.internalEnabled ? 'Hide username and password' : 'Hide local sign-in')
+						: (data.internalEnabled ? 'Use username and password' : 'Local sign-in')}
+				</a>
+			</p>
+		{/if}
+		{#if data.showPassword || form?.error}
 
 		<form
 			method="POST"
@@ -136,6 +158,7 @@
 				{/if}
 			</button>
 		</form>
+    {/if}
 
 		<p class="form-foot">New to Akaun? <button type="button" onclick={(e) => e.preventDefault()}>Ask your admin for access</button></p>
 	</div>
@@ -355,6 +378,7 @@
 
 	/* ── Submit ──────────────────────────────────────────────── */
 	.btn-primary {
+		text-decoration: none;
 		width: 100%;
 		height: 46px;
 		border: none;
@@ -414,6 +438,7 @@
 		line-height: 1.6;
 	}
 
+	.form-foot a,
 	.form-foot button {
 		color: var(--primary);
 		text-decoration: none;
@@ -426,6 +451,7 @@
 		font-size: inherit;
 	}
 
+	.form-foot a:hover,
 	.form-foot button:hover {
 		text-decoration: underline;
 	}

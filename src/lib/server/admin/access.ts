@@ -186,7 +186,8 @@ export function memberships(db: LedgerDb, userId: number): MembershipView[] {
 export type SuperuserChange =
   | { demoteGroupId: number }
   | { userId: number; groupIds: number[] }
-  | { deleteUserId: number };
+  | { deleteUserId: number }
+  | { disableUserId: number };
 
 /**
  * The one group Users & Groups never changes or deletes: the superuser group
@@ -206,7 +207,11 @@ export const LAST_SUPERUSER_MESSAGE =
  * `users.manage` — locking everyone out with no way back short of editing the
  * database.
  */
-export function keepsASuperuser(db: LedgerDb, change: SuperuserChange): boolean {
+export function keepsASuperuser(
+  db: LedgerDb,
+  change?: SuperuserChange,
+  candidates?: number[],
+): boolean {
   const superGroups = new Set(
     db
       .select({ id: groups.id })
@@ -215,19 +220,33 @@ export function keepsASuperuser(db: LedgerDb, change: SuperuserChange): boolean 
       .all()
       .map((g) => g.id),
   );
-  if ("demoteGroupId" in change) superGroups.delete(change.demoteGroupId);
+  if (change && "demoteGroupId" in change)
+    superGroups.delete(change.demoteGroupId);
   let rows = db
     .select({ userId: userGroups.userId, groupId: userGroups.groupId })
     .from(userGroups)
     .all();
-  if ("deleteUserId" in change)
-    rows = rows.filter((r) => r.userId !== change.deleteUserId);
-  if ("userId" in change)
+  if (change && "userId" in change)
     rows = [
       ...rows.filter((r) => r.userId !== change.userId),
       ...change.groupIds.map((groupId) => ({ userId: change.userId, groupId })),
     ];
-  return rows.some((r) => superGroups.has(r.groupId));
+  const enabled = new Set(
+    db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.disabled, false))
+      .all()
+      .map(({ id }) => id),
+  );
+  if (change && "deleteUserId" in change) enabled.delete(change.deleteUserId);
+  if (change && "disableUserId" in change) enabled.delete(change.disableUserId);
+  return rows.some(
+    (r) =>
+      superGroups.has(r.groupId) &&
+      enabled.has(r.userId) &&
+      (!candidates || candidates.includes(r.userId)),
+  );
 }
 
 /** A group as Users & Groups shows it. */
